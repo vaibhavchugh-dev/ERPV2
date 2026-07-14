@@ -1,0 +1,80 @@
+namespace CimmpleAPI.Services.Pdf.Models
+{
+    public class PdfDocumentData
+    {
+        public string CompanyName { get; set; } = "Your Company Name";
+        public string CompanyAddress { get; set; } = "123 Business Street";
+        public string CompanyCityStateZip { get; set; } = "City, State 12345";
+        public string CompanyEmail { get; set; } = "info@company.com";
+        public string CompanyPhone { get; set; } = "";
+        public string CompanyWebAddress { get; set; } = "";
+        public string LogoPath { get; set; } = "";
+        
+        public string CustomerName { get; set; } = "";
+        public List<string> BillingAddress { get; set; } = new();
+        public List<string> ShippingAddress { get; set; } = new();
+        public string BuyerName { get; set; } = "";
+        public string PhoneNumber { get; set; } = "";
+        
+        public List<PdfLineItem> LineItems { get; set; } = new();
+        public decimal TotalAmount { get; set; }
+        
+        public List<PdfRoutingStep> RoutingSteps { get; set; } = new();
+    }
+
+    public class PdfLineItem
+    {
+        public string PartNo { get; set; } = "";
+        public string PartDescription { get; set; } = "";
+        public string Date { get; set; } = "";
+        public string Unit { get; set; } = "EA";
+        public int Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal DiscountAmount { get; set; }
+        public decimal Amount { get; set; }
+        public string Notes { get; set; } = "";
+    }
+
+    public class PdfRoutingStep
+    {
+        public int Sequence { get; set; }
+        public string ProcessName { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string WorkstationName { get; set; } = "";
+        public string TechnicianName { get; set; } = "";
+        public int? EstimatedTime { get; set; }
+        public string Status { get; set; } = "";
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

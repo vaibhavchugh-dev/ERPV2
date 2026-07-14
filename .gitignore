@@ -1,0 +1,38 @@
+# Visual Studio / .NET
+bin/
+obj/
+_build_out/
+_coa_build_out/
+_pl_build_out/
+_seed_build_out/
+_tmp_build*/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Logs
+*.log
+
+# Build outputs
+build/
+dist/
+
+# Runtime
+.env
+.env.local
+appsettings.json
+appsettings.Development.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/

@@ -1,0 +1,277 @@
+/* Payroll Theme - Top Header */
+
+.top-header {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  padding: 1rem 1.5rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: 64px !important;
+  min-height: 64px !important;
+  max-height: 64px !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 30 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+.header-left {
+  flex: 1 !important;
+}
+
+.search-box {
+  position: relative !important;
+  max-width: 28rem !important;
+  width: 100% !important;
+}
+
+.search-box svg {
+  position: absolute !important;
+  left: 0.75rem !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: #9ca3af !important;
+  pointer-events: none !important;
+}
+
+.search-box input {
+  width: 100% !important;
+  padding-left: 2.5rem !important;
+  padding-right: 1rem !important;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 0.5rem !important;
+  font-size: 0.875rem !important;
+  outline: none !important;
+  background-color: #ffffff !important;
+  font-family: inherit;
+}
+
+.search-box input:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
+}
+
+.header-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 1rem !important;
+}
+
+.location-menu {
+  position: relative !important;
+}
+
+.location-menu-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  padding: 0.5rem 0.75rem !important;
+  border-radius: 0.5rem !important;
+  border: 1px solid #d1d5db !important;
+  background-color: #ffffff !important;
+  cursor: pointer !important;
+  color: #374151 !important;
+  transition: all 0.2s !important;
+  font-size: 14px !important;
+  font-family: inherit;
+  max-width: 200px !important;
+}
+
+.location-menu-btn:hover {
+  background-color: #f9fafb !important;
+  border-color: #9ca3af !important;
+}
+
+.location-menu-btn svg:first-child {
+  flex-shrink: 0;
+  color: #6366f1 !important;
+}
+
+.location-name {
+  flex: 1 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
+
+.location-menu-btn svg:last-child {
+  flex-shrink: 0;
+  color: #9ca3af !important;
+}
+
+.location-dropdown {
+  position: absolute !important;
+  right: 0 !important;
+  margin-top: 0.5rem !important;
+  width: 20rem !important;
+  max-height: 24rem !important;
+  overflow-y: auto !important;
+  background-color: #ffffff !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid #e5e7eb !important;
+  padding: 0.5rem 0 !important;
+  z-index: 50 !important;
+}
+
+.location-dropdown .dropdown-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.75rem 1rem !important;
+}
+
+.location-dropdown .dropdown-header svg {
+  color: #6366f1 !important;
+  flex-shrink: 0;
+}
+
+.location-dropdown .dropdown-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.75rem 1rem !important;
+  font-size: 0.875rem !important;
+  color: #374151 !important;
+  text-decoration: none !important;
+  transition: background-color 0.2s !important;
+  width: 100% !important;
+  border: none !important;
+  background: none !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  font-family: inherit;
+}
+
+.location-dropdown .dropdown-item:hover {
+  background-color: #f9fafb !important;
+}
+
+.location-dropdown .dropdown-item.active {
+  background-color: #eff6ff !important;
+  color: #1e40af !important;
+}
+
+.location-dropdown .dropdown-item.active:hover {
+  background-color: #dbeafe !important;
+}
+
+.user-menu {
+  position: relative !important;
+}
+
+.user-menu-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  padding: 0.5rem 0.75rem !important;
+  border-radius: 0.5rem !important;
+  border: none !important;
+  background: none !important;
+  cursor: pointer !important;
+  color: #374151 !important;
+  transition: background-color 0.2s !important;
+  font-size: 14px !important;
+  font-family: inherit;
+}
+
+.user-menu-btn:hover {
+  background-color: #f3f4f6 !important;
+}
+
+.user-menu-btn svg {
+  flex-shrink: 0;
+}
+
+.user-avatar-small {
+  width: 2rem !important;
+  height: 2rem !important;
+  border-radius: 9999px !important;
+  background-color: #eef2ff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #6366f1 !important;
+  flex-shrink: 0;
+}
+
+.user-dropdown {
+  position: absolute !important;
+  right: 0 !important;
+  margin-top: 0.5rem !important;
+  width: 16rem !important;
+  background-color: #ffffff !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid #e5e7eb !important;
+  padding: 0.5rem 0 !important;
+  z-index: 50 !important;
+}
+
+.dropdown-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.75rem 1rem !important;
+}
+
+.dropdown-name {
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  color: #111827 !important;
+}
+
+.dropdown-email {
+  font-size: 0.75rem !important;
+  color: #6b7280 !important;
+}
+
+.dropdown-divider {
+  border-top: 1px solid #e5e7eb !important;
+  margin: 0.25rem 0 !important;
+}
+
+.dropdown-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.5rem 1rem !important;
+  font-size: 0.875rem !important;
+  color: #374151 !important;
+  text-decoration: none !important;
+  transition: background-color 0.2s !important;
+  width: 100% !important;
+  border: none !important;
+  background: none !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  font-family: inherit;
+}
+
+.dropdown-item:hover {
+  background-color: #f9fafb !important;
+}
+
+.dropdown-item svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 640px) {
+  .search-box {
+    display: none !important;
+  }
+
+  .location-menu-btn .location-name {
+    display: none !important;
+  }
+
+  .user-menu-btn span {
+    display: none !important;
+  }
+}

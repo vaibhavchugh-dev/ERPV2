@@ -1,0 +1,106 @@
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace CimmpleAPI.Data.Models
+{
+    public class UserDetail
+    {
+        [Key]
+        public int User_UniqueID { get; set; }
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public string? Email { get; set; }
+        public int TenantID { get; set; }
+        public string? UserName { get; set; }
+        public string? Password { get; set; }
+        public string? Status { get; set; }
+        public int? Role { get; set; }
+        public DateTime PwdResetDate { get; set; }
+        public string? Phone1 { get; set; }
+        public string? EmployeeType { get; set; }
+        public string? Date_of_hire { get; set; }
+        public string? UserToken { get; set; }
+        public string? PasswordSalt { get; set; }
+        public string? PwdChangeStatus { get; set; }
+        public string? ChangePassword { get; set; }
+        public string? HID { get; set; }
+        public string? PrimaryContact { get; set; }
+        public string? Date_of_termination { get; set; }
+        public string? Termination_Reason { get; set; }
+        public string? ValidateStatus { get; set; }
+        public string? DOB { get; set; }
+        public string? SSN { get; set; }
+        public string? ChangedBy { get; set; }
+        public DateTime? CreateDate { get; set; }
+        public int? IsSalesAgent { get; set; }
+        public int? AllowPTO { get; set; }
+        public int? AllowPerformance { get; set; }
+        public int? AllowACATracking { get; set; }
+        public int? AllowDeposit { get; set; }
+        public string? BlockedPhone { get; set; }
+        public int? SendWelcomeEmail { get; set; }
+        public string? PwdType { get; set; }
+        public string? PhoneUpdateStatus { get; set; }
+        public string? Address { get; set; }
+        public string? Phone2 { get; set; }
+        public string? City { get; set; }
+        public string? State { get; set; }
+        public string? Zip { get; set; }
+        public string? Street { get; set; }
+        public string? PrimaryMethod { get; set; }
+        public int? VendorId { get; set; }
+        public string? ContractId { get; set; }
+        public int? PaidByVendor { get; set; }
+        public int? AllowContactorOverTime { get; set; }
+        public string? SearchSSN { get; set; }
+        public string? EmpCode { get; set; }
+        public int? Empid { get; set; }
+    }
+
+    public class UserRole
+    {
+        [Key]
+        public int RoleID { get; set; }
+        public string? RoleName { get; set; }
+        public int OrderNo { get; set; }
+        public string? ResetPwd { get; set; }
+        public int TenantId { get; set; }
+        public string? RoleTag { get; set; }
+    }
+
+    public class UserInfo
+    {
+        [Key]
+        public int UserID { get; set; }
+        public int User_UniqueID { get; set; }
+        public DateTime LogInTime { get; set; }
+        public int LogInStatus { get; set; }
+        public string IPAddress { get; set; }
+        public int TenantId { get; set; }
+    }
+
+    public class UserLogin
+    {
+        [Key]
+        public int id { get; set; }
+        public string? username { get; set; }
+        public DateTime logintime { get; set; }
+        public int ipaddress { get; set; }
+        public string? browser { get; set; }
+    }
+
+    public class UserMapping
+    {
+        [Key]
+        public int Id { get; set; }
+        public int userId { get; set; }
+        public int locationId { get; set; }
+    }
+}
+
+
+
+
+
+
+

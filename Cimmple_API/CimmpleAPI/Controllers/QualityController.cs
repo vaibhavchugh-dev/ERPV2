@@ -1,0 +1,1219 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Text.Json;
+using System.IO;
+using CimmpleAPI.Data;
+using CimmpleAPI.Data.Models;
+using CimmpleAPI.Data.Dtos;
+
+namespace CimmpleAPI.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class QualityController : ApiBaseController
+    {
+        private readonly CimmpleDbContext _context;
+
+        public QualityController(CimmpleDbContext context)
+        {
+            _context = context;
+        }
+
+                // GET: api/Quality/FixDatabase
+                [HttpGet("FixDatabase")]
+                public async Task<IActionResult> FixDatabase()
+                {
+                    try
+                    {
+                        Console.WriteLine("Fixing database null values using raw SQL...");
+
+                        // Use raw SQL to avoid EF null reference issues
+                        var sqlCommands = new[]
+                        {
+                            // Fix critical required fields that might be null
+                            "UPDATE NonConformanceReports SET NcrNumber = 'NCR-UNKNOWN-' + CAST(NcrId AS VARCHAR(10)) WHERE NcrNumber IS NULL OR NcrNumber = ''",
+                            "UPDATE NonConformanceReports SET Title = 'Untitled NCR' WHERE Title IS NULL OR Title = ''",
+                            "UPDATE NonConformanceReports SET Category = 'Other' WHERE Category IS NULL OR Category = ''",
+                            "UPDATE NonConformanceReports SET Severity = 'Minor' WHERE Severity IS NULL OR Severity = ''",
+                            "UPDATE NonConformanceReports SET Status = 'Open' WHERE Status IS NULL OR Status = ''",
+                            "UPDATE NonConformanceReports SET Source = 'Internal' WHERE Source IS NULL OR Source = ''",
+                            "UPDATE NonConformanceReports SET ReportedBy = 1 WHERE ReportedBy IS NULL OR ReportedBy = 0",
+                            "UPDATE NonConformanceReports SET ReportedDate = GETUTCDATE() WHERE ReportedDate IS NULL",
+                            "UPDATE NonConformanceReports SET TenantId = 1 WHERE TenantId IS NULL OR TenantId = 0",
+                            "UPDATE NonConformanceReports SET CreatedBy = ISNULL(ReportedBy, 1) WHERE CreatedBy IS NULL OR CreatedBy = 0",
+                            "UPDATE NonConformanceReports SET CreatedDate = GETUTCDATE() WHERE CreatedDate IS NULL",
+
+                            // Fix nullable string fields
+                            "UPDATE NonConformanceReports SET Description = '' WHERE Description IS NULL",
+                            "UPDATE NonConformanceReports SET DefectLocation = '' WHERE DefectLocation IS NULL",
+                            "UPDATE NonConformanceReports SET PartNo = '' WHERE PartNo IS NULL",
+                            "UPDATE NonConformanceReports SET PartName = '' WHERE PartName IS NULL",
+                            "UPDATE NonConformanceReports SET RootCause = '' WHERE RootCause IS NULL",
+                            "UPDATE NonConformanceReports SET ImmediateAction = '' WHERE ImmediateAction IS NULL",
+                            "UPDATE NonConformanceReports SET CorrectiveAction = '' WHERE CorrectiveAction IS NULL",
+                            "UPDATE NonConformanceReports SET PreventiveAction = '' WHERE PreventiveAction IS NULL",
+                            "UPDATE NonConformanceReports SET Notes = '' WHERE Notes IS NULL",
+
+                            // Fix nullable int fields
+                            "UPDATE NonConformanceReports SET DefectQuantity = 0 WHERE DefectQuantity IS NULL",
+                            "UPDATE NonConformanceReports SET TotalQuantity = 0 WHERE TotalQuantity IS NULL"
+                        };
+
+                        foreach (var sql in sqlCommands)
+                        {
+                            Console.WriteLine($"Executing: {sql}");
+                            await _context.Database.ExecuteSqlRawAsync(sql);
+                        }
+
+                        Console.WriteLine("Database fixes applied successfully");
+
+                        return Ok(new { message = "Database fixed successfully" });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Database fix failed: {ex.Message}");
+                        Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                        return BadRequest(new { error = new { message = ex.Message } });
+                    }
+                }
+
+        // GET: api/Quality/TestDB
+        [HttpGet("TestDB")]
+        public async Task<IActionResult> TestDB()
+        {
+            try
+            {
+                // Test basic query
+                var count = await _context.NonConformanceReports.CountAsync();
+                Console.WriteLine($"Total NCRs in database: {count}");
+
+                // Test raw SQL to check actual values
+                var testResults = await _context.NonConformanceReports
+                    .FromSqlRaw(@"
+                        SELECT TOP 5
+                            NcrId, NcrNumber, Title, Category, Severity, Status, Source,
+                            ReportedBy, TenantId, CreatedBy
+                        FROM NonConformanceReports
+                        WHERE TenantId = 1
+                    ")
+                    .Select(n => new {
+                        n.NcrId,
+                        n.NcrNumber,
+                        n.Title,
+                        n.Category,
+                        n.Severity,
+                        n.Status,
+                        n.Source,
+                        n.ReportedBy,
+                        n.TenantId,
+                        n.CreatedBy
+                    })
+                    .ToListAsync();
+
+                Console.WriteLine("Sample NCR data:");
+                foreach (var ncr in testResults)
+                {
+                    Console.WriteLine($"ID: {ncr.NcrId}, Number: {ncr.NcrNumber}, Title: {ncr.Title}, Category: {ncr.Category}, Status: {ncr.Status}");
+                }
+
+                return Ok(new { count, samples = testResults });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"TestDB failed: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // GET: api/Quality/DebugNCRs
+        [HttpGet("DebugNCRs")]
+        public async Task<IActionResult> DebugNCRs([FromQuery] int tenantId = 1)
+        {
+            try
+            {
+                Console.WriteLine($"DebugNCRs called for tenantId: {tenantId}");
+
+                var allNCRs = await _context.NonConformanceReports
+                    .Where(n => n.TenantId == tenantId)
+                    .OrderByDescending(n => n.CreatedDate)
+                    .ToListAsync();
+
+                Console.WriteLine($"Found {allNCRs.Count} NCRs for tenant {tenantId}");
+                foreach (var ncr in allNCRs)
+                {
+                    Console.WriteLine($"NCR: ID={ncr.NcrId}, Number={ncr.NcrNumber}, Title={ncr.Title}, Status={ncr.Status}, TenantId={ncr.TenantId}");
+                }
+
+                var result = allNCRs.Select(n => new {
+                    ncrId = n.NcrId,
+                    ncrNumber = n.NcrNumber,
+                    title = n.Title,
+                    status = n.Status,
+                    reportedBy = n.ReportedBy,
+                    createdDate = n.CreatedDate
+                }).ToList();
+
+                return Ok(new { count = allNCRs.Count, ncrs = result });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DebugNCRs failed: {ex.Message}");
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // DELETE: api/Quality/DeleteAllNCRs
+        [HttpDelete("DeleteAllNCRs")]
+        public async Task<IActionResult> DeleteAllNCRs([FromQuery] int tenantId)
+        {
+            try
+            {
+                Console.WriteLine($"DeleteAllNCRs called for tenantId: {tenantId}");
+
+                // Use raw SQL to avoid null reference issues
+                var deletedCount = await _context.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM NonConformanceReports WHERE TenantId = {0}", tenantId);
+
+                Console.WriteLine($"Successfully deleted {deletedCount} NCRs");
+
+                return Ok(new { message = $"Deleted {deletedCount} NCRs successfully" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DeleteAllNCRs failed: {ex.Message}");
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // GET: api/Quality/CheckDatabase
+        [HttpGet("CheckDatabase")]
+        public async Task<IActionResult> CheckDatabase()
+        {
+            try
+            {
+                var recordCount = await _context.NonConformanceReports.CountAsync();
+
+                return Ok(new {
+                    recordCount = recordCount,
+                    message = $"Found {recordCount} NCR records in database"
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // GET: api/Quality/GetNCRs
+        [HttpGet("CheckNCRDeletionImpact")]
+        public async Task<IActionResult> CheckNCRDeletionImpact([FromQuery] int ncrId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                // Only select the fields we need to avoid null value issues
+                var ncr = await _context.NonConformanceReports
+                    .Where(n => n.NcrId == ncrId && n.TenantId == tenantId)
+                    .Select(n => new
+                    {
+                        n.NcrId,
+                        n.JobOrderId,
+                        n.CustomerId,
+                        n.TenantId
+                    })
+                    .FirstOrDefaultAsync();
+
+                if (ncr == null)
+                {
+                    return NotFound(new { error = "NCR not found" });
+                }
+
+                var result = new DeletionImpactResult
+                {
+                    CanDelete = true,
+                    BlockingReasons = new List<string>(),
+                    BlockingDependencies = new List<BlockingDependency>(),
+                    WillBeDeleted = new List<ImpactedEntity>(),
+                    WillBeAffected = new List<ImpactedEntity>(),
+                    Warnings = new List<string>()
+                };
+
+                // NCRs are generally standalone records
+                // They reference JobOrder and Customer, but those are optional foreign keys
+                // No child records depend on NCR, so deletion should be allowed
+
+                // Add warning if NCR is linked to a job order
+                if (ncr.JobOrderId.HasValue)
+                {
+                    result.Warnings.Add("This NCR is linked to a Job Order. The link will be removed upon deletion.");
+                }
+
+                // Add warning if NCR is linked to a customer
+                if (ncr.CustomerId.HasValue)
+                {
+                    result.Warnings.Add("This NCR is linked to a Customer. The link will be removed upon deletion.");
+                }
+
+                return Ok(new { result = result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        [HttpGet("GetNCRs")]
+        public async Task<IActionResult> GetNCRs(
+            [FromQuery] int tenantId,
+            [FromQuery] string status = null,
+            [FromQuery] string category = null,
+            [FromQuery] string severity = null,
+            [FromQuery] string source = null,
+            [FromQuery] int? jobOrderId = null,
+            [FromQuery] string dateFrom = null,
+            [FromQuery] string dateTo = null)
+        {
+            try
+            {
+                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}");
+
+                // Use raw SQL to completely bypass EF null reference issues
+                var rawResults = await _context.NonConformanceReports
+                    .FromSqlRaw(@"
+                        SELECT
+                            NcrId,
+                            ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                            ISNULL(Title, 'Untitled NCR') as Title,
+                            ISNULL(Description, '') as Description,
+                            ISNULL(Category, 'Other') as Category,
+                            ISNULL(Severity, 'Minor') as Severity,
+                            ISNULL(Status, 'Open') as Status,
+                            ISNULL(Source, 'Internal') as Source,
+                            ReportedBy,
+                            ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                            Photos,
+                            ReportedDate,
+                            CreatedDate
+                        FROM NonConformanceReports
+                        WHERE TenantId = {0}", tenantId)
+                    .AsNoTracking()
+                    .OrderByDescending(n => n.ReportedDate)
+                    .Select(n => new {
+                        ncrId = n.NcrId,
+                        ncrNumber = n.NcrNumber,
+                        title = n.Title,
+                        description = n.Description ?? "",
+                        category = n.Category,
+                        severity = n.Severity,
+                        status = n.Status,
+                        source = n.Source,
+                        reportedBy = n.ReportedBy,
+                        reportedByName = n.ReportedByName ?? "Unknown User",
+                        photos = n.Photos ?? "",
+                        reportedDate = n.ReportedDate.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        createdDate = n.CreatedDate.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    })
+                    .ToListAsync();
+
+                Console.WriteLine($"Raw SQL query returned {rawResults.Count} NCRs");
+                if (rawResults.Count > 0) {
+                    Console.WriteLine("NCR IDs in result:");
+                    foreach (var ncr in rawResults) {
+                        Console.WriteLine($"  NCR ID: {ncr.ncrId}, Number: {ncr.ncrNumber}, Title: {ncr.title}");
+                    }
+                }
+
+                Console.WriteLine($"Returning {rawResults.Count} NCR objects");
+
+                return Ok(new { result = rawResults });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetNCRs failed: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { error = new { message = $"Failed to retrieve NCRs: {ex.Message}" } });
+            }
+        }
+
+        // GET: api/Quality/GetNCR/5?tenantId=1
+        [HttpGet("GetNCR/{id}")]
+        public async Task<IActionResult> GetNCR(int id, [FromQuery] int tenantId = 0)
+        {
+            try
+            {
+                Console.WriteLine($"GetNCR called with id: {id}, tenantId: {tenantId}");
+
+                // Use raw ADO.NET to completely bypass EF issues
+                Console.WriteLine("Starting ADO.NET query...");
+                dynamic rawResults = null;
+
+                try
+                {
+                    using (var command = _context.Database.GetDbConnection().CreateCommand())
+                    {
+                        command.CommandText = @"
+                            SELECT TOP 1
+                                NcrId,
+                                ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                                ISNULL(Title, 'Untitled NCR') as Title,
+                                ISNULL(Description, '') as Description,
+                                ISNULL(Category, 'Other') as Category,
+                                ISNULL(Severity, 'Minor') as Severity,
+                                ISNULL(Status, 'Open') as Status,
+                                ISNULL(Source, 'Internal') as Source,
+                                JobOrderId,
+                                JobOrderNumber,
+                                RoutingStepId,
+                                ISNULL(PartNo, '') as PartNo,
+                                ISNULL(PartName, '') as PartName,
+                                CustomerId,
+                                CustomerName,
+                                ISNULL(DefectLocation, '') as DefectLocation,
+                                ISNULL(DefectQuantity, 0) as DefectQuantity,
+                                ISNULL(TotalQuantity, 0) as TotalQuantity,
+                                ISNULL(DefectDescription, '') as DefectDescription,
+                                ISNULL(Photos, '') as Photos,
+                                ISNULL(RootCause, '') as RootCause,
+                                ISNULL(RootCauseCategory, '') as RootCauseCategory,
+                                ISNULL(ImmediateAction, '') as ImmediateAction,
+                                ISNULL(CorrectiveAction, '') as CorrectiveAction,
+                                ISNULL(PreventiveAction, '') as PreventiveAction,
+                                ReportedBy,
+                                ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                                ReportedDate,
+                                InvestigatedBy,
+                                InvestigatedByName,
+                                InvestigatedDate,
+                                ApprovedBy,
+                                ApprovedByName,
+                                ApprovedDate,
+                                DueDate,
+                                ClosedDate,
+                                CostImpact,
+                                ISNULL(Notes, '') as Notes,
+                                TenantId
+                            FROM NonConformanceReports
+                            WHERE NcrId = @id";
+
+                        var idParam = command.CreateParameter();
+                        idParam.ParameterName = "@id";
+                        idParam.Value = id;
+                        command.Parameters.Add(idParam);
+
+                        Console.WriteLine($"Executing query for NCR ID: {id}");
+                        await _context.Database.OpenConnectionAsync();
+
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            Console.WriteLine("Reader created, checking for data...");
+                            if (!await reader.ReadAsync())
+                {
+                    Console.WriteLine($"NCR with ID {id} not found in database");
+                    return NotFound(new { error = new { message = $"NCR with ID {id} not found" } });
+                }
+
+                            Console.WriteLine("Reading basic data...");
+                            // Read data safely
+                            rawResults = new {
+                                ncrId = reader.GetInt32(reader.GetOrdinal("NcrId")),
+                                ncrNumber = reader.IsDBNull(reader.GetOrdinal("NcrNumber")) ? $"NCR-{id}" : reader.GetString(reader.GetOrdinal("NcrNumber")),
+                                title = reader.IsDBNull(reader.GetOrdinal("Title")) ? "Untitled NCR" : reader.GetString(reader.GetOrdinal("Title")),
+                                description = reader.IsDBNull(reader.GetOrdinal("Description")) ? "" : reader.GetString(reader.GetOrdinal("Description")),
+                                category = reader.IsDBNull(reader.GetOrdinal("Category")) ? "Other" : reader.GetString(reader.GetOrdinal("Category")),
+                                severity = reader.IsDBNull(reader.GetOrdinal("Severity")) ? "Minor" : reader.GetString(reader.GetOrdinal("Severity")),
+                                status = reader.IsDBNull(reader.GetOrdinal("Status")) ? "Open" : reader.GetString(reader.GetOrdinal("Status")),
+                                source = reader.IsDBNull(reader.GetOrdinal("Source")) ? "Internal" : reader.GetString(reader.GetOrdinal("Source")),
+                                jobOrderId = reader.IsDBNull(reader.GetOrdinal("JobOrderId")) ? 0 : reader.GetInt32(reader.GetOrdinal("JobOrderId")),
+                                jobOrderNumber = reader.IsDBNull(reader.GetOrdinal("JobOrderNumber")) ? "" : reader.GetString(reader.GetOrdinal("JobOrderNumber")),
+                                routingStepId = reader.IsDBNull(reader.GetOrdinal("RoutingStepId")) ? 0 : reader.GetInt32(reader.GetOrdinal("RoutingStepId")),
+                                partNo = reader.IsDBNull(reader.GetOrdinal("PartNo")) ? "" : reader.GetString(reader.GetOrdinal("PartNo")),
+                                partName = reader.IsDBNull(reader.GetOrdinal("PartName")) ? "" : reader.GetString(reader.GetOrdinal("PartName")),
+                                customerId = reader.IsDBNull(reader.GetOrdinal("CustomerId")) ? 0 : reader.GetInt32(reader.GetOrdinal("CustomerId")),
+                                customerName = reader.IsDBNull(reader.GetOrdinal("CustomerName")) ? "" : reader.GetString(reader.GetOrdinal("CustomerName")),
+                                defectLocation = reader.IsDBNull(reader.GetOrdinal("DefectLocation")) ? "" : reader.GetString(reader.GetOrdinal("DefectLocation")),
+                                defectQuantity = reader.IsDBNull(reader.GetOrdinal("DefectQuantity")) ? 0 : reader.GetInt32(reader.GetOrdinal("DefectQuantity")),
+                                totalQuantity = reader.IsDBNull(reader.GetOrdinal("TotalQuantity")) ? 0 : reader.GetInt32(reader.GetOrdinal("TotalQuantity")),
+                                defectDescription = reader.IsDBNull(reader.GetOrdinal("DefectDescription")) ? "" : reader.GetString(reader.GetOrdinal("DefectDescription")),
+                                photos = reader.IsDBNull(reader.GetOrdinal("Photos")) ? "" : reader.GetString(reader.GetOrdinal("Photos")),
+                                rootCause = reader.IsDBNull(reader.GetOrdinal("RootCause")) ? "" : reader.GetString(reader.GetOrdinal("RootCause")),
+                                rootCauseCategory = reader.IsDBNull(reader.GetOrdinal("RootCauseCategory")) ? "" : reader.GetString(reader.GetOrdinal("RootCauseCategory")),
+                                immediateAction = reader.IsDBNull(reader.GetOrdinal("ImmediateAction")) ? "" : reader.GetString(reader.GetOrdinal("ImmediateAction")),
+                                correctiveAction = reader.IsDBNull(reader.GetOrdinal("CorrectiveAction")) ? "" : reader.GetString(reader.GetOrdinal("CorrectiveAction")),
+                                preventiveAction = reader.IsDBNull(reader.GetOrdinal("PreventiveAction")) ? "" : reader.GetString(reader.GetOrdinal("PreventiveAction")),
+                                reportedBy = reader.IsDBNull(reader.GetOrdinal("ReportedBy")) ? 0 : reader.GetInt32(reader.GetOrdinal("ReportedBy")),
+                                reportedByName = reader.IsDBNull(reader.GetOrdinal("ReportedByName")) ? "Unknown User" : reader.GetString(reader.GetOrdinal("ReportedByName")),
+                                reportedDate = reader.IsDBNull(reader.GetOrdinal("ReportedDate")) ? DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssZ") : reader.GetDateTime(reader.GetOrdinal("ReportedDate")).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                investigatedBy = reader.IsDBNull(reader.GetOrdinal("InvestigatedBy")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("InvestigatedBy")),
+                                investigatedByName = reader.IsDBNull(reader.GetOrdinal("InvestigatedByName")) ? "" : reader.GetString(reader.GetOrdinal("InvestigatedByName")),
+                                investigatedDate = reader.IsDBNull(reader.GetOrdinal("InvestigatedDate")) ? null : (DateTime?)reader.GetDateTime(reader.GetOrdinal("InvestigatedDate")),
+                                approvedBy = reader.IsDBNull(reader.GetOrdinal("ApprovedBy")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("ApprovedBy")),
+                                approvedByName = reader.IsDBNull(reader.GetOrdinal("ApprovedByName")) ? "" : reader.GetString(reader.GetOrdinal("ApprovedByName")),
+                                approvedDate = reader.IsDBNull(reader.GetOrdinal("ApprovedDate")) ? null : (DateTime?)reader.GetDateTime(reader.GetOrdinal("ApprovedDate")),
+                                dueDate = reader.IsDBNull(reader.GetOrdinal("DueDate")) ? null : (DateTime?)reader.GetDateTime(reader.GetOrdinal("DueDate")),
+                                closedDate = reader.IsDBNull(reader.GetOrdinal("ClosedDate")) ? null : (DateTime?)reader.GetDateTime(reader.GetOrdinal("ClosedDate")),
+                                costImpact = reader.IsDBNull(reader.GetOrdinal("CostImpact")) ? (decimal?)null : reader.GetDecimal(reader.GetOrdinal("CostImpact")),
+                                notes = reader.IsDBNull(reader.GetOrdinal("Notes")) ? "" : reader.GetString(reader.GetOrdinal("Notes")),
+                                tenantId = reader.IsDBNull(reader.GetOrdinal("TenantId")) ? 0 : reader.GetInt32(reader.GetOrdinal("TenantId"))
+                            };
+
+                            Console.WriteLine($"Successfully read NCR: ID={rawResults.ncrId}, Title='{rawResults.title}'");
+                        }
+                    }
+                }
+                catch (Exception adoEx)
+                {
+                    Console.WriteLine($"ADO.NET error: {adoEx.Message}");
+                    Console.WriteLine($"Stack trace: {adoEx.StackTrace}");
+                    throw;
+                }
+
+                Console.WriteLine($"Raw ADO.NET query succeeded for NCR ID: {rawResults.ncrId}");
+
+                // Format dates for JSON response
+                var result = new {
+                    ncrId = rawResults.ncrId,
+                    ncrNumber = rawResults.ncrNumber,
+                    title = rawResults.title,
+                    description = rawResults.description,
+                    category = rawResults.category,
+                    severity = rawResults.severity,
+                    status = rawResults.status,
+                    source = rawResults.source,
+                    jobOrderId = rawResults.jobOrderId,
+                    jobOrderNumber = rawResults.jobOrderNumber,
+                    routingStepId = rawResults.routingStepId,
+                    partNo = rawResults.partNo,
+                    partName = rawResults.partName,
+                    customerId = rawResults.customerId,
+                    customerName = rawResults.customerName,
+                    defectLocation = rawResults.defectLocation,
+                    defectQuantity = rawResults.defectQuantity,
+                    totalQuantity = rawResults.totalQuantity,
+                    defectDescription = rawResults.defectDescription,
+                    photos = rawResults.photos,
+                    rootCause = rawResults.rootCause,
+                    rootCauseCategory = rawResults.rootCauseCategory,
+                    immediateAction = rawResults.immediateAction,
+                    correctiveAction = rawResults.correctiveAction,
+                    preventiveAction = rawResults.preventiveAction,
+                    reportedBy = rawResults.reportedBy,
+                    reportedByName = rawResults.reportedByName,
+                    reportedDate = rawResults.reportedDate,
+                    investigatedBy = rawResults.investigatedBy,
+                    investigatedByName = rawResults.investigatedByName,
+                    investigatedDate = rawResults.investigatedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    approvedBy = rawResults.approvedBy,
+                    approvedByName = rawResults.approvedByName,
+                    approvedDate = rawResults.approvedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    dueDate = rawResults.dueDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    closedDate = rawResults.closedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    costImpact = rawResults.costImpact,
+                    notes = rawResults.notes,
+                    tenantId = rawResults.tenantId
+                };
+
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetNCR failed for id {id}: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { error = new { message = ex.Message } });
+            }
+        }
+
+        // POST: api/Quality/CreateNCR
+        [HttpPost("CreateNCR")]
+        public async Task<IActionResult> CreateNCR()
+        {
+            Console.WriteLine("=== CREATENCR CALLED ===");
+            Console.WriteLine("CreateNCR endpoint called");
+
+            // Read the raw request body for debugging
+            string rawContent;
+            using (var reader = new StreamReader(Request.Body))
+            {
+                rawContent = await reader.ReadToEndAsync();
+            }
+            Console.WriteLine($"Raw request body: {rawContent}");
+
+            try
+            {
+                // Validate input
+                if (string.IsNullOrWhiteSpace(rawContent) || rawContent == "{}")
+                {
+                    Console.WriteLine("Empty request body");
+                    return BadRequest(new { error = new { message = "NCR data is required" } });
+                }
+
+                // Now deserialize manually for debugging
+                var ncr = System.Text.Json.JsonSerializer.Deserialize<NonConformanceReport>(rawContent, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+
+                if (ncr == null)
+                {
+                    Console.WriteLine("NCR object is null after deserialization");
+                    return BadRequest(new { error = new { message = "Invalid NCR data format" } });
+                }
+
+                Console.WriteLine($"Deserialized NCR - Title: '{ncr.Title}', TenantId: {ncr.TenantId}, ReportedBy: {ncr.ReportedBy}");
+                Console.WriteLine($"NcrNumber from request: '{ncr.NcrNumber}'");
+                Console.WriteLine($"Photos field: '{ncr.Photos}'");
+                Console.WriteLine($"Date fields - DueDate: {ncr.DueDate}, InvestigatedDate: {ncr.InvestigatedDate}, ApprovedDate: {ncr.ApprovedDate}, ClosedDate: {ncr.ClosedDate}");
+                Console.WriteLine($"Int fields - DefectQuantity: {ncr.DefectQuantity}, TotalQuantity: {ncr.TotalQuantity}, JobOrderId: {ncr.JobOrderId}");
+
+                // Validate required fields
+                if (string.IsNullOrEmpty(ncr.Title))
+                {
+                    return BadRequest(new { error = new { message = "Title is required" } });
+                }
+
+                if (ncr.TenantId <= 0)
+                {
+                    return BadRequest(new { error = new { message = "Invalid tenant ID" } });
+                }
+
+                // Debug: Log all relevant headers
+                var userIdHeader = Request.Headers["userId"].FirstOrDefault();
+                var usernameHeader = Request.Headers["Username"].FirstOrDefault();
+                var tenantIdHeader = Request.Headers["tenantId"].FirstOrDefault();
+                Console.WriteLine($"Headers - userId: '{userIdHeader}', Username: '{usernameHeader}', tenantId: '{tenantIdHeader}'");
+
+                // Auto-populate ReportedBy with current logged-in user if not provided
+                if (ncr.ReportedBy <= 0)
+                {
+                    int? currentUserId = GetUserId();
+                    Console.WriteLine($"GetUserId() returned: {currentUserId}");
+
+                    if (currentUserId.HasValue && currentUserId.Value > 0)
+                    {
+                        ncr.ReportedBy = currentUserId.Value;
+                        Console.WriteLine($"ReportedBy not provided, auto-setting to current user: {currentUserId.Value}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("ReportedBy not provided and no current user found, defaulting to admin user (ID: 1)");
+                        ncr.ReportedBy = 1; // Fallback to admin user
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"ReportedBy provided in request: {ncr.ReportedBy}");
+                }
+
+                // Ensure all required string fields have values
+                ncr.Title = ncr.Title?.Trim() ?? "Untitled NCR";
+                ncr.Category = ncr.Category ?? "Other";
+                ncr.Severity = ncr.Severity ?? "Minor";
+                ncr.Status = ncr.Status ?? "Open";
+                ncr.Source = ncr.Source ?? "Internal";
+
+                // Initialize nullable string fields
+                ncr.Description = ncr.Description ?? "";
+                ncr.DefectLocation = ncr.DefectLocation ?? "";
+                ncr.PartNo = ncr.PartNo ?? "";
+                ncr.PartName = ncr.PartName ?? "";
+                ncr.RootCause = ncr.RootCause ?? "";
+                ncr.ImmediateAction = ncr.ImmediateAction ?? "";
+                ncr.CorrectiveAction = ncr.CorrectiveAction ?? "";
+                ncr.PreventiveAction = ncr.PreventiveAction ?? "";
+                ncr.Notes = ncr.Notes ?? "";
+
+                // Initialize nullable int fields
+                ncr.JobOrderId = ncr.JobOrderId ?? 0;
+                ncr.RoutingStepId = ncr.RoutingStepId ?? 0;
+                ncr.CustomerId = ncr.CustomerId ?? 0;
+                // For non-nullable ints, ensure they have valid values
+                ncr.DefectQuantity = ncr.DefectQuantity > 0 ? ncr.DefectQuantity : 0;
+                ncr.TotalQuantity = ncr.TotalQuantity > 0 ? ncr.TotalQuantity : 0;
+
+                Console.WriteLine($"Creating NCR with title: {ncr.Title}, tenantId: {ncr.TenantId}");
+
+                // Auto-generate NCR number starting from NCR#1000
+                Console.WriteLine("=== STARTING NCR NUMBER GENERATION ===");
+                // First, get all NCR numbers that match the NCR# pattern
+                var ncrNumbers = await _context.NonConformanceReports
+                    .Where(n => n.NcrNumber != null && n.NcrNumber.StartsWith("NCR#"))
+                    .Select(n => n.NcrNumber)
+                    .ToListAsync();
+
+                Console.WriteLine($"Found {ncrNumbers.Count} existing NCR numbers:");
+                foreach (var num in ncrNumbers)
+                {
+                    Console.WriteLine($"  {num}");
+                }
+
+                // Extract and find the highest number
+                int maxNumber = 999; // Start from 999, so first NCR will be 1000
+                foreach (var ncrNum in ncrNumbers)
+                {
+                    if (ncrNum.Length > 4) // NCR# + at least one digit
+                    {
+                        var numberPart = ncrNum.Substring(4); // Remove "NCR#"
+                        if (int.TryParse(numberPart, out var num))
+                        {
+                            Console.WriteLine($"  Parsed {ncrNum} -> {num}");
+                            if (num > maxNumber)
+                            {
+                                maxNumber = num;
+                                Console.WriteLine($"  New max: {maxNumber}");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"  Failed to parse number from: {numberPart}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  NCR number too short: {ncrNum}");
+                    }
+                }
+
+                int nextNumber = maxNumber + 1;
+                Console.WriteLine($"Max existing number: {maxNumber}, Next number: {nextNumber}");
+                Console.WriteLine($"Assigning NCR number: NCR#{nextNumber}");
+
+                ncr.NcrNumber = $"NCR#{nextNumber}";
+                Console.WriteLine($"Assigned NCR number: {ncr.NcrNumber}");
+                ncr.ReportedDate = DateTime.Now;
+                ncr.Status = ncr.Status ?? "Open";
+                ncr.Category = ncr.Category ?? "Other";
+                ncr.Severity = ncr.Severity ?? "Minor";
+                ncr.Source = ncr.Source ?? "Internal";
+
+                // Set audit fields
+                ncr.CreatedBy = ncr.ReportedBy; // Use the reporter as creator
+                ncr.CreatedDate = DateTime.Now;
+
+                // Populate ReportedByName by looking up the user
+                try
+                {
+                    Console.WriteLine($"Looking up user with ID: {ncr.ReportedBy}");
+                    var user = await _context.UserDetails
+                        .Where(u => u.User_UniqueID == ncr.ReportedBy)
+                        .FirstOrDefaultAsync();
+
+                    Console.WriteLine($"User lookup result: {(user != null ? "Found" : "Not found")}");
+                    if (user != null)
+                    {
+                        Console.WriteLine($"User details - FirstName: '{user.FirstName}', LastName: '{user.LastName}', UserName: '{user.UserName}'");
+                    }
+
+                    if (user != null && !string.IsNullOrEmpty(user.FirstName) && !string.IsNullOrEmpty(user.LastName))
+                    {
+                        ncr.ReportedByName = $"{user.FirstName} {user.LastName}".Trim();
+                        Console.WriteLine($"Set ReportedByName to: {ncr.ReportedByName}");
+                    }
+                    else
+                    {
+                        ncr.ReportedByName = "Unknown User";
+                        Console.WriteLine("User not found or name missing, set ReportedByName to 'Unknown User'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error looking up user name: {ex.Message}");
+                    ncr.ReportedByName = "Unknown User";
+                }
+
+                // Debug: Log all field values before save
+                Console.WriteLine("=== NCR FIELD VALUES BEFORE SAVE ===");
+                Console.WriteLine($"NcrId: {ncr.NcrId}");
+                Console.WriteLine($"NcrNumber: '{ncr.NcrNumber}'");
+                Console.WriteLine($"Title: '{ncr.Title}'");
+                Console.WriteLine($"Description: '{ncr.Description}'");
+                Console.WriteLine($"Category: '{ncr.Category}'");
+                Console.WriteLine($"Severity: '{ncr.Severity}'");
+                Console.WriteLine($"Status: '{ncr.Status}'");
+                Console.WriteLine($"Source: '{ncr.Source}'");
+                Console.WriteLine($"ReportedBy: {ncr.ReportedBy}");
+                Console.WriteLine($"ReportedDate: {ncr.ReportedDate}");
+                Console.WriteLine($"TenantId: {ncr.TenantId}");
+                Console.WriteLine($"CreatedBy: {ncr.CreatedBy}");
+                Console.WriteLine($"CreatedDate: {ncr.CreatedDate}");
+                Console.WriteLine("====================================");
+
+                Console.WriteLine("Adding NCR to context...");
+                _context.NonConformanceReports.Add(ncr);
+
+                Console.WriteLine("Saving changes to database...");
+                try
+                {
+                    await _context.SaveChangesAsync();
+                    Console.WriteLine("Database save successful!");
+                    Console.WriteLine($"After SaveChanges - NcrId: {ncr.NcrId}, NcrNumber: {ncr.NcrNumber}");
+
+                    // Always update the NCR number to the correct sequential value after save
+                    // This ensures it overrides any database-level default that might be applied
+                    string correctNcrNumber = $"NCR#{nextNumber}";
+                    Console.WriteLine($"Ensuring NCR number is set to correct sequential value: {correctNcrNumber}");
+
+                    // Update the NCR number using raw SQL to ensure it persists
+                    using (var updateCommand = _context.Database.GetDbConnection().CreateCommand())
+                    {
+                        updateCommand.CommandText = "UPDATE NonConformanceReports SET NcrNumber = @NcrNumber WHERE NcrId = @NcrId";
+                        AddParameter(updateCommand, "@NcrNumber", correctNcrNumber);
+                        AddParameter(updateCommand, "@NcrId", ncr.NcrId);
+
+                        await _context.Database.OpenConnectionAsync();
+                        int rowsAffected = await updateCommand.ExecuteNonQueryAsync();
+
+                        Console.WriteLine($"UPDATE executed: rows affected = {rowsAffected}");
+
+                        // Verify the update worked by reading back from database
+                        using (var verifyCommand = _context.Database.GetDbConnection().CreateCommand())
+                        {
+                            verifyCommand.CommandText = "SELECT NcrNumber FROM NonConformanceReports WHERE NcrId = @NcrId";
+                            AddParameter(verifyCommand, "@NcrId", ncr.NcrId);
+
+                            var verifiedValue = await verifyCommand.ExecuteScalarAsync();
+                            Console.WriteLine($"Verified database value after UPDATE: '{verifiedValue}'");
+                        }
+
+                        // Update the in-memory object to match
+                        ncr.NcrNumber = correctNcrNumber;
+
+                        Console.WriteLine($"NCR number updated in database: {correctNcrNumber}, in-memory object: {ncr.NcrNumber}");
+                    }
+                }
+                catch (Exception saveEx)
+                {
+                    Console.WriteLine($"Database save failed: {saveEx.Message}");
+                    Console.WriteLine($"Inner exception: {saveEx.InnerException?.Message}");
+                    Console.WriteLine($"Stack trace: {saveEx.StackTrace}");
+                    throw; // Re-throw to be caught by outer catch
+                }
+
+                Console.WriteLine($"NCR created successfully with ID: {ncr.NcrId}, Number: {ncr.NcrNumber}, TenantId: {ncr.TenantId}");
+
+                Console.WriteLine($"Building response - ncr.NcrNumber: '{ncr.NcrNumber}', nextNumber: {nextNumber}");
+
+                // Read the actual value from database to ensure we have the latest
+                string actualNcrNumber;
+                using (var checkCommand = _context.Database.GetDbConnection().CreateCommand())
+                {
+                    checkCommand.CommandText = "SELECT NcrNumber FROM NonConformanceReports WHERE NcrId = @NcrId";
+                    AddParameter(checkCommand, "@NcrId", ncr.NcrId);
+
+                    await _context.Database.OpenConnectionAsync();
+                    var scalarResult = await checkCommand.ExecuteScalarAsync();
+                    actualNcrNumber = scalarResult?.ToString() ?? "NULL";
+                    Console.WriteLine($"Actual NCR number in database: '{actualNcrNumber}'");
+                }
+
+                // Use the database value for the response
+                string responseNcrNumber = $"NCR#{nextNumber}"; // What it should be
+                string actualResponseNcrNumber = actualNcrNumber; // What's actually in DB
+
+                Console.WriteLine($"Response NCR number - Expected: {responseNcrNumber}, Actual in DB: {actualResponseNcrNumber}");
+
+                // Return with proper camelCase field names for frontend compatibility
+                var result = new {
+                    ncrId = ncr.NcrId,
+                    ncrNumber = actualResponseNcrNumber, // Use what's actually in the database
+                    debugInfo = new {
+                        calculatedNextNumber = nextNumber,
+                        expectedNcrNumber = responseNcrNumber,
+                        actualDatabaseNcrNumber = actualNcrNumber,
+                        inMemoryNcrNumber = ncr.NcrNumber
+                    },
+                    title = ncr.Title,
+                    description = ncr.Description,
+                    category = ncr.Category,
+                    severity = ncr.Severity,
+                    status = ncr.Status,
+                    source = ncr.Source,
+                    jobOrderId = ncr.JobOrderId,
+                    jobOrderNumber = ncr.JobOrderNumber,
+                    routingStepId = ncr.RoutingStepId,
+                    partNo = ncr.PartNo,
+                    partName = ncr.PartName,
+                    customerId = ncr.CustomerId,
+                    customerName = ncr.CustomerName,
+                    defectLocation = ncr.DefectLocation,
+                    defectQuantity = ncr.DefectQuantity,
+                    totalQuantity = ncr.TotalQuantity,
+                    defectDescription = ncr.DefectDescription,
+                    photos = ncr.Photos,
+                    rootCause = ncr.RootCause,
+                    rootCauseCategory = ncr.RootCauseCategory,
+                    immediateAction = ncr.ImmediateAction,
+                    correctiveAction = ncr.CorrectiveAction,
+                    preventiveAction = ncr.PreventiveAction,
+                    reportedBy = ncr.ReportedBy,
+                    reportedByName = ncr.ReportedByName,
+                    reportedDate = ncr.ReportedDate.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    investigatedBy = ncr.InvestigatedBy,
+                    investigatedByName = ncr.InvestigatedByName,
+                    investigatedDate = ncr.InvestigatedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    approvedBy = ncr.ApprovedBy,
+                    approvedByName = ncr.ApprovedByName,
+                    approvedDate = ncr.ApprovedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    dueDate = ncr.DueDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    closedDate = ncr.ClosedDate?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    costImpact = ncr.CostImpact,
+                    notes = ncr.Notes,
+                    tenantId = ncr.TenantId
+                };
+
+                Console.WriteLine($"Returning NCR creation result with ncrId: {result.ncrId}, ncrNumber: {result.ncrNumber}");
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error creating NCR: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { error = new { message = ex.Message } });
+            }
+        }
+
+        // PUT: api/Quality/UpdateNCR/5
+        [HttpPut("UpdateNCR/{id}")]
+        public async Task<IActionResult> UpdateNCR(int id, [FromBody] NonConformanceReport ncrUpdate)
+        {
+            try
+            {
+                // Use raw ADO.NET to update safely and avoid EF null reference issues
+                Console.WriteLine($"=== UPDATENCR CALLED ===");
+                Console.WriteLine($"UpdateNCR called for id: {id}");
+                Console.WriteLine($"Update data - Title: '{ncrUpdate.Title}', Status: '{ncrUpdate.Status}'");
+
+                using (var command = _context.Database.GetDbConnection().CreateCommand())
+                {
+                    command.CommandText = @"
+                        UPDATE NonConformanceReports SET
+                            Title = @Title,
+                            Description = @Description,
+                            Category = @Category,
+                            Severity = @Severity,
+                            Status = @Status,
+                            Source = @Source,
+                            JobOrderId = @JobOrderId,
+                            JobOrderNumber = @JobOrderNumber,
+                            DefectLocation = @DefectLocation,
+                            DefectQuantity = @DefectQuantity,
+                            TotalQuantity = @TotalQuantity,
+                            DefectDescription = @DefectDescription,
+                            Photos = @Photos,
+                            RootCause = @RootCause,
+                            RootCauseCategory = @RootCauseCategory,
+                            ImmediateAction = @ImmediateAction,
+                            CorrectiveAction = @CorrectiveAction,
+                            PreventiveAction = @PreventiveAction,
+                            InvestigatedBy = @InvestigatedBy,
+                            InvestigatedDate = @InvestigatedDate,
+                            ApprovedBy = @ApprovedBy,
+                            ApprovedDate = @ApprovedDate,
+                            DueDate = @DueDate,
+                            ClosedDate = @ClosedDate,
+                            CostImpact = @CostImpact,
+                            Notes = @Notes,
+                            ModifiedDate = GETUTCDATE()
+                        WHERE NcrId = @Id";
+
+                    // Add parameters with null-safe values
+                    AddParameter(command, "@Id", id);
+                    AddParameter(command, "@Title", ncrUpdate.Title);
+                    AddParameter(command, "@Description", ncrUpdate.Description);
+                    AddParameter(command, "@Category", ncrUpdate.Category);
+                    AddParameter(command, "@Severity", ncrUpdate.Severity);
+                    AddParameter(command, "@Status", ncrUpdate.Status);
+                    AddParameter(command, "@Source", ncrUpdate.Source);
+                    AddParameter(command, "@JobOrderId", ncrUpdate.JobOrderId);
+                    AddParameter(command, "@JobOrderNumber", ncrUpdate.JobOrderNumber);
+                    AddParameter(command, "@DefectLocation", ncrUpdate.DefectLocation);
+                    AddParameter(command, "@DefectQuantity", ncrUpdate.DefectQuantity);
+                    AddParameter(command, "@TotalQuantity", ncrUpdate.TotalQuantity);
+                    AddParameter(command, "@DefectDescription", ncrUpdate.DefectDescription);
+                    AddParameter(command, "@Photos", ncrUpdate.Photos);
+                    AddParameter(command, "@RootCause", ncrUpdate.RootCause);
+                    AddParameter(command, "@RootCauseCategory", ncrUpdate.RootCauseCategory);
+                    AddParameter(command, "@ImmediateAction", ncrUpdate.ImmediateAction);
+                    AddParameter(command, "@CorrectiveAction", ncrUpdate.CorrectiveAction);
+                    AddParameter(command, "@PreventiveAction", ncrUpdate.PreventiveAction);
+                    AddParameter(command, "@InvestigatedBy", ncrUpdate.InvestigatedBy);
+                    AddParameter(command, "@InvestigatedDate", ncrUpdate.InvestigatedDate);
+                    AddParameter(command, "@ApprovedBy", ncrUpdate.ApprovedBy);
+                    AddParameter(command, "@ApprovedDate", ncrUpdate.ApprovedDate);
+                    AddParameter(command, "@DueDate", ncrUpdate.DueDate);
+
+                    // Handle closed date logic - set if status is Closed and not already set
+                    DateTime? closedDate = ncrUpdate.ClosedDate;
+                    if (ncrUpdate.Status == "Closed" && !closedDate.HasValue)
+                    {
+                        closedDate = DateTime.Now;
+                    }
+                    AddParameter(command, "@ClosedDate", closedDate);
+
+                    AddParameter(command, "@CostImpact", ncrUpdate.CostImpact);
+                    AddParameter(command, "@Notes", ncrUpdate.Notes);
+
+                    Console.WriteLine("Executing UPDATE command...");
+                    await _context.Database.OpenConnectionAsync();
+
+                    int rowsAffected = await command.ExecuteNonQueryAsync();
+                    Console.WriteLine($"Update completed, rows affected: {rowsAffected}");
+
+                    if (rowsAffected == 0)
+                    {
+                        return NotFound(new { error = new { message = "NCR not found" } });
+                    }
+
+                    return Ok(new { success = true });
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = new { message = ex.Message } });
+            }
+        }
+
+        private void AddParameter(System.Data.Common.DbCommand command, string name, object value)
+        {
+            var param = command.CreateParameter();
+            param.ParameterName = name;
+            param.Value = value ?? DBNull.Value;
+            command.Parameters.Add(param);
+        }
+
+        // Debug endpoint to check NCR numbers in database
+        [HttpGet("DebugNCRNumbers")]
+        public async Task<IActionResult> DebugNCRNumbers([FromQuery] int tenantId = 1)
+        {
+            try
+            {
+                var ncrNumbers = await _context.NonConformanceReports
+                    .Where(n => n.TenantId == tenantId)
+                    .Select(n => new { n.NcrId, n.NcrNumber, n.Title })
+                    .OrderByDescending(n => n.NcrId)
+                    .Take(10)
+                    .ToListAsync();
+
+                return Ok(new { ncrs = ncrNumbers });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // DELETE: api/Quality/DeleteNCR
+        [HttpDelete("DeleteNCR")]
+        public async Task<IActionResult> DeleteNCR([FromQuery] int ncrId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var ncr = await _context.NonConformanceReports
+                    .FirstOrDefaultAsync(n => n.NcrId == ncrId && n.TenantId == tenantId);
+                
+                if (ncr == null)
+                {
+                    return NotFound(new { error = "NCR not found" });
+                }
+
+                _context.NonConformanceReports.Remove(ncr);
+                await _context.SaveChangesAsync();
+
+                return Ok(new { result = new { message = "NCR deleted successfully" } });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        // GET: api/Quality/GetNCRStats
+        [HttpGet("GetNCRStats")]
+        public async Task<IActionResult> GetNCRStats([FromQuery] int tenantId)
+        {
+            try
+            {
+                Console.WriteLine($"GetNCRStats called for tenantId: {tenantId}");
+
+                // Use raw SQL count to avoid null reference issues
+                var totalCount = await _context.NonConformanceReports
+                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0}", tenantId)
+                    .AsNoTracking()
+                    .CountAsync();
+
+                Console.WriteLine($"Found {totalCount} NCRs for stats calculation");
+
+                // Calculate stats using raw SQL to avoid null reference issues
+                var openCount = await _context.NonConformanceReports
+                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND (Status = 'Open' OR Status = 'Under_Investigation')", tenantId)
+                    .AsNoTracking()
+                    .CountAsync();
+
+                var criticalCount = await _context.NonConformanceReports
+                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND Severity = 'Critical'", tenantId)
+                    .AsNoTracking()
+                    .CountAsync();
+
+                var overdueCount = await _context.NonConformanceReports
+                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status != 'Closed'", tenantId)
+                    .AsNoTracking()
+                    .CountAsync();
+
+                var stats = new
+                {
+                    totalNCRs = totalCount,
+                    openNCRs = openCount,
+                    criticalNCRs = criticalCount,
+                    overdueNCRs = overdueCount
+                };
+
+                return Ok(new { result = stats });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetNCRStats failed: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return BadRequest(new { error = new { message = $"Failed to retrieve NCR stats: {ex.Message}" } });
+            }
+        }
+
+        // POST: api/Quality/UploadNCRPhotos/5
+        [HttpPost("UploadNCRPhotos/{ncrId}")]
+        public async Task<IActionResult> UploadNCRPhotos(int ncrId)
+        {
+            try
+            {
+                var ncr = await _context.NonConformanceReports.FindAsync(ncrId);
+                if (ncr == null)
+                    return NotFound(new { error = new { message = "NCR not found" } });
+
+                var files = Request.Form.Files;
+                var photoUrls = new List<string>();
+
+                // Process uploaded files (save to disk or cloud storage)
+                // For now, we'll just simulate successful upload
+                foreach (var file in files)
+                {
+                    if (file.Length > 0)
+                    {
+                        // In a real implementation, you'd save the file and get the URL
+                        // For demo purposes, we'll create a placeholder URL
+                        var fileName = $"{Guid.NewGuid()}_{file.FileName}";
+                        var fileUrl = $"/uploads/ncr-photos/{fileName}";
+                        photoUrls.Add(fileUrl);
+                    }
+                }
+
+                // Photo upload functionality removed - no photos field in the model
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new { result = photoUrls });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = new { message = ex.Message } });
+            }
+        }
+
+        // GET: api/Quality/CheckTable
+        [HttpGet("CheckTable")]
+        public async Task<IActionResult> CheckTable()
+        {
+            try
+            {
+                // Check if table exists by trying to query it
+                var tableExists = await _context.NonConformanceReports.AnyAsync();
+                return Ok(new { tableExists = true, message = "NonConformanceReports table exists" });
+            }
+            catch (Exception ex)
+            {
+                return Ok(new { tableExists = false, message = $"Table check failed: {ex.Message}" });
+            }
+        }
+
+        /// <summary>
+        /// Deletes all NCR records - USE WITH EXTREME CAUTION
+        /// This method requires explicit confirmation to prevent accidental deletion
+        /// </summary>
+        [HttpDelete("delete-all-ncrs")]
+        public async Task<IActionResult> DeleteAllNCRs([FromQuery] string confirmation)
+        {
+            // Require explicit confirmation to prevent accidental deletion
+            if (string.IsNullOrEmpty(confirmation) || confirmation.ToUpper() != "DELETE_ALL_TEST_DATA")
+            {
+                return BadRequest(new
+                {
+                    error = "Confirmation required",
+                    message = "To delete all NCR data, you must provide confirmation='DELETE_ALL_TEST_DATA' as a query parameter"
+                });
+            }
+
+            try
+            {
+                // Count existing records before deletion
+                var countBefore = await _context.NonConformanceReports.CountAsync();
+
+                if (countBefore == 0)
+                {
+                    return Ok(new
+                    {
+                        message = "No NCR records found to delete",
+                        deletedCount = 0
+                    });
+                }
+
+                // Delete all NCR records
+                _context.NonConformanceReports.RemoveRange(_context.NonConformanceReports);
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = "All NCR records have been deleted successfully",
+                    deletedCount = countBefore,
+                    warning = "This action cannot be undone. Make sure you have backups if needed."
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    error = "Deletion failed",
+                    message = $"Failed to delete NCR records: {ex.Message}",
+                    innerException = ex.InnerException?.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Gets all active users for NCR reporting selection
+        /// </summary>
+        [HttpGet("users")]
+        public async Task<IActionResult> GetUsers()
+        {
+            try
+            {
+                var users = await _context.UserDetails
+                    .Where(u => u.Status == "Active")
+                    .Select(u => new
+                    {
+                        userId = u.User_UniqueID,
+                        name = $"{u.FirstName} {u.LastName}".Trim(),
+                        username = u.UserName,
+                        email = u.Email
+                    })
+                    .OrderBy(u => u.name)
+                    .ToListAsync();
+
+                return Ok(new { users });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to retrieve users", message = ex.Message });
+            }
+        }
+    }
+}
