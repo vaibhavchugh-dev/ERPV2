@@ -6,6 +6,7 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.Json;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Repositories;
 using CimmpleAPI.Services;
 using Serilog;
 
@@ -62,6 +63,10 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
+
+// Register User Repository
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 
 // Configure JWT Authentication
 var tokenConfig = builder.Configuration.GetSection("TokenConfig");
