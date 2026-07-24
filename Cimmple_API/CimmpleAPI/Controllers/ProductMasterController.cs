@@ -11,7 +11,6 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class ProductMasterController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;

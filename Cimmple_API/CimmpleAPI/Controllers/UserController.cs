@@ -1,12 +1,23 @@
+using CimmpleAPI.Data;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Repositories;
+using CimmpleAPI.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Blob;
+using System;
+using System.Collections.Generic;
+using System.IO;
 using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -16,13 +27,17 @@ namespace CimmpleAPI.Controllers
     {
         private readonly IUserRepository _userRepository;
         private readonly IConfiguration _configuration;
+        private readonly CimmpleDbContext _context;
+        private readonly IWebHostEnvironment _environment;
         private const string LoginTokenDurationMinutes = "6000";
         private const string LogoutPopupTime = "6000";
 
-        public UserController(IUserRepository userRepository, IConfiguration configuration)
+        public UserController(IUserRepository userRepository, IConfiguration configuration, CimmpleDbContext context, IWebHostEnvironment environment)
         {
             _userRepository = userRepository;
             _configuration = configuration;
+            _context = context;
+            _environment = environment;
         }
 
         [HttpPost("Login")]
@@ -126,6 +141,44 @@ namespace CimmpleAPI.Controllers
         {
             var response = _userRepository.IsUnderMaintenance();
             return Ok(new JsonResponse(200, true, "success", response));
+        }
+
+        [HttpGet("GetProfilePic")]
+        [AllowAnonymous]
+        public IActionResult GetProfilePic([FromQuery] int userId, [FromQuery] int? tenantId)
+        {
+            try
+            {
+                var user = _context.UserDetails.AsNoTracking().FirstOrDefault(u => u.User_UniqueID == userId);
+                if (user == null || string.IsNullOrEmpty(user.ProfilePic))
+                {
+                    return NotFound();
+                }
+
+                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+                var fullPath = Path.Combine(webRootPath, user.ProfilePic.Replace('/', Path.DirectorySeparatorChar));
+
+                if (!System.IO.File.Exists(fullPath))
+                {
+                    return NotFound();
+                }
+
+                var ext = Path.GetExtension(fullPath).ToLower();
+                var contentType = ext switch
+                {
+                    ".png" => "image/png",
+                    ".gif" => "image/gif",
+                    ".webp" => "image/webp",
+                    ".svg" => "image/svg+xml",
+                    _ => "image/jpeg"
+                };
+
+                return PhysicalFile(fullPath, contentType);
+            }
+            catch
+            {
+                return NotFound();
+            }
         }
 
         [HttpPost("ChangePassword")]
@@ -237,6 +290,53 @@ namespace CimmpleAPI.Controllers
                 signingCredentials: signingCredentials);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        [HttpGet("GetProfilePic")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetProfilePic([FromQuery] int tenantId, [FromQuery] int userId)
+        {
+            try
+            {
+                var user = _context.UserDetails.AsNoTracking().FirstOrDefault(u => u.User_UniqueID == userId);
+                int effTenantId = tenantId != 0 ? tenantId : (user?.TenantID ?? 0);
+
+                UploadFile uploadfile = new UploadFile(_context, _configuration);
+                if (user != null && !string.IsNullOrEmpty(user.ProfilePic))
+                {
+                    string fileName = Path.GetFileName(user.ProfilePic);
+                    var fileInfo = new FileInfor
+                    {
+                        ContainerName = "data",
+                        Dirname = "ProfilePic/" + effTenantId + "/" + userId,
+                        UploadFileName = fileName,
+                        tenantID = effTenantId,
+                        type = "profilepic",
+                        userUniqueno = userId
+                    };
+
+                    byte[]? blobBytes = uploadfile.GetFilebyte(fileInfo);
+                    if (blobBytes != null && blobBytes.Length > 0)
+                    {
+                        var ext = Path.GetExtension(fileName).ToLower();
+                        var contentType = ext switch
+                        {
+                            ".png" => "image/png",
+                            ".gif" => "image/gif",
+                            ".webp" => "image/webp",
+                            ".svg" => "image/svg+xml",
+                            _ => "image/jpeg"
+                        };
+                        return File(blobBytes, contentType, fileName);
+                    }
+                }
+
+                return NotFound("No profile picture found for this user");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Failed to fetch profile picture: {ex.Message}");
+            }
         }
     }
 }

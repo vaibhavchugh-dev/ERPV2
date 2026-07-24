@@ -15,6 +15,15 @@ export interface QuotationAttachment {
   name: string;
   size: number;
   fileUrl?: string;
+  fileUniqueno?: number;
+  uploadFile?: string;
+  pageNo?: string;
+  createdBy?: number;
+  isPending?: boolean;
+  localUrl?: string;
+  file?: File;
+  fileCode?: string;
+  contentType?: string;
 }
 
 export interface QuotationComment {
@@ -82,6 +91,8 @@ export interface QuotationMasterReq {
   convertedOrderId?: number;
   Details: QuotationDetailReq[];
   Attachments?: QuotationAttachment[];
+  /** Existing attachment DB IDs removed in the UI and pending deletion on save. */
+  DeletedAttachmentIds?: number[];
   Comments?: QuotationComment[];
 }
 
@@ -252,22 +263,22 @@ export class QuotationService {
         convertedOrderId: result.convertedOrderId,
         Attachments: (() => {
           console.log("Processing attachments from result:", result.attachments, result.Attachments);
+          const mapAttachment = (a: any) => ({
+            id: a.id || a.Id || 0,
+            name: a.name || a.Name || "",
+            size: a.size || a.Size || 0,
+            fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+            fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+            uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+            pageNo: a.pageNo || a.PageNo || a.pageno || "0",
+            createdBy: a.createdBy || a.CreatedBy || a.createdby || 0,
+          });
           if (Array.isArray(result.attachments) && result.attachments.length > 0) {
-            const mapped = result.attachments.map((a: any) => ({
-              id: a.id || a.Id || 0,
-              name: a.name || a.Name || "",
-              size: a.size || a.Size || 0,
-              fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
-            }));
+            const mapped = result.attachments.map(mapAttachment);
             console.log("Mapped attachments from result.attachments:", mapped);
             return mapped;
           } else if (Array.isArray(result.Attachments) && result.Attachments.length > 0) {
-            const mapped = result.Attachments.map((a: any) => ({
-              id: a.id || a.Id || 0,
-              name: a.name || a.Name || "",
-              size: a.size || a.Size || 0,
-              fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
-            }));
+            const mapped = result.Attachments.map(mapAttachment);
             console.log("Mapped attachments from result.Attachments:", mapped);
             return mapped;
           }
@@ -320,8 +331,9 @@ export class QuotationService {
   };
 
   public static SaveQuotation = async (
-    request: QuotationMasterReq
-  ): Promise<{ id: number; message: string }> => {
+    request: QuotationMasterReq,
+    newFiles: File[] = []
+  ): Promise<{ id: number; message: string; attachments?: QuotationAttachment[] }> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     
@@ -354,7 +366,22 @@ export class QuotationService {
       }
     };
 
-    // Ensure all required fields are present
+    const mapAttachmentId = (raw: any): number => {
+      let id = 0;
+      if (typeof raw === "number") id = Math.floor(raw);
+      else if (typeof raw === "string") id = parseInt(raw, 10);
+      if (isNaN(id) || !Number.isInteger(id)) id = 0;
+      const MAX_INT32 = 2147483647;
+      if (id > MAX_INT32) id = id % MAX_INT32;
+      if (id < 0) id = 0;
+      return id;
+    };
+
+    // Existing attachments only (no pending File blobs in JSON). New files go in multipart.
+    const existingAttachments = (request.Attachments || []).filter(
+      (a) => !a.isPending && !a.file
+    );
+
     const payload: any = {
       OrderID: request.OrderID || 0,
       Tenantid: request.Tenantid || tenantID,
@@ -400,111 +427,65 @@ export class QuotationService {
           }))
         } : null
       })),
-      Attachments: (request.Attachments || []).map(a => {
-        // Ensure ID is always an integer within int32 range (max: 2,147,483,647)
-        let id: number;
-        if (typeof a.id === 'number') {
-          id = Math.floor(a.id);
-        } else if (typeof a.id === 'string') {
-          id = parseInt(a.id, 10);
-        } else {
-          id = 0;
-        }
-        // Double-check it's an integer and not NaN
-        if (isNaN(id) || !Number.isInteger(id)) {
-          id = 0;
-        }
-        // Ensure ID is within int32 range
-        const MAX_INT32 = 2147483647;
-        if (id > MAX_INT32) {
-          console.warn(`Attachment ID ${id} exceeds int32 max, using modulo: ${id % MAX_INT32}`);
-          id = id % MAX_INT32;
-        }
-        if (id < 0) {
-          id = 0;
-        }
-        console.log(`Attachment ID conversion: ${a.id} (${typeof a.id}) -> ${id} (${typeof id}, isInteger: ${Number.isInteger(id)}, withinRange: ${id <= MAX_INT32})`);
-        return {
-          Id: id,
-          Name: a.name || "",
-          Size: a.size || 0,
-          FileUrl: a.fileUrl || ""
-        };
-      }),
-      Comments: (request.Comments || []).map(c => {
-        // Ensure ID is always an integer within int32 range (max: 2,147,483,647)
-        let id: number;
-        if (typeof c.id === 'number') {
-          id = Math.floor(c.id);
-        } else if (typeof c.id === 'string') {
-          id = parseInt(c.id, 10);
-        } else {
-          id = 0;
-        }
-        // Double-check it's an integer and not NaN
-        if (isNaN(id) || !Number.isInteger(id)) {
-          id = 0;
-        }
-        // Ensure ID is within int32 range
-        const MAX_INT32 = 2147483647;
-        if (id > MAX_INT32) {
-          console.warn(`Comment ID ${id} exceeds int32 max, using modulo: ${id % MAX_INT32}`);
-          id = id % MAX_INT32;
-        }
-        if (id < 0) {
-          id = 0;
-        }
-        console.log(`Comment ID conversion: ${c.id} (${typeof c.id}) -> ${id} (${typeof id}, isInteger: ${Number.isInteger(id)}, withinRange: ${id <= MAX_INT32})`);
-        return {
-          Id: id,
-          Text: c.text || "",
-          CreatedAt: c.createdAt || new Date().toISOString(),
-          CreatedBy: c.createdBy || "User"
-        };
-      })
+      Attachments: existingAttachments.map(a => ({
+        Id: mapAttachmentId(a.id),
+        Name: a.name || "",
+        Size: a.size || 0,
+        FileUrl: a.fileUrl || a.uploadFile || "",
+        FileUniqueno: a.fileUniqueno || 0,
+        UploadFile: a.uploadFile || a.fileUrl || "",
+        PageNo: a.pageNo || "0",
+        CreatedBy: a.createdBy || 0
+      })),
+      DeletedAttachmentIds: (request.DeletedAttachmentIds || [])
+        .map(mapAttachmentId)
+        .filter((id) => id > 0),
+      Comments: (request.Comments || []).map(c => ({
+        Id: mapAttachmentId(c.id),
+        Text: c.text || "",
+        CreatedAt: c.createdAt || new Date().toISOString(),
+        CreatedBy: c.createdBy || "User"
+      }))
     };
 
-    // Remove undefined values and ensure all IDs are integers
     const cleanPayload = JSON.parse(JSON.stringify(payload, (key, value) => {
       if (value === undefined) {
         return null;
       }
-      // Ensure attachment and comment IDs are integers
       if (key === 'Id' && typeof value === 'number' && !Number.isInteger(value)) {
-        console.log(`Converting float Id to integer: ${value} -> ${Math.floor(value)}`);
         return Math.floor(value);
       }
       return value;
     }));
-    
-    // Final check: ensure all attachment and comment IDs are integers
-    if (cleanPayload.Attachments) {
-      cleanPayload.Attachments = cleanPayload.Attachments.map((a: any) => ({
-        ...a,
-        Id: Number.isInteger(a.Id) ? a.Id : Math.floor(a.Id || 0)
-      }));
-    }
-    if (cleanPayload.Comments) {
-      cleanPayload.Comments = cleanPayload.Comments.map((c: any) => ({
-        ...c,
-        Id: Number.isInteger(c.Id) ? c.Id : Math.floor(c.Id || 0)
-      }));
-    }
 
-    console.log("Sending payload to backend:", JSON.stringify(cleanPayload, null, 2));
+    const formData = new FormData();
+    formData.append("formField", JSON.stringify(cleanPayload));
+    (newFiles || []).forEach((file) => {
+      formData.append("file", file);
+    });
 
     const url = `/Quotation/SaveQuotation`;
-    return Instense.post(url, cleanPayload, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    }).then((response) => {
+    return Instense.post(url, formData).then((response) => {
       const result = response.data.result;
-      // Return the result which contains the id
       if (result && result.id) {
-        return { id: result.id, message: result.message || "Quotation saved successfully" };
+        const attachments = Array.isArray(result.attachments)
+          ? result.attachments.map((a: any) => ({
+              id: a.id || a.Id || 0,
+              name: a.name || a.Name || "",
+              size: a.size || a.Size || 0,
+              fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+              fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+              uploadFile: a.uploadFile || a.UploadFile || "",
+              pageNo: a.pageNo || a.PageNo || "0",
+              createdBy: a.createdBy || a.CreatedBy || 0,
+            }))
+          : undefined;
+        return {
+          id: result.id,
+          message: result.message || "Quotation saved successfully",
+          attachments,
+        };
       }
-      // Fallback if response structure is different
       return { id: request.OrderID || 0, message: "Quotation saved successfully" };
     }).catch((error) => {
       console.error("Error in SaveQuotation:", error);
@@ -512,13 +493,184 @@ export class QuotationService {
       if (error.response) {
         console.error("Error response data:", error.response.data);
         console.error("Error response status:", error.response.status);
-        console.error("Error response headers:", error.response.headers);
       }
       if (error.response?.data?.error) {
         console.error("Backend error message:", error.response.data.error);
       }
       throw error;
     });
+  };
+
+  public static QuotationSaveFile = async (
+    orderId: number,
+    files: File[]
+  ): Promise<QuotationAttachment[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("file", file);
+    });
+    formData.append(
+      "formField",
+      JSON.stringify({
+        OrderId: orderId,
+        OrderID: orderId,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("orderId", String(orderId));
+    formData.append("tenantId", String(tenantID));
+
+    const url = `/Quotation/QuotationSaveFile`;
+    return Instense.post(url, formData).then((response) => {
+      const result = response.data.result;
+      const attachments = result?.attachments || [];
+      return attachments.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || "0",
+        createdBy: a.createdBy || a.CreatedBy || 0,
+      }));
+    });
+  };
+
+  public static GetQuotationUploadFileWithFileCode = async (
+    orderId: number
+  ): Promise<Array<QuotationAttachment & { fileCode?: string; contentType?: string }>> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/GetQuotationUploadFileWithFileCode`;
+    return Instense.get(url, {
+      params: { orderId, tenantId: tenantID },
+    }).then((response) => {
+      const result = response.data.result || [];
+      return result.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || a.pageno || "0",
+        createdBy: a.createdby || a.createdBy || 0,
+        fileCode: a.fileCode || a.FileCode || "",
+        contentType: a.contentType || a.ContentType || "",
+      }));
+    });
+  };
+
+  /**
+   * Single-file binary fetch for the document viewer (no base64).
+   * Returns a Blob suitable for createObjectURL / react-pdf.
+   */
+  public static GetQuotationAttachmentFile = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    signal?: AbortSignal;
+  }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/GetQuotationAttachmentFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+      signal: request.signal,
+    }).then((response: any) => {
+      const blob: Blob = response.data;
+      const headerType =
+        (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) ||
+        "";
+      const contentType =
+        (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+        blob.type ||
+        "application/octet-stream";
+      const fileNameHeader =
+        response.headers?.["x-file-name"] || response.headers?.["X-File-Name"] || undefined;
+      return { blob, contentType, fileName: fileNameHeader };
+    });
+  };
+
+  public static DownloadQuotationAttachment = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    name: string;
+    uploadFile?: string;
+    /** Optional cached blob URL to avoid a second Azure download. */
+    cachedBlobUrl?: string;
+  }): Promise<void> => {
+    if (request.cachedBlobUrl) {
+      const link = document.createElement("a");
+      link.href = request.cachedBlobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      return;
+    }
+
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/GetQuotationAttachmentFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: true,
+      },
+      responseType: "blob",
+    }).then((response: any) => {
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
+    });
+  };
+
+  public static DeleteQuotationUploadedFile = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+  }): Promise<void> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/DeleteQuotationUploadedFile`;
+    return Instense.post(url, {
+      OrderId: request.orderId,
+      TenantId: tenantID,
+      FileUniqueno: request.fileUniqueno,
+    }).then(() => undefined);
   };
 
   public static CheckQuotationDeletionImpact = async (

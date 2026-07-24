@@ -23,6 +23,8 @@
     <PackageReference Include="Serilog.AspNetCore" Version="7.0.0" />
     <PackageReference Include="Serilog.Sinks.MSSqlServer" Version="5.9.0" />
     <PackageReference Include="QuestPDF" Version="2024.3.10" />
+    <PackageReference Include="WindowsAzure.Storage" Version="9.3.2" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.22.2" />
   </ItemGroup>
 
 </Project>

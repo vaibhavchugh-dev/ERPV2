@@ -12,7 +12,6 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class PdfController : ApiBaseController
     {
         private readonly PdfService _pdfService;
