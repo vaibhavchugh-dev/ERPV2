@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
   QuotationService,
   QuotationMasterReq,
   QuotationDetailReq,
+  QuotationAttachment,
   PriceBreakdownMatrix,
 } from "../../Common/Services/QuotationService";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -13,6 +14,9 @@ import { CustomerService } from "../../Common/Services/CustomerService";
 import { PriceBreakdownService, PriceBreakdownMaster } from "../../Common/Services/PriceBreakdownService";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import "./CustomerQuotationSlideout.scss";
 
@@ -65,8 +69,13 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set()); // Set of attachment IDs
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
-  const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
-  const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<number[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  /** Session cache for lazily loaded attachment blobs; cleared when slideout closes. */
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
@@ -223,6 +232,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   const loadQuotation = async () => {
     setLoading(true);
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+    documentCacheRef.current.clear();
     try {
       const quotation = await QuotationService.GetQuotationById(quotationId);
       if (quotation) {
@@ -246,31 +259,31 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         console.log("Loading quotation attachments:", quotation.Attachments);
         console.log("Attachments type:", typeof quotation.Attachments, "Is array:", Array.isArray(quotation.Attachments));
         if (quotation.Attachments && Array.isArray(quotation.Attachments) && quotation.Attachments.length > 0) {
-          // Ensure all IDs are integers within int32 range (max: 2,147,483,647)
-          const cleanedAttachments = quotation.Attachments.map(a => {
+          const cleanedAttachments: ModuleAttachment[] = quotation.Attachments.map((a: QuotationAttachment) => {
             let id = Math.floor(a.id || 0);
-            // Ensure ID is within int32 range (max: 2,147,483,647)
             const MAX_INT32 = 2147483647;
             if (id > MAX_INT32) {
-              id = id % MAX_INT32; // Use modulo to bring it within range
+              id = id % MAX_INT32;
             }
             return {
               id: id,
               name: a.name || "",
               size: a.size || 0,
-              fileUrl: a.fileUrl || ""
+              fileUrl: a.fileUrl || a.uploadFile || "",
+              fileUniqueno: a.fileUniqueno || 0,
+              uploadFile: a.uploadFile || a.fileUrl || "",
+              pageNo: a.pageNo || "0",
+              createdBy: a.createdBy || 0,
+              isPending: false,
             };
           });
           console.log("Cleaned attachments:", cleanedAttachments);
           setAttachments(cleanedAttachments);
-          // Set counter to max ID + 1 to avoid conflicts
-          const maxId = Math.max(...cleanedAttachments.map(a => a.id), 0);
-          setAttachmentIdCounter(maxId + 1);
         } else {
           console.log("No attachments found or empty array");
           setAttachments([]);
-          setAttachmentIdCounter(1);
         }
+        setDeletedAttachmentIds([]);
         console.log("Loading quotation comments:", quotation.Comments);
         if (quotation.Comments && Array.isArray(quotation.Comments) && quotation.Comments.length > 0) {
           // Ensure all IDs are integers within int32 range
@@ -566,48 +579,131 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Include price breakdown matrix, attachments, and comments in details before saving
       console.log("Saving quotation with attachments:", attachments);
       console.log("Saving quotation with comments:", comments);
       console.log("Form data before save:", formData);
-      
+
+      const pendingFiles = (attachments || [])
+        .filter((a) => a.isPending && a.file)
+        .map((a) => a.file as File);
+      const hadDeletes = deletedAttachmentIds.length > 0;
+
+      const persistedAttachments = (attachments || [])
+        .filter((a) => !a.isPending)
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          fileUrl: a.fileUrl || a.uploadFile || "",
+          fileUniqueno: a.fileUniqueno || 0,
+          uploadFile: a.uploadFile || a.fileUrl || "",
+          pageNo: a.pageNo || "0",
+          createdBy: a.createdBy || 0,
+        }));
+
       const formDataWithMatrix: QuotationMasterReq = {
         ...formData,
         Details: formData.Details.map((detail) => ({
           ...detail,
           PriceBreakdownMatrix: priceBreakdownMatrixData.get(detail.ItemNo) || undefined,
         })),
-        Attachments: attachments || [],
+        Attachments: persistedAttachments,
+        DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments || [],
       };
-      
-      // Validate that we have the minimum required data
+
       if (!formDataWithMatrix.CustomerID || formDataWithMatrix.CustomerID <= 0) {
         toast.error("Customer is required");
         setLoading(false);
         return;
       }
-      
+
       if (!formDataWithMatrix.OrderDate) {
         toast.error("Quotation date is required");
         setLoading(false);
         return;
       }
-      
-      console.log("Sending quotation data:", formDataWithMatrix);
-      const result = await QuotationService.SaveQuotation(formDataWithMatrix);
-      toast.success("Quotation saved successfully");
-      
-      // Update the OrderID in formData if it was a new quotation
-      if (formData.OrderID === 0 && result.id > 0) {
-        setFormData(prev => ({
+
+      // Single SaveQuotation request: quotation + new files + existing refs + deleted IDs.
+      const result = await QuotationService.SaveQuotation(formDataWithMatrix, pendingFiles);
+
+      if (result.id > 0 && formData.OrderID !== result.id) {
+        setFormData((prev) => ({
           ...prev,
-          OrderID: result.id
+          OrderID: result.id,
         }));
       }
-      
+
+      attachments
+        .filter((a) => a.isPending && a.localUrl)
+        .forEach((a) => {
+          if (a.localUrl) URL.revokeObjectURL(a.localUrl);
+        });
+
+      if (result.attachments) {
+        setAttachments(
+          result.attachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+            pageNo: a.pageNo || "0",
+            createdBy: a.createdBy || 0,
+            isPending: false,
+          }))
+        );
+      } else if (pendingFiles.length > 0 || deletedAttachmentIds.length > 0) {
+        const refreshed = await QuotationService.GetQuotationById(result.id);
+        if (refreshed?.Attachments) {
+          setAttachments(
+            refreshed.Attachments.map((a) => ({
+              id: a.id,
+              name: a.name,
+              size: a.size,
+              fileUrl: a.fileUrl || a.uploadFile || "",
+              fileUniqueno: a.fileUniqueno || 0,
+              uploadFile: a.uploadFile || a.fileUrl || "",
+              pageNo: a.pageNo || "0",
+              createdBy: a.createdBy || 0,
+              isPending: false,
+            }))
+          );
+        }
+      }
+
+      setDeletedAttachmentIds([]);
+
+      // If pending local URLs were revoked or attachment set changed, reset viewer session cache.
+      if (documentViewerOpen && (pendingFiles.length > 0 || hadDeletes)) {
+        documentCacheRef.current.clear();
+        const savedList =
+          result.attachments ||
+          (
+            await QuotationService.GetQuotationById(result.id)
+          )?.Attachments ||
+          [];
+        if (savedList.length === 0) {
+          setDocumentViewerOpen(false);
+          setViewerDocuments([]);
+          setActiveViewerIndex(0);
+        } else {
+          setViewerDocuments(
+            savedList.map((a) => ({
+              id: a.id,
+              name: a.name,
+              size: a.size,
+              fileUniqueno: a.fileUniqueno || 0,
+              isPending: false,
+            }))
+          );
+          setActiveViewerIndex((idx) => Math.min(idx, savedList.length - 1));
+        }
+      }
+
+      toast.success("Quotation saved successfully");
       setIsStateChanged(false);
-      // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
       console.error("Error saving quotation:", error);
       toast.error(`Error saving quotation: ${error.message || "Unknown error"}`);
@@ -616,12 +712,191 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     }
   };
 
+  const discardPendingAttachments = () => {
+    attachments
+      .filter((attachment) => attachment.isPending && attachment.localUrl)
+      .forEach((attachment) => {
+        if (attachment.localUrl) {
+          URL.revokeObjectURL(attachment.localUrl);
+        }
+      });
+    setDeletedAttachmentIds([]);
+  };
+
+  const clearDocumentSessionCache = useCallback(() => {
+    documentCacheRef.current.clear();
+  }, []);
+
+  // Release cached blob URLs when the slideout unmounts.
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+    };
+  }, []);
+
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+  };
+
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    // Metadata only — bytes load on demand via session cache.
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
+
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
+      }
+
+      if (file.isPending) {
+        return file.localUrl
+          ? { url: file.localUrl, contentType: file.contentType }
+          : null;
+      }
+
+      if (!file.fileUniqueno || formData.OrderID <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno },
+        async () => {
+          const { blob, contentType } = await QuotationService.GetQuotationAttachmentFile({
+            orderId: formData.OrderID,
+            fileUniqueno: file.fileUniqueno!,
+            signal,
+          });
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType,
+            blobUrl,
+            ownsUrl: true,
+          };
+        }
+      );
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id) ||
+          (file.fileUniqueno && d.fileUniqueno === file.fileUniqueno)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    [formData.OrderID]
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      if (file.localUrl || file.isPending || !file.fileUniqueno || formData.OrderID <= 0) {
+        return;
+      }
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {
+        // Prefetch failures are non-blocking.
+      });
+    },
+    [formData.OrderID, loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    if (match.isPending && match.localUrl) {
+      const link = document.createElement("a");
+      link.href = match.localUrl;
+      link.download = match.name;
+      link.click();
+      return;
+    }
+
+    if (!match.fileUniqueno || formData.OrderID <= 0) {
+      toast.error("Attachment is not available for download yet");
+      return;
+    }
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno,
+    });
+
+    await QuotationService.DownloadQuotationAttachment({
+      orderId: formData.OrderID,
+      fileUniqueno: match.fileUniqueno,
+      name: match.name,
+      uploadFile: match.uploadFile,
+      cachedBlobUrl: cached?.blobUrl,
+    });
+  };
+
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+        discardPendingAttachments();
+        closeDocumentViewer();
+        clearDocumentSessionCache();
         onClose();
       }
     } else {
+      discardPendingAttachments();
+      closeDocumentViewer();
+      clearDocumentSessionCache();
       onClose();
     }
   };
@@ -1008,7 +1283,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   return (
     <div className="customer-quotation-slideout-overlay" onClick={handleCancel}>
-      <div className="customer-quotation-slideout-card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`customer-quotation-slideout-card ${documentViewerOpen ? "is-document-workspace" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="customer-quotation-slideout-header">
           <div>
             <h2>{quotationId > 0 ? "Edit Quotation" : "New Quotation"}</h2>
@@ -1122,6 +1400,27 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           </div>
         </div>
 
+        <div className="customer-quotation-slideout-workspace">
+          {documentViewerOpen && (
+            <div className="customer-quotation-slideout-viewer-pane">
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          )}
+
+          <div className="customer-quotation-slideout-form-pane">
         <form className="customer-quotation-slideout-form" onSubmit={handleSubmit}>
           <div className="customer-quotation-slideout-content">
             {/* Basic Information */}
@@ -1787,105 +2086,56 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             </div>
 
             {/* Attachments Section */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Attachments</h3>
-              
-              {attachments.length === 0 ? (
-                <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.875rem" }}>No attachments added</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
-                  {attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "0.75rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1 }}>
-                        <span style={{ fontSize: "1.25rem" }}>📎</span>
-                        <div>
-                          <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{attachment.name}</div>
-                          <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {(attachment.size / 1024).toFixed(2)} KB
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
-                          setIsStateChanged(true);
-                        }}
-                        style={{
-                          padding: "0.25rem 0.5rem",
-                          backgroundColor: "#ef4444",
-                          color: "white",
-                          border: "none",
-                          borderRadius: "0.25rem",
-                          cursor: "pointer",
-                          fontSize: "0.75rem",
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              {/* Add Attachment Button - Bottom Left */}
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#6366f1",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.375rem",
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  transition: "all 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "#4f46e5";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "#6366f1";
-                }}
-              >
-                <input
-                  type="file"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    files.forEach((file) => {
-                      setAttachmentIdCounter((prev) => {
-                        const newId = prev;
-                        const newAttachment = {
-                          id: newId, // Use sequential ID to ensure it's within int32 range
-                          name: file.name,
-                          size: file.size,
-                        };
-                        setAttachments((prevAttachments) => [...prevAttachments, newAttachment]);
-                        setIsStateChanged(true);
-                        return newId + 1; // Increment for next attachment
-                      });
-                    });
-                  }}
-                />
-                + Add Attachment
-              </label>
-            </div>
+            <AttachmentUploadSection
+              attachments={attachments}
+              orderId={formData.OrderID}
+              disabled={loading}
+              deferUploadUntilSave
+              onAttachmentsChange={(next) => {
+                setAttachments(next);
+                setIsStateChanged(true);
+              }}
+              onDeleteAttachment={async (attachment) => {
+                // Pending local files: drop from UI only.
+                if (attachment.isPending || !attachment.id || attachment.id <= 0 || !attachment.fileUniqueno) {
+                  if (attachment.localUrl) {
+                    URL.revokeObjectURL(attachment.localUrl);
+                  }
+                  setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                  setIsStateChanged(true);
+                  return;
+                }
+
+                // Existing Azure attachments: queue for deletion on SaveQuotation.
+                documentCacheRef.current.remove({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                setDeletedAttachmentIds((prev) =>
+                  prev.includes(attachment.id) ? prev : [...prev, attachment.id]
+                );
+                setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                setIsStateChanged(true);
+                toast.info("Attachment will be removed when you save the quotation");
+              }}
+              onDownloadAttachment={async (attachment) => {
+                if (!attachment.fileUniqueno || formData.OrderID <= 0) {
+                  throw new Error("Attachment is not available for download yet");
+                }
+                const cached = documentCacheRef.current.get({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                await QuotationService.DownloadQuotationAttachment({
+                  orderId: formData.OrderID,
+                  fileUniqueno: attachment.fileUniqueno,
+                  name: attachment.name,
+                  uploadFile: attachment.uploadFile,
+                  cachedBlobUrl: cached?.blobUrl,
+                });
+              }}
+              onViewAttachment={handleOpenDocumentViewer}
+            />
 
             {/* Comments Section */}
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
@@ -2011,6 +2261,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             </button>
           </div>
         </form>
+          </div>
+        </div>
       </div>
 
       {/* Combined Price Breakdown Matrix Popup */}

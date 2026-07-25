@@ -14,7 +14,6 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class JobOrderController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;

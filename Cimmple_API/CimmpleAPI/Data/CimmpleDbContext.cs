@@ -37,6 +37,7 @@ namespace CimmpleAPI.Data
 
         public DbSet<WorkstationMaster> WorkstationMaster { get; set; }
         public DbSet<UserWorkstationMapping> UserWorkstationMapping { get; set; }
+        public DbSet<gcwConfig> gcwConfig { get; set; }
 
         public DbSet<NCRCodeMaster> NCRCodeMaster { get; set; }
         public DbSet<NonConformanceReport> NonConformanceReports { get; set; }

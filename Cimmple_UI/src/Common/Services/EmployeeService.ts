@@ -143,6 +143,49 @@ export class EmployeeService {
     });
   };
 
+  public static SaveEmployeeData = async (
+    request: EmployeeMasterReq,
+    file?: File | null
+  ): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === 'development') {
+      tenantID = 1;
+    }
+    request.TenantID = tenantID;
+
+    const url = `/Employee/SaveEmployeeData`;
+    const formData = new FormData();
+    if (file) {
+      formData.append("file", file);
+    } else {
+      formData.append("file", new File([], "", { type: "application/octet-stream" }));
+    }
+    formData.append("formField", JSON.stringify(request));
+
+    return Instense.post(url, formData).then((response) => {
+      return response.data.result;
+    });
+  };
+
+  public static GetProfilePic = async (
+    request: { userId: number; tenantId?: number }
+  ): Promise<Blob | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = request.tenantId || storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === 'development') {
+      tenantID = 1;
+    }
+
+    const url = `/Employee/GetProfilePic`;
+    return Instense.get(url, {
+      params: { userId: request.userId, tenantId: tenantID },
+      responseType: "blob",
+    }).then((response) => {
+      return response.data;
+    }).catch(() => null);
+  };
+
   public static GetAllRoles = async (
     request: { tenantid: number }
   ): Promise<Role[] | null> => {

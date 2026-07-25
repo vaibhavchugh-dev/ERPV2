@@ -15,7 +15,6 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class LocationController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;

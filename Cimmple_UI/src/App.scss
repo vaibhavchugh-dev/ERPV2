@@ -70,3 +70,109 @@ body {
     cursor: not-allowed;
   }
 }
+
+.login-bg {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #4b6cb7 0%, #182848 100%);
+}
+
+.loginnew {
+  position: relative;
+  top: 50%;
+  transform: translateY(-50%);
+
+  .form {
+    position: relative;
+    z-index: 1;
+    background: #ffffff;
+    border-radius: 10px;
+    max-width: 360px;
+    margin: 0 auto 100px;
+    padding: 45px;
+    text-align: center;
+  }
+
+  .form input,
+  .form .form-control {
+    outline: 0;
+    background: #f2f2f2;
+    width: 100%;
+    border: 0;
+    border-radius: 5px;
+    margin: 0 0 15px;
+    padding: 15px;
+    box-sizing: border-box;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .form input:focus,
+  .form .form-control:focus {
+    background: #dbdbdb;
+    box-shadow: none;
+  }
+
+  .form button {
+    text-transform: uppercase;
+    outline: 0;
+    background: #4b6cb7;
+    width: 100%;
+    border: 0;
+    border-radius: 5px;
+    padding: 15px;
+    color: #ffffff;
+    font-size: 14px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    justify-content: center;
+  }
+
+  .form button:active {
+    background: #395591;
+  }
+
+  .form span {
+    font-size: 40px;
+    color: #4b6cb7;
+    margin-bottom: 25px;
+    display: block;
+    font-weight: 600;
+  }
+
+  .invalid-feedback {
+    display: block !important;
+    color: #dc3545 !important;
+    margin-top: 4px;
+    font-size: 12px !important;
+    text-align: center;
+  }
+}
+
+.react-confirm-alert-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1050;
+}
+
+.react-confirm-alert-body.login-change-password-modal {
+  min-width: 75%;
+  width: 400px;
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.login-change-password-title {
+  padding-top: 6px;
+  margin-bottom: 40px;
+  font-size: 20px;
+}

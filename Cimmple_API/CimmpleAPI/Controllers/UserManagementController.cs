@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Utilities;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -10,7 +11,7 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class UserManagementController : ControllerBase
+    public class UserManagementController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
 
@@ -234,8 +235,7 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { message = "User not found" });
                 }
 
-                // In production, implement proper password reset logic with email notifications
-                user.Password = resetDto.NewPassword; // Should be hashed
+                user.Password = PasswordHelper.GenerateHashedPassword(resetDto.NewPassword ?? "");
                 user.PwdResetDate = DateTime.Now;
                 user.ChangePassword = "Y";
 
