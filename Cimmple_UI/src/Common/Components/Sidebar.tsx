@@ -239,6 +239,16 @@ const Sidebar: React.FC = () => {
       path: "/masters/process",
     },
     {
+      icon: faClipboardList,
+      title: "Job Template Master",
+      path: "/masters/jobtemplate",
+    },
+    {
+      icon: faTable,
+      title: "Category Master",
+      path: "/masters/category",
+    },
+    {
       icon: faDollarSign,
       title: "Price Breakdown Master",
       path: "/masters/pricebreakdown",

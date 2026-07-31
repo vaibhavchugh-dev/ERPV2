@@ -38,6 +38,7 @@ namespace CimmpleAPI.Controllers
                         workstations = new List<object>(),
                         locations = new List<object>(),
                         processes = new List<object>(),
+                        jobTemplates = new List<object>(),
                         priceBreakdowns = new List<object>(),
                         creditCards = new List<object>(),
                         chartOfAccounts = new List<object>(),
@@ -65,6 +66,7 @@ namespace CimmpleAPI.Controllers
                     workstations = await SearchWorkstations(searchTerm, tenantId, limit),
                     locations = await SearchLocations(searchTerm, tenantId, limit),
                     processes = await SearchProcesses(searchTerm, tenantId, limit),
+                    jobTemplates = await SearchJobTemplates(searchTerm, tenantId, limit),
                     priceBreakdowns = await SearchPriceBreakdowns(searchTerm, tenantId, limit),
                     creditCards = await SearchCreditCards(searchTerm, tenantId, limit),
                     chartOfAccounts = await SearchChartOfAccounts(searchTerm, tenantId, limit),
@@ -378,7 +380,9 @@ namespace CimmpleAPI.Controllers
             var processes = await _context.ProcessMaster
                 .Where(p => p.Tenantid == tenantId &&
                     (p.ProcessName != null && p.ProcessName.ToLower().Contains(searchTerm) ||
+                     p.ProcessCode != null && p.ProcessCode.ToLower().Contains(searchTerm) ||
                      p.PDescription != null && p.PDescription.ToLower().Contains(searchTerm) ||
+                     p.ProcessCategory != null && p.ProcessCategory.ToLower().Contains(searchTerm) ||
                      p.ledgercode != null && p.ledgercode.ToLower().Contains(searchTerm)))
                 .Take(limit)
                 .Select(p => new
@@ -386,13 +390,38 @@ namespace CimmpleAPI.Controllers
                     id = p.Id,
                     type = "process",
                     name = p.ProcessName ?? "",
+                    code = p.ProcessCode ?? "",
                     description = p.PDescription ?? "",
+                    category = p.ProcessCategory ?? "",
                     ledgerCode = p.ledgercode ?? "",
                     status = p.status
                 })
                 .ToListAsync();
 
             return processes.Cast<object>().ToList();
+        }
+
+        private async Task<List<object>> SearchJobTemplates(string searchTerm, int tenantId, int limit)
+        {
+            var jobTemplates = await _context.JobTemplateMaster
+                .Where(t => t.Tenantid == tenantId &&
+                    (t.TemplateName != null && t.TemplateName.ToLower().Contains(searchTerm) ||
+                     t.TemplateCode != null && t.TemplateCode.ToLower().Contains(searchTerm) ||
+                     t.Description != null && t.Description.ToLower().Contains(searchTerm)))
+                .Take(limit)
+                .Select(t => new
+                {
+                    id = t.Id,
+                    type = "jobTemplate",
+                    name = t.TemplateName ?? "",
+                    code = t.TemplateCode ?? "",
+                    description = t.Description ?? "",
+                    revision = t.Revision,
+                    status = t.Status
+                })
+                .ToListAsync();
+
+            return jobTemplates.Cast<object>().ToList();
         }
 
         private async Task<List<object>> SearchPriceBreakdowns(string searchTerm, int tenantId, int limit)

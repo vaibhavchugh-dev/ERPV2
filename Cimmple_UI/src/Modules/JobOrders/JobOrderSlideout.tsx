@@ -1302,11 +1302,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                       onChange={(e) => {
                         const selectedProcessId = parseInt(e.target.value);
                         const selectedProcess = processes.find(p => p.id === selectedProcessId);
+                        const defaultWsId = selectedProcess?.defaultWorkstationId || undefined;
+                        const defaultWs = defaultWsId
+                          ? workstations.find(w => w.id === defaultWsId)
+                          : undefined;
                         setNewRoutingStep({ 
                           ...newRoutingStep, 
                           processId: selectedProcessId || undefined,
                           processName: selectedProcess?.processName || "",
-                          description: selectedProcess?.pDescription || ""
+                          description: selectedProcess?.pDescription || "",
+                          estimatedTime: selectedProcess?.defaultEstimatedTimeMinutes ?? newRoutingStep.estimatedTime ?? 0,
+                          workstationId: defaultWsId,
+                          workstationName: defaultWs?.workstationName || selectedProcess?.defaultWorkstationName || "",
                         });
                       }}
                       style={{ width: "100%" }}
@@ -1314,7 +1321,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                       <option value="">Select a process...</option>
                       {processes.map((process) => (
                         <option key={process.id} value={process.id}>
-                          {process.processName}
+                          {process.processCode
+                            ? `${process.processCode} — ${process.processName}`
+                            : process.processName}
                         </option>
                       ))}
                     </select>
