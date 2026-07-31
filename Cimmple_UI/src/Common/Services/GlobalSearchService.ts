@@ -3,7 +3,7 @@ import Instense from "./Axios-config";
 export interface SearchResult {
   id: number;
   type: 'customer' | 'vendor' | 'order' | 'invoice' | 'jobOrder' | 'quotation' |
-        'bank' | 'workstation' | 'location' | 'process' | 'priceBreakdown' | 
+        'bank' | 'workstation' | 'location' | 'process' | 'jobTemplate' | 'priceBreakdown' | 
         'creditCard' | 'chartOfAccount' | 'vendorOrder' | 'vendorInvoice' | 
         'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'document';
   name?: string;
@@ -71,6 +71,7 @@ export interface GlobalSearchResults {
   workstations: SearchResult[];
   locations: SearchResult[];
   processes: SearchResult[];
+  jobTemplates: SearchResult[];
   priceBreakdowns: SearchResult[];
   creditCards: SearchResult[];
   chartOfAccounts: SearchResult[];
@@ -98,6 +99,7 @@ export class GlobalSearchService {
         workstations: [],
         locations: [],
         processes: [],
+        jobTemplates: [],
         priceBreakdowns: [],
         creditCards: [],
         chartOfAccounts: [],
@@ -141,6 +143,8 @@ export class GlobalSearchService {
         return `/masters/location?open=${result.id}`;
       case 'process':
         return `/masters/process?open=${result.id}`;
+      case 'jobTemplate':
+        return `/masters/jobtemplate?open=${result.id}`;
       case 'priceBreakdown':
         return `/masters/pricebreakdown?open=${result.id}`;
       case 'creditCard':
@@ -189,6 +193,8 @@ export class GlobalSearchService {
         return result.name || result.code || '';
       case 'process':
         return result.name || '';
+      case 'jobTemplate':
+        return result.code ? `${result.code} — ${result.name}` : result.name || '';
       case 'priceBreakdown':
         return result.name || '';
       case 'creditCard':

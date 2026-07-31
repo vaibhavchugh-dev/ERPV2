@@ -30,6 +30,29 @@ export interface User {
   email: string;
 }
 
+export interface WorkstationImportRow {
+  RowNumber?: number;
+  WorkstationName?: string;
+  Status?: string;
+}
+
+export interface WorkstationImportRowResult {
+  rowNumber: number;
+  workstationId?: number | null;
+  status: string;
+  message: string;
+}
+
+export interface WorkstationImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: WorkstationImportRowResult[];
+}
+
+export const WORKSTATION_IMPORT_HEADERS = ["WorkstationName", "Status"] as const;
+
 export class WorkstationService {
   public static GetWorkstations = async (
     request: { tenantid: number }
@@ -90,6 +113,39 @@ export class WorkstationService {
     return Instense.post(url, request).then((response) => {
       const result = response.data.result;
       return result;
+    });
+  };
+
+  public static ImportWorkstations = async (
+    rows: WorkstationImportRow[],
+    options?: { updateExisting?: boolean; stopOnError?: boolean }
+  ): Promise<WorkstationImportResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Workstation/ImportWorkstations`;
+    return Instense.post(url, {
+      TenantID: tenantID,
+      UpdateExisting: options?.updateExisting ?? true,
+      StopOnError: options?.stopOnError ?? false,
+      Rows: rows,
+    }).then((response) => {
+      const raw = response.data.result || {};
+      return {
+        created: raw.created ?? raw.Created ?? 0,
+        updated: raw.updated ?? raw.Updated ?? 0,
+        skipped: raw.skipped ?? raw.Skipped ?? 0,
+        failed: raw.failed ?? raw.Failed ?? 0,
+        rows: (raw.rows || raw.Rows || []).map((r: any) => ({
+          rowNumber: r.rowNumber ?? r.RowNumber,
+          workstationId: r.workstationId ?? r.WorkstationId,
+          status: r.status ?? r.Status ?? "",
+          message: r.message ?? r.Message ?? "",
+        })),
+      } as WorkstationImportResult;
     });
   };
 

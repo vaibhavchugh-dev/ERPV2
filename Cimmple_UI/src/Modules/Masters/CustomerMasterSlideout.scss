@@ -642,6 +642,12 @@ select.form-input.status-inactive {
   flex-shrink: 0;
 }
 
+/* Import modals put the footer straight into the card, which has no padding of its own */
+.form-card > .form-actions {
+  padding: 1.25rem 1.5rem;
+  margin-top: 0;
+}
+
 .btn-cancel {
   padding: 0.625rem 1rem;
   color: #374151;

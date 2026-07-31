@@ -1,0 +1,227 @@
+/* Payroll Theme - Category tag/chip control */
+
+.category-tag-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.category-tag-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.category-tag-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.category-tag-group-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  margin: 0;
+}
+
+.category-tag-group-count {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.category-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+}
+
+.category-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.625rem;
+  border-radius: 9999px;
+  background-color: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #e0e7ff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  max-width: 100%;
+}
+
+.category-tag span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: #6366f1;
+  font-size: 0.875rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.category-tag-remove:hover {
+  background-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.category-tag-empty {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+/* Add button + dropdown */
+
+.category-tag-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.category-tag-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px dashed #d1d5db;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.category-tag-add:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #4f46e5;
+  background: #f5f3ff;
+}
+
+.category-tag-add:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.category-tag-dropdown {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  width: 18rem;
+  max-width: 80vw;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  padding: 0.5rem;
+}
+
+.category-tag-search {
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+  color: #111827;
+}
+
+.category-tag-search:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.category-tag-options {
+  margin-top: 0.5rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.category-tag-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4375rem 0.5rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: #374151;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.category-tag-option:hover {
+  background-color: #f3f4f6;
+}
+
+.category-tag-option.is-selected {
+  color: #4f46e5;
+  font-weight: 500;
+}
+
+.category-tag-option-check {
+  color: #6366f1;
+  flex-shrink: 0;
+}
+
+.category-tag-option.is-create {
+  color: #4f46e5;
+  font-weight: 500;
+}
+
+.category-tag-no-options {
+  padding: 0.75rem 0.5rem;
+  font-size: 0.8125rem;
+  color: #9ca3af;
+  text-align: center;
+}
+
+/* Read-only tag list, used in table cells */
+
+.category-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.category-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  background-color: #f3f4f6;
+  color: #374151;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.category-tag-chip-more {
+  background-color: #e0e7ff;
+  color: #4338ca;
+}

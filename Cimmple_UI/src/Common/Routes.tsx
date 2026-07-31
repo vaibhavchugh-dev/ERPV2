@@ -6,6 +6,8 @@ import WorkstationMaster from "../Modules/Masters/WorkstationMaster";
 import EmployeeMaster from "../Modules/Masters/EmployeeMaster";
 import LocationMaster from "../Modules/Masters/LocationMaster";
 import ProcessMaster from "../Modules/Masters/ProcessMaster";
+import JobTemplateMaster from "../Modules/Masters/JobTemplateMaster";
+import CategoryMaster from "../Modules/Masters/CategoryMaster";
 import PriceBreakdownMaster from "../Modules/Masters/PriceBreakdownMaster";
 import CreditCardMaster from "../Modules/Masters/CreditCardMaster";
 import ChartofAccountsMaster from "../Modules/Masters/ChartofAccountsMaster";
@@ -77,6 +79,16 @@ export const protectedRoutes: any[] = [
     path: "/masters/process",
     name: "Process Master",
     Component: ProcessMaster,
+  },
+  {
+    path: "/masters/jobtemplate",
+    name: "Job Template Master",
+    Component: JobTemplateMaster,
+  },
+  {
+    path: "/masters/category",
+    name: "Category Master",
+    Component: CategoryMaster,
   },
   {
     path: "/masters/pricebreakdown",

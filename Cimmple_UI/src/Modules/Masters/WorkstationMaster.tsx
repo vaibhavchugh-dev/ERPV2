@@ -3,12 +3,15 @@ import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
 import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
+import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
+import "./CustomerMaster.scss";
 
 const WorkstationMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedWorkstationId, setSelectedWorkstationId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -158,6 +161,9 @@ const WorkstationMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your workstations and user assignments</p>
         </div>
         <div className="page-actions">
+          <button className="btn-secondary" onClick={() => setShowImport(true)} type="button">
+            <span>Import</span>
+          </button>
           <button className="btn-primary" onClick={handleAddWorkstation}>
             <span>+</span>
             <span>Add Workstation</span>
@@ -279,6 +285,13 @@ const WorkstationMasterComponent: React.FC = () => {
         <WorkstationMasterSlideout
           workstationId={selectedWorkstationId}
           onClose={handleCloseSlideout}
+        />
+      )}
+
+      {showImport && (
+        <WorkstationMasterImportModal
+          onClose={() => setShowImport(false)}
+          onImported={loadWorkstations}
         />
       )}
     </div>

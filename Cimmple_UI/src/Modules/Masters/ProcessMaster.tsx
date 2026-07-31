@@ -3,6 +3,7 @@ import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import ProcessMasterSlideout from "./ProcessMasterSlideout";
+import ProcessMasterImportModal from "./ProcessMasterImportModal";
 import "./CustomerMaster.scss";
 
 const ProcessMasterComponent: React.FC = () => {
@@ -10,6 +11,7 @@ const ProcessMasterComponent: React.FC = () => {
   const history = useHistory();
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedProcessId, setSelectedProcessId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -17,10 +19,9 @@ const ProcessMasterComponent: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<keyof ProcessMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const openId = params.get('open');
+    const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -40,26 +41,20 @@ const ProcessMasterComponent: React.FC = () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       let tenantID = storage?.tenantID || 0;
-      // For development: if tenantID is not set, use a default value
-      if (tenantID === 0 && process.env.NODE_ENV === 'development') {
-        tenantID = 1; // Default tenant ID for development
-        console.log('[ProcessMaster] Using default tenantID:', tenantID);
+      if (tenantID === 0 && process.env.NODE_ENV === "development") {
+        tenantID = 1;
       }
 
-      console.log('[ProcessMaster] Loading processes with tenantID:', tenantID);
       const result = await ProcessService.GetProcesses({ tenantid: tenantID });
-      console.log('[ProcessMaster] API response:', result);
-      
+
       if (result && Array.isArray(result)) {
         setProcesses(result);
-        console.log('[ProcessMaster] Loaded', result.length, 'processes');
       } else {
-        console.warn('[ProcessMaster] Invalid response from API:', result);
         setProcesses([]);
       }
     } catch (error: any) {
-      console.error('[ProcessMaster] Error loading processes:', error);
-      toast.error(`Error loading processes: ${error.message || 'Unknown error'}`);
+      console.error("[ProcessMaster] Error loading processes:", error);
+      toast.error(`Error loading processes: ${error.message || "Unknown error"}`);
       setProcesses([]);
     } finally {
       setLoading(false);
@@ -91,23 +86,19 @@ const ProcessMasterComponent: React.FC = () => {
   };
 
   const filteredProcesses = processes.filter((process) => {
+    const term = searchTerm.toLowerCase();
     const matchesSearch =
-      process.processName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      process.pDescription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      process.ledgercode?.toLowerCase().includes(searchTerm.toLowerCase());
+      process.processName?.toLowerCase().includes(term) ||
+      process.processCode?.toLowerCase().includes(term) ||
+      process.pDescription?.toLowerCase().includes(term) ||
+      process.ledgercode?.toLowerCase().includes(term) ||
+      process.processCategory?.toLowerCase().includes(term) ||
+      process.defaultWorkstationName?.toLowerCase().includes(term);
 
-    if (filterValue === "all") {
-      return matchesSearch;
-    }
-
-    if (filterValue === "active") {
-      return matchesSearch && process.status === 1;
-    }
-
-    if (filterValue === "inactive") {
-      return matchesSearch && process.status === 0;
-    }
-
+    if (filterValue === "all") return matchesSearch;
+    if (filterValue === "active") return matchesSearch && process.status === 1;
+    if (filterValue === "inactive") return matchesSearch && process.status === 0;
+    if (filterValue === "outside") return matchesSearch && process.isFixed === 1;
     return matchesSearch;
   });
 
@@ -153,21 +144,26 @@ const ProcessMasterComponent: React.FC = () => {
 
   return (
     <div className="customers-page">
-      {/* Page Header */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Process Master</h1>
-          <p className="page-subtitle">Manage your process database</p>
+          <p className="page-subtitle">Manage manufacturing processes and routing defaults</p>
         </div>
         <div className="page-actions">
-          <button className="btn-primary" onClick={handleAddProcess}>
+          <button
+            className="btn-secondary"
+            onClick={() => setShowImport(true)}
+            type="button"
+          >
+            <span>Import</span>
+          </button>
+          <button className="btn-primary" onClick={handleAddProcess} type="button">
             <span>+</span>
             <span>Add Process</span>
           </button>
         </div>
       </div>
 
-      {/* Filters and Search */}
       <div className="page-filters">
         <div className="search-wrapper">
           <svg
@@ -212,87 +208,63 @@ const ProcessMasterComponent: React.FC = () => {
             <option value="all">All Processes</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
+            <option value="outside">Outside Services</option>
           </select>
         </div>
       </div>
 
-      {/* Processes Table */}
       <div className="table-card">
         <div className="table-wrapper">
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("srno")}
-                >
-                  <div className="th-content">
-                    Sr. No.
-                    {getSortIcon("srno")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("srno")}>
+                  <div className="th-content">Sr. No.{getSortIcon("srno")}</div>
                 </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("processName")}
-                >
-                  <div className="th-content">
-                    Process Name
-                    {getSortIcon("processName")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("processCode")}>
+                  <div className="th-content">Code{getSortIcon("processCode")}</div>
                 </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("pDescription")}
-                >
-                  <div className="th-content">
-                    Description
-                    {getSortIcon("pDescription")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("processName")}>
+                  <div className="th-content">Process Name{getSortIcon("processName")}</div>
                 </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("ledgercode")}
-                >
-                  <div className="th-content">
-                    Ledger Code
-                    {getSortIcon("ledgercode")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("processCategory")}>
+                  <div className="th-content">Category{getSortIcon("processCategory")}</div>
                 </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("isFixed")}
-                >
-                  <div className="th-content">
-                    Outside Services
-                    {getSortIcon("isFixed")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("defaultEstimatedTimeMinutes")}>
+                  <div className="th-content">Est. Time{getSortIcon("defaultEstimatedTimeMinutes")}</div>
                 </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("status")}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("status")}
-                  </div>
+                <th className="sortable" onClick={() => handleSort("defaultWorkstationName")}>
+                  <div className="th-content">Workstation{getSortIcon("defaultWorkstationName")}</div>
+                </th>
+                <th className="sortable" onClick={() => handleSort("isFixed")}>
+                  <div className="th-content">Outside{getSortIcon("isFixed")}</div>
+                </th>
+                <th className="sortable" onClick={() => handleSort("status")}>
+                  <div className="th-content">Status{getSortIcon("status")}</div>
                 </th>
               </tr>
             </thead>
             <tbody>
               {sortedProcesses.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={8} className="empty-state">
                     <p>No processes found</p>
-                    <small>Click "Add Process" to get started</small>
+                    <small>Click "Add Process" or "Import" to get started</small>
                   </td>
                 </tr>
               ) : (
                 sortedProcesses.map((process) => (
                   <tr key={process.id} onClick={() => handleRowClick(process)}>
                     <td>{process.srno || ""}</td>
+                    <td>{process.processCode || ""}</td>
                     <td>{process.processName || ""}</td>
-                    <td>{process.pDescription || ""}</td>
-                    <td>{process.ledgercode || ""}</td>
+                    <td>{process.processCategory || ""}</td>
+                    <td>
+                      {process.defaultEstimatedTimeMinutes != null
+                        ? `${process.defaultEstimatedTimeMinutes} min`
+                        : ""}
+                    </td>
+                    <td>{process.defaultWorkstationName || ""}</td>
                     <td>
                       <span
                         className={`badge ${
@@ -308,7 +280,8 @@ const ProcessMasterComponent: React.FC = () => {
                           process.status === 1 ? "badge-success" : "badge-danger"
                         }`}
                       >
-                        {process.statusText || (process.status === 1 ? "Active" : "Inactive")}
+                        {process.statusText ||
+                          (process.status === 1 ? "Active" : "Inactive")}
                       </span>
                     </td>
                   </tr>
@@ -325,9 +298,15 @@ const ProcessMasterComponent: React.FC = () => {
           onClose={handleCloseSlideout}
         />
       )}
+
+      {showImport && (
+        <ProcessMasterImportModal
+          onClose={() => setShowImport(false)}
+          onImported={loadProcesses}
+        />
+      )}
     </div>
   );
 };
 
 export default ProcessMasterComponent;
-
