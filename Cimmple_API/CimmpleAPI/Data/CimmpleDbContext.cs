@@ -43,6 +43,17 @@ namespace CimmpleAPI.Data
         public DbSet<NonConformanceReport> NonConformanceReports { get; set; }
         public DbSet<ProcessMaster> ProcessMaster { get; set; }
         public DbSet<PriceBreakdownMaster> PriceBreakdownMaster { get; set; }
+
+        // Generic categorisation (category types + values, shared across modules)
+        public DbSet<CategoryType> CategoryType { get; set; }
+        public DbSet<CategoryValue> CategoryValue { get; set; }
+
+        // Job Template Entities
+        public DbSet<JobTemplateMaster> JobTemplateMaster { get; set; }
+        public DbSet<JobTemplateOperation> JobTemplateOperation { get; set; }
+        public DbSet<JobTemplateCategory> JobTemplateCategory { get; set; }
+        public DbSet<JobTemplateAttachment> JobTemplateAttachment { get; set; }
+
         public DbSet<CreditCardMaster> CreditCardMaster { get; set; }
         public DbSet<DocumentMaster> DocumentMaster { get; set; }
         public DbSet<DocumentType> DocumentType { get; set; }
@@ -138,6 +149,125 @@ namespace CimmpleAPI.Data
             // Configure PriceBreakdownMaster table name
             modelBuilder.Entity<PriceBreakdownMaster>()
                 .ToTable("PriceBreakdownMaster");
+
+            modelBuilder.Entity<ProcessMaster>(entity =>
+            {
+                entity.ToTable("ProcessMaster");
+                entity.Property(e => e.ProcessCode).HasMaxLength(50);
+                entity.Property(e => e.ProcessName).HasMaxLength(200);
+                entity.Property(e => e.ProcessCategory).HasMaxLength(50);
+                entity.Property(e => e.ledgercode).HasMaxLength(50);
+                entity.Property(e => e.StandardCostPerHour).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.IsSystem).HasDefaultValue(false);
+                entity.HasIndex(e => new { e.Tenantid, e.ProcessName });
+                entity.HasIndex(e => new { e.Tenantid, e.ProcessCode });
+            });
+
+            // =============================================
+            // CATEGORY CONFIGURATIONS
+            // =============================================
+
+            modelBuilder.Entity<CategoryType>(entity =>
+            {
+                entity.ToTable("CategoryType");
+                entity.Property(e => e.Code).HasMaxLength(50);
+                entity.Property(e => e.Name).HasMaxLength(100);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.Property(e => e.AllowUserValues).HasDefaultValue(true);
+                entity.Property(e => e.IsActive).HasDefaultValue(true);
+                entity.Property(e => e.IsSystem).HasDefaultValue(false);
+                entity.HasIndex(e => new { e.Tenantid, e.Name }).IsUnique();
+            });
+
+            modelBuilder.Entity<CategoryValue>(entity =>
+            {
+                entity.ToTable("CategoryValue");
+                entity.Property(e => e.Code).HasMaxLength(50);
+                entity.Property(e => e.Name).HasMaxLength(150);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.Property(e => e.IsActive).HasDefaultValue(true);
+                entity.Property(e => e.IsSystem).HasDefaultValue(false);
+                entity.HasIndex(e => new { e.CategoryTypeId, e.Name }).IsUnique();
+                entity.HasIndex(e => new { e.Tenantid, e.CategoryTypeId });
+                entity.HasOne(e => e.CategoryType)
+                    .WithMany(t => t.Values)
+                    .HasForeignKey(e => e.CategoryTypeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // =============================================
+            // JOB TEMPLATE CONFIGURATIONS
+            // =============================================
+
+            modelBuilder.Entity<JobTemplateMaster>(entity =>
+            {
+                entity.ToTable("JobTemplateMaster");
+                entity.Property(e => e.TemplateCode).HasMaxLength(50);
+                entity.Property(e => e.TemplateName).HasMaxLength(200);
+                entity.Property(e => e.DefaultMaterial).HasMaxLength(200);
+                entity.Property(e => e.MaterialGrade).HasMaxLength(100);
+                entity.Property(e => e.RawMaterialSize).HasMaxLength(100);
+                entity.Property(e => e.Tool).HasMaxLength(200);
+                entity.Property(e => e.Fixture).HasMaxLength(200);
+                entity.Property(e => e.Workholding).HasMaxLength(200);
+                entity.Property(e => e.Gauge).HasMaxLength(200);
+                entity.Property(e => e.InspectionType).HasMaxLength(100);
+                entity.Property(e => e.Status).HasDefaultValue(1);
+                entity.Property(e => e.Revision).HasDefaultValue(1);
+                entity.Property(e => e.IsSystem).HasDefaultValue(false);
+                entity.Property(e => e.EstimatedSetupTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.EstimatedCycleTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.EstimatedLabourTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.EstimatedMachineTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.Tenantid, e.TemplateCode }).IsUnique();
+                entity.HasIndex(e => new { e.Tenantid, e.TemplateName });
+                entity.HasIndex(e => new { e.Tenantid, e.Status });
+            });
+
+            modelBuilder.Entity<JobTemplateOperation>(entity =>
+            {
+                entity.ToTable("JobTemplateOperation");
+                entity.Property(e => e.IsMandatory).HasDefaultValue(true);
+                entity.Property(e => e.QualityCheckRequired).HasDefaultValue(false);
+                entity.Property(e => e.SetupTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.CycleTimeMinutes).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.JobTemplateId, e.SequenceNumber }).IsUnique();
+                entity.HasOne(e => e.JobTemplate)
+                    .WithMany(t => t.Operations)
+                    .HasForeignKey(e => e.JobTemplateId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<JobTemplateCategory>(entity =>
+            {
+                entity.ToTable("JobTemplateCategory");
+                entity.HasIndex(e => new { e.JobTemplateId, e.CategoryValueId }).IsUnique();
+                entity.HasIndex(e => e.CategoryValueId);
+                entity.HasOne(e => e.JobTemplate)
+                    .WithMany(t => t.Categories)
+                    .HasForeignKey(e => e.JobTemplateId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                // Restrict so a value still in use cannot be deleted out from under a template
+                entity.HasOne(e => e.CategoryValue)
+                    .WithMany()
+                    .HasForeignKey(e => e.CategoryValueId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<JobTemplateAttachment>(entity =>
+            {
+                entity.ToTable("JobTemplateAttachment");
+                entity.Property(e => e.AttachmentType).HasMaxLength(50);
+                entity.Property(e => e.FileName).HasMaxLength(255);
+                entity.Property(e => e.FileUrl).HasMaxLength(500);
+                entity.Property(e => e.ContentType).HasMaxLength(100);
+                entity.HasIndex(e => e.JobTemplateId);
+                entity.HasOne(e => e.JobTemplate)
+                    .WithMany(t => t.Attachments)
+                    .HasForeignKey(e => e.JobTemplateId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             
             // Configure CreditCardMaster table name
             modelBuilder.Entity<CreditCardMaster>(entity =>

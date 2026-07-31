@@ -1,0 +1,307 @@
+/* Payroll Theme - Job Template Master slideout
+   Adds the operations grid and attachment list on top of the shared form styles. */
+
+@import "./CustomerMasterSlideout.scss";
+
+.jt-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.jt-section-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.jt-section-hint {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 0.125rem 0 0 0;
+}
+
+/* Operations grid */
+
+.jt-operations {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.jt-operations-scroll {
+  overflow-x: auto;
+}
+
+.jt-operations-table {
+  width: 100%;
+  min-width: 52rem;
+  border-collapse: collapse;
+}
+
+.jt-operations-table th {
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.jt-operations-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: middle;
+}
+
+.jt-operations-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.jt-operations-table tbody tr.has-error td {
+  background-color: #fef2f2;
+}
+
+.jt-operations-table input[type="text"],
+.jt-operations-table input[type="number"],
+.jt-operations-table select {
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  color: #111827;
+  background: #ffffff;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.jt-operations-table input:focus,
+.jt-operations-table select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.jt-operations-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.jt-cell-center {
+  text-align: center;
+}
+
+.jt-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.jt-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 0.875rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+
+.jt-icon-button:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.jt-icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.jt-icon-button.is-danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.jt-empty-block {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: #6b7280;
+  border: 1px dashed #d1d5db;
+  border-radius: 0.5rem;
+  background: #f9fafb;
+}
+
+.jt-empty-block p {
+  margin: 0 0 0.5rem 0;
+  font-weight: 500;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+.jt-empty-block small {
+  display: block;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+}
+
+.jt-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.4375rem 0.875rem;
+  border: 1px solid #6366f1;
+  border-radius: 0.375rem;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.jt-add-button:hover {
+  background: #e0e7ff;
+}
+
+/* Attachments */
+
+.jt-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.jt-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.jt-attachment-icon {
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}
+
+.jt-attachment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.jt-attachment-name {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #4f46e5;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jt-attachment-name:hover {
+  text-decoration: underline;
+}
+
+.jt-attachment-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-top: 0.125rem;
+}
+
+.jt-upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.jt-upload-select {
+  padding: 0.4375rem 0.625rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  color: #374151;
+  background: #ffffff;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.jt-upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.4375rem 0.875rem;
+  border: 1px solid #6366f1;
+  border-radius: 0.375rem;
+  background: #6366f1;
+  color: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.jt-upload-label:hover {
+  background: #4f46e5;
+}
+
+.jt-upload-label.is-disabled {
+  background: #c7d2fe;
+  border-color: #c7d2fe;
+  cursor: not-allowed;
+}
+
+/* Summary strip used on the Manufacturing tab */
+
+.jt-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid #e0e7ff;
+  border-radius: 0.5rem;
+  background: #eef2ff;
+  margin-bottom: 1.25rem;
+}
+
+.jt-summary-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #6366f1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.jt-summary-value {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #312e81;
+  margin-top: 0.125rem;
+}

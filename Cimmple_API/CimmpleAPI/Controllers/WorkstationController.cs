@@ -26,7 +26,18 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                // Get workstations with concatenated user names
+                // Assigned users are fetched in one query and grouped in memory; querying per
+                // workstation turns this endpoint into dozens of round trips.
+                var assignedUsers = _context.UserWorkstationMapping
+                    .Where(uwm => uwm.TenantId == tenantid)
+                    .Join(_context.UserDetails,
+                        uwm => uwm.UserId,
+                        ud => ud.User_UniqueID,
+                        (uwm, ud) => new { uwm.WorkstationId, ud.UserName })
+                    .ToList()
+                    .GroupBy(x => x.WorkstationId)
+                    .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(x => x.UserName)));
+
                 var workstations = _context.WorkstationMaster
                     .Where(w => w.TenantId == tenantid)
                     .ToList()
@@ -36,14 +47,7 @@ namespace CimmpleAPI.Controllers
                         workstationName = w.WorkstationName,
                         isActive = w.IsActive,
                         tenantId = w.TenantId,
-                        // Concatenate user names from mappings
-                        userName = string.Join(", ", _context.UserWorkstationMapping
-                            .Where(uwm => uwm.WorkstationId == w.Id && uwm.TenantId == tenantid)
-                            .Join(_context.UserDetails,
-                                uwm => uwm.UserId,
-                                ud => ud.User_UniqueID,
-                                (uwm, ud) => ud.UserName)
-                            .ToList())
+                        userName = assignedUsers.TryGetValue(w.Id, out var names) ? names : ""
                     })
                     .ToList();
 
@@ -221,6 +225,145 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("ImportWorkstations")]
+        public IActionResult ImportWorkstations([FromBody] WorkstationImportRequest request)
+        {
+            try
+            {
+                if (request == null || request.Rows == null || request.Rows.Count == 0)
+                {
+                    return BadRequest(new { error = "No rows to import" });
+                }
+
+                if (request.TenantID <= 0)
+                {
+                    return BadRequest(new { error = "TenantID is required" });
+                }
+
+                var existing = _context.WorkstationMaster
+                    .Where(w => w.TenantId == request.TenantID)
+                    .ToList();
+
+                var result = new WorkstationImportResult();
+                var rowResults = new List<WorkstationImportRowResult>();
+                var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                using var tx = _context.Database.BeginTransaction();
+                try
+                {
+                    for (int i = 0; i < request.Rows.Count; i++)
+                    {
+                        var row = request.Rows[i];
+                        var rowNumber = row.RowNumber ?? (i + 2);
+                        var rowResult = new WorkstationImportRowResult { RowNumber = rowNumber };
+
+                        var name = (row.WorkstationName ?? "").Trim();
+
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = "Workstation Name is required";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!batchNames.Add(name))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Duplicate Workstation Name '{name}' in import file";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        var isActive = ParseStatus(row.Status);
+                        var match = existing.FirstOrDefault(w =>
+                            string.Equals(w.WorkstationName, name, StringComparison.OrdinalIgnoreCase));
+
+                        if (match != null)
+                        {
+                            if (!request.UpdateExisting)
+                            {
+                                rowResult.Status = "Skipped";
+                                rowResult.Message = "Workstation already exists";
+                                rowResult.WorkstationId = match.Id;
+                                result.Skipped++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+
+                            match.WorkstationName = name;
+                            if (isActive.HasValue) match.IsActive = isActive.Value;
+
+                            rowResult.Status = "Updated";
+                            rowResult.Message = "Updated";
+                            rowResult.WorkstationId = match.Id;
+                            result.Updated++;
+                        }
+                        else
+                        {
+                            var workstation = new WorkstationMaster
+                            {
+                                TenantId = request.TenantID,
+                                WorkstationName = name,
+                                IsActive = isActive ?? true
+                            };
+                            _context.WorkstationMaster.Add(workstation);
+                            existing.Add(workstation);
+
+                            rowResult.Status = "Created";
+                            rowResult.Message = "Created";
+                            result.Created++;
+                        }
+
+                        rowResults.Add(rowResult);
+                    }
+
+                    if (request.StopOnError && result.Failed > 0)
+                    {
+                        tx.Rollback();
+                        return BadRequest(new
+                        {
+                            error = "Import cancelled due to validation errors",
+                            result = new
+                            {
+                                created = 0,
+                                updated = 0,
+                                skipped = 0,
+                                failed = result.Failed,
+                                rows = rowResults
+                            }
+                        });
+                    }
+
+                    _context.SaveChanges();
+                    tx.Commit();
+
+                    result.Rows = rowResults;
+                    return Ok(new { result });
+                }
+                catch
+                {
+                    tx.Rollback();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        private static bool? ParseStatus(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var v = value.Trim().ToLowerInvariant();
+            if (v is "active" or "1" or "yes" or "true") return true;
+            if (v is "inactive" or "0" or "no" or "false") return false;
+            return null;
+        }
+
         [HttpGet("GetUserWorkstationMapping")]
         public IActionResult GetUserWorkstationMapping([FromQuery] int tenantid, [FromQuery] int workstationId)
         {
@@ -373,6 +516,38 @@ namespace CimmpleAPI.Controllers
         public int UserId { get; set; }
         public int TenantId { get; set; }
         public string UserName { get; set; }
+    }
+
+    public class WorkstationImportRequest
+    {
+        public int TenantID { get; set; }
+        public bool UpdateExisting { get; set; } = true;
+        public bool StopOnError { get; set; } = false;
+        public List<WorkstationImportRow> Rows { get; set; } = new();
+    }
+
+    public class WorkstationImportRow
+    {
+        public int? RowNumber { get; set; }
+        public string? WorkstationName { get; set; }
+        public string? Status { get; set; }
+    }
+
+    public class WorkstationImportResult
+    {
+        public int Created { get; set; }
+        public int Updated { get; set; }
+        public int Skipped { get; set; }
+        public int Failed { get; set; }
+        public List<WorkstationImportRowResult> Rows { get; set; } = new();
+    }
+
+    public class WorkstationImportRowResult
+    {
+        public int RowNumber { get; set; }
+        public int? WorkstationId { get; set; }
+        public string Status { get; set; } = "";
+        public string Message { get; set; } = "";
     }
 }
 
