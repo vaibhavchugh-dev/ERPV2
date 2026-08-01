@@ -43,32 +43,50 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetCategoryTypes")]
-        public IActionResult GetCategoryTypes([FromQuery] int tenantid, [FromQuery] bool includeValues = true)
+        public IActionResult GetCategoryTypes(
+            [FromQuery] int tenantid,
+            [FromQuery] bool includeValues = true,
+            [FromQuery] bool includeUsageCounts = false)
         {
             try
             {
+                // Types, their values and optional usage counts come back together. The
+                // database is often remote, so a second round trip costs more than the
+                // extra columns do. Usage counts are only needed on the Category Master
+                // page; the listing filter panel skips them to keep the SQL lean.
                 var types = _context.CategoryType
                     .Where(t => t.Tenantid == tenantid)
                     .OrderBy(t => t.DisplayOrder)
                     .ThenBy(t => t.Name)
+                    .Select(t => new
+                    {
+                        t.Id,
+                        t.Code,
+                        t.Name,
+                        t.Description,
+                        t.DisplayOrder,
+                        t.AllowUserValues,
+                        t.IsSystem,
+                        t.IsActive,
+                        Values = t.Values
+                            .Where(v => includeValues)
+                            .Select(v => new
+                            {
+                                v.Id,
+                                v.CategoryTypeId,
+                                v.Code,
+                                v.Name,
+                                v.Description,
+                                v.DisplayOrder,
+                                v.IsSystem,
+                                v.IsActive,
+                                UsageCount = includeUsageCounts
+                                    ? _context.JobTemplateCategory.Count(c => c.CategoryValueId == v.Id)
+                                    : 0
+                            })
+                            .ToList()
+                    })
                     .ToList();
-
-                var valuesByType = includeValues
-                    ? _context.CategoryValue
-                        .Where(v => v.Tenantid == tenantid)
-                        .OrderBy(v => v.DisplayOrder)
-                        .ThenBy(v => v.Name)
-                        .ToList()
-                        .GroupBy(v => v.CategoryTypeId)
-                        .ToDictionary(g => g.Key, g => g.ToList())
-                    : new Dictionary<int, List<CategoryValue>>();
-
-                var usageCounts = _context.JobTemplateCategory
-                    .Where(c => c.Tenantid == tenantid)
-                    .GroupBy(c => c.CategoryValueId)
-                    .Select(g => new { CategoryValueId = g.Key, Count = g.Count() })
-                    .ToList()
-                    .ToDictionary(g => g.CategoryValueId, g => g.Count);
 
                 var result = types.Select(t => new
                 {
@@ -80,7 +98,9 @@ namespace CimmpleAPI.Controllers
                     allowUserValues = t.AllowUserValues,
                     isSystem = t.IsSystem,
                     isActive = t.IsActive,
-                    values = (valuesByType.ContainsKey(t.Id) ? valuesByType[t.Id] : new List<CategoryValue>())
+                    values = t.Values
+                        .OrderBy(v => v.DisplayOrder)
+                        .ThenBy(v => v.Name)
                         .Select(v => new
                         {
                             id = v.Id,
@@ -92,7 +112,7 @@ namespace CimmpleAPI.Controllers
                             displayOrder = v.DisplayOrder,
                             isSystem = v.IsSystem,
                             isActive = v.IsActive,
-                            usageCount = usageCounts.ContainsKey(v.Id) ? usageCounts[v.Id] : 0
+                            usageCount = v.UsageCount
                         })
                         .ToList()
                 })

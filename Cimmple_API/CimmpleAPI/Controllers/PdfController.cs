@@ -689,7 +689,9 @@ namespace CimmpleAPI.Controllers
                     PhoneNumber = customer?.phone_number ?? "",
                     LineItems = new List<PdfLineItem>(),
                     TotalAmount = jobOrder.QtyOrdered * jobOrder.UnitPrice,
-                    RoutingSteps = routingSteps
+                    RoutingSteps = routingSteps,
+                    RoutingTemplateCode = jobOrder.JobTemplateCode ?? "",
+                    RoutingTemplateRevision = jobOrder.JobTemplateRevision
                 };
 
                 var jobOrderNumber = jobOrder.JobOrderNumber < 1000 

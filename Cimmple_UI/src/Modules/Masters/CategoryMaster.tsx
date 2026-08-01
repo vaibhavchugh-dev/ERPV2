@@ -25,7 +25,7 @@ const CategoryMasterComponent: React.FC = () => {
   const loadCategoryTypes = async (preferredTypeId?: number) => {
     setLoading(true);
     try {
-      const result = await CategoryService.GetCategoryTypes(true);
+      const result = await CategoryService.GetCategoryTypes(true, true);
       setCategoryTypes(result);
 
       const target = preferredTypeId ?? selectedTypeId;
