@@ -32,6 +32,12 @@ namespace CimmpleAPI.Data.Models
         public string? RoutingStepsJson { get; set; }
         public string? DrawingNumber { get; set; }
         public string? DrawingRevision { get; set; }
+        public int? JobTemplateId { get; set; }
+        // Code and revision are snapshotted so the traveller still shows where a router
+        // came from after the template is renamed, revised or deleted.
+        [MaxLength(50)]
+        public string? JobTemplateCode { get; set; }
+        public int? JobTemplateRevision { get; set; }
         public DateTime CreatedDate { get; set; }
         public DateTime? ModifiedDate { get; set; }
     }

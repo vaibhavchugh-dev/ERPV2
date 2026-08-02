@@ -96,14 +96,21 @@ const JobTemplateMasterComponent: React.FC = () => {
   }, [location.search, history, location.pathname]);
 
   useEffect(() => {
-    loadCategoryTypes();
-  }, []);
+    if (showFilters && categoryTypes.length === 0) {
+      loadCategoryTypes();
+    }
+  }, [showFilters]);
 
   // Debounce the search box so each keystroke does not hit the API
   useEffect(() => {
     const timer = setTimeout(() => {
-      setAppliedSearch(searchTerm);
-      setPage(1);
+      setAppliedSearch((current) => {
+        if (current === searchTerm) {
+          return current;
+        }
+        setPage(1);
+        return searchTerm;
+      });
     }, 350);
     return () => clearTimeout(timer);
   }, [searchTerm]);
@@ -177,7 +184,11 @@ const JobTemplateMasterComponent: React.FC = () => {
   const handleCloseSlideout = () => {
     setShowSlideout(false);
     loadTemplates();
-    loadCategoryTypes();
+    // Refresh facets only if the user has already opened the filter panel,
+    // otherwise leave the deferred load alone.
+    if (showFilters || categoryTypes.length > 0) {
+      loadCategoryTypes();
+    }
   };
 
   const handleSort = (column?: string) => {

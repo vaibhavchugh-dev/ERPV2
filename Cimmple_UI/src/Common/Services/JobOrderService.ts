@@ -48,6 +48,9 @@ export interface JobOrderMasterReq {
   RoutingSteps?: JobOrderRoutingStep[];
   DrawingNumber?: string;
   DrawingRevision?: string;
+  JobTemplateId?: number | null;
+  JobTemplateCode?: string;
+  JobTemplateRevision?: number | null;
 }
 
 export interface JobOrderAttachment {
@@ -201,6 +204,9 @@ export class JobOrderService {
           : [],
         DrawingNumber: result.drawingNumber || result.DrawingNumber || "",
         DrawingRevision: result.drawingRevision || result.DrawingRevision || "",
+        JobTemplateId: result.jobTemplateId ?? result.JobTemplateId ?? null,
+        JobTemplateCode: result.jobTemplateCode || result.JobTemplateCode || "",
+        JobTemplateRevision: result.jobTemplateRevision ?? result.JobTemplateRevision ?? null,
       };
     });
   };

@@ -9,6 +9,8 @@ import { OrderService, OrderMasterReq } from "../../Common/Services/OrderService
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
+import { JobTemplateService, JobTemplate } from "../../Common/Services/JobTemplateService";
+import JobTemplatePickerDialog from "../../Common/Components/JobTemplatePickerDialog";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
@@ -53,9 +55,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     RoutingSteps: [],
     DrawingNumber: "",
     DrawingRevision: "",
+    JobTemplateId: null,
+    JobTemplateCode: "",
+    JobTemplateRevision: null,
   });
 
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(jobOrderId > 0);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -80,6 +86,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [employees, setEmployees] = useState<EmployeeMaster[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<JobTemplate | null>(null);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -90,6 +99,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       UserToken: storage?.userToken || 0,
     }));
 
+    setInitialLoading(jobOrderId > 0);
     if (jobOrderId > 0) {
       loadJobOrder();
     }
@@ -181,23 +191,27 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     try {
       const jobOrder = await JobOrderService.GetJobOrderById(jobOrderId);
       if (jobOrder) {
+        // The customer order is fetched before anything is committed to state, so both
+        // detail panels appear in the same render instead of Part Details laying out
+        // alone in the left column and then jumping right.
+        let order: OrderMasterReq | null = null;
+        if (jobOrder.CustomerOrderID > 0) {
+          try {
+            order = await OrderService.GetOrderById(jobOrder.CustomerOrderID);
+          } catch (err) {
+            console.error("Error loading customer order:", err);
+          }
+        }
+
         setFormData(jobOrder);
         setAttachments(jobOrder.Attachments || []);
         setComments(jobOrder.Comments || []);
         setRoutingSteps(jobOrder.RoutingSteps || []);
-        
-        // Load customer order details
-        if (jobOrder.CustomerOrderID > 0) {
-          try {
-            const order = await OrderService.GetOrderById(jobOrder.CustomerOrderID);
-            if (order) {
-              setCustomerOrderDetails(order);
-              const orderNum = order.PONumber < 1000 ? order.PONumber + 999 : order.PONumber;
-              setCustomerOrderNumber(`CO#${orderNum}`);
-            }
-          } catch (err) {
-            console.error("Error loading customer order:", err);
-          }
+
+        if (order) {
+          setCustomerOrderDetails(order);
+          const orderNum = order.PONumber < 1000 ? order.PONumber + 999 : order.PONumber;
+          setCustomerOrderNumber(`CO#${orderNum}`);
         }
       }
     } catch (error: any) {
@@ -205,6 +219,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       toast.error(`Error loading job order: ${error.message || "Unknown error"}`);
     } finally {
       setLoading(false);
+      setInitialLoading(false);
     }
   };
 
@@ -346,6 +361,116 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setCommentIdCounter((prev) => prev + 1);
   };
 
+  const handleTemplatePicked = (template: JobTemplate) => {
+    setSelectedTemplate(template);
+    setShowTemplatePicker(false);
+  };
+
+  const handleApplyJobTemplate = async () => {
+    if (!selectedTemplate) {
+      toast.error("Please select a job template");
+      return;
+    }
+
+    if (
+      routingSteps.length > 0 &&
+      !window.confirm(
+        `This will replace the ${routingSteps.length} existing router step(s), including any tracked progress, with the steps from template ${selectedTemplate.templateCode}. Continue?`
+      )
+    ) {
+      return;
+    }
+
+    setApplyingTemplate(true);
+    try {
+      const template = await JobTemplateService.GetJobTemplateById(selectedTemplate.id);
+      const operations = template?.Operations || [];
+
+      if (operations.length === 0) {
+        toast.error("This job template has no operations to apply");
+        return;
+      }
+
+      // Cycle time is per piece, so a job needs one setup plus a cycle for every unit ordered.
+      // Quantity is floored at 1 so a not-yet-quantified job still gets a usable estimate.
+      const qtyMultiplier = Math.max(1, formData.QtyOrdered || 0);
+      let unavailableReferences = 0;
+
+      const steps: JobOrderRoutingStep[] = operations
+        .slice()
+        .sort((a, b) => a.SequenceNumber - b.SequenceNumber)
+        .map((operation, index) => {
+          const processMissing =
+            !!operation.ProcessId && !processes.some((p) => p.id === operation.ProcessId);
+          const workstationMissing =
+            !!operation.WorkstationId && !workstations.some((w) => w.id === operation.WorkstationId);
+          if (processMissing || workstationMissing) {
+            unavailableReferences += 1;
+          }
+
+          const setupTime = operation.SetupTimeMinutes || 0;
+          const cycleTime = operation.CycleTimeMinutes || 0;
+
+          return {
+            id: index + 1,
+            sequence: operation.SequenceNumber,
+            processName: operation.ProcessName || "",
+            processId: operation.ProcessId ?? undefined,
+            workstationName: operation.WorkstationName || "",
+            workstationId: operation.WorkstationId ?? undefined,
+            estimatedTime: Math.round(setupTime + cycleTime * qtyMultiplier),
+            description: operation.Instructions || "",
+            status: "Pending",
+            progressState: "idle",
+            qtyProduced: 0,
+            elapsedTime: 0,
+          } as JobOrderRoutingStep;
+        });
+
+      // The replaced steps take their ids with them, so any running timer is now orphaned.
+      stepTimers.forEach((timer) => clearInterval(timer));
+      setStepTimers(new Map());
+
+      setRoutingSteps(steps);
+      setFormData((prev) => ({
+        ...prev,
+        RoutingSteps: steps,
+        JobTemplateId: template?.Id || selectedTemplate.id,
+        JobTemplateCode: template?.TemplateCode || selectedTemplate.templateCode,
+        JobTemplateRevision: template?.Revision ?? selectedTemplate.revision ?? null,
+      }));
+      setNewRoutingStep({
+        sequence: Math.max(...steps.map((s) => s.sequence)) + 10,
+        processName: "",
+        processId: undefined,
+        estimatedTime: 0,
+      });
+
+      toast.success(
+        `${steps.length} step(s) added from template ${template?.TemplateCode || ""}`.trim()
+      );
+      if (unavailableReferences > 0) {
+        toast.warning(
+          `${unavailableReferences} step(s) reference a process or workstation that is no longer active. Review them before saving.`
+        );
+      }
+    } catch (error: any) {
+      console.error("Error applying job template:", error);
+      toast.error(`Error applying job template: ${error.message || "Unknown error"}`);
+    } finally {
+      setApplyingTemplate(false);
+    }
+  };
+
+  const handleClearJobTemplateLink = () => {
+    setFormData((prev) => ({
+      ...prev,
+      JobTemplateId: null,
+      JobTemplateCode: "",
+      JobTemplateRevision: null,
+    }));
+  };
+
   const handleAddRoutingStep = () => {
     if (!newRoutingStep.processId || !newRoutingStep.processName?.trim()) {
       toast.error("Please select a process/operation name");
@@ -376,7 +501,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     
     // Reset form
     setNewRoutingStep({
-      sequence: updatedSteps.length + 1,
+      sequence: Math.max(...updatedSteps.map((s) => s.sequence)) + 1,
       processName: "",
       processId: undefined,
       estimatedTime: 0,
@@ -789,8 +914,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           <div className="job-order-slideout-content">
             {/* Two Column Layout: Customer Order Details (Left) and Part Details (Right) */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "1.5rem", marginBottom: "2rem" }}>
-              {/* Customer Order Details Section - Left Column */}
-              {customerOrderDetails && (
+              {/* Customer Order Details Section - Left Column.
+                  Kept in the layout while the job order is still loading so the grid
+                  always starts with two columns and Part Details never shifts. */}
+              {(customerOrderDetails || initialLoading) && (
                 <div style={{ padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
                   <h3 style={{ margin: "0 0 1.5rem 0", fontSize: "1.125rem", fontWeight: 600 }}>
                     Customer Order Details
@@ -804,9 +931,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                           backgroundColor: "#f3f4f6",
                           borderRadius: "0.375rem",
                           fontSize: "0.875rem",
-                          color: "#6366f1",
-                          cursor: "pointer",
-                          textDecoration: "underline",
+                          color: customerOrderDetails ? "#6366f1" : "#9ca3af",
+                          cursor: customerOrderDetails ? "pointer" : "default",
+                          textDecoration: customerOrderDetails ? "underline" : "none",
                           border: "none",
                           minHeight: "2.5rem",
                           display: "flex",
@@ -814,11 +941,16 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setShowCustomerOrderSlideout(true);
+                          if (customerOrderDetails) {
+                            setShowCustomerOrderSlideout(true);
+                          }
                         }}
-                        title="Click to view customer order"
+                        title={customerOrderDetails ? "Click to view customer order" : ""}
                       >
-                        {customerOrderNumber || `CO#${customerOrderDetails.PONumber < 1000 ? customerOrderDetails.PONumber + 999 : customerOrderDetails.PONumber}`}
+                        {customerOrderDetails
+                          ? customerOrderNumber ||
+                            `CO#${customerOrderDetails.PONumber < 1000 ? customerOrderDetails.PONumber + 999 : customerOrderDetails.PONumber}`
+                          : "-"}
                       </div>
                     </div>
                     <div className="form-group">
@@ -836,7 +968,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                           alignItems: "center",
                         }}
                       >
-                        {customerOrderDetails.OrderDate || "-"}
+                        {customerOrderDetails?.OrderDate || "-"}
                       </div>
                     </div>
                   </div>
@@ -856,7 +988,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                           alignItems: "center",
                         }}
                       >
-                        {customerOrderDetails.CustomerName || "-"}
+                        {customerOrderDetails?.CustomerName || "-"}
                       </div>
                     </div>
                     <div className="form-group">
@@ -874,7 +1006,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                           alignItems: "center",
                         }}
                       >
-                        {customerOrderDetails.QuotationNo || customerOrderDetails.CustomerPoNumber || "-"}
+                        {customerOrderDetails?.QuotationNo || customerOrderDetails?.CustomerPoNumber || "-"}
                       </div>
                     </div>
                   </div>
@@ -1011,7 +1143,44 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             {/* Job Router Section */}
             <div style={{ marginBottom: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-                <h3 style={{ margin: 0, fontSize: "1.125rem", fontWeight: 600 }}>Job Router - Manufacturing Steps</h3>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.125rem", fontWeight: 600 }}>Job Router - Manufacturing Steps</h3>
+                  {formData.JobTemplateCode && (
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.375rem" }}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "0.125rem 0.5rem",
+                          backgroundColor: "#eef2ff",
+                          color: "#4338ca",
+                          border: "1px solid #c7d2fe",
+                          borderRadius: "9999px",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                        }}
+                      >
+                        From template {formData.JobTemplateCode}
+                        {formData.JobTemplateRevision ? ` Rev. ${formData.JobTemplateRevision}` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleClearJobTemplateLink}
+                        title="Stop recording this job order as built from that template"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          color: "#6b7280",
+                          fontSize: "0.75rem",
+                          textDecoration: "underline",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Unlink
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
                   <input
                     type="checkbox"
@@ -1270,12 +1439,94 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                             fontSize: "0.875rem" 
                           }}
                         >
-                          No routing steps added yet. Use the form below to add manufacturing steps.
+                          No routing steps added yet. Build the router from a job template, or add manufacturing steps one at a time below.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Build Router from a Job Template */}
+              <div style={{ padding: "1rem", marginBottom: "1rem", backgroundColor: "#ffffff", borderRadius: "0.375rem", border: "1px solid #e5e7eb" }}>
+                <h4 style={{ margin: "0 0 1rem 0", fontSize: "0.875rem", fontWeight: 600 }}>Build Router from Job Template</h4>
+                <div style={{ display: "flex", alignItems: "stretch", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <div
+                    style={{
+                      flex: "1 1 260px",
+                      minWidth: 0,
+                      padding: "0.625rem 0.75rem",
+                      border: `1px solid ${selectedTemplate ? "#c7d2fe" : "#d1d5db"}`,
+                      borderRadius: "0.375rem",
+                      backgroundColor: selectedTemplate ? "#eef2ff" : "#f9fafb",
+                    }}
+                  >
+                    {selectedTemplate ? (
+                      <>
+                        <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "#111827" }}>
+                          {`${selectedTemplate.templateCode} — ${selectedTemplate.templateName}`}
+                        </div>
+                        <div style={{ fontSize: "0.75rem", color: "#4b5563", marginTop: "0.25rem" }}>
+                          {[
+                            `Rev ${selectedTemplate.revision}`,
+                            `${selectedTemplate.operationCount ?? 0} step${selectedTemplate.operationCount === 1 ? "" : "s"}`,
+                            selectedTemplate.primaryProcessName,
+                            (selectedTemplate.categories || [])
+                              .map((c) => c.categoryValueName)
+                              .join(", "),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+                        No template selected
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowTemplatePicker(true)}
+                      disabled={applyingTemplate}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        backgroundColor: "#ffffff",
+                        color: "#374151",
+                        border: "1px solid #d1d5db",
+                        borderRadius: "0.375rem",
+                        fontSize: "0.875rem",
+                        fontWeight: 500,
+                        cursor: applyingTemplate ? "not-allowed" : "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {selectedTemplate ? "Change Template..." : "Browse Templates..."}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyJobTemplate}
+                      disabled={applyingTemplate || !selectedTemplate}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        backgroundColor: applyingTemplate || !selectedTemplate ? "#a5b4fc" : "#6366f1",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "0.375rem",
+                        fontSize: "0.875rem",
+                        fontWeight: 500,
+                        cursor: applyingTemplate || !selectedTemplate ? "not-allowed" : "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {applyingTemplate ? "Applying..." : "Apply Template"}
+                    </button>
+                  </div>
+                </div>
+                <p style={{ margin: "0.75rem 0 0 0", fontSize: "0.75rem", color: "#6b7280" }}>
+                  {`Replaces every step above with the template's operations. Estimated time per step is one setup plus one cycle for each of the ${Math.max(1, formData.QtyOrdered || 0)} ${formData.Unit || "unit"} ordered, and stays editable afterwards.`}
+                </p>
               </div>
 
               {/* Add New Routing Step Form */}
@@ -1545,6 +1796,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           }}
         />
       )}
+
+      {/* Job Template Picker */}
+      <JobTemplatePickerDialog
+        isOpen={showTemplatePicker}
+        selectedTemplate={selectedTemplate}
+        onSelect={handleTemplatePicked}
+        onCancel={() => setShowTemplatePicker(false)}
+      />
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog

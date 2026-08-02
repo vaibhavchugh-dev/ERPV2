@@ -20,6 +20,8 @@ namespace CimmpleAPI.Services.Pdf.Models
         public decimal TotalAmount { get; set; }
         
         public List<PdfRoutingStep> RoutingSteps { get; set; } = new();
+        public string RoutingTemplateCode { get; set; } = "";
+        public int? RoutingTemplateRevision { get; set; }
     }
 
     public class PdfLineItem
