@@ -58,13 +58,14 @@ const resolveTenantId = (): number => {
 
 export class CategoryService {
   public static GetCategoryTypes = async (
-    includeValues: boolean = true
+    includeValues: boolean = true,
+    includeUsageCounts: boolean = false
   ): Promise<CategoryType[]> => {
     const tenantID = resolveTenantId();
 
     const url = `/Category/GetCategoryTypes`;
     return Instense.get(url, {
-      params: { tenantid: tenantID, includeValues },
+      params: { tenantid: tenantID, includeValues, includeUsageCounts },
     }).then((response) => {
       const result = response.data.result as CategoryType[];
       return result || [];

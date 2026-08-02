@@ -2047,6 +2047,16 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<int>("JobPriority")
                         .HasColumnType("int");
 
+                    b.Property<string>("JobTemplateCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int?>("JobTemplateId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("JobTemplateRevision")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("ModifiedDate")
                         .HasColumnType("datetime2");
 

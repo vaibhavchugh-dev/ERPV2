@@ -122,72 +122,92 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                var totalCount = query.Count();
-
-                query = ApplySort(query, sortBy, sortDir);
+                var pagedQuery = ApplySort(query, sortBy, sortDir);
 
                 if (pageSize > 0)
                 {
                     if (page < 1) page = 1;
-                    query = query.Skip((page - 1) * pageSize).Take(pageSize);
+                    pagedQuery = pagedQuery.Skip((page - 1) * pageSize).Take(pageSize);
                 }
 
-                var templates = query.ToList();
-                var templateIds = templates.Select(t => t.Id).ToList();
+                // Everything the row needs comes back in one query. The database is often
+                // remote, so each extra round trip costs far more than the work it does.
+                var rows = pagedQuery.Select(t => new
+                {
+                    t.Id,
+                    t.TemplateCode,
+                    t.TemplateName,
+                    t.Revision,
+                    t.Status,
+                    t.IsSystem,
+                    t.PrimaryProcessId,
+                    PrimaryProcessName = _context.ProcessMaster
+                        .Where(p => p.Id == t.PrimaryProcessId)
+                        .Select(p => p.ProcessName)
+                        .FirstOrDefault(),
+                    t.WorkstationId,
+                    WorkstationName = _context.WorkstationMaster
+                        .Where(w => w.Id == t.WorkstationId)
+                        .Select(w => w.WorkstationName)
+                        .FirstOrDefault(),
+                    t.EffectiveFrom,
+                    t.EffectiveTo,
+                    t.DefaultMaterial,
+                    t.CreatedDate,
+                    t.ModifiedDate,
+                    OperationCount = t.Operations.Count(),
+                    AttachmentCount = t.Attachments.Count(),
+                    Categories = t.Categories.Select(c => new
+                    {
+                        CategoryValueId = c.CategoryValueId,
+                        CategoryValueName = c.CategoryValue!.Name,
+                        ValueOrder = c.CategoryValue!.DisplayOrder,
+                        CategoryTypeId = c.CategoryValue!.CategoryTypeId,
+                        CategoryTypeName = c.CategoryValue!.CategoryType!.Name,
+                        TypeOrder = c.CategoryValue!.CategoryType!.DisplayOrder
+                    }).ToList()
+                })
+                .ToList();
 
-                var processNames = _context.ProcessMaster
-                    .Where(p => p.Tenantid == tenantid)
-                    .Select(p => new { p.Id, p.ProcessName })
-                    .ToList()
-                    .ToDictionary(p => p.Id, p => p.ProcessName ?? "");
-
-                var workstationNames = _context.WorkstationMaster
-                    .Where(w => w.TenantId == tenantid)
-                    .Select(w => new { w.Id, w.WorkstationName })
-                    .ToList()
-                    .ToDictionary(w => w.Id, w => w.WorkstationName ?? "");
-
-                var categoriesByTemplate = LoadCategoryTags(templateIds);
-
-                var operationCounts = _context.JobTemplateOperation
-                    .Where(o => templateIds.Contains(o.JobTemplateId))
-                    .GroupBy(o => o.JobTemplateId)
-                    .Select(g => new { JobTemplateId = g.Key, Count = g.Count() })
-                    .ToList()
-                    .ToDictionary(g => g.JobTemplateId, g => g.Count);
-
-                var attachmentCounts = _context.JobTemplateAttachment
-                    .Where(a => templateIds.Contains(a.JobTemplateId))
-                    .GroupBy(a => a.JobTemplateId)
-                    .Select(g => new { JobTemplateId = g.Key, Count = g.Count() })
-                    .ToList()
-                    .ToDictionary(g => g.JobTemplateId, g => g.Count);
-
-                var items = templates.Select(t => new
+                var items = rows.Select(t => new
                 {
                     id = t.Id,
                     templateCode = t.TemplateCode ?? "",
                     templateName = t.TemplateName ?? "",
-                    description = t.Description ?? "",
                     revision = t.Revision,
                     status = t.Status,
                     statusText = t.Status == 1 ? "Active" : "Inactive",
                     isSystem = t.IsSystem,
                     primaryProcessId = t.PrimaryProcessId,
-                    primaryProcessName = LookupName(processNames, t.PrimaryProcessId),
+                    primaryProcessName = t.PrimaryProcessName ?? "",
                     workstationId = t.WorkstationId,
-                    workstationName = LookupName(workstationNames, t.WorkstationId),
+                    workstationName = t.WorkstationName ?? "",
                     effectiveFrom = t.EffectiveFrom,
                     effectiveTo = t.EffectiveTo,
                     defaultMaterial = t.DefaultMaterial ?? "",
-                    operationCount = operationCounts.ContainsKey(t.Id) ? operationCounts[t.Id] : 0,
-                    attachmentCount = attachmentCounts.ContainsKey(t.Id) ? attachmentCounts[t.Id] : 0,
-                    categories = categoriesByTemplate.ContainsKey(t.Id)
-                        ? categoriesByTemplate[t.Id]
-                        : new List<object>(),
+                    operationCount = t.OperationCount,
+                    attachmentCount = t.AttachmentCount,
+                    categories = t.Categories
+                        .OrderBy(c => c.TypeOrder)
+                        .ThenBy(c => c.ValueOrder)
+                        .ThenBy(c => c.CategoryValueName)
+                        .Select(c => new
+                        {
+                            categoryValueId = c.CategoryValueId,
+                            categoryValueName = c.CategoryValueName ?? "",
+                            categoryTypeId = c.CategoryTypeId,
+                            categoryTypeName = c.CategoryTypeName ?? ""
+                        })
+                        .ToList(),
                     lastUpdated = t.ModifiedDate ?? t.CreatedDate
                 })
                 .ToList();
+
+                // A full first page means there may be more, so the total has to be asked for.
+                // Anything else is already known from the rows in hand, and skipping that second
+                // round trip is worth having on a remote database.
+                var firstPageHoldsEverything = pageSize <= 0 || (page == 1 && rows.Count < pageSize);
+                var totalCount = firstPageHoldsEverything ? rows.Count : query.Count();
 
                 var effectivePageSize = pageSize > 0 ? pageSize : (totalCount == 0 ? 1 : totalCount);
 
@@ -214,38 +234,79 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                // Header, operations, attachments and tags in one round trip.
                 var template = _context.JobTemplateMaster
-                    .FirstOrDefault(t => t.Id == jobTemplateId && t.Tenantid == tenantId);
+                    .Where(t => t.Id == jobTemplateId && t.Tenantid == tenantId)
+                    .Select(t => new
+                    {
+                        Header = t,
+                        PrimaryProcessName = _context.ProcessMaster
+                            .Where(p => p.Id == t.PrimaryProcessId)
+                            .Select(p => p.ProcessName)
+                            .FirstOrDefault(),
+                        WorkstationName = _context.WorkstationMaster
+                            .Where(w => w.Id == t.WorkstationId)
+                            .Select(w => w.WorkstationName)
+                            .FirstOrDefault(),
+                        Operations = t.Operations.Select(o => new
+                        {
+                            o.Id,
+                            o.SequenceNumber,
+                            o.ProcessId,
+                            ProcessName = _context.ProcessMaster
+                                .Where(p => p.Id == o.ProcessId)
+                                .Select(p => p.ProcessName)
+                                .FirstOrDefault(),
+                            o.WorkstationId,
+                            WorkstationName = _context.WorkstationMaster
+                                .Where(w => w.Id == o.WorkstationId)
+                                .Select(w => w.WorkstationName)
+                                .FirstOrDefault(),
+                            o.SetupTimeMinutes,
+                            o.CycleTimeMinutes,
+                            o.Instructions,
+                            o.IsMandatory,
+                            o.QualityCheckRequired
+                        }).ToList(),
+                        Attachments = t.Attachments.Select(a => new
+                        {
+                            a.Id,
+                            a.AttachmentType,
+                            a.FileName,
+                            a.FileUrl,
+                            a.ContentType,
+                            a.FileSize,
+                            a.UploadedDate
+                        }).ToList(),
+                        Categories = t.Categories.Select(c => new
+                        {
+                            CategoryValueId = c.CategoryValueId,
+                            CategoryValueName = c.CategoryValue!.Name,
+                            ValueOrder = c.CategoryValue!.DisplayOrder,
+                            CategoryTypeId = c.CategoryValue!.CategoryTypeId,
+                            CategoryTypeName = c.CategoryValue!.CategoryType!.Name,
+                            TypeOrder = c.CategoryValue!.CategoryType!.DisplayOrder
+                        }).ToList()
+                    })
+                    .FirstOrDefault();
 
                 if (template == null)
                 {
                     return NotFound(new { error = "Job template not found" });
                 }
 
-                var processNames = _context.ProcessMaster
-                    .Where(p => p.Tenantid == tenantId)
-                    .Select(p => new { p.Id, p.ProcessName })
-                    .ToList()
-                    .ToDictionary(p => p.Id, p => p.ProcessName ?? "");
+                var header = template.Header;
 
-                var workstationNames = _context.WorkstationMaster
-                    .Where(w => w.TenantId == tenantId)
-                    .Select(w => new { w.Id, w.WorkstationName })
-                    .ToList()
-                    .ToDictionary(w => w.Id, w => w.WorkstationName ?? "");
-
-                var operations = _context.JobTemplateOperation
-                    .Where(o => o.JobTemplateId == jobTemplateId)
+                var operations = template.Operations
                     .OrderBy(o => o.SequenceNumber)
-                    .AsEnumerable()
                     .Select(o => new
                     {
                         id = o.Id,
                         sequenceNumber = o.SequenceNumber,
                         processId = o.ProcessId,
-                        processName = LookupName(processNames, o.ProcessId),
+                        processName = o.ProcessName ?? "",
                         workstationId = o.WorkstationId,
-                        workstationName = LookupName(workstationNames, o.WorkstationId),
+                        workstationName = o.WorkstationName ?? "",
                         setupTimeMinutes = o.SetupTimeMinutes,
                         cycleTimeMinutes = o.CycleTimeMinutes,
                         instructions = o.Instructions ?? "",
@@ -254,10 +315,8 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                var attachments = _context.JobTemplateAttachment
-                    .Where(a => a.JobTemplateId == jobTemplateId)
+                var attachments = template.Attachments
                     .OrderBy(a => a.Id)
-                    .AsEnumerable()
                     .Select(a => new
                     {
                         id = a.Id,
@@ -270,49 +329,60 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                var categories = LoadCategoryTags(new List<int> { jobTemplateId });
+                var categories = template.Categories
+                    .OrderBy(c => c.TypeOrder)
+                    .ThenBy(c => c.ValueOrder)
+                    .ThenBy(c => c.CategoryValueName)
+                    .Select(c => new
+                    {
+                        categoryValueId = c.CategoryValueId,
+                        categoryValueName = c.CategoryValueName ?? "",
+                        categoryTypeId = c.CategoryTypeId,
+                        categoryTypeName = c.CategoryTypeName ?? ""
+                    })
+                    .ToList();
 
                 var data = new
                 {
-                    id = template.Id,
-                    templateCode = template.TemplateCode ?? "",
-                    templateName = template.TemplateName ?? "",
-                    description = template.Description ?? "",
-                    status = template.Status,
-                    statusText = template.Status == 1 ? "Active" : "Inactive",
-                    revision = template.Revision,
-                    effectiveFrom = template.EffectiveFrom,
-                    effectiveTo = template.EffectiveTo,
-                    primaryProcessId = template.PrimaryProcessId,
-                    primaryProcessName = LookupName(processNames, template.PrimaryProcessId),
-                    workstationId = template.WorkstationId,
-                    workstationName = LookupName(workstationNames, template.WorkstationId),
-                    estimatedSetupTimeMinutes = template.EstimatedSetupTimeMinutes,
-                    estimatedCycleTimeMinutes = template.EstimatedCycleTimeMinutes,
-                    estimatedLabourTimeMinutes = template.EstimatedLabourTimeMinutes,
-                    estimatedMachineTimeMinutes = template.EstimatedMachineTimeMinutes,
-                    defaultMaterial = template.DefaultMaterial ?? "",
-                    materialGrade = template.MaterialGrade ?? "",
-                    rawMaterialSize = template.RawMaterialSize ?? "",
-                    materialNotes = template.MaterialNotes ?? "",
-                    tool = template.Tool ?? "",
-                    fixture = template.Fixture ?? "",
-                    workholding = template.Workholding ?? "",
-                    gauge = template.Gauge ?? "",
-                    toolingNotes = template.ToolingNotes ?? "",
-                    inspectionType = template.InspectionType ?? "",
-                    firstArticleRequired = template.FirstArticleRequired,
-                    inProcessInspection = template.InProcessInspection,
-                    finalInspection = template.FinalInspection,
-                    cmmRequired = template.CmmRequired,
-                    inspectionNotes = template.InspectionNotes ?? "",
-                    isSystem = template.IsSystem,
-                    createdDate = template.CreatedDate,
-                    modifiedDate = template.ModifiedDate,
-                    lastUpdated = template.ModifiedDate ?? template.CreatedDate,
+                    id = header.Id,
+                    templateCode = header.TemplateCode ?? "",
+                    templateName = header.TemplateName ?? "",
+                    description = header.Description ?? "",
+                    status = header.Status,
+                    statusText = header.Status == 1 ? "Active" : "Inactive",
+                    revision = header.Revision,
+                    effectiveFrom = header.EffectiveFrom,
+                    effectiveTo = header.EffectiveTo,
+                    primaryProcessId = header.PrimaryProcessId,
+                    primaryProcessName = template.PrimaryProcessName ?? "",
+                    workstationId = header.WorkstationId,
+                    workstationName = template.WorkstationName ?? "",
+                    estimatedSetupTimeMinutes = header.EstimatedSetupTimeMinutes,
+                    estimatedCycleTimeMinutes = header.EstimatedCycleTimeMinutes,
+                    estimatedLabourTimeMinutes = header.EstimatedLabourTimeMinutes,
+                    estimatedMachineTimeMinutes = header.EstimatedMachineTimeMinutes,
+                    defaultMaterial = header.DefaultMaterial ?? "",
+                    materialGrade = header.MaterialGrade ?? "",
+                    rawMaterialSize = header.RawMaterialSize ?? "",
+                    materialNotes = header.MaterialNotes ?? "",
+                    tool = header.Tool ?? "",
+                    fixture = header.Fixture ?? "",
+                    workholding = header.Workholding ?? "",
+                    gauge = header.Gauge ?? "",
+                    toolingNotes = header.ToolingNotes ?? "",
+                    inspectionType = header.InspectionType ?? "",
+                    firstArticleRequired = header.FirstArticleRequired,
+                    inProcessInspection = header.InProcessInspection,
+                    finalInspection = header.FinalInspection,
+                    cmmRequired = header.CmmRequired,
+                    inspectionNotes = header.InspectionNotes ?? "",
+                    isSystem = header.IsSystem,
+                    createdDate = header.CreatedDate,
+                    modifiedDate = header.ModifiedDate,
+                    lastUpdated = header.ModifiedDate ?? header.CreatedDate,
                     operations,
                     attachments,
-                    categories = categories.ContainsKey(jobTemplateId) ? categories[jobTemplateId] : new List<object>()
+                    categories
                 };
 
                 return Ok(new { result = data });
@@ -939,50 +1009,6 @@ namespace CimmpleAPI.Controllers
             template.InspectionNotes = request.InspectionNotes?.Trim() ?? "";
         }
 
-        private Dictionary<int, List<object>> LoadCategoryTags(List<int> templateIds)
-        {
-            if (templateIds.Count == 0)
-            {
-                return new Dictionary<int, List<object>>();
-            }
-
-            return _context.JobTemplateCategory
-                .Where(c => templateIds.Contains(c.JobTemplateId))
-                .Join(_context.CategoryValue,
-                    c => c.CategoryValueId,
-                    v => v.Id,
-                    (c, v) => new { c.JobTemplateId, Value = v })
-                .Join(_context.CategoryType,
-                    cv => cv.Value.CategoryTypeId,
-                    t => t.Id,
-                    (cv, t) => new
-                    {
-                        cv.JobTemplateId,
-                        CategoryValueId = cv.Value.Id,
-                        CategoryValueName = cv.Value.Name,
-                        CategoryTypeId = t.Id,
-                        CategoryTypeName = t.Name,
-                        t.DisplayOrder,
-                        ValueOrder = cv.Value.DisplayOrder
-                    })
-                .ToList()
-                .GroupBy(x => x.JobTemplateId)
-                .ToDictionary(
-                    g => g.Key,
-                    g => g
-                        .OrderBy(x => x.DisplayOrder)
-                        .ThenBy(x => x.ValueOrder)
-                        .ThenBy(x => x.CategoryValueName)
-                        .Select(x => (object)new
-                        {
-                            categoryValueId = x.CategoryValueId,
-                            categoryValueName = x.CategoryValueName ?? "",
-                            categoryTypeId = x.CategoryTypeId,
-                            categoryTypeName = x.CategoryTypeName ?? ""
-                        })
-                        .ToList());
-        }
-
         private static IQueryable<JobTemplateMaster> ApplySort(
             IQueryable<JobTemplateMaster> query, string? sortBy, string? sortDir)
         {
@@ -1021,11 +1047,6 @@ namespace CimmpleAPI.Controllers
                 .Where(id => id > 0)
                 .Distinct()
                 .ToList();
-        }
-
-        private static string LookupName(Dictionary<int, string> names, int? id)
-        {
-            return id.HasValue && names.ContainsKey(id.Value) ? names[id.Value] : "";
         }
 
         private static int? NullIfNotPositive(int? value)
