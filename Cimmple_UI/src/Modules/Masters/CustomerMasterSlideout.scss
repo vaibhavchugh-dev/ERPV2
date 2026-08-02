@@ -649,13 +649,20 @@ select.form-input.status-inactive {
 }
 
 .btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 2.5rem;
   padding: 0.625rem 1rem;
+  margin: 0;
   color: #374151;
   background: #ffffff;
   border: 1px solid #d1d5db;
   border-radius: 0.5rem;
   font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.25;
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
@@ -672,13 +679,20 @@ select.form-input.status-inactive {
 }
 
 .btn-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 2.5rem;
   padding: 0.625rem 1rem;
+  margin: 0;
   background: #6366f1;
   color: white;
-  border: none;
+  border: 1px solid #6366f1;
   border-radius: 0.5rem;
   font-size: 0.875rem;
   font-weight: 500;
+  line-height: 1.25;
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
@@ -686,6 +700,7 @@ select.form-input.status-inactive {
 
 .btn-submit:hover:not(:disabled) {
   background: #4f46e5;
+  border-color: #4f46e5;
 }
 
 .btn-submit:disabled {

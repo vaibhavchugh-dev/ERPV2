@@ -93,11 +93,13 @@ const ChartofAccountsMaster: React.FC = () => {
       key: "accountCode",
       label: "Account Code",
       sortable: true,
+      locked: true,
     },
     {
       key: "accountName",
       label: "Account Name",
       sortable: true,
+      locked: true,
     },
     {
       key: "accountType",
@@ -155,6 +157,8 @@ const ChartofAccountsMaster: React.FC = () => {
         ]}
         emptyMessage="No accounts found"
         getRowId={(row) => row.accountID}
+        columnPreferenceKey="chartOfAccountsMaster.hiddenColumns"
+        defaultHiddenColumns={["mainGroup"]}
       />
       {showSlideout && (
         <ChartofAccountsMasterSlideout

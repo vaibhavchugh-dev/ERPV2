@@ -1,74 +1,66 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import {
-  ProcessService,
-  ProcessImportRow,
-  ProcessImportResult,
-  PROCESS_IMPORT_HEADERS,
-} from "../../Common/Services/ProcessService";
+  EmployeeService,
+  EmployeeImportRow,
+  EmployeeImportResult,
+  EMPLOYEE_IMPORT_HEADERS,
+  Role,
+} from "../../Common/Services/EmployeeService";
 import {
-  WorkstationService,
-  WorkstationMaster,
-} from "../../Common/Services/WorkstationService";
+  LocationService,
+  LocationMaster,
+} from "../../Common/Services/LocationService";
 import {
   buildCsv,
   downloadCsv,
   mapCsvRows,
   parseCsv,
 } from "../../Common/Utils/CsvImport";
-import { PROCESS_TEMPLATE_ROWS } from "./ProcessMasterTemplateData";
+import { EMPLOYEE_TEMPLATE_ROWS } from "./EmployeeMasterTemplateData";
 import "./CustomerMasterSlideout.scss";
 
-interface ProcessMasterImportModalProps {
+interface EmployeeMasterImportModalProps {
   onClose: () => void;
   onImported: () => void;
 }
 
-type PreviewRow = ProcessImportRow & { _errors: string[]; _warnings: string[] };
+type PreviewRow = EmployeeImportRow & { _errors: string[]; _warnings: string[] };
 
 const HEADER_ALIASES: Record<string, string> = {
-  processcode: "ProcessCode",
-  code: "ProcessCode",
-  processname: "ProcessName",
-  name: "ProcessName",
-  description: "Description",
-  pdescription: "Description",
-  ledgercode: "LedgerCode",
-  processcategory: "ProcessCategory",
-  category: "ProcessCategory",
-  outsideservices: "OutsideServices",
-  outside: "OutsideServices",
-  isfixed: "OutsideServices",
+  empcode: "EmpCode",
+  employeecode: "EmpCode",
+  code: "EmpCode",
+  firstname: "FirstName",
+  first: "FirstName",
+  lastname: "LastName",
+  last: "LastName",
+  email: "Email",
+  username: "UserName",
+  user: "UserName",
   status: "Status",
-  defaultestimatedtimeminutes: "DefaultEstimatedTimeMinutes",
-  estimatedtime: "DefaultEstimatedTimeMinutes",
-  defaulttime: "DefaultEstimatedTimeMinutes",
-  defaultworkstationname: "DefaultWorkstationName",
-  workstation: "DefaultWorkstationName",
-  defaultworkstation: "DefaultWorkstationName",
-  standardcostperhour: "StandardCostPerHour",
-  costperhour: "StandardCostPerHour",
+  rolename: "RoleName",
+  role: "RoleName",
+  employeetype: "EmployeeType",
+  type: "EmployeeType",
+  phone1: "Phone1",
+  phone: "Phone1",
+  phone2: "Phone2",
+  dateofhire: "DateOfHire",
+  hiredate: "DateOfHire",
+  address: "Address",
+  city: "City",
+  state: "State",
+  zip: "Zip",
+  zipcode: "Zip",
+  locationname: "LocationName",
+  location: "LocationName",
+  dob: "DOB",
+  dateofbirth: "DOB",
+  ssn: "SSN",
 };
 
-function mapRows(csvRows: string[][]): PreviewRow[] {
-  return mapCsvRows(csvRows, HEADER_ALIASES, "ProcessName").map(
-    ({ rowNumber, values }) => {
-      const row: PreviewRow = {
-        ...(values as ProcessImportRow),
-        RowNumber: rowNumber,
-        _errors: [],
-        _warnings: [],
-      };
-
-      if (!row.ProcessName?.trim()) {
-        row._errors.push("Process Name is required");
-      }
-      return row;
-    }
-  );
-}
-
-const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
+const EmployeeMasterImportModal: React.FC<EmployeeMasterImportModalProps> = ({
   onClose,
   onImported,
 }) => {
@@ -76,50 +68,69 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
   const [fileName, setFileName] = useState("");
   const [updateExisting, setUpdateExisting] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<ProcessImportResult | null>(null);
-  const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
-  const [workstationsLoaded, setWorkstationsLoaded] = useState(false);
+  const [result, setResult] = useState<EmployeeImportResult | null>(null);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [locations, setLocations] = useState<LocationMaster[]>([]);
+  const [lookupsLoaded, setLookupsLoaded] = useState(false);
 
   useEffect(() => {
-    const loadWorkstations = async () => {
+    const loadLookups = async () => {
       try {
         const storage = JSON.parse(localStorage.getItem("storage") || "{}");
         let tenantID = storage?.tenantID || 0;
         if (tenantID === 0 && process.env.NODE_ENV === "development") {
           tenantID = 1;
         }
-        const result = await WorkstationService.GetWorkstations({ tenantid: tenantID });
-        if (result && Array.isArray(result)) {
-          setWorkstations(result.filter((w) => w.isActive !== false));
+        const [roleResult, locationResult] = await Promise.all([
+          EmployeeService.GetAllRoles({ tenantid: tenantID }),
+          LocationService.GetLocations({ tenantid: tenantID }),
+        ]);
+        if (roleResult && Array.isArray(roleResult)) {
+          setRoles(roleResult);
         }
-        setWorkstationsLoaded(true);
+        if (locationResult && Array.isArray(locationResult)) {
+          setLocations(locationResult);
+        }
       } catch (error) {
-        console.error("Error loading workstations:", error);
-        setWorkstationsLoaded(true);
+        console.error("Error loading employee import lookups:", error);
+      } finally {
+        setLookupsLoaded(true);
       }
     };
-    loadWorkstations();
+    loadLookups();
   }, []);
 
-  // Warnings are derived so they settle once the workstation list arrives. Checking before
-  // then would flag every row as missing.
   const rows = useMemo<PreviewRow[]>(
     () =>
       previewRows.map((row) => {
         const warnings: string[] = [];
-        const workstationName = row.DefaultWorkstationName?.trim();
+        if (!lookupsLoaded) {
+          return { ...row, _warnings: warnings };
+        }
+
+        const roleName = row.RoleName?.trim();
         if (
-          workstationsLoaded &&
-          workstationName &&
-          !workstations.some(
-            (w) => w.workstationName?.toLowerCase() === workstationName.toLowerCase()
+          roleName &&
+          !roles.some((r) => r.roleName?.toLowerCase() === roleName.toLowerCase())
+        ) {
+          warnings.push(`Role "${roleName}" not found, will be left blank`);
+        }
+
+        const locationName = row.LocationName?.trim();
+        if (
+          locationName &&
+          !locations.some(
+            (l) =>
+              l.name?.toLowerCase() === locationName.toLowerCase() ||
+              l.code?.toLowerCase() === locationName.toLowerCase()
           )
         ) {
-          warnings.push(`Workstation "${workstationName}" not found, will be left blank`);
+          warnings.push(`Location "${locationName}" not found, will be left blank`);
         }
+
         return { ...row, _warnings: warnings };
       }),
-    [previewRows, workstations, workstationsLoaded]
+    [previewRows, roles, locations, lookupsLoaded]
   );
 
   const validCount = useMemo(
@@ -137,21 +148,29 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
 
   const downloadTemplate = () => {
     const contents = buildCsv(
-      PROCESS_IMPORT_HEADERS,
-      PROCESS_TEMPLATE_ROWS.map((row) => [
-        row.code,
-        row.name,
-        row.description,
-        "", // LedgerCode depends on the tenant chart of accounts
-        row.category,
-        row.outsideServices,
+      EMPLOYEE_IMPORT_HEADERS,
+      EMPLOYEE_TEMPLATE_ROWS.map((row) => [
+        row.empCode,
+        row.firstName,
+        row.lastName,
+        row.email,
+        row.userName,
         "Active",
-        row.estimatedMinutes != null ? String(row.estimatedMinutes) : "",
-        row.defaultWorkstation,
-        "", // StandardCostPerHour depends on the shop's rates
+        row.roleName,
+        row.employeeType,
+        row.phone1,
+        row.phone2,
+        row.dateOfHire,
+        row.address,
+        row.city,
+        row.state,
+        row.zip,
+        row.locationName,
+        row.dob,
+        row.ssn,
       ])
     );
-    downloadCsv("process-master-import-template.csv", contents);
+    downloadCsv("employee-master-import-template.csv", contents);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -163,13 +182,58 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
 
     try {
       const text = await file.text();
-      const csvRows = parseCsv(text);
-      const mapped = mapRows(csvRows);
-      if (mapped.length === 0) {
+      const parsed = mapCsvRows(parseCsv(text), HEADER_ALIASES, "FirstName");
+
+      if (parsed.length === 0) {
         toast.error("No data rows found in the CSV");
         setPreviewRows([]);
         return;
       }
+
+      const seenCodes = new Set<string>();
+      const seenUserNames = new Set<string>();
+      const seenEmails = new Set<string>();
+      const mapped: PreviewRow[] = parsed.map(({ rowNumber, values }) => {
+        const errors: string[] = [];
+        const firstName = (values.FirstName || "").trim();
+        const lastName = (values.LastName || "").trim();
+        const empCode = (values.EmpCode || "").trim();
+        const userName = (values.UserName || "").trim();
+        const email = (values.Email || "").trim();
+
+        if (!firstName) errors.push("First Name is required");
+        if (!lastName) errors.push("Last Name is required");
+
+        if (empCode) {
+          if (seenCodes.has(empCode.toLowerCase())) {
+            errors.push("Duplicate emp code in this file");
+          } else {
+            seenCodes.add(empCode.toLowerCase());
+          }
+        }
+        if (userName) {
+          if (seenUserNames.has(userName.toLowerCase())) {
+            errors.push("Duplicate user name in this file");
+          } else {
+            seenUserNames.add(userName.toLowerCase());
+          }
+        }
+        if (email) {
+          if (seenEmails.has(email.toLowerCase())) {
+            errors.push("Duplicate email in this file");
+          } else {
+            seenEmails.add(email.toLowerCase());
+          }
+        }
+
+        return {
+          RowNumber: rowNumber,
+          ...(values as EmployeeImportRow),
+          _errors: errors,
+          _warnings: [],
+        };
+      });
+
       setPreviewRows(mapped);
     } catch (err: any) {
       toast.error(err.message || "Failed to parse CSV");
@@ -186,10 +250,10 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
 
     setImporting(true);
     try {
-      const payload: ProcessImportRow[] = rowsToImport.map(
+      const payload: EmployeeImportRow[] = rowsToImport.map(
         ({ _errors, _warnings, ...rest }) => rest
       );
-      const importResult = await ProcessService.ImportProcesses(payload, {
+      const importResult = await EmployeeService.ImportEmployees(payload, {
         updateExisting,
         stopOnError: false,
       });
@@ -204,9 +268,7 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
       onImported();
     } catch (error: any) {
       const message =
-        error?.response?.data?.error ||
-        error?.message ||
-        "Import failed";
+        error?.response?.data?.error || error?.message || "Import failed";
       toast.error(message);
     } finally {
       setImporting(false);
@@ -218,10 +280,10 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
       <div
         className="form-card"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: "920px", width: "95vw" }}
+        style={{ maxWidth: "960px", width: "95vw" }}
       >
         <div className="form-header">
-          <h2>Import Processes</h2>
+          <h2>Import Employees</h2>
           <button type="button" className="btn-close" onClick={onClose}>
             ×
           </button>
@@ -229,13 +291,12 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
 
         <div className="tab-content" style={{ padding: "0 1.5rem 1rem" }}>
           <p style={{ color: "#6b7280", fontSize: "0.875rem", marginTop: 0 }}>
-            Upload a CSV file to create or update processes. Matching uses Process Code when present, otherwise Process Name.
+            Upload a CSV file to create or update employees. Matching uses Emp Code, then User
+            Name, then Email. First Name and Last Name are required.
           </p>
           <p style={{ color: "#6b7280", fontSize: "0.8125rem", marginTop: "-0.5rem" }}>
-            The template contains {PROCESS_TEMPLATE_ROWS.length} standard machine shop processes. Import the
-            Workstation Master template first so the default workstations resolve; unmatched names are
-            imported as a warning with the workstation left blank. Ledger Code and Standard Cost / Hour are
-            left blank because they depend on your accounts and rates.
+            RoleName and LocationName are soft lookups — unmatched names import with a warning and
+            leave those fields blank.
           </p>
 
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -258,13 +319,21 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
             )}
           </div>
 
-          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem", fontSize: "0.875rem" }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              fontSize: "0.875rem",
+            }}
+          >
             <input
               type="checkbox"
               checked={updateExisting}
               onChange={(e) => setUpdateExisting(e.target.checked)}
             />
-            Update existing processes when matched
+            Update existing employees when matched
           </label>
 
           {rows.length > 0 && (
@@ -272,23 +341,29 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
               <div style={{ marginBottom: "0.75rem", fontSize: "0.875rem", color: "#374151" }}>
                 Preview: {rows.length} rows ({validCount} valid, {errorCount} with errors
                 {warningCount > 0 ? `, ${warningCount} with warnings` : ""})
-                {!workstationsLoaded && (
+                {!lookupsLoaded && (
                   <span style={{ color: "#b45309", marginLeft: "0.5rem" }}>
-                    checking workstation names...
+                    checking role and location names...
                   </span>
                 )}
               </div>
-              <div style={{ maxHeight: "280px", overflow: "auto", border: "1px solid #e5e7eb", borderRadius: "0.5rem" }}>
+              <div
+                style={{
+                  maxHeight: "280px",
+                  overflow: "auto",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.5rem",
+                }}
+              >
                 <table className="customers-table" style={{ margin: 0 }}>
                   <thead>
                     <tr>
                       <th>#</th>
                       <th>Code</th>
                       <th>Name</th>
-                      <th>Category</th>
-                      <th>Est. Time</th>
-                      <th>Workstation</th>
-                      <th>Outside</th>
+                      <th>User Name</th>
+                      <th>Role</th>
+                      <th>Type</th>
                       <th>Status</th>
                       <th>Issues</th>
                     </tr>
@@ -306,13 +381,14 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
                         }
                       >
                         <td>{idx + 1}</td>
-                        <td>{row.ProcessCode || ""}</td>
-                        <td>{row.ProcessName || ""}</td>
-                        <td>{row.ProcessCategory || ""}</td>
-                        <td>{row.DefaultEstimatedTimeMinutes || ""}</td>
-                        <td>{row.DefaultWorkstationName || ""}</td>
-                        <td>{row.OutsideServices || ""}</td>
-                        <td>{row.Status || ""}</td>
+                        <td>{row.EmpCode || ""}</td>
+                        <td>
+                          {[row.FirstName, row.LastName].filter(Boolean).join(" ")}
+                        </td>
+                        <td>{row.UserName || ""}</td>
+                        <td>{row.RoleName || ""}</td>
+                        <td>{row.EmployeeType || ""}</td>
+                        <td>{row.Status || "Active"}</td>
                         <td style={{ fontSize: "0.8125rem" }}>
                           {row._errors.length > 0 && (
                             <span style={{ color: "#dc2626" }}>{row._errors.join("; ")}</span>
@@ -339,7 +415,8 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
                 fontSize: "0.875rem",
               }}
             >
-              <strong>Import result:</strong> Created {result.created}, Updated {result.updated}, Skipped {result.skipped}, Failed {result.failed}
+              <strong>Import result:</strong> Created {result.created}, Updated {result.updated},
+              Skipped {result.skipped}, Failed {result.failed}
               {result.rows?.some((r) => r.status === "Error") && (
                 <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.25rem", color: "#dc2626" }}>
                   {result.rows
@@ -375,10 +452,10 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
           <button
             type="button"
             className="btn-submit"
-            disabled={importing || validCount === 0}
+            disabled={importing || validCount === 0 || !lookupsLoaded}
             onClick={handleImport}
           >
-            {importing ? "Importing..." : `Import ${validCount || ""} Processes`}
+            {importing ? "Importing..." : `Import ${validCount || ""} Employees`}
           </button>
         </div>
       </div>
@@ -386,4 +463,4 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
   );
 };
 
-export default ProcessMasterImportModal;
+export default EmployeeMasterImportModal;

@@ -1,7 +1,7 @@
 -- Add JobTemplateId, JobTemplateCode and JobTemplateRevision columns to JobOrderMaster
 -- Records which job template a job order's router was built from.
 -- This script is safe to run multiple times (checks if columns exist first)
-
+USE ERPv2Db
 IF NOT EXISTS (
     SELECT 1 
     FROM sys.columns 

@@ -1,39 +1,66 @@
 import React, { useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import {
-  WorkstationService,
-  WorkstationImportRow,
-  WorkstationImportResult,
-  WORKSTATION_IMPORT_HEADERS,
-} from "../../Common/Services/WorkstationService";
+  CustomerService,
+  CustomerImportRow,
+  CustomerImportResult,
+  CUSTOMER_IMPORT_HEADERS,
+} from "../../Common/Services/CustomerService";
 import {
   buildCsv,
   downloadCsv,
   mapCsvRows,
   parseCsv,
 } from "../../Common/Utils/CsvImport";
-import { WORKSTATION_TEMPLATE_ROWS } from "./WorkstationMasterTemplateData";
+import { CUSTOMER_TEMPLATE_ROWS } from "./CustomerMasterTemplateData";
 import "./CustomerMasterSlideout.scss";
 
-interface WorkstationMasterImportModalProps {
+interface CustomerMasterImportModalProps {
   onClose: () => void;
   onImported: () => void;
 }
 
-interface PreviewRow extends WorkstationImportRow {
-  _errors: string[];
-}
+type PreviewRow = CustomerImportRow & { _errors: string[] };
 
 const HEADER_ALIASES: Record<string, string> = {
-  workstationname: "WorkstationName",
-  workstation: "WorkstationName",
-  name: "WorkstationName",
+  customercode: "CustomerCode",
+  code: "CustomerCode",
+  companyname: "CompanyName",
+  customername: "CompanyName",
+  name: "CompanyName",
+  companyalias: "CompanyAlias",
+  alias: "CompanyAlias",
+  email: "Email",
+  phone: "Phone",
+  phonenumber: "Phone",
+  address: "Address",
+  apartment: "Apartment",
+  city: "City",
+  state: "State",
+  states: "State",
+  zip: "Zip",
+  zipcode: "Zip",
+  country: "Country",
+  shippingaddress: "ShippingAddress",
+  shippingapartment: "ShippingApartment",
+  shippingcity: "ShippingCity",
+  shippingstate: "ShippingState",
+  shippingstates: "ShippingState",
+  shippingzip: "ShippingZip",
+  shippingzipcode: "ShippingZip",
+  shippingcountry: "ShippingCountry",
   status: "Status",
-  isactive: "Status",
-  active: "Status",
+  contacttitle: "ContactTitle",
+  title: "ContactTitle",
+  contactfirstname: "ContactFirstName",
+  firstname: "ContactFirstName",
+  contactlastname: "ContactLastName",
+  lastname: "ContactLastName",
+  contactphone: "ContactPhone",
+  contactemail: "ContactEmail",
 };
 
-const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> = ({
+const CustomerMasterImportModal: React.FC<CustomerMasterImportModalProps> = ({
   onClose,
   onImported,
 }) => {
@@ -41,7 +68,7 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
   const [fileName, setFileName] = useState("");
   const [updateExisting, setUpdateExisting] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<WorkstationImportResult | null>(null);
+  const [result, setResult] = useState<CustomerImportResult | null>(null);
 
   const validCount = useMemo(
     () => previewRows.filter((r) => r._errors.length === 0).length,
@@ -54,10 +81,34 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
 
   const downloadTemplate = () => {
     const contents = buildCsv(
-      WORKSTATION_IMPORT_HEADERS,
-      WORKSTATION_TEMPLATE_ROWS.map((row) => [row.name, "Active"])
+      CUSTOMER_IMPORT_HEADERS,
+      CUSTOMER_TEMPLATE_ROWS.map((row) => [
+        row.code,
+        row.companyName,
+        row.companyAlias,
+        row.email,
+        row.phone,
+        row.address,
+        row.apartment,
+        row.city,
+        row.state,
+        row.zip,
+        row.country,
+        row.shippingAddress,
+        row.shippingApartment,
+        row.shippingCity,
+        row.shippingState,
+        row.shippingZip,
+        row.shippingCountry,
+        "Active",
+        row.contactTitle,
+        row.contactFirstName,
+        row.contactLastName,
+        row.contactPhone,
+        row.contactEmail,
+      ])
     );
-    downloadCsv("workstation-master-import-template.csv", contents);
+    downloadCsv("customer-master-import-template.csv", contents);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,7 +120,7 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
 
     try {
       const text = await file.text();
-      const parsed = mapCsvRows(parseCsv(text), HEADER_ALIASES, "WorkstationName");
+      const parsed = mapCsvRows(parseCsv(text), HEADER_ALIASES, "CompanyName");
 
       if (parsed.length === 0) {
         toast.error("No data rows found in the CSV");
@@ -77,23 +128,54 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
         return;
       }
 
-      const seen = new Set<string>();
+      const seenNames = new Set<string>();
+      const seenCodes = new Set<string>();
       const mapped: PreviewRow[] = parsed.map(({ rowNumber, values }) => {
         const errors: string[] = [];
-        const name = (values.WorkstationName || "").trim();
+        const companyName = (values.CompanyName || "").trim();
+        const customerCode = (values.CustomerCode || "").trim();
 
-        if (!name) {
-          errors.push("Workstation Name is required");
-        } else if (seen.has(name.toLowerCase())) {
-          errors.push("Duplicate workstation name in this file");
+        if (!companyName) {
+          errors.push("Company Name is required");
+        } else if (seenNames.has(companyName.toLowerCase())) {
+          errors.push("Duplicate company name in this file");
         } else {
-          seen.add(name.toLowerCase());
+          seenNames.add(companyName.toLowerCase());
+        }
+
+        if (customerCode) {
+          if (seenCodes.has(customerCode.toLowerCase())) {
+            errors.push("Duplicate customer code in this file");
+          } else {
+            seenCodes.add(customerCode.toLowerCase());
+          }
         }
 
         return {
           RowNumber: rowNumber,
-          WorkstationName: values.WorkstationName,
+          CustomerCode: values.CustomerCode,
+          CompanyName: values.CompanyName,
+          CompanyAlias: values.CompanyAlias,
+          Email: values.Email,
+          Phone: values.Phone,
+          Address: values.Address,
+          Apartment: values.Apartment,
+          City: values.City,
+          State: values.State,
+          Zip: values.Zip,
+          Country: values.Country,
+          ShippingAddress: values.ShippingAddress,
+          ShippingApartment: values.ShippingApartment,
+          ShippingCity: values.ShippingCity,
+          ShippingState: values.ShippingState,
+          ShippingZip: values.ShippingZip,
+          ShippingCountry: values.ShippingCountry,
           Status: values.Status,
+          ContactTitle: values.ContactTitle,
+          ContactFirstName: values.ContactFirstName,
+          ContactLastName: values.ContactLastName,
+          ContactPhone: values.ContactPhone,
+          ContactEmail: values.ContactEmail,
           _errors: errors,
         };
       });
@@ -114,10 +196,10 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
 
     setImporting(true);
     try {
-      const payload: WorkstationImportRow[] = rowsToImport.map(
+      const payload: CustomerImportRow[] = rowsToImport.map(
         ({ _errors, ...rest }) => rest
       );
-      const importResult = await WorkstationService.ImportWorkstations(payload, {
+      const importResult = await CustomerService.ImportCustomers(payload, {
         updateExisting,
         stopOnError: false,
       });
@@ -144,10 +226,10 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
       <div
         className="form-card"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: "760px", width: "95vw" }}
+        style={{ maxWidth: "960px", width: "95vw" }}
       >
         <div className="form-header">
-          <h2>Import Workstations</h2>
+          <h2>Import Customers</h2>
           <button type="button" className="btn-close" onClick={onClose}>
             ×
           </button>
@@ -155,13 +237,12 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
 
         <div className="tab-content" style={{ padding: "0 1.5rem 1rem" }}>
           <p style={{ color: "#6b7280", fontSize: "0.875rem", marginTop: 0 }}>
-            Upload a CSV file to create or update workstations. Rows are matched on
-            Workstation Name.
+            Upload a CSV file to create or update customers. Matching uses Customer Code when
+            present, otherwise Company Name. Codes are auto-generated when left blank on create.
           </p>
           <p style={{ color: "#6b7280", fontSize: "0.8125rem", marginTop: "-0.5rem" }}>
-            The template contains {WORKSTATION_TEMPLATE_ROWS.length} workstations covering the
-            standard process catalog. Import these before importing Process Master so each
-            process picks up its default workstation.
+            Optional contact columns create or update the default contact. Billing and shipping
+            address columns map to the customer record (and billing address on create/update).
           </p>
 
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -198,7 +279,7 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
               checked={updateExisting}
               onChange={(e) => setUpdateExisting(e.target.checked)}
             />
-            Update existing workstations when matched
+            Update existing customers when matched
           </label>
 
           {previewRows.length > 0 && (
@@ -218,16 +299,31 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
                   <thead>
                     <tr>
                       <th>#</th>
-                      <th>Workstation Name</th>
+                      <th>Code</th>
+                      <th>Company Name</th>
+                      <th>City</th>
+                      <th>Contact</th>
+                      <th>Phone</th>
                       <th>Status</th>
                       <th>Issues</th>
                     </tr>
                   </thead>
                   <tbody>
                     {previewRows.map((row, idx) => (
-                      <tr key={idx} style={row._errors.length ? { background: "#fef2f2" } : undefined}>
+                      <tr
+                        key={idx}
+                        style={row._errors.length ? { background: "#fef2f2" } : undefined}
+                      >
                         <td>{idx + 1}</td>
-                        <td>{row.WorkstationName || ""}</td>
+                        <td>{row.CustomerCode || ""}</td>
+                        <td>{row.CompanyName || ""}</td>
+                        <td>{row.City || ""}</td>
+                        <td>
+                          {[row.ContactFirstName, row.ContactLastName]
+                            .filter(Boolean)
+                            .join(" ") || ""}
+                        </td>
+                        <td>{row.ContactPhone || row.Phone || ""}</td>
                         <td>{row.Status || "Active"}</td>
                         <td style={{ color: "#dc2626", fontSize: "0.8125rem" }}>
                           {row._errors.join("; ")}
@@ -264,6 +360,18 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
                     ))}
                 </ul>
               )}
+              {result.rows?.some((r) => r.warning) && (
+                <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.25rem", color: "#b45309" }}>
+                  {result.rows
+                    .filter((r) => r.warning)
+                    .slice(0, 10)
+                    .map((r) => (
+                      <li key={`warning-${r.rowNumber}`}>
+                        Row {r.rowNumber}: {r.warning}
+                      </li>
+                    ))}
+                </ul>
+              )}
             </div>
           )}
         </div>
@@ -278,7 +386,7 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
             disabled={importing || validCount === 0}
             onClick={handleImport}
           >
-            {importing ? "Importing..." : `Import ${validCount || ""} Workstations`}
+            {importing ? "Importing..." : `Import ${validCount || ""} Customers`}
           </button>
         </div>
       </div>
@@ -286,4 +394,4 @@ const WorkstationMasterImportModal: React.FC<WorkstationMasterImportModalProps> 
   );
 };
 
-export default WorkstationMasterImportModal;
+export default CustomerMasterImportModal;

@@ -405,6 +405,308 @@ namespace CimmpleAPI.Controllers
             return $"V{(maxCode + 1001)}";
         }
 
+        [HttpPost("ImportVendors")]
+        public IActionResult ImportVendors([FromBody] VendorImportRequest request)
+        {
+            try
+            {
+                if (request == null || request.Rows == null || request.Rows.Count == 0)
+                {
+                    return BadRequest(new { error = "No rows to import" });
+                }
+
+                if (request.Tenantid <= 0)
+                {
+                    return BadRequest(new { error = "Tenantid is required" });
+                }
+
+                var existing = _context.VendorMaster
+                    .Where(v => v.Tenantid == request.Tenantid)
+                    .ToList();
+
+                var existingIds = existing.Select(v => v.vendor_id).ToList();
+                var existingContacts = existingIds.Count == 0
+                    ? new List<VendorContact>()
+                    : _context.VendorContact
+                        .Where(vc => existingIds.Contains(vc.customer_id))
+                        .ToList();
+
+                int nextCodeSeq = existing.Count + 1001;
+                var result = new VendorImportResult();
+                var rowResults = new List<VendorImportRowResult>();
+                var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var batchCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                using var tx = _context.Database.BeginTransaction();
+                try
+                {
+                    for (int i = 0; i < request.Rows.Count; i++)
+                    {
+                        var row = request.Rows[i];
+                        var rowNumber = row.RowNumber ?? (i + 2);
+                        var rowResult = new VendorImportRowResult { RowNumber = rowNumber };
+
+                        var companyName = (row.CompanyName ?? "").Trim();
+                        var vendorCode = (row.VendorCode ?? "").Trim();
+
+                        if (string.IsNullOrWhiteSpace(companyName))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = "Company Name is required";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(vendorCode) && !batchCodes.Add(vendorCode))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Duplicate Vendor Code '{vendorCode}' in import file";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!batchNames.Add(companyName))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Duplicate Company Name '{companyName}' in import file";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        VendorMaster? match = null;
+                        if (!string.IsNullOrEmpty(vendorCode))
+                        {
+                            match = existing.FirstOrDefault(v =>
+                                string.Equals(v.vendorcode, vendorCode, StringComparison.OrdinalIgnoreCase));
+                        }
+                        if (match == null)
+                        {
+                            match = existing.FirstOrDefault(v =>
+                                string.Equals(v.company_name, companyName, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        var nameConflict = existing.FirstOrDefault(v =>
+                            (match == null || v.vendor_id != match.vendor_id) &&
+                            string.Equals(v.company_name, companyName, StringComparison.OrdinalIgnoreCase));
+                        if (nameConflict != null)
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Company Name '{companyName}' already exists";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(vendorCode))
+                        {
+                            var codeConflict = existing.FirstOrDefault(v =>
+                                (match == null || v.vendor_id != match.vendor_id) &&
+                                !string.IsNullOrEmpty(v.vendorcode) &&
+                                string.Equals(v.vendorcode, vendorCode, StringComparison.OrdinalIgnoreCase));
+                            if (codeConflict != null)
+                            {
+                                rowResult.Status = "Error";
+                                rowResult.Message = $"Vendor Code '{vendorCode}' already exists";
+                                result.Failed++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+                        }
+
+                        var status = ParseVendorStatus(row.Status);
+                        var country = string.IsNullOrWhiteSpace(row.Country) ? null : row.Country.Trim();
+                        var shippingCountry = string.IsNullOrWhiteSpace(row.ShippingCountry) ? null : row.ShippingCountry.Trim();
+
+                        VendorMaster vendor;
+                        bool isNew = match == null;
+
+                        if (match != null)
+                        {
+                            if (!request.UpdateExisting)
+                            {
+                                rowResult.Status = "Skipped";
+                                rowResult.Message = "Vendor already exists";
+                                rowResult.VendorId = match.vendor_id;
+                                result.Skipped++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+
+                            vendor = match;
+                            if (!string.IsNullOrEmpty(vendorCode)) vendor.vendorcode = vendorCode;
+                            vendor.company_name = companyName;
+                            if (row.CompanyAlias != null) vendor.companyAlias = row.CompanyAlias.Trim();
+                            if (row.Email != null) vendor.email = row.Email.Trim();
+                            if (row.Phone != null) vendor.phone_number = row.Phone.Trim();
+                            if (row.Address != null) vendor.address = row.Address.Trim();
+                            if (row.Apartment != null) vendor.apartment = row.Apartment.Trim();
+                            if (row.City != null) vendor.city = row.City.Trim();
+                            if (row.State != null) vendor.state = row.State.Trim();
+                            if (row.Zip != null) vendor.zip = row.Zip.Trim();
+                            if (country != null) vendor.country = country;
+                            if (row.ShippingAddress != null) vendor.shippingAddress = row.ShippingAddress.Trim();
+                            if (row.ShippingApartment != null) vendor.shippingApartment = row.ShippingApartment.Trim();
+                            if (row.ShippingCity != null) vendor.shippingCity = row.ShippingCity.Trim();
+                            if (row.ShippingState != null) vendor.shippingStates = row.ShippingState.Trim();
+                            if (row.ShippingZip != null) vendor.shippingZipCode = row.ShippingZip.Trim();
+                            if (shippingCountry != null) vendor.shippingCountry = shippingCountry;
+                            if (row.Term != null) vendor.term = row.Term.Trim();
+                            if (row.ShipVia != null) vendor.ship_via = row.ShipVia.Trim();
+                            if (status != null) vendor.status = status;
+                            vendor.ContactEmail = vendor.email ?? "";
+
+                            rowResult.Status = "Updated";
+                            rowResult.Message = "Updated";
+                            rowResult.VendorId = vendor.vendor_id;
+                            result.Updated++;
+                        }
+                        else
+                        {
+                            vendor = new VendorMaster
+                            {
+                                Tenantid = request.Tenantid,
+                                vendorcode = string.IsNullOrEmpty(vendorCode) ? $"V{nextCodeSeq++}" : vendorCode,
+                                company_name = companyName,
+                                companyAlias = row.CompanyAlias?.Trim() ?? "",
+                                email = row.Email?.Trim() ?? "",
+                                phone_number = row.Phone?.Trim() ?? "",
+                                address = row.Address?.Trim() ?? "",
+                                apartment = row.Apartment?.Trim() ?? "",
+                                city = row.City?.Trim() ?? "",
+                                state = row.State?.Trim() ?? "",
+                                zip = row.Zip?.Trim() ?? "",
+                                country = country ?? "US",
+                                shippingAddress = row.ShippingAddress?.Trim() ?? "",
+                                shippingApartment = row.ShippingApartment?.Trim() ?? "",
+                                shippingCity = row.ShippingCity?.Trim() ?? "",
+                                shippingStates = row.ShippingState?.Trim() ?? "",
+                                shippingZipCode = row.ShippingZip?.Trim() ?? "",
+                                shippingCountry = shippingCountry ?? "US",
+                                status = status ?? "Active",
+                                term = row.Term?.Trim() ?? "",
+                                ship_via = row.ShipVia?.Trim() ?? "",
+                                ContactEmail = row.Email?.Trim() ?? "",
+                                WebAddress = "",
+                                firstname = row.ContactFirstName?.Trim() ?? "",
+                                last_name = row.ContactLastName?.Trim() ?? ""
+                            };
+                            _context.VendorMaster.Add(vendor);
+                            existing.Add(vendor);
+                            _context.SaveChanges();
+
+                            rowResult.Status = "Created";
+                            rowResult.Message = "Created";
+                            rowResult.VendorId = vendor.vendor_id;
+                            result.Created++;
+                        }
+
+                        UpsertImportedVendorContact(vendor, row, existingContacts, isNew);
+                        rowResults.Add(rowResult);
+                    }
+
+                    if (request.StopOnError && result.Failed > 0)
+                    {
+                        tx.Rollback();
+                        return BadRequest(new
+                        {
+                            error = "Import cancelled due to validation errors",
+                            result = new
+                            {
+                                created = 0,
+                                updated = 0,
+                                skipped = 0,
+                                failed = result.Failed,
+                                rows = rowResults
+                            }
+                        });
+                    }
+
+                    _context.SaveChanges();
+                    tx.Commit();
+
+                    result.Rows = rowResults;
+                    return Ok(new { result });
+                }
+                catch
+                {
+                    tx.Rollback();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        private void UpsertImportedVendorContact(
+            VendorMaster vendor,
+            VendorImportRow row,
+            List<VendorContact> existingContacts,
+            bool isNew)
+        {
+            var hasContactData =
+                !string.IsNullOrWhiteSpace(row.ContactFirstName) ||
+                !string.IsNullOrWhiteSpace(row.ContactLastName) ||
+                !string.IsNullOrWhiteSpace(row.ContactPhone) ||
+                !string.IsNullOrWhiteSpace(row.ContactEmail) ||
+                !string.IsNullOrWhiteSpace(row.ContactTitle);
+
+            if (!hasContactData && !isNew) return;
+
+            var contact = existingContacts.FirstOrDefault(c =>
+                c.customer_id == vendor.vendor_id && c.isDefault);
+
+            if (contact == null && !isNew)
+            {
+                contact = existingContacts.FirstOrDefault(c => c.customer_id == vendor.vendor_id);
+            }
+
+            if (contact == null)
+            {
+                if (!hasContactData) return;
+
+                contact = new VendorContact
+                {
+                    customer_id = vendor.vendor_id,
+                    title = row.ContactTitle?.Trim() ?? "",
+                    firstname = row.ContactFirstName?.Trim() ?? "",
+                    lastname = row.ContactLastName?.Trim() ?? "",
+                    phoneno = row.ContactPhone?.Trim() ?? row.Phone?.Trim() ?? "",
+                    email = row.ContactEmail?.Trim() ?? row.Email?.Trim() ?? "",
+                    isDefault = true
+                };
+                _context.VendorContact.Add(contact);
+                existingContacts.Add(contact);
+            }
+            else if (hasContactData)
+            {
+                if (row.ContactTitle != null) contact.title = row.ContactTitle.Trim();
+                if (row.ContactFirstName != null) contact.firstname = row.ContactFirstName.Trim();
+                if (row.ContactLastName != null) contact.lastname = row.ContactLastName.Trim();
+                if (row.ContactPhone != null) contact.phoneno = row.ContactPhone.Trim();
+                if (row.ContactEmail != null) contact.email = row.ContactEmail.Trim();
+                contact.isDefault = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.firstname))
+                vendor.firstname = contact.firstname;
+            if (!string.IsNullOrWhiteSpace(contact.lastname))
+                vendor.last_name = contact.lastname;
+        }
+
+        private static string? ParseVendorStatus(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var v = value.Trim().ToLowerInvariant();
+            if (v is "active" or "1" or "yes" or "true") return "Active";
+            if (v is "inactive" or "0" or "no" or "false") return "Inactive";
+            return null;
+        }
+
         [HttpGet("CheckVendorDeletionImpact")]
         public IActionResult CheckVendorDeletionImpact([FromQuery] int vendorId, [FromQuery] int tenantId)
         {
@@ -657,6 +959,62 @@ namespace CimmpleAPI.Controllers
         public string phoneno { get; set; }
         public string email { get; set; }
         public bool isDefault { get; set; }
+    }
+
+    public class VendorImportRequest
+    {
+        public int Tenantid { get; set; }
+        public bool UpdateExisting { get; set; } = true;
+        public bool StopOnError { get; set; } = false;
+        public List<VendorImportRow> Rows { get; set; } = new();
+    }
+
+    public class VendorImportRow
+    {
+        public int? RowNumber { get; set; }
+        public string? VendorCode { get; set; }
+        public string? CompanyName { get; set; }
+        public string? CompanyAlias { get; set; }
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public string? Apartment { get; set; }
+        public string? City { get; set; }
+        public string? State { get; set; }
+        public string? Zip { get; set; }
+        public string? Country { get; set; }
+        public string? ShippingAddress { get; set; }
+        public string? ShippingApartment { get; set; }
+        public string? ShippingCity { get; set; }
+        public string? ShippingState { get; set; }
+        public string? ShippingZip { get; set; }
+        public string? ShippingCountry { get; set; }
+        public string? Term { get; set; }
+        public string? ShipVia { get; set; }
+        public string? Status { get; set; }
+        public string? ContactTitle { get; set; }
+        public string? ContactFirstName { get; set; }
+        public string? ContactLastName { get; set; }
+        public string? ContactPhone { get; set; }
+        public string? ContactEmail { get; set; }
+    }
+
+    public class VendorImportResult
+    {
+        public int Created { get; set; }
+        public int Updated { get; set; }
+        public int Skipped { get; set; }
+        public int Failed { get; set; }
+        public List<VendorImportRowResult> Rows { get; set; } = new();
+    }
+
+    public class VendorImportRowResult
+    {
+        public int RowNumber { get; set; }
+        public int? VendorId { get; set; }
+        public string Status { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string? Warning { get; set; }
     }
 }
 

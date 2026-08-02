@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import {
   JobTemplateService,
   JobTemplate,
@@ -13,14 +15,6 @@ import "./CustomerMaster.scss";
 import "./JobTemplateMaster.scss";
 
 type SortDirection = "asc" | "desc";
-
-interface ColumnDefinition {
-  key: string;
-  label: string;
-  sortKey?: string;
-  /** Columns the user cannot hide, so a row is never blank. */
-  locked?: boolean;
-}
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "templateCode", label: "Code", sortKey: "templateCode", locked: true },
@@ -71,16 +65,14 @@ const JobTemplateMasterComponent: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  const [hiddenColumns, setHiddenColumns] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(COLUMN_PREFERENCE_KEY);
-      return stored ? JSON.parse(stored) : DEFAULT_HIDDEN_COLUMNS;
-    } catch {
-      return DEFAULT_HIDDEN_COLUMNS;
-    }
-  });
-  const [showColumnChooser, setShowColumnChooser] = useState(false);
-  const columnChooserRef = useRef<HTMLDivElement>(null);
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -114,22 +106,6 @@ const JobTemplateMasterComponent: React.FC = () => {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchTerm]);
-
-  useEffect(() => {
-    if (!showColumnChooser) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        columnChooserRef.current &&
-        !columnChooserRef.current.contains(event.target as Node)
-      ) {
-        setShowColumnChooser(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showColumnChooser]);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -229,23 +205,6 @@ const JobTemplateMasterComponent: React.FC = () => {
     setStatusFilter("all");
     setPage(1);
   };
-
-  const toggleColumn = (key: string) => {
-    setHiddenColumns((prev) => {
-      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
-      try {
-        localStorage.setItem(COLUMN_PREFERENCE_KEY, JSON.stringify(next));
-      } catch {
-        // Preference persistence is best-effort
-      }
-      return next;
-    });
-  };
-
-  const visibleColumns = useMemo(
-    () => COLUMNS.filter((c) => c.locked || !hiddenColumns.includes(c.key)),
-    [hiddenColumns]
-  );
 
   const handleExport = async () => {
     setExporting(true);
@@ -359,30 +318,14 @@ const JobTemplateMasterComponent: React.FC = () => {
           >
             <span>{exporting ? "Exporting..." : "Export"}</span>
           </button>
-          <div className="column-chooser" ref={columnChooserRef}>
-            <button
-              className="btn-secondary"
-              onClick={() => setShowColumnChooser(!showColumnChooser)}
-              type="button"
-            >
-              <span>Columns</span>
-            </button>
-            {showColumnChooser && (
-              <div className="column-chooser-menu">
-                {COLUMNS.map((column) => (
-                  <label className="column-chooser-option" key={column.key}>
-                    <input
-                      type="checkbox"
-                      checked={column.locked || !hiddenColumns.includes(column.key)}
-                      disabled={column.locked}
-                      onChange={() => toggleColumn(column.key)}
-                    />
-                    <span>{column.label}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddTemplate} type="button">
             <span>+</span>
             <span>Add Template</span>

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import { PriceBreakdownService, PriceBreakdownMaster, PriceBreakdownMasterReq } from "../../Common/Services/PriceBreakdownService";
 import "./CustomerMaster.scss";
 
@@ -7,12 +9,31 @@ interface EditablePriceBreakdown extends PriceBreakdownMaster {
   isNew?: boolean;
 }
 
+const COLUMNS: ColumnDefinition[] = [
+  { key: "srno", label: "Sr. No." },
+  { key: "itemName", label: "Item Name", locked: true },
+  { key: "status", label: "Active" },
+  { key: "actions", label: "Actions", locked: true },
+];
+
+const DEFAULT_HIDDEN_COLUMNS: string[] = [];
+const COLUMN_PREFERENCE_KEY = "priceBreakdownMaster.hiddenColumns";
+
 const PriceBreakdownMasterComponent: React.FC = () => {
   const [priceBreakdowns, setPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [originalPriceBreakdowns, setOriginalPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     loadPriceBreakdowns();
@@ -149,6 +170,114 @@ const PriceBreakdownMasterComponent: React.FC = () => {
     }
   };
 
+  const getColumnHeaderStyle = (key: string): React.CSSProperties | undefined => {
+    switch (key) {
+      case "srno":
+        return { width: "80px" };
+      case "status":
+        return { width: "100px", textAlign: "center" };
+      case "actions":
+        return { width: "80px" };
+      default:
+        return undefined;
+    }
+  };
+
+  const renderCell = (
+    priceBreakdown: EditablePriceBreakdown,
+    index: number,
+    key: string
+  ): React.ReactNode => {
+    switch (key) {
+      case "srno":
+        return priceBreakdown.srno || index + 1;
+      case "itemName":
+        return (
+          <input
+            type="text"
+            className="form-input"
+            style={{
+              width: "100%",
+              padding: "0.625rem 0.75rem",
+              border: "1px solid #d1d5db",
+              borderRadius: "0.375rem",
+              fontSize: "0.875rem",
+              color: "#111827",
+              backgroundColor: "#ffffff",
+              transition: "all 0.15s",
+            }}
+            value={priceBreakdown.itemName || ""}
+            onChange={(e) => handleInputChange(index, "itemName", e.target.value)}
+            onFocus={(e) => {
+              e.target.style.borderColor = "#6366f1";
+              e.target.style.boxShadow = "0 0 0 3px rgba(99, 102, 241, 0.1)";
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = "#d1d5db";
+              e.target.style.boxShadow = "none";
+            }}
+            placeholder="Enter item name"
+            maxLength={500}
+          />
+        );
+      case "status":
+        return (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              gap: "0.5rem",
+              margin: 0,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={priceBreakdown.status === 1}
+              onChange={() => handleStatusToggle(index)}
+              style={{
+                width: "18px",
+                height: "18px",
+                cursor: "pointer",
+                margin: 0,
+              }}
+            />
+          </label>
+        );
+      case "actions":
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteRow(index);
+            }}
+            className="btn-icon btn-icon-danger"
+            style={{
+              padding: "0.25rem 0.5rem",
+              fontSize: "0.875rem",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            title="Delete"
+          >
+            ×
+          </button>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const getColumnCellStyle = (key: string): React.CSSProperties | undefined => {
+    if (key === "status" || key === "actions") {
+      return { textAlign: "center", verticalAlign: "middle" };
+    }
+    return undefined;
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -167,6 +296,14 @@ const PriceBreakdownMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your price breakdown items</p>
         </div>
         <div className="page-actions">
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddRow}>
             <span>+</span>
             <span>Add Item</span>
@@ -180,16 +317,17 @@ const PriceBreakdownMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th style={{ width: "80px" }}>Sr. No.</th>
-                <th>Item Name</th>
-                <th style={{ width: "100px", textAlign: "center" }}>Active</th>
-                <th style={{ width: "80px" }}>Actions</th>
+                {visibleColumns.map((column) => (
+                  <th key={column.key} style={getColumnHeaderStyle(column.key)}>
+                    {column.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {priceBreakdowns.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No price breakdown items found</p>
                     <small>Click "Add Item" to get started</small>
                   </td>
@@ -197,77 +335,14 @@ const PriceBreakdownMasterComponent: React.FC = () => {
               ) : (
                 priceBreakdowns.map((priceBreakdown, index) => (
                   <tr key={priceBreakdown.id || `new-${index}`}>
-                    <td>{priceBreakdown.srno || index + 1}</td>
-                    <td>
-                      <input
-                        type="text"
-                        className="form-input"
-                        style={{ 
-                          width: "100%", 
-                          padding: "0.625rem 0.75rem",
-                          border: "1px solid #d1d5db",
-                          borderRadius: "0.375rem",
-                          fontSize: "0.875rem",
-                          color: "#111827",
-                          backgroundColor: "#ffffff",
-                          transition: "all 0.15s"
-                        }}
-                        value={priceBreakdown.itemName || ""}
-                        onChange={(e) => handleInputChange(index, 'itemName', e.target.value)}
-                        onFocus={(e) => {
-                          e.target.style.borderColor = "#6366f1";
-                          e.target.style.boxShadow = "0 0 0 3px rgba(99, 102, 241, 0.1)";
-                        }}
-                        onBlur={(e) => {
-                          e.target.style.borderColor = "#d1d5db";
-                          e.target.style.boxShadow = "none";
-                        }}
-                        placeholder="Enter item name"
-                        maxLength={500}
-                      />
-                    </td>
-                    <td style={{ textAlign: "center", verticalAlign: "middle" }}>
-                      <label style={{ 
-                        display: "flex", 
-                        alignItems: "center", 
-                        justifyContent: "center",
-                        cursor: "pointer",
-                        gap: "0.5rem",
-                        margin: 0
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={priceBreakdown.status === 1}
-                          onChange={() => handleStatusToggle(index)}
-                          style={{ 
-                            width: "18px", 
-                            height: "18px", 
-                            cursor: "pointer",
-                            margin: 0
-                          }}
-                        />
-                      </label>
-                    </td>
-                    <td style={{ textAlign: "center", verticalAlign: "middle" }}>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteRow(index);
-                        }}
-                        className="btn-icon btn-icon-danger"
-                        style={{
-                          padding: "0.25rem 0.5rem",
-                          fontSize: "0.875rem",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center"
-                        }}
-                        title="Delete"
+                    {visibleColumns.map((column) => (
+                      <td
+                        key={column.key}
+                        style={getColumnCellStyle(column.key)}
                       >
-                        ×
-                      </button>
-                    </td>
+                        {renderCell(priceBreakdown, index, column.key)}
+                      </td>
+                    ))}
                   </tr>
                 ))
               )}

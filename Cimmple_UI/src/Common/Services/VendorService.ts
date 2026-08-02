@@ -65,6 +65,79 @@ export interface VendorMasterReq {
   coaAccountId?: number; // Optional Chart of Accounts ID
 }
 
+export interface VendorImportRow {
+  RowNumber?: number;
+  VendorCode?: string;
+  CompanyName?: string;
+  CompanyAlias?: string;
+  Email?: string;
+  Phone?: string;
+  Address?: string;
+  Apartment?: string;
+  City?: string;
+  State?: string;
+  Zip?: string;
+  Country?: string;
+  ShippingAddress?: string;
+  ShippingApartment?: string;
+  ShippingCity?: string;
+  ShippingState?: string;
+  ShippingZip?: string;
+  ShippingCountry?: string;
+  Term?: string;
+  ShipVia?: string;
+  Status?: string;
+  ContactTitle?: string;
+  ContactFirstName?: string;
+  ContactLastName?: string;
+  ContactPhone?: string;
+  ContactEmail?: string;
+}
+
+export interface VendorImportRowResult {
+  rowNumber: number;
+  vendorId?: number | null;
+  status: string;
+  message: string;
+  warning?: string | null;
+}
+
+export interface VendorImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: VendorImportRowResult[];
+}
+
+export const VENDOR_IMPORT_HEADERS = [
+  "VendorCode",
+  "CompanyName",
+  "CompanyAlias",
+  "Email",
+  "Phone",
+  "Address",
+  "Apartment",
+  "City",
+  "State",
+  "Zip",
+  "Country",
+  "ShippingAddress",
+  "ShippingApartment",
+  "ShippingCity",
+  "ShippingState",
+  "ShippingZip",
+  "ShippingCountry",
+  "Term",
+  "ShipVia",
+  "Status",
+  "ContactTitle",
+  "ContactFirstName",
+  "ContactLastName",
+  "ContactPhone",
+  "ContactEmail",
+] as const;
+
 export class VendorService {
   public static GetVendorlist = async (
     request: { tenantid: number }
@@ -116,6 +189,40 @@ export class VendorService {
       }
 
       return result as VendorMasterReq;
+    });
+  };
+
+  public static ImportVendors = async (
+    rows: VendorImportRow[],
+    options?: { updateExisting?: boolean; stopOnError?: boolean }
+  ): Promise<VendorImportResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Vendor/ImportVendors`;
+    return Instense.post(url, {
+      Tenantid: tenantID,
+      UpdateExisting: options?.updateExisting ?? true,
+      StopOnError: options?.stopOnError ?? false,
+      Rows: rows,
+    }).then((response) => {
+      const raw = response.data.result || {};
+      return {
+        created: raw.created ?? raw.Created ?? 0,
+        updated: raw.updated ?? raw.Updated ?? 0,
+        skipped: raw.skipped ?? raw.Skipped ?? 0,
+        failed: raw.failed ?? raw.Failed ?? 0,
+        rows: (raw.rows || raw.Rows || []).map((r: any) => ({
+          rowNumber: r.rowNumber ?? r.RowNumber,
+          vendorId: r.vendorId ?? r.VendorId,
+          status: r.status ?? r.Status ?? "",
+          message: r.message ?? r.Message ?? "",
+          warning: r.warning ?? r.Warning ?? null,
+        })),
+      } as VendorImportResult;
     });
   };
 

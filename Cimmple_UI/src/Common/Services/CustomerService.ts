@@ -90,6 +90,75 @@ export interface CustomerMasterReq {
   CustomerContact?: CustomerContact[];
 }
 
+export interface CustomerImportRow {
+  RowNumber?: number;
+  CustomerCode?: string;
+  CompanyName?: string;
+  CompanyAlias?: string;
+  Email?: string;
+  Phone?: string;
+  Address?: string;
+  Apartment?: string;
+  City?: string;
+  State?: string;
+  Zip?: string;
+  Country?: string;
+  ShippingAddress?: string;
+  ShippingApartment?: string;
+  ShippingCity?: string;
+  ShippingState?: string;
+  ShippingZip?: string;
+  ShippingCountry?: string;
+  Status?: string;
+  ContactTitle?: string;
+  ContactFirstName?: string;
+  ContactLastName?: string;
+  ContactPhone?: string;
+  ContactEmail?: string;
+}
+
+export interface CustomerImportRowResult {
+  rowNumber: number;
+  customerId?: number | null;
+  status: string;
+  message: string;
+  warning?: string | null;
+}
+
+export interface CustomerImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: CustomerImportRowResult[];
+}
+
+export const CUSTOMER_IMPORT_HEADERS = [
+  "CustomerCode",
+  "CompanyName",
+  "CompanyAlias",
+  "Email",
+  "Phone",
+  "Address",
+  "Apartment",
+  "City",
+  "State",
+  "Zip",
+  "Country",
+  "ShippingAddress",
+  "ShippingApartment",
+  "ShippingCity",
+  "ShippingState",
+  "ShippingZip",
+  "ShippingCountry",
+  "Status",
+  "ContactTitle",
+  "ContactFirstName",
+  "ContactLastName",
+  "ContactPhone",
+  "ContactEmail",
+] as const;
+
 export class CustomerService {
   public static GetCustomerlist = async (
     request: { tenantid: number }
@@ -141,6 +210,40 @@ export class CustomerService {
       }
 
       return result as CustomerMaster;
+    });
+  };
+
+  public static ImportCustomers = async (
+    rows: CustomerImportRow[],
+    options?: { updateExisting?: boolean; stopOnError?: boolean }
+  ): Promise<CustomerImportResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Customer/ImportCustomers`;
+    return Instense.post(url, {
+      Tenantid: tenantID,
+      UpdateExisting: options?.updateExisting ?? true,
+      StopOnError: options?.stopOnError ?? false,
+      Rows: rows,
+    }).then((response) => {
+      const raw = response.data.result || {};
+      return {
+        created: raw.created ?? raw.Created ?? 0,
+        updated: raw.updated ?? raw.Updated ?? 0,
+        skipped: raw.skipped ?? raw.Skipped ?? 0,
+        failed: raw.failed ?? raw.Failed ?? 0,
+        rows: (raw.rows || raw.Rows || []).map((r: any) => ({
+          rowNumber: r.rowNumber ?? r.RowNumber,
+          customerId: r.customerId ?? r.CustomerId,
+          status: r.status ?? r.Status ?? "",
+          message: r.message ?? r.Message ?? "",
+          warning: r.warning ?? r.Warning ?? null,
+        })),
+      } as CustomerImportResult;
     });
   };
 
