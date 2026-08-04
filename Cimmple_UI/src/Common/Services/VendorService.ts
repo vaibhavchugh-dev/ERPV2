@@ -62,7 +62,30 @@ export interface VendorMasterReq {
   ship_via: string;
   TenantID: number;
   VendorContact?: VendorContact[];
-  coaAccountId?: number; // Optional Chart of Accounts ID
+  coaAccountId?: number;
+  vendorcode?: string;
+  portalAccessEnabled?: boolean;
+  portalHasPassword?: boolean;
+  portalUserId?: number;
+  portalUserName?: string;
+  /** Plaintext portal password sent only when enabling/resetting access */
+  portalPassword?: string;
+}
+
+export interface SaveVendorPortalAccessRequest {
+  vendorId: number;
+  tenantId?: number;
+  enabled: boolean;
+  newPassword?: string;
+}
+
+export interface VendorPortalAccessResult {
+  message: string;
+  portalAccessEnabled: boolean;
+  portalHasPassword: boolean;
+  portalUserId?: number;
+  portalUserName?: string;
+  vendorCode?: string;
 }
 
 export interface VendorImportRow {
@@ -243,6 +266,34 @@ export class VendorService {
     return Instense.post(url, request).then((response) => {
       const result = response.data.result;
       return result;
+    });
+  };
+
+  public static SaveVendorPortalAccess = async (
+    request: SaveVendorPortalAccessRequest
+  ): Promise<VendorPortalAccessResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = request.tenantId || storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Vendor/SaveVendorPortalAccess`;
+    return Instense.post(url, {
+      VendorId: request.vendorId,
+      TenantId: tenantID,
+      Enabled: request.enabled,
+      NewPassword: request.newPassword || null,
+    }).then((response) => {
+      const raw = response.data.result || response.data || {};
+      return {
+        message: raw.message ?? raw.Message ?? "",
+        portalAccessEnabled: raw.portalAccessEnabled ?? raw.PortalAccessEnabled ?? false,
+        portalHasPassword: raw.portalHasPassword ?? raw.PortalHasPassword ?? false,
+        portalUserId: raw.portalUserId ?? raw.PortalUserId,
+        portalUserName: raw.portalUserName ?? raw.PortalUserName,
+        vendorCode: raw.vendorCode ?? raw.VendorCode,
+      } as VendorPortalAccessResult;
     });
   };
 

@@ -41,6 +41,9 @@ export interface EmployeeMasterReq {
   Zip: string;
   Country: string;
   LocationId?: number;
+  LocationIds?: number[];
+  DefaultLocationId?: number;
+  CanAccessAllLocations?: boolean;
   TenantID: number;
   DOB: string;
   SSN: string;
@@ -175,6 +178,9 @@ export class EmployeeService {
         Zip: result.zip,
         Country: result.country || "US",
         LocationId: result.locationId,
+        LocationIds: result.locationIds || (result.locationId ? [result.locationId] : []),
+        DefaultLocationId: result.defaultLocationId,
+        CanAccessAllLocations: !!result.canAccessAllLocations,
         TenantID: result.tenantID,
         DOB: result.dob || "",
         SSN: result.ssn || "",

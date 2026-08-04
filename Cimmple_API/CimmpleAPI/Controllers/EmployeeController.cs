@@ -12,7 +12,6 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class EmployeeController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
@@ -28,7 +27,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var employees = _context.UserDetails
-                    .Where(u => u.TenantID == tenantid)
+                    .Where(u => u.TenantID == tenantid && (u.VendorId == null || u.VendorId == 0))
                     .GroupJoin(_context.UserRole,
                         u => u.Role,
                         r => r.RoleID,
@@ -82,10 +81,11 @@ namespace CimmpleAPI.Controllers
                     .Where(r => r.RoleID == employee.Role)
                     .FirstOrDefault();
 
-                // Get location mapping if exists
-                var locationMapping = _context.UserMapping
+                // Get location mappings
+                var locationMappings = _context.UserMapping
                     .Where(um => um.userId == employeeId)
-                    .FirstOrDefault();
+                    .Select(um => um.locationId)
+                    .ToList();
 
                 var result = new
                 {
@@ -110,7 +110,10 @@ namespace CimmpleAPI.Controllers
                     state = employee.State ?? "",
                     zip = employee.Zip ?? "",
                     country = "US", // Default to US for now, can be added to UserDetail model later
-                    locationId = locationMapping != null ? (int?)locationMapping.locationId : null,
+                    locationId = locationMappings.FirstOrDefault() > 0 ? (int?)locationMappings.FirstOrDefault() : null,
+                    locationIds = locationMappings,
+                    defaultLocationId = employee.DefaultLocationId,
+                    canAccessAllLocations = employee.CanAccessAllLocations,
                     tenantID = employee.TenantID,
                     dob = employee.DOB ?? "",
                     ssn = employee.SSN ?? ""
@@ -240,39 +243,59 @@ namespace CimmpleAPI.Controllers
                 // Save employee first to get the User_UniqueID for new employees
                 await _context.SaveChangesAsync();
 
-                // Handle Location Mapping (after employee is saved so we have User_UniqueID)
-                if (request.LocationId.HasValue && request.LocationId.Value > 0)
-                {
-                    var existingMapping = _context.UserMapping
-                        .Where(um => um.userId == employee.User_UniqueID)
-                        .FirstOrDefault();
+                // Handle Location Mapping — supports multi-location (LocationIds) or legacy single LocationId
+                var locationIds = (request.LocationIds != null && request.LocationIds.Count > 0)
+                    ? request.LocationIds.Where(id => id > 0).Distinct().ToList()
+                    : (request.LocationId.HasValue && request.LocationId.Value > 0
+                        ? new List<int> { request.LocationId.Value }
+                        : new List<int>());
 
-                    if (existingMapping != null)
+                var existingMappings = _context.UserMapping
+                    .Where(um => um.userId == employee.User_UniqueID)
+                    .ToList();
+
+                if (locationIds.Count > 0)
+                {
+                    var toRemove = existingMappings.Where(m => !locationIds.Contains(m.locationId)).ToList();
+                    if (toRemove.Count > 0)
                     {
-                        existingMapping.locationId = request.LocationId.Value;
-                        _context.UserMapping.Update(existingMapping);
+                        _context.UserMapping.RemoveRange(toRemove);
                     }
-                    else
+
+                    var existingIds = existingMappings.Select(m => m.locationId).ToHashSet();
+                    foreach (var locId in locationIds.Where(id => !existingIds.Contains(id)))
                     {
-                        var newMapping = new UserMapping
+                        _context.UserMapping.Add(new UserMapping
                         {
                             userId = employee.User_UniqueID,
-                            locationId = request.LocationId.Value
-                        };
-                        _context.UserMapping.Add(newMapping);
+                            locationId = locId
+                        });
+                    }
+
+                    if (!employee.DefaultLocationId.HasValue
+                        || !locationIds.Contains(employee.DefaultLocationId.Value))
+                    {
+                        employee.DefaultLocationId = locationIds[0];
                     }
                 }
                 else
                 {
-                    // Remove location mapping if LocationId is not provided or is 0
-                    var existingMapping = _context.UserMapping
-                        .Where(um => um.userId == employee.User_UniqueID)
-                        .FirstOrDefault();
-
-                    if (existingMapping != null)
+                    if (existingMappings.Count > 0)
                     {
-                        _context.UserMapping.Remove(existingMapping);
+                        _context.UserMapping.RemoveRange(existingMappings);
                     }
+
+                    employee.DefaultLocationId = null;
+                }
+
+                if (request.CanAccessAllLocations.HasValue)
+                {
+                    employee.CanAccessAllLocations = request.CanAccessAllLocations.Value;
+                }
+
+                if (request.DefaultLocationId.HasValue && request.DefaultLocationId.Value > 0)
+                {
+                    employee.DefaultLocationId = request.DefaultLocationId.Value;
                 }
 
                 // Save location mapping changes
@@ -849,6 +872,10 @@ namespace CimmpleAPI.Controllers
         public string Apartment { get; set; }
         public string Country { get; set; }
         public int? LocationId { get; set; }
+        /// <summary>Assigned locations (multi-location). Takes precedence over LocationId when provided.</summary>
+        public List<int>? LocationIds { get; set; }
+        public int? DefaultLocationId { get; set; }
+        public bool? CanAccessAllLocations { get; set; }
         public int TenantID { get; set; }
         public string DOB { get; set; }
         public string SSN { get; set; }

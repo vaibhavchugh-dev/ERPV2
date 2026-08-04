@@ -42,6 +42,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     Zip: "",
     Country: "US",
     LocationId: undefined,
+    LocationIds: [],
+    DefaultLocationId: undefined,
+    CanAccessAllLocations: false,
     TenantID: 0,
     DOB: "",
     SSN: "",
@@ -124,6 +127,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
           Zip: employee.Zip,
           Country: employee.Country || "US",
           LocationId: employee.LocationId,
+          LocationIds: employee.LocationIds || (employee.LocationId ? [employee.LocationId] : []),
+          DefaultLocationId: employee.DefaultLocationId,
+          CanAccessAllLocations: !!employee.CanAccessAllLocations,
           TenantID: employee.TenantID,
           DOB: employee.DOB,
           SSN: employee.SSN,
@@ -525,7 +531,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                     </div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor="LocationId">Location</label>
+                    <label htmlFor="LocationIds">Locations</label>
                     <div className="input-group">
                       <div className="input-group-prepend">
                         <span className="input-group-icon">
@@ -536,13 +542,21 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                         </span>
                       </div>
                       <select
-                        id="LocationId"
-                        name="LocationId"
+                        id="LocationIds"
+                        name="LocationIds"
                         className="form-input"
-                        value={formData.LocationId || ""}
-                        onChange={(e) => handleInputChange("LocationId", e.target.value ? parseInt(e.target.value) : undefined)}
+                        multiple
+                        size={Math.min(6, Math.max(3, locations.length || 3))}
+                        value={(formData.LocationIds || []).map(String)}
+                        onChange={(e) => {
+                          const selected = Array.from(e.target.selectedOptions).map((o) => parseInt(o.value, 10));
+                          handleInputChange("LocationIds", selected);
+                          handleInputChange("LocationId", selected[0] || undefined);
+                          if (!formData.DefaultLocationId || !selected.includes(formData.DefaultLocationId)) {
+                            handleInputChange("DefaultLocationId", selected[0] || undefined);
+                          }
+                        }}
                       >
-                        <option value="">Select Location</option>
                         {locations.map((location) => (
                           <option key={location.locationId} value={location.locationId}>
                             {location.name} {location.code ? `(${location.code})` : ""}
@@ -550,6 +564,44 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                         ))}
                       </select>
                     </div>
+                    <small className="text-muted">Hold Ctrl/Cmd to select multiple locations</small>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="DefaultLocationId">Default Location</label>
+                    <select
+                      id="DefaultLocationId"
+                      name="DefaultLocationId"
+                      className="form-input"
+                      value={formData.DefaultLocationId || ""}
+                      onChange={(e) =>
+                        handleInputChange(
+                          "DefaultLocationId",
+                          e.target.value ? parseInt(e.target.value, 10) : undefined
+                        )
+                      }
+                    >
+                      <option value="">Select default</option>
+                      {(formData.LocationIds || []).map((id) => {
+                        const loc = locations.find((l) => l.locationId === id);
+                        return (
+                          <option key={id} value={id}>
+                            {loc?.name || id}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ display: "flex", alignItems: "center", paddingTop: 28 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!formData.CanAccessAllLocations}
+                        onChange={(e) => handleInputChange("CanAccessAllLocations", e.target.checked)}
+                      />
+                      Access all tenant locations
+                    </label>
                   </div>
                 </div>
                 <div className="form-row">

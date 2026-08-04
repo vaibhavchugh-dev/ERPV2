@@ -15,7 +15,6 @@ namespace CimmpleAPI.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    [AllowAnonymous]
     public class CategoryController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;

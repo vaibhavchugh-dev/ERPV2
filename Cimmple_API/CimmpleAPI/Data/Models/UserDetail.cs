@@ -55,6 +55,17 @@ namespace CimmpleAPI.Data.Models
         public string? SearchSSN { get; set; }
         public string? EmpCode { get; set; }
         public int? Empid { get; set; }
+
+        /// <summary>Preferred active location after login.</summary>
+        public int? DefaultLocationId { get; set; }
+
+        /// <summary>When true, user may switch to any location in the tenant.</summary>
+        public bool CanAccessAllLocations { get; set; }
+
+        public int FailedLoginCount { get; set; }
+
+        /// <summary>UTC time until which the account remains locked after failed attempts.</summary>
+        public DateTime? LockoutEndUtc { get; set; }
     }
 
     public class UserRole

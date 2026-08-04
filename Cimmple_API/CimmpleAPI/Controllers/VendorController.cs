@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services.Auth;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,10 +17,12 @@ namespace CimmpleAPI.Controllers
     public class VendorController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly IAuthService _authService;
 
-        public VendorController(CimmpleDbContext context)
+        public VendorController(CimmpleDbContext context, IAuthService authService)
         {
             _context = context;
+            _authService = authService;
         }
 
         [HttpGet("GetVendorlist")]
@@ -123,6 +126,16 @@ namespace CimmpleAPI.Controllers
                     .Where(vcm => vcm.vendorid == vendorId)
                     .FirstOrDefault();
 
+                var portalUser = _context.UserDetails
+                    .Where(u => u.VendorId == vendorId && u.TenantID == tenantId)
+                    .OrderBy(u => u.User_UniqueID)
+                    .FirstOrDefault();
+
+                var portalEnabled = portalUser != null
+                    && (string.IsNullOrWhiteSpace(portalUser.Status)
+                        || string.Equals(portalUser.Status, "Active", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(portalUser.Status, "A", StringComparison.OrdinalIgnoreCase));
+
                 var result = new
                 {
                     vendor_id = vendor.vendor_id,
@@ -148,7 +161,11 @@ namespace CimmpleAPI.Controllers
                     ship_via = vendor.ship_via,
                     TenantID = vendor.Tenantid,
                     VendorContact = contacts,
-                    coaAccountId = coaMapping != null ? (int?)coaMapping.accountid : null
+                    coaAccountId = coaMapping != null ? (int?)coaMapping.accountid : null,
+                    portalAccessEnabled = portalEnabled,
+                    portalHasPassword = portalUser != null && !string.IsNullOrEmpty(portalUser.Password),
+                    portalUserId = portalUser?.User_UniqueID,
+                    portalUserName = portalUser?.UserName
                 };
 
                 return Ok(new { result = result });
@@ -157,6 +174,198 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        /// <summary>
+        /// Enable/disable vendor portal login and optionally set/reset the portal password.
+        /// Creates a UserDetails row linked via VendorId when enabling.
+        /// </summary>
+        [HttpPost("SaveVendorPortalAccess")]
+        public async Task<IActionResult> SaveVendorPortalAccess([FromBody] SaveVendorPortalAccessRequest request)
+        {
+            try
+            {
+                if (request == null || request.VendorId <= 0)
+                {
+                    return BadRequest(new { error = "VendorId is required" });
+                }
+
+                var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var (ok, error, result) = await ApplyVendorPortalAccessAsync(
+                    request.VendorId, tenantId, request.Enabled, request.NewPassword);
+
+                if (!ok)
+                {
+                    if (string.Equals(error, "Vendor not found", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return NotFound(new { error });
+                    }
+                    return BadRequest(new { error });
+                }
+
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                var detail = ex.InnerException?.Message ?? ex.Message;
+                return StatusCode(500, new { error = detail });
+            }
+        }
+
+        private async Task<(bool ok, string? error, object? result)> ApplyVendorPortalAccessAsync(
+            int vendorId, int tenantId, bool enabled, string? newPassword)
+        {
+            var vendor = await _context.VendorMaster
+                .FirstOrDefaultAsync(v => v.vendor_id == vendorId && v.Tenantid == tenantId);
+
+            if (vendor == null)
+            {
+                return (false, "Vendor not found", null);
+            }
+
+            var portalUsers = await _context.UserDetails
+                .Where(u => u.VendorId == vendorId && u.TenantID == tenantId)
+                .OrderBy(u => u.User_UniqueID)
+                .ToListAsync();
+
+            if (!enabled)
+            {
+                foreach (var user in portalUsers)
+                {
+                    user.Status = "Inactive";
+                }
+
+                await _context.SaveChangesAsync();
+                return (true, null, new
+                {
+                    message = "Vendor portal access disabled",
+                    portalAccessEnabled = false,
+                    portalHasPassword = portalUsers.Any(u => !string.IsNullOrEmpty(u.Password)),
+                    portalUserId = portalUsers.FirstOrDefault()?.User_UniqueID,
+                    portalUserName = portalUsers.FirstOrDefault()?.UserName
+                });
+            }
+
+            var portalUser = portalUsers.FirstOrDefault();
+            var isNew = portalUser == null;
+            if (portalUser == null)
+            {
+                var userName = await GenerateUniquePortalUserNameAsync(vendor.vendorcode, tenantId, vendorId);
+                portalUser = new UserDetail
+                {
+                    TenantID = tenantId,
+                    VendorId = vendorId,
+                    UserName = userName,
+                    FirstName = string.IsNullOrWhiteSpace(vendor.firstname) ? (vendor.company_name ?? "Vendor") : vendor.firstname,
+                    LastName = string.IsNullOrWhiteSpace(vendor.last_name) ? "Portal" : vendor.last_name,
+                    Email = vendor.email ?? vendor.ContactEmail ?? "",
+                    Phone1 = vendor.phone_number ?? "",
+                    Phone2 = "",
+                    Status = "Active",
+                    EmployeeType = "Vendor",
+                    Date_of_hire = "",
+                    DOB = "",
+                    SSN = "",
+                    EmpCode = "",
+                    CreateDate = DateTime.UtcNow,
+                    PwdResetDate = DateTime.UtcNow,
+                    Password = "",
+                    PasswordSalt = "",
+                    UserToken = "",
+                    PwdChangeStatus = "No",
+                    ChangePassword = "No",
+                    HID = "",
+                    PrimaryContact = "",
+                    Date_of_termination = "",
+                    Termination_Reason = "",
+                    ValidateStatus = "",
+                    ChangedBy = "",
+                    BlockedPhone = "",
+                    PwdType = "",
+                    PhoneUpdateStatus = "",
+                    PrimaryMethod = "",
+                    ContractId = "",
+                    SearchSSN = "",
+                    Address = vendor.address ?? "",
+                    City = vendor.city ?? "",
+                    State = vendor.state ?? "",
+                    Zip = vendor.zip ?? "",
+                    Street = "",
+                    CanAccessAllLocations = false,
+                    FailedLoginCount = 0
+                };
+                _context.UserDetails.Add(portalUser);
+            }
+            else
+            {
+                portalUser.Status = "Active";
+                portalUser.VendorId = vendorId;
+                portalUser.EmployeeType = "Vendor";
+                if (string.IsNullOrWhiteSpace(portalUser.Email))
+                {
+                    portalUser.Email = vendor.email ?? vendor.ContactEmail ?? "";
+                }
+            }
+
+            var passwordProvided = !string.IsNullOrWhiteSpace(newPassword);
+            var hasExistingPassword = !string.IsNullOrEmpty(portalUser.Password);
+
+            if (passwordProvided)
+            {
+                var settings = await _context.SystemSettings
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId)
+                    ?? new SystemSettings { TenantId = tenantId };
+
+                if (!_authService.ValidatePasswordAgainstPolicy(newPassword!, settings, out var policyError))
+                {
+                    return (false, policyError ?? "Password does not meet policy requirements", null);
+                }
+
+                await _authService.EnsurePasswordHashedAsync(portalUser, newPassword!);
+                portalUser.PwdResetDate = DateTime.UtcNow;
+                portalUser.ChangePassword = "N";
+                portalUser.FailedLoginCount = 0;
+                portalUser.LockoutEndUtc = null;
+            }
+            else if (isNew || !hasExistingPassword)
+            {
+                return (false, "Password is required when enabling portal access for the first time.", null);
+            }
+
+            await _context.SaveChangesAsync();
+
+            return (true, null, new
+            {
+                message = isNew ? "Vendor portal access enabled" : "Vendor portal access updated",
+                portalAccessEnabled = true,
+                portalHasPassword = !string.IsNullOrEmpty(portalUser.Password),
+                portalUserId = portalUser.User_UniqueID,
+                portalUserName = portalUser.UserName,
+                vendorCode = vendor.vendorcode
+            });
+        }
+
+        private async Task<string> GenerateUniquePortalUserNameAsync(string? vendorCode, int tenantId, int vendorId)
+        {
+            var code = string.IsNullOrWhiteSpace(vendorCode) ? vendorId.ToString() : vendorCode.Trim();
+            var baseName = $"vendor.{code}";
+            var candidate = baseName;
+            var suffix = 0;
+            while (await _context.UserDetails.AnyAsync(u =>
+                       u.TenantID == tenantId
+                       && u.UserName == candidate
+                       && (u.VendorId == null || u.VendorId != vendorId)))
+            {
+                suffix++;
+                candidate = $"{baseName}.{suffix}";
+            }
+
+            return candidate;
         }
 
         // Manual body deserialization to avoid any stale model-binding metadata issues
@@ -269,6 +478,16 @@ namespace CimmpleAPI.Controllers
                         };
                         _context.VendorCOAMapping.Add(coaMapping);
                         _context.SaveChanges();
+                    }
+
+                    if (request.portalAccessEnabled.HasValue)
+                    {
+                        var (ok, portalError, _) = await ApplyVendorPortalAccessAsync(
+                            newVendor.vendor_id, request.TenantID, request.portalAccessEnabled.Value, request.portalPassword);
+                        if (!ok)
+                        {
+                            return BadRequest(new { error = portalError });
+                        }
                     }
 
                     return Ok(new { result = new { vendor_id = newVendor.vendor_id, message = "Vendor created successfully" } });
@@ -385,6 +604,16 @@ namespace CimmpleAPI.Controllers
                         {
                             _context.VendorCOAMapping.Remove(existingCoaMapping);
                             _context.SaveChanges();
+                        }
+                    }
+
+                    if (request.portalAccessEnabled.HasValue)
+                    {
+                        var (ok, portalError, _) = await ApplyVendorPortalAccessAsync(
+                            existingVendor.vendor_id, request.TenantID, request.portalAccessEnabled.Value, request.portalPassword);
+                        if (!ok)
+                        {
+                            return BadRequest(new { error = portalError });
                         }
                     }
 
@@ -947,6 +1176,11 @@ namespace CimmpleAPI.Controllers
         public int TenantID { get; set; }
         public List<VendorContactReq>? VendorContact { get; set; }
         public int? coaAccountId { get; set; } // Optional Chart of Accounts ID
+
+        /// <summary>When set, enable/disable vendor portal login as part of save.</summary>
+        public bool? portalAccessEnabled { get; set; }
+        /// <summary>Optional new portal password (required when enabling without an existing password).</summary>
+        public string? portalPassword { get; set; }
     }
 
     public class VendorContactReq
@@ -1015,6 +1249,14 @@ namespace CimmpleAPI.Controllers
         public string Status { get; set; } = "";
         public string Message { get; set; } = "";
         public string? Warning { get; set; }
+    }
+
+    public class SaveVendorPortalAccessRequest
+    {
+        public int VendorId { get; set; }
+        public int TenantId { get; set; }
+        public bool Enabled { get; set; }
+        public string? NewPassword { get; set; }
     }
 }
 

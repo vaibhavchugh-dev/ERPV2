@@ -222,8 +222,8 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     return createPortal(
       <div className="slideout-overlay" onClick={onClose}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
-          <div style={{ padding: "2rem", textAlign: "center" }}>
-            <div className="spinner"></div>
+          <div className="page-loading">
+            <div className="loading-spinner"></div>
             <p>Loading order details...</p>
           </div>
         </div>

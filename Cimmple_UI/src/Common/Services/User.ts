@@ -1,5 +1,6 @@
 import { API_ROOT } from "./Api-config";
 import Instense from "./Axios-config";
+import { AuthService } from "./AuthService";
 
 export class User {
   public static isAuthenticated = localStorage.getItem("token") !== null;
@@ -7,25 +8,17 @@ export class User {
   public static apiLoginResponse: any = null;
 
   public static RemoveAuthToken = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("storage");
+    AuthService.clearSession("erp");
     User.isAuthenticated = false;
   };
 
   public static removeToken = async (): Promise<any> => {
-    const url = `${API_ROOT.backendHost}/User/Logout`;
-    return Instense.post(url, {}).then((response) => {
-      return response.data;
-    }).catch(() => {
-      // Ignore errors on logout
-      return {};
-    });
+    try {
+      await AuthService.logout();
+    } catch {
+      // ignore
+    }
+    User.isAuthenticated = false;
+    return {};
   };
 }
-
-
-
-
-
-
-

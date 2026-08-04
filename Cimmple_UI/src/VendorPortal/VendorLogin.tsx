@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { Container, Row, Col, Card, Form, Button, Spinner } from "react-bootstrap";
+import { Container, Row, Col, Card, Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
+import { AuthService } from "../Common/Services/AuthService";
 import "./VendorPortal.scss";
 
 export const VendorLogin: React.FC = () => {
   const history = useHistory();
   const [vendorCode, setVendorCode] = useState("");
   const [password, setPassword] = useState("");
+  const [tenantId, setTenantId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -15,24 +17,22 @@ export const VendorLogin: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // For now, use vendor code as authentication
-      // In production, this should call a vendor authentication API
       if (!vendorCode) {
         toast.error("Vendor code is required");
         return;
       }
 
-      // Store vendor session
-      localStorage.setItem("vendorToken", "vendor-auth-token");
-      localStorage.setItem("vendorStorage", JSON.stringify({
-        vendorCode: vendorCode,
-        isVendor: true
-      }));
-      
+      const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
+      await AuthService.vendorLogin(
+        vendorCode.trim(),
+        password,
+        parsedTenant && !isNaN(parsedTenant) ? parsedTenant : undefined
+      );
+
       toast.success("Login successful!");
       history.push("/vendor/dashboard");
     } catch (error: any) {
-      toast.error(error.message || "Login failed");
+      toast.error(error?.response?.data?.message || error.message || "Login failed");
     } finally {
       setIsLoading(false);
     }
@@ -69,19 +69,22 @@ export const VendorLogin: React.FC = () => {
                     required
                   />
                 </Form.Group>
+                <Form.Group className="mb-3">
+                  <Form.Label>Tenant ID (optional)</Form.Label>
+                  <Form.Control
+                    type="number"
+                    placeholder="Only if required"
+                    value={tenantId}
+                    onChange={(e) => setTenantId(e.target.value)}
+                  />
+                </Form.Group>
                 <Button variant="primary" type="submit" className="w-100" disabled={isLoading}>
-                  {isLoading ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="mr-2" />
-                      Logging in...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
+                  {isLoading ? "Logging in..." : "Sign In"}
                 </Button>
               </Form>
               <div className="text-center mt-3">
                 <small className="text-muted">
+                  Sign in with your vendor code and portal password.{" "}
                   <a href="/login" style={{ color: "#6366f1" }}>Back to Main Portal</a>
                 </small>
               </div>
@@ -92,4 +95,3 @@ export const VendorLogin: React.FC = () => {
     </Container>
   );
 };
-

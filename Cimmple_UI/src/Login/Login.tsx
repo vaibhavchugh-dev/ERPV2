@@ -1,13 +1,16 @@
 import * as React from "react";
-import { Container, Row, Col, Card, Form, Button, Spinner } from "react-bootstrap";
+import { Container, Row, Col, Card, Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { User } from "../Common/Services/User";
+import { AuthService } from "../Common/Services/AuthService";
 import { toast } from "react-toastify";
 
 export const Login: React.FC = () => {
   const history = useHistory();
   const [userName, setUserName] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [tenantId, setTenantId] = React.useState("");
+  const [showTenant, setShowTenant] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -15,22 +18,33 @@ export const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // TODO: Implement actual login logic with backend API
-      // For now, just set a mock token to allow navigation
-      localStorage.setItem("token", "mock-token");
-      localStorage.setItem("storage", JSON.stringify({
-        userName: userName || "Demo User",
-        tenantID: 1,
-        rolId: 1,
-        userId: 1,
-        user_UniqueID: "1"
-      }));
-      
+      const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
+      const response = await AuthService.login(
+        userName.trim(),
+        password,
+        parsedTenant && !isNaN(parsedTenant) ? parsedTenant : undefined
+      );
+
       User.isAuthenticated = true;
+      User.apiLoginResponse = response;
+
+      if (response.user.mustChangePassword) {
+        toast.info("Please change your password");
+        history.push("/change-password");
+        return;
+      }
+
       toast.success("Login successful!");
       history.push("/home");
     } catch (error: any) {
-      toast.error(error.message || "Login failed");
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Login failed";
+      if (typeof message === "string" && message.toLowerCase().includes("tenant")) {
+        setShowTenant(true);
+      }
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -54,6 +68,7 @@ export const Login: React.FC = () => {
                     placeholder="Enter username"
                     value={userName}
                     onChange={(e) => setUserName(e.target.value)}
+                    autoComplete="username"
                     required
                   />
                 </Form.Group>
@@ -64,23 +79,28 @@ export const Login: React.FC = () => {
                     placeholder="Enter password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
                     required
                   />
                 </Form.Group>
+                {(showTenant || tenantId) && (
+                  <Form.Group className="mb-3">
+                    <Form.Label>Tenant ID</Form.Label>
+                    <Form.Control
+                      type="number"
+                      placeholder="Required if username exists in multiple tenants"
+                      value={tenantId}
+                      onChange={(e) => setTenantId(e.target.value)}
+                    />
+                  </Form.Group>
+                )}
                 <Button variant="primary" type="submit" className="w-100" disabled={isLoading}>
-                  {isLoading ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="mr-2" />
-                      Logging in...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
+                  {isLoading ? "Signing in..." : "Sign In"}
                 </Button>
               </Form>
               <div className="text-center mt-3">
                 <small className="text-muted">
-                  Note: Backend API integration pending. Any username/password will work for now.
+                  <a href="/vendor/login">Vendor portal</a>
                 </small>
               </div>
             </Card.Body>

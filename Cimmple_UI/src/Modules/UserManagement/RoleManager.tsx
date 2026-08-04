@@ -160,8 +160,9 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
     return (
       <div className="role-manager-overlay">
         <div className="role-manager-panel">
-          <div className="loading-spinner">
-            <i className="fas fa-spinner fa-spin"></i> Loading roles...
+          <div className="page-loading">
+            <div className="loading-spinner"></div>
+            <p>Loading roles...</p>
           </div>
         </div>
       </div>
@@ -320,11 +321,7 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
                   className="btn btn-primary"
                   disabled={saving}
                 >
-                  {saving ? (
-                    <>
-                      <i className="fas fa-spinner fa-spin"></i> Saving...
-                    </>
-                  ) : (
+                  {saving ? "Saving..." : (
                     <>
                       <i className="fas fa-save"></i> {editingRole ? 'Update' : 'Create'} Role
                     </>

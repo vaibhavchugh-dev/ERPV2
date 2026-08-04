@@ -85,7 +85,7 @@ const DeletionImpactDialog: React.FC<DeletionImpactDialogProps> = ({
 
         {!impact ? (
           <div className="deletion-loading">
-            <div className="spinner"></div>
+            <div className="loading-spinner"></div>
             <p>Checking deletion impact...</p>
           </div>
         ) : !impact.canDelete ? (

@@ -123,8 +123,9 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
     return (
       <div className="role-permission-manager-overlay">
         <div className="role-permission-manager-panel">
-          <div className="loading-spinner">
-            <i className="fas fa-spinner fa-spin"></i> Loading permissions...
+          <div className="page-loading">
+            <div className="loading-spinner"></div>
+            <p>Loading permissions...</p>
           </div>
         </div>
       </div>
@@ -354,11 +355,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
             onClick={handleSave}
             disabled={saving}
           >
-            {saving ? (
-              <>
-                <i className="fas fa-spinner fa-spin"></i> Saving...
-              </>
-            ) : (
+            {saving ? "Saving..." : (
               <>
                 <i className="fas fa-save"></i> Save Permissions
               </>
