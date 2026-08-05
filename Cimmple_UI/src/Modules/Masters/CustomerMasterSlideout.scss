@@ -671,11 +671,27 @@ select.form-input.status-inactive {
 .btn-cancel:hover:not(:disabled) {
   background: #f9fafb;
   border-color: #9ca3af;
+  color: #111827;
 }
 
 .btn-cancel:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: #f3f4f6 !important;
+  color: #374151 !important;
+  border: 1px solid #d1d5db !important;
+
+  &:hover,
+  &:hover:not(:disabled),
+  &:focus,
+  &:active {
+    background-color: #e5e7eb !important;
+    color: #111827 !important;
+    border-color: #9ca3af !important;
+  }
 }
 
 .btn-submit {

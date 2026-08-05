@@ -13,9 +13,29 @@ export const Login: React.FC = () => {
   const [showTenant, setShowTenant] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  React.useEffect(() => {
+    User.UnderMaintenance().then((result: any) => {
+      if (result?.message === "success" && result?.result === 1) {
+        window.location.href = window.location.origin + "/Under-Maintenance";
+      }
+    });
+
+    if (localStorage.getItem("logOutFromIdlePopUp")) {
+      localStorage.removeItem("logOutFromIdlePopUp");
+      setIdleLogOutMessage("You have been logged out due to inactivity");
+    }
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    setErrorMessage("");
+
+    if (!userNameVal || !userPwd) {
+      setErrorMessage("Username and password are required");
+      return;
+    }
+
+    setLoginButtonSpinner(true);
 
     try {
       const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
@@ -46,9 +66,14 @@ export const Login: React.FC = () => {
       }
       toast.error(message);
     } finally {
-      setIsLoading(false);
+      setChangePasswordSpinner(false);
     }
   };
+
+  if (isValidateLogin) {
+    console.log("***********");
+    return <Redirect to="/home" />;
+  }
 
   return (
     <Container fluid className="d-flex align-items-center justify-content-center" style={{ minHeight: "100vh", backgroundColor: "#f5f5f5" }}>
@@ -60,11 +85,13 @@ export const Login: React.FC = () => {
                 <h2>Cimmple ERP</h2>
                 <p className="text-muted">Sign in to your account</p>
               </Card.Title>
-              <Form onSubmit={handleLogin}>
+              <Form onSubmit={handleSubmit}>
                 <Form.Group className="mb-3">
                   <Form.Label>Username</Form.Label>
                   <Form.Control
                     type="text"
+                    name="userNameVal"
+                    value={userNameVal}
                     placeholder="Enter username"
                     value={userName}
                     onChange={(e) => setUserName(e.target.value)}
@@ -97,6 +124,12 @@ export const Login: React.FC = () => {
                 <Button variant="primary" type="submit" className="w-100" disabled={isLoading}>
                   {isLoading ? "Signing in..." : "Sign In"}
                 </Button>
+                {errorMessage && (
+                  <span className="text-danger d-block mt-2 text-center">{errorMessage}</span>
+                )}
+                {idleLogOutMessage && (
+                  <span className="text-danger d-block mt-2 text-center">{idleLogOutMessage}</span>
+                )}
               </Form>
               <div className="text-center mt-3">
                 <small className="text-muted">
@@ -107,6 +140,53 @@ export const Login: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Modal show={changepasswordpopupshow} onHide={() => setChangepasswordpopupshow(false)} centered backdrop="static">
+        <Modal.Header closeButton>
+          <Modal.Title>Change Password Required</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="text-muted">Please change your temporary password to continue.</p>
+          <Form onSubmit={handleChangePasswordSubmit}>
+            <Form.Group className="mb-3">
+              <Form.Label className="font-semibold">New Password</Form.Label>
+              <Form.Control
+                type="password"
+                placeholder="Enter new password"
+                value={changepassword}
+                onChange={(e) => setChangepassword(e.target.value)}
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label className="font-semibold">Confirm New Password</Form.Label>
+              <Form.Control
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmchangepassword}
+                onChange={(e) => setConfirmchangepassword(e.target.value)}
+              />
+            </Form.Group>
+            {changePasswordError && (
+              <span className="text-danger d-block mb-3 text-center">{changePasswordError}</span>
+            )}
+            <div className="d-flex justify-content-end gap-2">
+              <Button variant="secondary" className="me-2" onClick={() => setChangepasswordpopupshow(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" disabled={changePasswordSpinner || !changepassword || changepassword !== confirmchangepassword}>
+                {changePasswordSpinner ? (
+                  <>
+                    <Spinner animation="border" size="sm" className="me-2" />
+                    Updating...
+                  </>
+                ) : (
+                  "Change Password"
+                )}
+              </Button>
+            </div>
+          </Form>
+        </Modal.Body>
+      </Modal>
     </Container>
   );
 };

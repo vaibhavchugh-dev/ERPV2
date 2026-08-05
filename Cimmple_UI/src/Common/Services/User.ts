@@ -1,3 +1,5 @@
+import axios from "axios";
+import { IUser } from "../Contracts/IUser";
 import { API_ROOT } from "./Api-config";
 import Instense from "./Axios-config";
 import { AuthService } from "./AuthService";

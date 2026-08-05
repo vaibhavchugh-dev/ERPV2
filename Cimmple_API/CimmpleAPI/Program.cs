@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.Json;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Repositories;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using Serilog;
