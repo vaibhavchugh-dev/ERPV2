@@ -1,23 +1,17 @@
 import * as React from "react";
-import { Container, Row, Col, Card, Form, Button, Spinner, Modal } from "react-bootstrap";
-import { Redirect } from "react-router-dom";
+import { Container, Row, Col, Card, Form, Button } from "react-bootstrap";
+import { useHistory } from "react-router-dom";
 import { User } from "../Common/Services/User";
-import { IUser } from "../Common/Contracts/IUser";
+import { AuthService } from "../Common/Services/AuthService";
 import { toast } from "react-toastify";
 
 export const Login: React.FC = () => {
-  const [userNameVal, setUserNameVal] = React.useState("");
-  const [userPwd, setUserPwd] = React.useState("");
-  const [errorMessage, setErrorMessage] = React.useState("");
-  const [loginButtonSpinner, setLoginButtonSpinner] = React.useState(false);
-  const [isValidateLogin, setIsValidateLogin] = React.useState(false);
-  const [changepasswordpopupshow, setChangepasswordpopupshow] = React.useState(false);
-  const [changepassword, setChangepassword] = React.useState("");
-  const [confirmchangepassword, setConfirmchangepassword] = React.useState("");
-  const [loggedInUserName, setLoggedInUserName] = React.useState("");
-  const [idleLogOutMessage, setIdleLogOutMessage] = React.useState("");
-  const [changePasswordError, setChangePasswordError] = React.useState("");
-  const [changePasswordSpinner, setChangePasswordSpinner] = React.useState(false);
+  const history = useHistory();
+  const [userName, setUserName] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [tenantId, setTenantId] = React.useState("");
+  const [showTenant, setShowTenant] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
     User.UnderMaintenance().then((result: any) => {
@@ -44,82 +38,33 @@ export const Login: React.FC = () => {
     setLoginButtonSpinner(true);
 
     try {
-      const result: IUser | null = await User.loginNew(
-        userNameVal,
-        userPwd,
-        "LoginPage"
+      const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
+      const response = await AuthService.login(
+        userName.trim(),
+        password,
+        parsedTenant && !isNaN(parsedTenant) ? parsedTenant : undefined
       );
-      if (!User.apiLoginResponse?.success || !result) {
-        setErrorMessage("Please enter the valid username/password.");
-        setLoginButtonSpinner(false);
+
+      User.isAuthenticated = true;
+      User.apiLoginResponse = response;
+
+      if (response.user.mustChangePassword) {
+        toast.info("Please change your password");
+        history.push("/change-password");
         return;
       }
 
-      if (result.user_UniqueID === 0) {
-        setErrorMessage("Please enter the valid username/password.");
-        setLoginButtonSpinner(false);
-        return;
-      }
-
-      if (result.pwdChangeStatus === "req") {
-        setLoggedInUserName(result.userName);
-        setChangepasswordpopupshow(true);
-        setLoginButtonSpinner(false);
-        return;
-      }
-
-      if (result.message === "success") {
-        await User.ValidateUserStatus(result.userName, result.tenantID, "loginModal");
-        setIsValidateLogin(true);
-        setLoginButtonSpinner(false);
-      } else {
-        setErrorMessage(result.message || "Login failed");
-        setLoginButtonSpinner(false);
-      }
+      toast.success("Login successful!");
+      history.push("/home");
     } catch (error: any) {
-      setLoginButtonSpinner(false);
-      toast.error(`Server Error: ${error?.message || error}`, {
-        position: toast.POSITION.BOTTOM_RIGHT,
-        containerId: "Login",
-      });
-    }
-  };
-
-  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setChangePasswordError("");
-
-    if (!changepassword || !confirmchangepassword) {
-      setChangePasswordError("Both password fields are required.");
-      return;
-    }
-
-    if (changepassword !== confirmchangepassword) {
-      setChangePasswordError("Passwords do not match.");
-      return;
-    }
-
-    setChangePasswordSpinner(true);
-    try {
-      const userObj = User.apiLoginResponse?.user;
-      const userId = userObj?.user_UniqueID || userObj?.tenantID || 0;
-      const res = await User.ChangeOldPassword(loggedInUserName || userNameVal, changepassword, userId);
-
-      if (res?.message === "success" || res?.status === true || res?.success === true) {
-        toast.success("Password changed successfully! Logging in...", {
-          position: toast.POSITION.BOTTOM_RIGHT,
-          containerId: "Login",
-        });
-        setChangepasswordpopupshow(false);
-        if (userObj) {
-          await User.ValidateUserStatus(userObj.userName, userObj.tenantID, "loginModal");
-          setIsValidateLogin(true);
-        }
-      } else {
-        setChangePasswordError(res?.message || "Failed to change password.");
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Login failed";
+      if (typeof message === "string" && message.toLowerCase().includes("tenant")) {
+        setShowTenant(true);
       }
-    } catch (err: any) {
-      setChangePasswordError(err?.message || "Error updating password.");
+      toast.error(message);
     } finally {
       setChangePasswordSpinner(false);
     }
@@ -148,33 +93,36 @@ export const Login: React.FC = () => {
                     name="userNameVal"
                     value={userNameVal}
                     placeholder="Enter username"
-                    onChange={(e) => {
-                      setUserNameVal(e.target.value);
-                      setErrorMessage("");
-                    }}
-                    className="form-control inp_text"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    autoComplete="username"
+                    required
                   />
                 </Form.Group>
                 <Form.Group className="mb-3">
                   <Form.Label>Password</Form.Label>
                   <Form.Control
                     type="password"
-                    name="userPwd"
-                    value={userPwd}
-                    placeholder="Enter Password"
-                    onChange={(e) => setUserPwd(e.target.value)}
-                    className="form-control inp_text"
+                    placeholder="Enter password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    required
                   />
                 </Form.Group>
-                <Button variant="primary" type="submit" className="w-100" disabled={loginButtonSpinner}>
-                  {loginButtonSpinner ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="mr-2" />
-                      Logging in...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
+                {(showTenant || tenantId) && (
+                  <Form.Group className="mb-3">
+                    <Form.Label>Tenant ID</Form.Label>
+                    <Form.Control
+                      type="number"
+                      placeholder="Required if username exists in multiple tenants"
+                      value={tenantId}
+                      onChange={(e) => setTenantId(e.target.value)}
+                    />
+                  </Form.Group>
+                )}
+                <Button variant="primary" type="submit" className="w-100" disabled={isLoading}>
+                  {isLoading ? "Signing in..." : "Sign In"}
                 </Button>
                 {errorMessage && (
                   <span className="text-danger d-block mt-2 text-center">{errorMessage}</span>
@@ -183,6 +131,11 @@ export const Login: React.FC = () => {
                   <span className="text-danger d-block mt-2 text-center">{idleLogOutMessage}</span>
                 )}
               </Form>
+              <div className="text-center mt-3">
+                <small className="text-muted">
+                  <a href="/vendor/login">Vendor portal</a>
+                </small>
+              </div>
             </Card.Body>
           </Card>
         </Col>

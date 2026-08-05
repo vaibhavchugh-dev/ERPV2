@@ -525,8 +525,9 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     return (
       <div className="slideout-overlay" onClick={handleCancel}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
-          <div className="form-header">
-            <h2>Loading...</h2>
+          <div className="page-loading">
+            <div className="loading-spinner"></div>
+            <p>Loading...</p>
           </div>
         </div>
       </div>

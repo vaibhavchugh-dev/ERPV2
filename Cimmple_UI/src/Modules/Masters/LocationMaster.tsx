@@ -2,8 +2,28 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import LocationMasterSlideout from "./LocationMasterSlideout";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "code", label: "Code", sortKey: "code", locked: true },
+  { key: "name", label: "Name", sortKey: "name", locked: true },
+  { key: "locTypeName", label: "Type", sortKey: "locTypeName" },
+  { key: "displayPath", label: "Path", sortKey: "displayPath" },
+  { key: "parentName", label: "Parent", sortKey: "parentName" },
+  { key: "address", label: "Address", sortKey: "address" },
+  { key: "city", label: "City", sortKey: "city" },
+  { key: "state", label: "State", sortKey: "state" },
+  { key: "country", label: "Country", sortKey: "country" },
+  { key: "email", label: "Email", sortKey: "email" },
+  { key: "phone", label: "Phone", sortKey: "phone" },
+  { key: "status", label: "Status", sortKey: "status" },
+];
+
+const DEFAULT_HIDDEN_COLUMNS = ["address", "city", "state", "country", "email", "phone"];
+const COLUMN_PREFERENCE_KEY = "locationMaster.hiddenColumns";
 
 const LocationMasterComponent: React.FC = () => {
   const location = useLocation();
@@ -16,6 +36,15 @@ const LocationMasterComponent: React.FC = () => {
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof LocationMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -150,6 +179,45 @@ const LocationMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (location: LocationMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "code":
+        return location.code || "";
+      case "name":
+        return location.name || "";
+      case "locTypeName":
+        return location.locTypeName || "—";
+      case "displayPath":
+        return location.displayPath || "—";
+      case "parentName":
+        return location.parentName || "—";
+      case "address":
+        return location.address || "";
+      case "city":
+        return location.city || "";
+      case "state":
+        return location.state || "";
+      case "country":
+        return location.country || "";
+      case "email":
+        return location.email || "";
+      case "phone":
+        return location.phone || "";
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              location.status === "Active" ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {location.status || ""}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -170,6 +238,14 @@ const LocationMasterComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddLocation}>
             <span>+</span>
             <span>Add Location</span>
@@ -232,120 +308,28 @@ const LocationMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("code")}
-                >
-                  <div className="th-content">
-                    Code
-                    {getSortIcon("code")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("name")}
-                >
-                  <div className="th-content">
-                    Name
-                    {getSortIcon("name")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("locTypeName")}
-                >
-                  <div className="th-content">
-                    Type
-                    {getSortIcon("locTypeName")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("displayPath")}
-                >
-                  <div className="th-content">
-                    Path
-                    {getSortIcon("displayPath")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("parentName")}
-                >
-                  <div className="th-content">
-                    Parent
-                    {getSortIcon("parentName")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("address")}
-                >
-                  <div className="th-content">
-                    Address
-                    {getSortIcon("address")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("city")}
-                >
-                  <div className="th-content">
-                    City
-                    {getSortIcon("city")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("state")}
-                >
-                  <div className="th-content">
-                    State
-                    {getSortIcon("state")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("country")}
-                >
-                  <div className="th-content">
-                    Country
-                    {getSortIcon("country")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("email")}
-                >
-                  <div className="th-content">
-                    Email
-                    {getSortIcon("email")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("phone")}
-                >
-                  <div className="th-content">
-                    Phone
-                    {getSortIcon("phone")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("status")}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("status")}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof LocationMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof LocationMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedLocations.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No locations found</p>
                     <small>Click "Add Location" to get started</small>
                   </td>
@@ -353,28 +337,24 @@ const LocationMasterComponent: React.FC = () => {
               ) : (
                 sortedLocations.map((location) => (
                   <tr key={location.locationId} onClick={() => handleRowClick(location)}>
-                    <td>{location.code || ""}</td>
-                    <td>{location.name || ""}</td>
-                    <td>{location.locTypeName || "—"}</td>
-                    <td style={{ maxWidth: "280px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={location.displayPath}>
-                      {location.displayPath || "—"}
-                    </td>
-                    <td>{location.parentName || "—"}</td>
-                    <td>{location.address || ""}</td>
-                    <td>{location.city || ""}</td>
-                    <td>{location.state || ""}</td>
-                    <td>{location.country || ""}</td>
-                    <td>{location.email || ""}</td>
-                    <td>{location.phone || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          location.status === "Active" ? "badge-success" : "badge-danger"
-                        }`}
+                    {visibleColumns.map((column) => (
+                      <td
+                        key={column.key}
+                        style={
+                          column.key === "displayPath"
+                            ? {
+                                maxWidth: "280px",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }
+                            : undefined
+                        }
+                        title={column.key === "displayPath" ? location.displayPath : undefined}
                       >
-                        {location.status || ""}
-                      </span>
-                    </td>
+                        {renderCell(location, column.key)}
+                      </td>
+                    ))}
                   </tr>
                 ))
               )}
@@ -394,4 +374,3 @@ const LocationMasterComponent: React.FC = () => {
 };
 
 export default LocationMasterComponent;
-

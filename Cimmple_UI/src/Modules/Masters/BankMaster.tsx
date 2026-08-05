@@ -30,45 +30,47 @@ const BankMasterComponent: React.FC = () => {
 
   // Define columns for the table
   const columns: ColumnConfig<BankMaster>[] = [
-    { 
-      key: "accountNo", 
-      label: "Account No", 
-      sortable: true 
-    },
-    { 
-      key: "bankName", 
-      label: "Bank Name", 
+    {
+      key: "accountNo",
+      label: "Account No",
       sortable: true,
+      locked: true,
+    },
+    {
+      key: "bankName",
+      label: "Bank Name",
+      sortable: true,
+      locked: true,
       render: (value) => (
         <span style={{ fontWeight: 500, color: "#111827" }}>
           {value || ""}
         </span>
-      )
+      ),
     },
-    { 
-      key: "accountType", 
-      label: "Account Type", 
-      sortable: true 
+    {
+      key: "accountType",
+      label: "Account Type",
+      sortable: true,
     },
-    { 
-      key: "phone", 
-      label: "Phone Number", 
-      sortable: true 
+    {
+      key: "phone",
+      label: "Phone Number",
+      sortable: true,
     },
-    { 
-      key: "email", 
-      label: "Email", 
-      sortable: true 
+    {
+      key: "email",
+      label: "Email",
+      sortable: true,
     },
-    { 
-      key: "status", 
-      label: "Status", 
+    {
+      key: "status",
+      label: "Status",
       sortable: true,
       render: (value) => (
         <span className={`badge ${value === "Active" ? "badge-success" : "badge-danger"}`}>
           {value || "Active"}
         </span>
-      )
+      ),
     },
   ];
 
@@ -158,6 +160,8 @@ const BankMasterComponent: React.FC = () => {
         ]}
         getRowId={(row) => row.id}
         emptyMessage="No banks found"
+        columnPreferenceKey="bankMaster.hiddenColumns"
+        defaultHiddenColumns={["phone", "email"]}
       />
 
       {showSlideout && (

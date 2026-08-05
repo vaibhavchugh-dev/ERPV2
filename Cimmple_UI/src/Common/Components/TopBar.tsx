@@ -6,6 +6,7 @@ import { faSearch, faUser, faSignOutAlt, faChevronDown, faMapMarkerAlt } from "@
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
 import { LocationService, LocationMaster } from "../Services/LocationService";
+import { AuthService } from "../Services/AuthService";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import "./TopBar.scss";
 
@@ -190,22 +191,60 @@ const TopBar: React.FC = () => {
     };
   }, []);
 
+  const toLocationMaster = useCallback(
+    (l: { locationId: number; name: string; code: string; locType: number }): LocationMaster => ({
+      locationId: l.locationId,
+      name: l.name || "",
+      code: l.code || "",
+      locType: l.locType,
+      address: "",
+      city: "",
+      state: "",
+      zip: "",
+      country: "",
+      region: "",
+      email: "",
+      phone: "",
+      webaddress: "",
+      status: "Active",
+    }),
+    []
+  );
+
   // Define loadLocations function before using it in useEffect
   const loadLocations = useCallback(async () => {
-    if (tenantId === 0) return;
-    
     setLoadingLocations(true);
     try {
+      const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+      const canAccessAll = !!storageObj.canAccessAllLocations;
+      const cached = AuthService.getAllowedLocations();
+
+      if (!canAccessAll && cached.length > 0) {
+        setLocations(cached.map(toLocationMaster));
+        return;
+      }
+
+      if (tenantId === 0) return;
+
       const locationsData = await LocationService.GetLocations({ tenantid: tenantId });
       if (locationsData && Array.isArray(locationsData)) {
-        setLocations(locationsData);
+        if (canAccessAll || cached.length === 0) {
+          setLocations(locationsData);
+        } else {
+          const allowedIds = new Set(cached.map((l) => l.locationId));
+          setLocations(locationsData.filter((l: LocationMaster) => allowedIds.has(l.locationId)));
+        }
       }
     } catch (error) {
-      console.error('Error loading locations:', error);
+      console.error("Error loading locations:", error);
+      const cached = AuthService.getAllowedLocations();
+      if (cached.length > 0) {
+        setLocations(cached.map(toLocationMaster));
+      }
     } finally {
       setLoadingLocations(false);
     }
-  }, [tenantId]);
+  }, [tenantId, toLocationMaster]);
 
   // Define handleLocationChange function before using it in useEffect
   const handleLocationChange = useCallback((locationId: number) => {
@@ -213,15 +252,23 @@ const TopBar: React.FC = () => {
       setLocationMenuOpen(false);
       return;
     }
-    
-    dispatch({ type: 'SET_LOCATION', payload: locationId });
-    localStorage.setItem('locationId', locationId.toString());
-    
-    // Dispatch custom event for other components to listen
-    window.dispatchEvent(new CustomEvent('locationChanged', { 
-      detail: { locationId } 
-    }));
-    
+
+    const allowed = AuthService.getAllowedLocations();
+    const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+    const canAccessAll = !!storageObj.canAccessAllLocations;
+    if (!canAccessAll && allowed.length > 0 && !allowed.some((l) => l.locationId === locationId)) {
+      return;
+    }
+
+    dispatch({ type: "SET_LOCATION", payload: locationId });
+    localStorage.setItem("locationId", locationId.toString());
+
+    window.dispatchEvent(
+      new CustomEvent("locationChanged", {
+        detail: { locationId },
+      })
+    );
+
     setLocationMenuOpen(false);
   }, [currentLocationId, dispatch]);
 

@@ -242,10 +242,7 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
             <button type="button" className="btn-cancel" onClick={downloadTemplate}>
               Download Template
             </button>
-            <label
-              className="btn-submit"
-              style={{ cursor: "pointer", display: "inline-flex", alignItems: "center" }}
-            >
+            <label className="btn-submit">
               Choose CSV
               <input
                 type="file"
