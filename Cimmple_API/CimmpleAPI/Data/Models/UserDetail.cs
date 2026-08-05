@@ -55,6 +55,7 @@ namespace CimmpleAPI.Data.Models
         public string? SearchSSN { get; set; }
         public string? EmpCode { get; set; }
         public int? Empid { get; set; }
+        public string? ProfilePic { get; set; }
 
         /// <summary>Preferred active location after login.</summary>
         public int? DefaultLocationId { get; set; }

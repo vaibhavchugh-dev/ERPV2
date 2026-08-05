@@ -23,4 +23,9 @@ export class User {
     User.isAuthenticated = false;
     return {};
   };
+
+  public static UnderMaintenance = async (): Promise<any> => {
+    const url = `/User/UnderMaintenance`;
+    return Instense.get(url).then((response) => response.data);
+  };
 }

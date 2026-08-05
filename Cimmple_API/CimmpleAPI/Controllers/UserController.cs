@@ -143,44 +143,6 @@ namespace CimmpleAPI.Controllers
             return Ok(new JsonResponse(200, true, "success", response));
         }
 
-        [HttpGet("GetProfilePic")]
-        [AllowAnonymous]
-        public IActionResult GetProfilePic([FromQuery] int userId, [FromQuery] int? tenantId)
-        {
-            try
-            {
-                var user = _context.UserDetails.AsNoTracking().FirstOrDefault(u => u.User_UniqueID == userId);
-                if (user == null || string.IsNullOrEmpty(user.ProfilePic))
-                {
-                    return NotFound();
-                }
-
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var fullPath = Path.Combine(webRootPath, user.ProfilePic.Replace('/', Path.DirectorySeparatorChar));
-
-                if (!System.IO.File.Exists(fullPath))
-                {
-                    return NotFound();
-                }
-
-                var ext = Path.GetExtension(fullPath).ToLower();
-                var contentType = ext switch
-                {
-                    ".png" => "image/png",
-                    ".gif" => "image/gif",
-                    ".webp" => "image/webp",
-                    ".svg" => "image/svg+xml",
-                    _ => "image/jpeg"
-                };
-
-                return PhysicalFile(fullPath, contentType);
-            }
-            catch
-            {
-                return NotFound();
-            }
-        }
-
         [HttpPost("ChangePassword")]
         [AllowAnonymous]
         public IActionResult ChangePassword([FromBody] ChangePasswordModel changePassword)

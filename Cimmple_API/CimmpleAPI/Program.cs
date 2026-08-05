@@ -66,6 +66,10 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
 
+// Legacy user repository (UserController login / maintenance helpers)
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+
 // Auth services
 builder.Services.Configure<TokenConfigOptions>(builder.Configuration.GetSection(TokenConfigOptions.SectionName));
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
