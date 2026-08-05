@@ -1,3 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 
@@ -18,7 +21,7 @@ namespace CimmpleAPI.Controllers
 
             // Fallback for transitional clients; prefer claims after login is enforced
             var tenantIdHeader = Request.Headers["tenantId"].FirstOrDefault();
-            return int.TryParse(tenantIdHeader, out var tenantId) ? tenantId : 0;
+            return int.TryParse(tenantIdHeader, out var headerTenantId) ? headerTenantId : 0;
         }
 
         protected string? GetUsername()

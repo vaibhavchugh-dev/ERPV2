@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
+import { Modal, Button } from "react-bootstrap";
 import {
   EmployeeService,
   EmployeeMasterReq,
@@ -58,6 +59,20 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
 
+  // Profile Picture State & Refs
+  const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
+  const [profilePicPreview, setProfilePicPreview] = useState<string>("");
+  const [profilePicUrl, setProfilePicUrl] = useState<string>("");
+  const [showProfilePicModal, setShowProfilePicModal] = useState<boolean>(false);
+  const [showProfileCamera, setShowProfileCamera] = useState<boolean>(false);
+  const [pendingProfilePicFile, setPendingProfilePicFile] = useState<File | null>(null);
+  const [pendingProfilePicPreview, setPendingProfilePicPreview] = useState<string>("");
+
+  const profileVideoRef = useRef<HTMLVideoElement | null>(null);
+  const profileCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const profilePicInputRef = useRef<HTMLInputElement | null>(null);
+  const profileCameraStreamRef = useRef<MediaStream | null>(null);
+
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     setFormData((prev) => ({
@@ -101,6 +116,173 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     }
   };
 
+  const defaultProfileAvatar = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='%239ca3af'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>";
+
+  const getProfilePicSrc = () => {
+    return profilePicPreview || profilePicUrl || defaultProfileAvatar;
+  };
+
+  const loadProfilePic = async (userId: number) => {
+    if (!userId || userId === 0) return;
+    try {
+      const blob = await EmployeeService.GetProfilePic({ userId });
+      if (blob && blob.size > 0) {
+        const url = URL.createObjectURL(blob);
+        setProfilePicUrl(url);
+      }
+    } catch (e) {
+      console.error("Error loading profile picture:", e);
+    }
+  };
+
+  const stopProfileCamera = () => {
+    if (profileCameraStreamRef.current) {
+      profileCameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      profileCameraStreamRef.current = null;
+    }
+    if (profileVideoRef.current) {
+      profileVideoRef.current.srcObject = null;
+    }
+  };
+
+  const openProfilePicModal = () => {
+    setShowProfilePicModal(true);
+    setShowProfileCamera(false);
+    setPendingProfilePicFile(profilePicFile);
+    setPendingProfilePicPreview(profilePicPreview || profilePicUrl || "");
+  };
+
+  const closeProfilePicModal = () => {
+    stopProfileCamera();
+    setShowProfilePicModal(false);
+    setShowProfileCamera(false);
+    setPendingProfilePicFile(null);
+    setPendingProfilePicPreview("");
+    if (profilePicInputRef.current) {
+      profilePicInputRef.current.value = "";
+    }
+  };
+
+  const openProfileCamera = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast.error("Camera is not available in this browser.");
+      return;
+    }
+
+    try {
+      stopProfileCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "user" },
+      });
+      profileCameraStreamRef.current = stream;
+      setShowProfileCamera(true);
+      setPendingProfilePicFile(null);
+      setPendingProfilePicPreview("");
+
+      setTimeout(() => {
+        if (profileVideoRef.current) {
+          profileVideoRef.current.srcObject = stream;
+          profileVideoRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch (err) {
+      toast.error("Unable to open the camera. Please allow camera access.");
+    }
+  };
+
+  const captureProfilePhoto = () => {
+    const video = profileVideoRef.current;
+    const canvas = profileCanvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
+      toast.error("Camera is not ready yet.");
+      return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      toast.error("Unable to capture photo.");
+      return;
+    }
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const preview = canvas.toDataURL("image/jpeg", 0.9);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          toast.error("Unable to capture photo.");
+          return;
+        }
+
+        const file = new File([blob], `profile-photo-${Date.now()}.jpg`, {
+          type: "image/jpeg",
+        });
+
+        stopProfileCamera();
+        setPendingProfilePicFile(file);
+        setPendingProfilePicPreview(preview);
+        setShowProfileCamera(false);
+      },
+      "image/jpeg",
+      0.9
+    );
+  };
+
+  const handleProfilePicChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+
+    const allowedExtensions = ["jpg", "jpeg", "png", "gif", "webp"];
+    const fileExtension = file.name.split(".").pop()?.toLowerCase();
+    const isImageFile =
+      (file.type && file.type.indexOf("image/") === 0) ||
+      (fileExtension && allowedExtensions.includes(fileExtension));
+
+    if (!isImageFile) {
+      toast.error("Only image files are allowed.");
+      event.target.value = "";
+      return;
+    }
+
+    const maxFileSize = 5 * 1024 * 1024;
+    if (file.size > maxFileSize) {
+      toast.error("Profile picture must be 5 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      stopProfileCamera();
+      setPendingProfilePicFile(file);
+      setPendingProfilePicPreview(reader.result as string);
+      setShowProfileCamera(false);
+    };
+    reader.onerror = () => {
+      toast.error("Unable to read the selected image.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveProfilePicSelection = () => {
+    if (!pendingProfilePicFile) {
+      closeProfilePicModal();
+      return;
+    }
+
+    setProfilePicFile(pendingProfilePicFile);
+    setProfilePicPreview(pendingProfilePicPreview);
+    setShowProfilePicModal(false);
+    setIsStateChanged(true);
+
+    if (profilePicInputRef.current) {
+      profilePicInputRef.current.value = "";
+    }
+  };
+
   const loadEmployee = async () => {
     setLoading(true);
     try {
@@ -133,9 +315,10 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
           TenantID: employee.TenantID,
           DOB: employee.DOB,
           SSN: employee.SSN,
-          // Keep actual UserName if it exists, otherwise empty (toggle will be set based on this)
           UserName: employee.UserName && employee.UserName.trim() !== "" ? employee.UserName : "",
         });
+
+        loadProfilePic(employee.User_UniqueID);
       }
     } catch (error: any) {
       console.error("Error loading employee:", error);
@@ -357,7 +540,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       }
       // If UserName has a value other than "enabled", it's an existing login username - keep it as is
       
-      await EmployeeService.SaveEmployee(submitData);
+      await EmployeeService.SaveEmployeeData(submitData, profilePicFile);
       toast.success(
         employeeId > 0 ? "Employee updated successfully" : "Employee created successfully"
       );
@@ -392,9 +575,52 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     <div className="slideout-overlay" onClick={handleDiscard}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
-          <h2>
-            {employeeId === 0 ? "New Employee" : formData.FirstName && formData.LastName ? `${formData.FirstName} ${formData.LastName}` : "Edit Employee"}
-          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="user-slideout-profile-pic" style={{ position: "relative", width: "60px", height: "60px", flex: "0 0 60px" }}>
+              <button
+                type="button"
+                className="btn p-0 border-0 bg-transparent position-relative"
+                onClick={openProfilePicModal}
+                title="Edit profile picture"
+                style={{ width: "100%", height: "100%" }}
+              >
+                <img
+                  src={getProfilePicSrc()}
+                  alt="Profile"
+                  style={{
+                    width: "60px",
+                    height: "60px",
+                    objectFit: "cover",
+                    borderRadius: "50%",
+                    border: "1px solid #d7dde5",
+                  }}
+                />
+                <span
+                  className="edit-icon d-flex align-items-center justify-content-center"
+                  style={{
+                    position: "absolute",
+                    right: "0px",
+                    bottom: "0px",
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "50%",
+                    background: "#164DA0",
+                    color: "#fff",
+                    border: "2px solid #fff",
+                    fontSize: "11px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                  }}
+                >
+                  ✎
+                </span>
+              </button>
+            </div>
+            <h2>
+              {employeeId === 0 ? "New Employee" : formData.FirstName && formData.LastName ? `${formData.FirstName} ${formData.LastName}` : "Edit Employee"}
+            </h2>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div className="status-field-inline">
               <div className={`input-group ${formData.Status === 'Active' ? 'status-active-group' : 'status-inactive-group'}`} style={{ maxWidth: '150px' }}>
@@ -1006,6 +1232,100 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
           onDeleteAll={handleDeleteAll}
           isLoading={loading}
         />
+
+        <Modal
+          show={showProfilePicModal}
+          onHide={closeProfilePicModal}
+          centered
+        >
+          <Modal.Header closeButton>
+            <Modal.Title>Upload Photo</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <div className="d-flex flex-column align-items-center">
+              {showProfileCamera ? (
+                <>
+                  <video
+                    ref={profileVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      width: "100%",
+                      maxWidth: "420px",
+                      aspectRatio: "4 / 3",
+                      objectFit: "cover",
+                      borderRadius: "8px",
+                      border: "1px solid #d7dde5",
+                      background: "#111",
+                    }}
+                  />
+                  <Button
+                    variant="primary"
+                    type="button"
+                    className="mt-3"
+                    onClick={captureProfilePhoto}
+                  >
+                    Capture Photo
+                  </Button>
+                </>
+              ) : (
+                <img
+                  src={pendingProfilePicPreview || getProfilePicSrc()}
+                  alt="Profile preview"
+                  style={{
+                    width: "200px",
+                    height: "200px",
+                    objectFit: "cover",
+                    borderRadius: "50%",
+                    border: "1px solid #d7dde5",
+                  }}
+                />
+              )}
+              <div className="d-flex align-items-center justify-content-center gap-2 mt-4">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => profilePicInputRef.current?.click()}
+                >
+                  Choose Photo
+                </Button>
+                <Button
+                  variant="primary"
+                  type="button"
+                  onClick={openProfileCamera}
+                >
+                  Take Photo
+                </Button>
+              </div>
+              <input
+                ref={profilePicInputRef}
+                type="file"
+                accept="image/*"
+                className="d-none"
+                onChange={handleProfilePicChange}
+              />
+              <canvas ref={profileCanvasRef} className="d-none" />
+            </div>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={closeProfilePicModal}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="button"
+              onClick={saveProfilePicSelection}
+              disabled={!pendingProfilePicFile}
+            >
+              Use Photo
+            </Button>
+          </Modal.Footer>
+        </Modal>
       </div>
     </div>
   );

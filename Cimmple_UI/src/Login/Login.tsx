@@ -13,9 +13,29 @@ export const Login: React.FC = () => {
   const [tenantId, setTenantId] = React.useState("");
   const [showTenant, setShowTenant] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [idleLogOutMessage, setIdleLogOutMessage] = React.useState("");
 
-  const handleLogin = async (e: React.FormEvent) => {
+  React.useEffect(() => {
+    User.UnderMaintenance().then((result: any) => {
+      if (result?.message === "success" && result?.result === 1) {
+        window.location.href = window.location.origin + "/Under-Maintenance";
+      }
+    });
+
+    if (localStorage.getItem("logOutFromIdlePopUp")) {
+      localStorage.removeItem("logOutFromIdlePopUp");
+      setIdleLogOutMessage("You have been logged out due to inactivity");
+    }
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!userName.trim() || !password) {
+      toast.error("Username and password are required");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -94,7 +114,13 @@ export const Login: React.FC = () => {
             <p>Sign in to your Cimmple account</p>
           </div>
 
-          <Form className="login-form" onSubmit={handleLogin}>
+          {idleLogOutMessage && (
+            <div className="login-idle-message" role="status">
+              {idleLogOutMessage}
+            </div>
+          )}
+
+          <Form className="login-form" onSubmit={handleSubmit}>
             <Form.Group className="mb-3">
               <Form.Label>Username</Form.Label>
               <Form.Control
