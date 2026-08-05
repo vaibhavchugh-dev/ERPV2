@@ -24,33 +24,54 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetJobOrders")]
-        public IActionResult GetJobOrders([FromQuery] int tenantid)
+        public IActionResult GetJobOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                var jobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantid)
-                    .OrderByDescending(j => j.OrderDate)
-                    .Select(j => new
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                // Job orders inherit location from the linked customer order.
+                var query =
+                    from j in _context.JobOrderMaster.AsNoTracking()
+                    where j.Tenantid == tenantid
+                    join o in _context.CustomerOrder.AsNoTracking().Where(x => x.Tenantid == tenantid)
+                        on j.CustomerOrderID equals o.OrderID into orderGroup
+                    from o in orderGroup.DefaultIfEmpty()
+                    select new
                     {
-                        jobOrderID = j.JobOrderID,
-                        jobOrderNumber = j.JobOrderNumber,
-                        customerOrderID = j.CustomerOrderID,
-                        customerOrderDetailID = j.CustomerOrderDetailID,
-                        customerID = j.CustomerID,
-                        customerName = j.CustomerName ?? "",
-                        customerCode = j.CustomerCode ?? "",
-                        partNo = j.PartNo ?? "",
-                        partName = j.PartName ?? "",
-                        qtyOrdered = j.QtyOrdered,
-                        unit = j.Unit ?? "",
-                        unitPrice = j.UnitPrice,
-                        dueDate = j.DueDate,
-                        jobNumber = j.JobNumber ?? "",
-                        jobDesc = j.JobDesc ?? "",
-                        jobPriority = j.JobPriority,
-                        status = j.Status ?? "Draft",
-                        orderDate = j.OrderDate
+                        Job = j,
+                        OrderLocationId = o != null ? o.locationId : 0
+                    };
+
+                if (filterLocationId.HasValue)
+                {
+                    query = query.Where(x => x.OrderLocationId == filterLocationId.Value);
+                }
+
+                var jobOrders = query
+                    .OrderByDescending(x => x.Job.OrderDate)
+                    .Select(x => new
+                    {
+                        jobOrderID = x.Job.JobOrderID,
+                        jobOrderNumber = x.Job.JobOrderNumber,
+                        customerOrderID = x.Job.CustomerOrderID,
+                        customerOrderDetailID = x.Job.CustomerOrderDetailID,
+                        customerID = x.Job.CustomerID,
+                        customerName = x.Job.CustomerName ?? "",
+                        customerCode = x.Job.CustomerCode ?? "",
+                        partNo = x.Job.PartNo ?? "",
+                        partName = x.Job.PartName ?? "",
+                        qtyOrdered = x.Job.QtyOrdered,
+                        unit = x.Job.Unit ?? "",
+                        unitPrice = x.Job.UnitPrice,
+                        dueDate = x.Job.DueDate,
+                        jobNumber = x.Job.JobNumber ?? "",
+                        jobDesc = x.Job.JobDesc ?? "",
+                        jobPriority = x.Job.JobPriority,
+                        status = x.Job.Status ?? "Draft",
+                        orderDate = x.Job.OrderDate,
+                        locationId = x.OrderLocationId
                     })
                     .ToList();
 

@@ -75,10 +75,11 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const locationId = Number(localStorage.getItem("locationId") || 0);
     setFormData((prev) => ({
       ...prev,
       TenantID: storage?.tenantID || 0,
-      locationId: storage?.locationId || 0,
+      locationId: locationId > 0 ? locationId : 0,
     }));
 
     loadCOAAccounts();

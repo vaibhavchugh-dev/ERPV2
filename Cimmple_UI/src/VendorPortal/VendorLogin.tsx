@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { Container, Row, Col, Card, Form, Button } from "react-bootstrap";
+import { Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AuthService } from "../Common/Services/AuthService";
-import "./VendorPortal.scss";
+import "../Login/Login.scss";
 
 export const VendorLogin: React.FC = () => {
   const history = useHistory();
@@ -39,59 +39,90 @@ export const VendorLogin: React.FC = () => {
   };
 
   return (
-    <Container fluid className="vendor-login-container">
-      <Row className="w-100">
-        <Col md={4} className="mx-auto">
-          <Card className="vendor-login-card">
-            <Card.Body>
-              <Card.Title className="text-center mb-4">
-                <h2>Vendor Portal</h2>
-                <p className="text-muted">Sign in to view and respond to quotations</p>
-              </Card.Title>
-              <Form onSubmit={handleLogin}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Vendor Code</Form.Label>
-                  <Form.Control
-                    type="text"
-                    placeholder="Enter your vendor code"
-                    value={vendorCode}
-                    onChange={(e) => setVendorCode(e.target.value)}
-                    required
-                  />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                  <Form.Label>Password</Form.Label>
-                  <Form.Control
-                    type="password"
-                    placeholder="Enter password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                </Form.Group>
-                <Form.Group className="mb-3">
-                  <Form.Label>Tenant ID (optional)</Form.Label>
-                  <Form.Control
-                    type="number"
-                    placeholder="Only if required"
-                    value={tenantId}
-                    onChange={(e) => setTenantId(e.target.value)}
-                  />
-                </Form.Group>
-                <Button variant="primary" type="submit" className="w-100" disabled={isLoading}>
-                  {isLoading ? "Logging in..." : "Sign In"}
-                </Button>
-              </Form>
-              <div className="text-center mt-3">
-                <small className="text-muted">
-                  Sign in with your vendor code and portal password.{" "}
-                  <a href="/login" style={{ color: "#6366f1" }}>Back to Main Portal</a>
-                </small>
-              </div>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-    </Container>
+    <div className="login-page">
+      <aside className="login-brand" aria-label="Cimmple vendor portal">
+        <div className="login-brand-top">
+          <div className="login-brand-mark">
+            <img src="/logo.svg" alt="" />
+            <span>Cimmple</span>
+          </div>
+        </div>
+
+        <div className="login-brand-copy">
+          <h1>
+            Vendor portal for{" "}
+            <em>quotations</em>
+          </h1>
+          <p>
+            Review RFQs, submit pricing, and collaborate with machine shops
+            running on CimmpleFlow.
+          </p>
+          <div className="login-brand-pills" aria-hidden="true">
+            <span>RFQs</span>
+            <span>Quotes</span>
+            <span>Responses</span>
+          </div>
+        </div>
+
+        <div className="login-brand-foot">
+          <span>Supplier access for Cimmple shops</span>
+          <a href="https://www.cimmple.com/" target="_blank" rel="noopener noreferrer">
+            cimmple.com
+          </a>
+        </div>
+      </aside>
+
+      <main className="login-panel">
+        <div className="login-panel-inner">
+          <div className="login-panel-header">
+            <h2>Vendor sign in</h2>
+            <p>Use your vendor code and portal password</p>
+          </div>
+
+          <Form className="login-form" onSubmit={handleLogin}>
+            <Form.Group className="mb-3">
+              <Form.Label>Vendor Code</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="Enter your vendor code"
+                value={vendorCode}
+                onChange={(e) => setVendorCode(e.target.value)}
+                required
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Password</Form.Label>
+              <Form.Control
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Tenant ID (optional)</Form.Label>
+              <Form.Control
+                type="number"
+                placeholder="Only if required"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+              />
+            </Form.Group>
+            <Button
+              type="submit"
+              className="w-100 login-submit"
+              disabled={isLoading}
+            >
+              {isLoading ? "Signing in..." : "Sign In"}
+            </Button>
+          </Form>
+
+          <div className="login-footer-link">
+            Employee? <a href="/login">Back to main portal</a>
+          </div>
+        </div>
+      </main>
+    </div>
   );
 };

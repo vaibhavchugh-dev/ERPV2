@@ -22,16 +22,30 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetVendorInvoices")]
-        public IActionResult GetVendorInvoices([FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public IActionResult GetVendorInvoices(
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? vendorId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
 
-                var invoices = _context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId)
-                    .ToList();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var invoicesQuery = _context.VendorInvoiceMaster
+                    .Where(vim => vim.TenantId == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    invoicesQuery = invoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                }
+
+                var invoices = invoicesQuery.ToList();
 
                 Console.WriteLine($"Found {invoices.Count} vendor invoices in database");
 
@@ -146,6 +160,9 @@ namespace CimmpleAPI.Controllers
                     // Generate invoice number
                     var invoiceNumber = GenerateVendorInvoiceNumber(tenantId);
 
+                    if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
+                        return forbidLoc!;
+
                     // Create vendor invoice header
                     var invoice = new VendorInvoiceMaster
                     {
@@ -158,7 +175,7 @@ namespace CimmpleAPI.Controllers
                         VendorCode = request.VendorCode,
                         VendorName = request.VendorName,
                         vid = request.VendorId,
-                        locationId = request.LocationId ?? 1,
+                        locationId = resolvedInvoiceLoc,
                         Amount = request.LineItems.Sum(item => item.Amount),
                         TotalAmount = request.LineItems.Sum(item => item.Amount),
                         PaymentMethod = "",

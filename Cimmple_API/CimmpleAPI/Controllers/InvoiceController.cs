@@ -226,6 +226,8 @@ namespace CimmpleAPI.Controllers
 
                     var postingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
                     var postingDesc = $"Auto-posted customer invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
+                    if (!TryResolveLocationId(null, out var jeLocationId, out var forbidJeLoc, fallback: 1))
+                        return forbidJeLoc!;
                     var invoiceHeader = new JournalEntry
                     {
                         EntryDate = invoice.InvoiceDate.Date,
@@ -233,7 +235,7 @@ namespace CimmpleAPI.Controllers
                         Description = postingDesc,
                         AccountingPeriod = invoicePeriodKey,
                         TenantId = tenantId,
-                        locationId = 1,
+                        locationId = jeLocationId,
                         createdby = GetUserId(),
                         createdDate = DateTime.UtcNow
                     };

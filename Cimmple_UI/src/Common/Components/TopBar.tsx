@@ -1,20 +1,30 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useHistory, useLocation } from "react-router-dom";
-import { useDispatch, useSelector } from "react-redux";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faSearch, faUser, faSignOutAlt, faChevronDown, faMapMarkerAlt } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
-import { LocationService, LocationMaster } from "../Services/LocationService";
+import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
+import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import "./TopBar.scss";
+
+/** Working locations for the switcher: sites and warehouses (not bins/shelves/zones). */
+const isWorkingLocation = (loc: { locType?: number | null }) => {
+  const t = loc.locType;
+  return (
+    t == null ||
+    t === 0 ||
+    t === LOCATION_KIND.BusinessSite ||
+    t === LOCATION_KIND.Warehouse
+  );
+};
 
 const TopBar: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
-  const dispatch = useDispatch();
-  const currentLocationId = useSelector((state: any) => state.LocationReducer?.locationId || 0);
+  const { locationId: currentLocationId, setLocationId } = useActiveLocation();
   
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
@@ -220,7 +230,7 @@ const TopBar: React.FC = () => {
       const cached = AuthService.getAllowedLocations();
 
       if (!canAccessAll && cached.length > 0) {
-        setLocations(cached.map(toLocationMaster));
+        setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
         return;
       }
 
@@ -228,18 +238,19 @@ const TopBar: React.FC = () => {
 
       const locationsData = await LocationService.GetLocations({ tenantid: tenantId });
       if (locationsData && Array.isArray(locationsData)) {
-        if (canAccessAll || cached.length === 0) {
-          setLocations(locationsData);
-        } else {
-          const allowedIds = new Set(cached.map((l) => l.locationId));
-          setLocations(locationsData.filter((l: LocationMaster) => allowedIds.has(l.locationId)));
-        }
+        let list: LocationMaster[] =
+          canAccessAll || cached.length === 0
+            ? locationsData
+            : locationsData.filter((l: LocationMaster) =>
+                cached.some((a) => a.locationId === l.locationId)
+              );
+        setLocations(list.filter(isWorkingLocation));
       }
     } catch (error) {
       console.error("Error loading locations:", error);
       const cached = AuthService.getAllowedLocations();
       if (cached.length > 0) {
-        setLocations(cached.map(toLocationMaster));
+        setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
       }
     } finally {
       setLoadingLocations(false);
@@ -260,17 +271,9 @@ const TopBar: React.FC = () => {
       return;
     }
 
-    dispatch({ type: "SET_LOCATION", payload: locationId });
-    localStorage.setItem("locationId", locationId.toString());
-
-    window.dispatchEvent(
-      new CustomEvent("locationChanged", {
-        detail: { locationId },
-      })
-    );
-
+    setLocationId(locationId);
     setLocationMenuOpen(false);
-  }, [currentLocationId, dispatch]);
+  }, [currentLocationId, setLocationId]);
 
   // Load locations on mount
   useEffect(() => {
@@ -305,25 +308,14 @@ const TopBar: React.FC = () => {
     if (currentLocationId > 0 && locations.length > 0) {
       const location = locations.find(loc => loc.locationId === currentLocationId);
       setCurrentLocation(location || null);
+      // If the stored location is a bin/zone (not in working list), move to first working location
+      if (!location) {
+        handleLocationChange(locations[0].locationId);
+      }
     } else {
       setCurrentLocation(null);
     }
-  }, [currentLocationId, locations]);
-
-  // Listen for location changes from other components
-  useEffect(() => {
-    const handleLocationChanged = (event: CustomEvent) => {
-      const newLocationId = event.detail?.locationId;
-      if (newLocationId && newLocationId !== currentLocationId) {
-        dispatch({ type: 'SET_LOCATION', payload: newLocationId });
-      }
-    };
-
-    window.addEventListener('locationChanged', handleLocationChanged as EventListener);
-    return () => {
-      window.removeEventListener('locationChanged', handleLocationChanged as EventListener);
-    };
-  }, [currentLocationId, dispatch]);
+  }, [currentLocationId, locations, handleLocationChange]);
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -428,11 +420,11 @@ const TopBar: React.FC = () => {
             <button
               className="location-menu-btn"
               onClick={() => setLocationMenuOpen(!locationMenuOpen)}
-              title={currentLocation ? `Current location: ${currentLocation.name}` : 'Select location'}
+              title={currentLocation ? `Working site: ${currentLocation.name}` : 'Select working site'}
             >
               <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
               <span className="location-name">
-                {currentLocation ? currentLocation.name : 'Select Location'}
+                {currentLocation ? currentLocation.name : 'Select Site'}
               </span>
               <FontAwesomeIcon icon={faChevronDown} size="xs" />
             </button>
@@ -441,8 +433,8 @@ const TopBar: React.FC = () => {
                 <div className="dropdown-header">
                   <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
                   <div>
-                    <div className="dropdown-name">Switch Location</div>
-                    <div className="dropdown-email">Select your working location</div>
+                    <div className="dropdown-name">Working site</div>
+                    <div className="dropdown-email">Used for new documents, inventory default, and PDF branding</div>
                   </div>
                 </div>
                 <div className="dropdown-divider"></div>

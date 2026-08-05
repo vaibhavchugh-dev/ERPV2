@@ -26,13 +26,21 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetOrders")]
-        public IActionResult GetOrders([FromQuery] int tenantid)
+        public IActionResult GetOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                // Load all orders
-                var orders = _context.CustomerOrder
-                    .Where(o => o.Tenantid == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                // Shared multi-site: return all tenant orders unless an explicit location filter is passed.
+                var ordersQuery = _context.CustomerOrder.Where(o => o.Tenantid == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    ordersQuery = ordersQuery.Where(o => o.locationId == filterLocationId.Value);
+                }
+
+                var orders = ordersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .ToList();
 
@@ -424,7 +432,9 @@ namespace CimmpleAPI.Controllers
                 order.BuyerName = request.BuyerName ?? "";
                 order.quotationId = request.QuotationId;
                 order.QuotationNo = request.QuotationNo ?? "";
-                order.locationId = request.LocationId ?? 0;
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLocationId, out var forbidLoc))
+                    return forbidLoc!;
+                order.locationId = resolvedLocationId;
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -781,13 +791,23 @@ namespace CimmpleAPI.Controllers
         // =============================================
 
         [HttpGet("GetVendorOrders")]
-        public async Task<IActionResult> GetVendorOrders(int tenantId)
+        public async Task<IActionResult> GetVendorOrders([FromQuery] int tenantId, [FromQuery] int? locationId = null)
         {
             try
             {
-                var vendorOrders = await _context.VendorOrders
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var vendorOrdersQuery = _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId)
+                    .Where(o => o.Tenantid == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    vendorOrdersQuery = vendorOrdersQuery.Where(o => o.LocationId == filterLocationId.Value);
+                }
+
+                var vendorOrders = await vendorOrdersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .Select(o => new
                     {
@@ -1154,6 +1174,11 @@ namespace CimmpleAPI.Controllers
                     ParentQuotationID = orderData.TryGetProperty("ParentQuotationID", out JsonElement parentQuotationIDElem) && parentQuotationIDElem.ValueKind == JsonValueKind.Number ? parentQuotationIDElem.GetInt32() : (int?)null,
                     AdditionalNotes = orderData.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : ""
                 };
+
+                if (!TryResolveLocationId(order.LocationId, out var resolvedVendorLocationId, out var forbidVendorLoc))
+                    return forbidVendorLoc!;
+                if (resolvedVendorLocationId > 0)
+                    order.LocationId = resolvedVendorLocationId;
 
                 Console.WriteLine($"SaveVendorOrder: Assigned to order - QuotationId = {order.QuotationId}, QuotationNo = '{order.QuotationNo}', TenantId = {order.Tenantid}");
 

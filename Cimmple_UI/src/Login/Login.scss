@@ -1,0 +1,322 @@
+.login-page {
+  --login-ink: #0d0e10;
+  --login-ink-soft: #1a1c20;
+  --login-slate: #0f172a;
+  --login-blue: #0a7cff;
+  --login-blue-deep: #005fd4;
+  --login-teal: #0d9085;
+  --login-muted: #64748b;
+  --login-border: #e2e8f0;
+  --login-surface: #ffffff;
+  --login-panel: #f8fafc;
+
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  font-family: "Satoshi", system-ui, sans-serif;
+  color: var(--login-ink);
+  background: var(--login-surface);
+}
+
+.login-brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2.75rem 3rem;
+  overflow: hidden;
+  color: #f8fafc;
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 10%, rgba(10, 124, 255, 0.28), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 85%, rgba(13, 144, 133, 0.22), transparent 50%),
+    linear-gradient(155deg, var(--login-ink) 0%, var(--login-slate) 55%, #063874 100%);
+}
+
+.login-brand::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 75% 70% at 40% 45%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+.login-brand::after {
+  content: "";
+  position: absolute;
+  width: 28rem;
+  height: 28rem;
+  right: -8rem;
+  top: 35%;
+  border-radius: 50%;
+  border: 1px solid rgba(10, 124, 255, 0.2);
+  box-shadow:
+    0 0 0 40px rgba(10, 124, 255, 0.05),
+    0 0 0 80px rgba(13, 144, 133, 0.04);
+  pointer-events: none;
+  animation: login-orbit 18s linear infinite;
+}
+
+.login-brand-top,
+.login-brand-copy,
+.login-brand-foot {
+  position: relative;
+  z-index: 1;
+}
+
+.login-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  animation: login-rise 0.7s ease both;
+}
+
+.login-brand-mark img {
+  width: 2.75rem;
+  height: 2.75rem;
+  filter: brightness(0) invert(1);
+}
+
+.login-brand-mark span {
+  font-family: "Cabinet Grotesk", "Satoshi", system-ui, sans-serif;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.login-brand-copy {
+  max-width: 28rem;
+  margin: 4rem 0;
+  animation: login-rise 0.85s 0.08s ease both;
+}
+
+.login-brand-copy h1 {
+  margin: 0 0 1rem;
+  font-family: "Cabinet Grotesk", "Satoshi", system-ui, sans-serif;
+  font-size: clamp(2rem, 3.4vw, 3.15rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+}
+
+.login-brand-copy h1 em {
+  font-style: normal;
+  background: linear-gradient(90deg, #7cc4ff 0%, #5eead4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.login-brand-copy p {
+  margin: 0;
+  max-width: 26rem;
+  color: rgba(248, 250, 252, 0.78);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.login-brand-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.75rem;
+}
+
+.login-brand-pills span {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(248, 250, 252, 0.88);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.login-brand-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgba(248, 250, 252, 0.55);
+  font-size: 0.8rem;
+  animation: login-rise 0.9s 0.14s ease both;
+}
+
+.login-brand-foot a {
+  color: rgba(248, 250, 252, 0.8);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(10, 124, 255, 0.5);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.login-brand-foot a:hover {
+  color: #fff;
+  border-color: var(--login-blue);
+}
+
+.login-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+  background:
+    linear-gradient(180deg, #ffffff 0%, var(--login-panel) 100%);
+}
+
+.login-panel-inner {
+  width: 100%;
+  max-width: 24rem;
+  animation: login-rise 0.75s 0.12s ease both;
+}
+
+.login-panel-header {
+  margin-bottom: 1.75rem;
+}
+
+.login-panel-header h2 {
+  margin: 0 0 0.4rem;
+  font-family: "Cabinet Grotesk", "Satoshi", system-ui, sans-serif;
+  font-size: 1.85rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--login-ink);
+}
+
+.login-panel-header p {
+  margin: 0;
+  color: var(--login-muted);
+  font-size: 0.95rem;
+}
+
+.login-form .form-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.4rem;
+}
+
+.login-form .form-control {
+  min-height: 2.85rem;
+  border-radius: 0.65rem;
+  border-color: var(--login-border);
+  background: #fff;
+  font-size: 0.95rem;
+  padding: 0.7rem 0.9rem;
+}
+
+.login-form .form-control:focus {
+  border-color: var(--login-blue);
+  box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.14);
+}
+
+.login-submit {
+  margin-top: 0.35rem;
+  min-height: 2.95rem;
+  border-radius: 0.7rem !important;
+  border: none !important;
+  background: linear-gradient(135deg, var(--login-blue) 0%, var(--login-blue-deep) 100%) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  font-size: 0.95rem !important;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 24px rgba(10, 124, 255, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease !important;
+}
+
+.login-submit:hover:not(:disabled) {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(10, 124, 255, 0.34);
+}
+
+.login-submit:disabled {
+  opacity: 0.7;
+  box-shadow: none;
+}
+
+.login-footer-link {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--login-muted);
+}
+
+.login-footer-link a {
+  color: var(--login-blue-deep);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.login-footer-link a:hover {
+  text-decoration: underline;
+}
+
+@keyframes login-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 991.98px) {
+  .login-page {
+    grid-template-columns: 1fr;
+  }
+
+  .login-brand {
+    min-height: auto;
+    padding: 1.75rem 1.5rem 2rem;
+  }
+
+  .login-brand::after {
+    width: 16rem;
+    height: 16rem;
+    right: -5rem;
+    top: auto;
+    bottom: -4rem;
+  }
+
+  .login-brand-copy {
+    margin: 1.75rem 0 1.25rem;
+  }
+
+  .login-brand-copy h1 {
+    font-size: 1.85rem;
+  }
+
+  .login-brand-copy p {
+    font-size: 0.95rem;
+  }
+
+  .login-brand-pills {
+    margin-top: 1.1rem;
+  }
+
+  .login-brand-foot {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .login-panel {
+    padding: 2rem 1.25rem 2.5rem;
+  }
+}
