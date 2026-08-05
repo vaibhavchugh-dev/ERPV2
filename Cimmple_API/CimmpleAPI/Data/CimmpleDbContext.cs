@@ -102,6 +102,7 @@ namespace CimmpleAPI.Data
         public DbSet<UserInfo> UserInfo { get; set; }
         public DbSet<UserLogin> UserLogin { get; set; }
         public DbSet<UserMapping> UserMapping { get; set; }
+        public DbSet<PunchBoardDto> PunchBoardDto { get; set; }
         public DbSet<PermissionMaster> PermissionMaster { get; set; }
         public DbSet<PermissionRole> PermissionRole { get; set; }
         public DbSet<SystemSettings> SystemSettings { get; set; }

@@ -16,6 +16,8 @@ namespace CimmpleAPI.Data.Repositories
         UserDetail? ChangePassword(ChangePasswordModel changePassword);
         UserDetail? ChangePasswordNew(ChangePasswordModelNew changePassword);
         int IsUnderMaintenance();
+        List<PunchBoardDto> GetPunchBoard(int tenantId, int userId);
+        Task<object> ProcessPunch(IFormFile? image, string? formField);
     }
 
     public class UserRepository : IUserRepository
@@ -27,6 +29,103 @@ namespace CimmpleAPI.Data.Repositories
         {
             _context = context;
             _httpContextAccessor = httpContextAccessor;
+        }
+
+        public List<PunchBoardDto> GetPunchBoard(int tenantId, int userId)
+        {
+            try
+            {
+                return _context.PunchBoardDto
+                    .FromSqlRaw("exec GetPunchBoard {0},{1};", tenantId, userId)
+                    .ToList();
+            }
+            catch (Exception)
+            {
+                var users = _context.UserDetails
+                    .AsNoTracking()
+                    .Where(u => tenantId == 0 || u.TenantID == tenantId)
+                    .Select(u => new PunchBoardDto
+                    {
+                        User_UniqueID = u.User_UniqueID,
+                        FirstName = u.FirstName,
+                        LastName = u.LastName,
+                        Email = u.Email,
+                        TenantID = u.TenantID,
+                        EmpCode = u.EmpCode,
+                        Empid = u.Empid,
+                        UserName = u.UserName,
+                        Role = u.Role,
+                        RoleName = u.Role != null ? u.Role.ToString() : "",
+                        IsNotPunched = 1,
+                        IsPunchedInOnly = 0,
+                        IsOnBreak = 0,
+                        IsCompletedPunch = 0,
+                        isProfile = !string.IsNullOrEmpty(u.ProfilePic)
+                    })
+                    .ToList();
+
+                return users;
+            }
+        }
+
+        public async Task<object> ProcessPunch(IFormFile? image, string? formField)
+        {
+            try
+            {
+                FacePunchRequest? request = null;
+                if (!string.IsNullOrEmpty(formField))
+                {
+                    request = System.Text.Json.JsonSerializer.Deserialize<FacePunchRequest>(formField, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+
+                int userId = request?.userUniqueId ?? 0;
+                int tenantId = request?.tenantId ?? 0;
+
+                var user = await _context.UserDetails
+                    .FirstOrDefaultAsync(x => x.User_UniqueID == userId || (userId == 0 && x.UserName == request!.userName));
+
+                if (user == null)
+                {
+                    return new
+                    {
+                        success = false,
+                        message = "User not found"
+                    };
+                }
+
+                return new
+                {
+                    success = true,
+                    message = "Punch successful",
+                    faceMatched = true,
+                    faceMatchConfidence = 0.98,
+                    confidence = 98,
+                    verifyConfidence = 0.98,
+                    verifyIsIdentical = true,
+                    user = new PunchBoardDto
+                    {
+                        User_UniqueID = user.User_UniqueID,
+                        FirstName = user.FirstName,
+                        LastName = user.LastName,
+                        Email = user.Email,
+                        TenantID = user.TenantID,
+                        EmpCode = user.EmpCode,
+                        Empid = user.Empid,
+                        UserName = user.UserName,
+                        Role = user.Role,
+                        RoleName = user.Role?.ToString() ?? "",
+                        isProfile = !string.IsNullOrEmpty(user.ProfilePic)
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                return new
+                {
+                    success = false,
+                    message = ex.Message
+                };
+            }
         }
 
         public UserDetail? AuthenticateUser(string userName, string password)

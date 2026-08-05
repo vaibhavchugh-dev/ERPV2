@@ -28,6 +28,15 @@ export class User {
     return loginResponse.user;
   };
 
+  public static login = async (
+    userName: string,
+    password: string,
+    LoginHID: string = "",
+    Nonce: string = ""
+  ): Promise<IUser | null> => {
+    return User.loginNew(userName, password, LoginHID, Nonce);
+  };
+
   public static AutoLogin = async (
     userName: string,
     token: string,

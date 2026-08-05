@@ -338,5 +338,72 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, $"Failed to fetch profile picture: {ex.Message}");
             }
         }
+
+        [HttpGet("GetPunchBoard")]
+        [AllowAnonymous]
+        public IActionResult GetPunchBoard([FromQuery] int TenantID, [FromQuery] int userId)
+        {
+            var result = _userRepository.GetPunchBoard(TenantID, userId);
+            return Ok(new JsonResponse(200, true, "true", result));
+        }
+
+        [HttpPost("Punch")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Punch([FromForm] PunchRequests request)
+        {
+            dynamic result = await _userRepository.ProcessPunch(request.image, request.formField);
+            return Ok(new JsonResponse(200, true, "Success", result));
+        }
+
+        [HttpPost("PunchPasswordVerify")]
+        [AllowAnonymous]
+        public IActionResult PunchPasswordVerify([FromBody] PunchLoginModel model)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(model.password))
+                {
+                    return Ok(new { success = false, message = "Invalid password" });
+                }
+
+                var user = _userRepository.AuthenticateUser(model.userName ?? "", model.password);
+                if (user == null)
+                {
+                    return Ok(new { success = false, message = "Invalid username or password" });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = model.direction == "IN" ? "Punch In Successful" : "Punch Out Successful",
+                    user = new PunchBoardDto
+                    {
+                        User_UniqueID = user.User_UniqueID,
+                        FirstName = user.FirstName,
+                        LastName = user.LastName,
+                        Email = user.Email,
+                        TenantID = user.TenantID,
+                        EmpCode = user.EmpCode,
+                        Empid = user.Empid,
+                        UserName = user.UserName,
+                        Role = user.Role,
+                        RoleName = user.Role?.ToString() ?? "",
+                        isProfile = !string.IsNullOrEmpty(user.ProfilePic)
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return Ok(new { success = false, message = ex.Message });
+            }
+        }
+
+        [HttpPost("CreateLivenessSession")]
+        [AllowAnonymous]
+        public IActionResult CreateLivenessSession([FromBody] object payload)
+        {
+            return Ok(new JsonResponse(200, true, "Session created", Guid.NewGuid().ToString()));
+        }
     }
 }
+

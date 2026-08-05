@@ -38,6 +38,7 @@ import BusinessIntelligence from "../Modules/Reports/BusinessIntelligence";
 import Dashboard from "../Modules/Dashboard/Dashboard";
 
 export const protectedRoutes: any[] = [
+
   {
     path: "/home",
     name: "Dashboard",

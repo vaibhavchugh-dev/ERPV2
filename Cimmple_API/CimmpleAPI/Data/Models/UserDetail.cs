@@ -128,6 +128,53 @@ namespace CimmpleAPI.Data.Models
         public string? KeyName { get; set; }
         public string? KeyValue { get; set; }
     }
+
+    public class PunchBoardDto
+    {
+        [Key]
+        public int User_UniqueID { get; set; }
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public string? Email { get; set; }
+        public int TenantID { get; set; }
+        public string? EmpCode { get; set; }
+        public int? Empid { get; set; }
+        public string? UserName { get; set; }
+        public int? Role { get; set; }
+        public string? RoleName { get; set; }
+        public int? noofusers { get; set; }
+        public DateTime? TodayPunchIn { get; set; }
+        public DateTime? TodayPunchOut { get; set; }
+        public DateTime? TodayBreakIn { get; set; }
+        public DateTime? TodayBreakOut { get; set; }
+        public int IsPunchedInOnly { get; set; }
+        public int IsNotPunched { get; set; }
+        public int IsOnBreak { get; set; }
+        public int IsCompletedPunch { get; set; }
+        public bool isProfile { get; set; }
+    }
+
+    public class FacePunchRequest
+    {
+        public int tenantId { get; set; }
+        public int locationId { get; set; }
+        public int userUniqueId { get; set; }
+        public string? userName { get; set; }
+        public string? direction { get; set; }
+    }
+
+    public class PunchRequests
+    {
+        public IFormFile? image { get; set; }
+        public string? formField { get; set; }
+    }
+
+    public class PunchLoginModel
+    {
+        public string? userName { get; set; }
+        public string? password { get; set; }
+        public string? direction { get; set; }
+    }
 }
 
 

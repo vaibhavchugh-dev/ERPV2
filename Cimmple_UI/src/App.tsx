@@ -5,6 +5,8 @@ import { ToastContainer } from "react-toastify";
 import { ProtectedLayout } from "./Common/Components/ProtectedLayout";
 import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
+import { PunchLogin } from "./Login/PunchLogin";
+import PunchInOut from "./Modules/PunchInOut/PunchInOut";
 import VendorProtectedLayout from "./VendorPortal/VendorProtectedLayout";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
 import "./App.scss";
@@ -36,6 +38,8 @@ const AppContent: React.FC = () => {
       <Router>
         <Switch>
           <Route exact path="/login" component={Login} />
+          <Route exact path="/punch-login" component={PunchLogin} />
+          <Route exact path="/punch-in-out" component={PunchInOut} />
           <Route exact path="/logout" component={Logout} />
           <Route path="/vendor" component={VendorProtectedLayout} />
           <Route path="/" component={ProtectedLayout} />
