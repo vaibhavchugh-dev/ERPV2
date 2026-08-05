@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import {
   InventoryService,
   RawMaterial,
@@ -84,6 +86,33 @@ function formatStorage(m: RawMaterial): string {
   return parts.length ? parts.join(" · ") : "—";
 }
 
+const COLUMNS: ColumnDefinition[] = [
+  { key: "partNo", label: "Part #", locked: true },
+  { key: "partName", label: "Part Name", locked: true },
+  { key: "status", label: "Status" },
+  { key: "vendorName", label: "Vendor" },
+  { key: "sku", label: "SKU" },
+  { key: "storage", label: "Storage" },
+  { key: "defaultLocationName", label: "Loc (master)" },
+  { key: "stockForm", label: "Form" },
+  { key: "materialGrade", label: "Grade" },
+  { key: "dims", label: "Dims (mm)" },
+  { key: "isRemnant", label: "Remnant" },
+  { key: "unit", label: "Unit" },
+  { key: "unitCost", label: "Cost" },
+  { key: "description", label: "Description" },
+  { key: "action", label: "Action", locked: true },
+];
+
+const DEFAULT_HIDDEN_COLUMNS = [
+  "sku",
+  "storage",
+  "defaultLocationName",
+  "dims",
+  "description",
+];
+const COLUMN_PREFERENCE_KEY = "rawMaterialMaster.hiddenColumns";
+
 const RawMaterialMaster: React.FC = () => {
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
@@ -97,6 +126,15 @@ const RawMaterialMaster: React.FC = () => {
   const [isMaterialGradeOther, setIsMaterialGradeOther] = useState(false);
   const [isStockFormOther, setIsStockFormOther] = useState(false);
   const [form, setForm] = useState<RawMaterialForm>(emptyForm);
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   const loadLocations = async () => {
     const tid = getTenantId();
@@ -405,6 +443,102 @@ const RawMaterialMaster: React.FC = () => {
     return materials.filter((m) => m.id !== id);
   }, [materials, form.id]);
 
+  const renderCell = (material: RawMaterial, key: string): React.ReactNode => {
+    switch (key) {
+      case "partNo":
+        return material.partNo || "";
+      case "partName":
+        return material.partName || "";
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              material.isActive === false ? "badge-secondary" : "badge-success"
+            }`}
+          >
+            {material.isActive === false ? "Inactive" : "Active"}
+          </span>
+        );
+      case "vendorName":
+        return (
+          <span style={{ maxWidth: 180, fontSize: "0.875rem", display: "inline-block" }}>
+            {material.vendorName || "—"}
+          </span>
+        );
+      case "sku":
+        return material.sku || "—";
+      case "storage":
+        return (
+          <span style={{ maxWidth: 200, fontSize: "0.875rem", display: "inline-block" }}>
+            {formatStorage(material)}
+          </span>
+        );
+      case "defaultLocationName":
+        return (
+          <span style={{ fontSize: "0.875rem" }}>
+            {material.defaultLocationName || "—"}
+          </span>
+        );
+      case "stockForm":
+        return material.stockForm || "—";
+      case "materialGrade":
+        return (
+          <span style={{ maxWidth: 120, display: "inline-block" }}>
+            {material.materialGrade || "—"}
+          </span>
+        );
+      case "dims":
+        return (
+          <span style={{ fontSize: "0.8125rem", whiteSpace: "nowrap" }}>
+            {[
+              material.thicknessMm != null ? `T ${material.thicknessMm}` : null,
+              material.widthMm != null ? `W ${material.widthMm}` : null,
+              material.lengthMm != null ? `L ${material.lengthMm}` : null,
+            ]
+              .filter(Boolean)
+              .join(" × ") || "—"}
+          </span>
+        );
+      case "isRemnant":
+        return material.isRemnant ? (
+          <span className="badge badge-raw">Yes</span>
+        ) : (
+          "—"
+        );
+      case "unit":
+        return material.unit || "";
+      case "unitCost":
+        return Number(material.unitCost || 0).toFixed(2);
+      case "description":
+        return (
+          <span style={{ maxWidth: 200, fontSize: "0.875rem", display: "inline-block" }}>
+            {material.description || ""}
+          </span>
+        );
+      case "action":
+        return (
+          <>
+            <button
+              type="button"
+              className="btn-small"
+              onClick={() => handleEdit(material)}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn-small"
+              onClick={() => handleToggleStatus(material)}
+            >
+              {material.isActive === false ? "Activate" : "Deactivate"}
+            </button>
+          </>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -435,6 +569,14 @@ const RawMaterialMaster: React.FC = () => {
           >
             Refresh
           </button>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button
             type="button"
             className="btn-primary"
@@ -988,93 +1130,27 @@ const RawMaterialMaster: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th>Part #</th>
-                <th>Part Name</th>
-                <th>Status</th>
-                <th>Vendor</th>
-                <th>SKU</th>
-                <th>Storage</th>
-                <th>Loc (master)</th>
-                <th>Form</th>
-                <th>Grade</th>
-                <th>Dims (mm)</th>
-                <th>Remnant</th>
-                <th>Unit</th>
-                <th>Cost</th>
-                <th>Description</th>
-                <th>Action</th>
+                {visibleColumns.map((column) => (
+                  <th key={column.key}>{column.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {filteredMaterials.length === 0 ? (
                 <tr>
-                  <td colSpan={15} style={{ padding: "1.5rem", color: "#6b7280" }}>
+                  <td
+                    colSpan={visibleColumns.length}
+                    style={{ padding: "1.5rem", color: "#6b7280" }}
+                  >
                     No raw materials found.
                   </td>
                 </tr>
               ) : (
                 filteredMaterials.map((material) => (
                   <tr key={material.id}>
-                    <td>{material.partNo || ""}</td>
-                    <td>{material.partName || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          material.isActive === false ? "badge-secondary" : "badge-success"
-                        }`}
-                      >
-                        {material.isActive === false ? "Inactive" : "Active"}
-                      </span>
-                    </td>
-                    <td style={{ maxWidth: 180, fontSize: "0.875rem" }}>
-                      {material.vendorName || "—"}
-                    </td>
-                    <td>{material.sku || "—"}</td>
-                    <td style={{ maxWidth: 200, fontSize: "0.875rem" }}>
-                      {formatStorage(material)}
-                    </td>
-                    <td style={{ fontSize: "0.875rem" }}>
-                      {material.defaultLocationName || "—"}
-                    </td>
-                    <td>{material.stockForm || "—"}</td>
-                    <td style={{ maxWidth: 120 }}>{material.materialGrade || "—"}</td>
-                    <td style={{ fontSize: "0.8125rem", whiteSpace: "nowrap" }}>
-                      {[
-                        material.thicknessMm != null ? `T ${material.thicknessMm}` : null,
-                        material.widthMm != null ? `W ${material.widthMm}` : null,
-                        material.lengthMm != null ? `L ${material.lengthMm}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" × ") || "—"}
-                    </td>
-                    <td>
-                      {material.isRemnant ? (
-                        <span className="badge badge-raw">Yes</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>{material.unit || ""}</td>
-                    <td>{Number(material.unitCost || 0).toFixed(2)}</td>
-                    <td style={{ maxWidth: 200, fontSize: "0.875rem" }}>
-                      {material.description || ""}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-small"
-                        onClick={() => handleEdit(material)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-small"
-                        onClick={() => handleToggleStatus(material)}
-                      >
-                        {material.isActive === false ? "Activate" : "Deactivate"}
-                      </button>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(material, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { toast } from "react-toastify";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSettingsSafe } from "../../Contexts/SettingsContext";
+import ColumnChooser from "../ColumnChooser";
+import { useColumnChooser } from "../../Hooks/useColumnChooser";
 import "./MasterListPage.scss";
 
 // Column configuration
@@ -10,7 +11,9 @@ export interface ColumnConfig<T = any> {
   sortable?: boolean;
   render?: (value: any, row: T) => React.ReactNode;
   width?: string;
-  align?: 'left' | 'center' | 'right';
+  align?: "left" | "center" | "right";
+  /** Columns the user cannot hide, so a row is never blank. */
+  locked?: boolean;
 }
 
 // Filter option
@@ -27,7 +30,7 @@ export interface CustomActionButton {
   disabled?: boolean;
 }
 
-  // Props for MasterListPage
+// Props for MasterListPage
 export interface MasterListPageProps<T = any> {
   title: string;
   subtitle?: string;
@@ -51,7 +54,14 @@ export interface MasterListPageProps<T = any> {
   customActionButtons?: CustomActionButton[]; // Custom action buttons
   enablePagination?: boolean; // Enable pagination (default: false for backward compatibility)
   pageSize?: number; // Override default page size from settings
+  /** Unique localStorage key for hidden columns. Defaults from title. */
+  columnPreferenceKey?: string;
+  /** Column keys hidden until the user enables them. */
+  defaultHiddenColumns?: string[];
 }
+
+const slugPreferenceKey = (title: string) =>
+  `masterList.${title.replace(/[^a-zA-Z0-9]+/g, "")}.hiddenColumns`;
 
 const MasterListPage = <T extends Record<string, any>>({
   title,
@@ -71,13 +81,45 @@ const MasterListPage = <T extends Record<string, any>>({
   customActionButtons = [],
   enablePagination = false,
   pageSize,
+  columnPreferenceKey,
+  defaultHiddenColumns = [],
 }: MasterListPageProps<T>) => {
   const settings = useSettingsSafe();
   const [searchTerm, setSearchTerm] = useState("");
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
-  
+
+  const chooserColumns = useMemo(() => {
+    const mapped = columns.map((column) => ({
+      key: String(column.key),
+      label: column.label,
+      locked: column.locked,
+    }));
+    if (!mapped.some((c) => c.locked) && mapped.length > 0) {
+      mapped[0] = { ...mapped[0], locked: true };
+    }
+    return mapped;
+  }, [columns]);
+
+  const preferenceKey = columnPreferenceKey || slugPreferenceKey(title);
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(preferenceKey, chooserColumns, defaultHiddenColumns);
+
+  const visibleTableColumns = useMemo(
+    () =>
+      columns.filter((column) =>
+        visibleColumns.some((visible) => visible.key === String(column.key))
+      ),
+    [columns, visibleColumns]
+  );
+
   // Determine page size: prop override > settings > default (10)
   const effectivePageSize = pageSize || (enablePagination ? settings?.defaultPageSize || 10 : data.length);
 
@@ -98,9 +140,9 @@ const MasterListPage = <T extends Record<string, any>>({
 
   const filteredData = data.filter((row) => {
     if (!searchTerm) return true;
-    
+
     const searchLower = searchTerm.toLowerCase();
-    
+
     // If searchFields specified, only search those
     if (searchFields.length > 0) {
       return searchFields.some((field) => {
@@ -108,7 +150,7 @@ const MasterListPage = <T extends Record<string, any>>({
         return value?.toString().toLowerCase().includes(searchLower);
       });
     }
-    
+
     // Otherwise search all columns
     return columns.some((col) => {
       const value = row[col.key as keyof T];
@@ -185,26 +227,32 @@ const MasterListPage = <T extends Record<string, any>>({
           <h1 className="page-title">{title}</h1>
           {subtitle && <p className="page-subtitle">{subtitle}</p>}
         </div>
-        {(onAdd || customActionButtons.length > 0) && (
-          <div className="page-actions">
-            {customActionButtons.map((button, index) => (
-              <button
-                key={index}
-                className={button.className || "btn-secondary"}
-                onClick={button.onClick}
-                disabled={button.disabled}
-              >
-                {button.label}
-              </button>
-            ))}
-            {onAdd && (
-              <button className="btn-primary" onClick={onAdd}>
-                <span>+</span>
-                <span>{addButtonLabel}</span>
-              </button>
-            )}
-          </div>
-        )}
+        <div className="page-actions">
+          {customActionButtons.map((button, index) => (
+            <button
+              key={index}
+              className={button.className || "btn-secondary"}
+              onClick={button.onClick}
+              disabled={button.disabled}
+            >
+              {button.label}
+            </button>
+          ))}
+          <ColumnChooser
+            columns={chooserColumns}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
+          {onAdd && (
+            <button className="btn-primary" onClick={onAdd}>
+              <span>+</span>
+              <span>{addButtonLabel}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters and Search */}
@@ -254,7 +302,7 @@ const MasterListPage = <T extends Record<string, any>>({
           <table className="master-table">
             <thead>
               <tr>
-                {columns.map((column) => {
+                {visibleTableColumns.map((column) => {
                   const align = column.align || "left";
                   return (
                     <th
@@ -278,7 +326,7 @@ const MasterListPage = <T extends Record<string, any>>({
             <tbody>
               {paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="empty-state">
+                  <td colSpan={visibleTableColumns.length} className="empty-state">
                     {emptyMessage}
                   </td>
                 </tr>
@@ -291,7 +339,7 @@ const MasterListPage = <T extends Record<string, any>>({
                       onClick={() => onRowClick && onRowClick(row)}
                       className={onRowClick ? "clickable" : ""}
                     >
-                      {columns.map((column) => (
+                      {visibleTableColumns.map((column) => (
                         <td
                           key={String(column.key)}
                           style={{ textAlign: column.align || "left" }}
@@ -317,7 +365,7 @@ const MasterListPage = <T extends Record<string, any>>({
           <div className="pagination-buttons">
             <button
               className="pagination-btn"
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
               disabled={currentPage === 1}
             >
               Previous
@@ -327,7 +375,7 @@ const MasterListPage = <T extends Record<string, any>>({
             </span>
             <button
               className="pagination-btn"
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
               disabled={currentPage === totalPages}
             >
               Next
@@ -340,9 +388,3 @@ const MasterListPage = <T extends Record<string, any>>({
 };
 
 export default MasterListPage;
-
-
-
-
-
-

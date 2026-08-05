@@ -61,10 +61,11 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       
       const storage = JSON.parse(localStorage.getItem('storage') || '{}');
       const tenantId = storage?.tenantID || (process.env.NODE_ENV === 'development' ? 1 : 0);
-      
-      if (tenantId === 0) {
-        // No tenant ID - use defaults
-        setSettings(getDefaultSettings(1));
+      const hasToken = !!localStorage.getItem('token');
+
+      if (tenantId === 0 || !hasToken) {
+        // No session yet — use defaults (avoid 401 during login)
+        setSettings(getDefaultSettings(tenantId || 1));
         setLoading(false);
         return;
       }

@@ -2,8 +2,23 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { ProductMasterService, ProductMaster } from "../../Common/Services/ProductMasterService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProductMasterSlideout from "./ProductMasterSlideout";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
+  { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
+  { key: "unit", label: "Unit", sortKey: "unit" },
+  { key: "totalQtyOrdered", label: "Total Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "avgUnitPrice", label: "Avg Unit Price", sortKey: "avgUnitPrice" },
+  { key: "orderCount", label: "Orders", sortKey: "orderCount" },
+  { key: "quotationCount", label: "Quotations", sortKey: "quotationCount" },
+  { key: "lastOrderDate", label: "Last Ordered", sortKey: "lastOrderDate" },
+];
+const DEFAULT_HIDDEN_COLUMNS = ["quotationCount"];
+const COLUMN_PREFERENCE_KEY = "productMaster.hiddenColumns";
 
 const ProductMasterComponent: React.FC = () => {
   const location = useLocation();
@@ -16,6 +31,15 @@ const ProductMasterComponent: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortColumn, setSortColumn] = useState<keyof ProductMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     loadProducts();
@@ -174,6 +198,29 @@ const ProductMasterComponent: React.FC = () => {
     }
   };
 
+  const renderCell = (product: ProductMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "partNo":
+        return product.partNo || "";
+      case "partName":
+        return product.partName || "";
+      case "unit":
+        return product.unit || "";
+      case "totalQtyOrdered":
+        return product.totalQtyOrdered.toLocaleString();
+      case "avgUnitPrice":
+        return formatCurrency(product.avgUnitPrice);
+      case "orderCount":
+        return <span className="badge badge-info">{product.orderCount}</span>;
+      case "quotationCount":
+        return <span className="badge badge-secondary">{product.quotationCount}</span>;
+      case "lastOrderDate":
+        return formatDate(product.lastOrderDate);
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -191,15 +238,25 @@ const ProductMasterComponent: React.FC = () => {
           <h1 className="page-title">Product Master</h1>
           <p className="page-subtitle">All parts from customer orders</p>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={handleSyncFromOrders}
-          disabled={syncing}
-          title="Add distinct parts from orders and quotations into the Product Master table (for Inventory and other modules)"
-        >
-          {syncing ? "Syncing…" : "Sync from orders"}
-        </button>
+        <div className="page-actions">
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleSyncFromOrders}
+            disabled={syncing}
+            title="Add distinct parts from orders and quotations into the Product Master table (for Inventory and other modules)"
+          >
+            {syncing ? "Syncing…" : "Sync from orders"}
+          </button>
+        </div>
       </div>
 
       {/* Filters and Search */}
@@ -234,84 +291,27 @@ const ProductMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("partNo")}
-                >
-                  <div className="th-content">
-                    Part Number
-                    {getSortIcon("partNo")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("partName")}
-                >
-                  <div className="th-content">
-                    Part Name
-                    {getSortIcon("partName")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("unit")}
-                >
-                  <div className="th-content">
-                    Unit
-                    {getSortIcon("unit")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("totalQtyOrdered")}
-                >
-                  <div className="th-content">
-                    Total Qty Ordered
-                    {getSortIcon("totalQtyOrdered")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("avgUnitPrice")}
-                >
-                  <div className="th-content">
-                    Avg Unit Price
-                    {getSortIcon("avgUnitPrice")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("orderCount")}
-                >
-                  <div className="th-content">
-                    Orders
-                    {getSortIcon("orderCount")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("quotationCount")}
-                >
-                  <div className="th-content">
-                    Quotations
-                    {getSortIcon("quotationCount")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("lastOrderDate")}
-                >
-                  <div className="th-content">
-                    Last Ordered
-                    {getSortIcon("lastOrderDate")}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey && handleSort(column.sortKey as keyof ProductMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof ProductMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No products found</p>
                     <small>Products will appear here once customer orders are created</small>
                   </td>
@@ -319,18 +319,9 @@ const ProductMasterComponent: React.FC = () => {
               ) : (
                 sortedProducts.map((product, index) => (
                   <tr key={`${product.partNo}-${index}`} onClick={() => handleRowClick(product)}>
-                    <td>{product.partNo || ""}</td>
-                    <td>{product.partName || ""}</td>
-                    <td>{product.unit || ""}</td>
-                    <td>{product.totalQtyOrdered.toLocaleString()}</td>
-                    <td>{formatCurrency(product.avgUnitPrice)}</td>
-                    <td>
-                      <span className="badge badge-info">{product.orderCount}</span>
-                    </td>
-                    <td>
-                      <span className="badge badge-secondary">{product.quotationCount}</span>
-                    </td>
-                    <td>{formatDate(product.lastOrderDate)}</td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(product, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}

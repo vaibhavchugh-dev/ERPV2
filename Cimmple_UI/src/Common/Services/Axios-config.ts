@@ -1,41 +1,75 @@
 import axios from "axios";
 import { API_ROOT } from "./Api-config";
+import { AuthService } from "./AuthService";
 
 const Instense = axios.create();
 
 Instense.defaults.baseURL = `${API_ROOT.backendHost}`;
 
+let refreshPromise: Promise<string | null> | null = null;
+
 const forceRedirectToLogin = () => {
   try {
-    localStorage.clear();
-  } catch (err) {
-    // ignore localStorage clearing issues
+    AuthService.clearSession("all");
+  } catch {
+    // ignore
   }
   try {
     sessionStorage.clear();
-  } catch (err) {
-    // ignore sessionStorage clearing issues
+  } catch {
+    // ignore
   }
-  if (window.location.pathname !== "/login") {
+  const path = window.location.pathname || "";
+  if (path.startsWith("/vendor")) {
+    if (path !== "/vendor/login") {
+      window.location.href = "/vendor/login";
+    }
+  } else if (path !== "/login") {
     window.location.href = "/login";
   }
 };
 
+const getBearerToken = () => {
+  const path = window.location.pathname || "";
+  if (path.startsWith("/vendor")) {
+    return localStorage.getItem("vendorToken");
+  }
+  return localStorage.getItem("token");
+};
+
+const tryRefreshToken = async (): Promise<string | null> => {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const refreshed = await AuthService.refresh();
+      return refreshed?.accessToken ?? null;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+};
+
 Instense.interceptors.request.use((config) => {
-  // Always try to set tenantId header, even if storage is null
   let tenantID = 0;
   let userName = "";
   let userId = "";
-  
-  if (localStorage.getItem("token") != null) {
-    config.headers.Authorization = `bearer ${localStorage.getItem("token")}`;
+
+  const path = window.location.pathname || "";
+  const isVendor = path.startsWith("/vendor");
+  const storageRaw = isVendor
+    ? localStorage.getItem("vendorStorage")
+    : localStorage.getItem("storage");
+
+  const token = getBearerToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  
-  if (localStorage.getItem("storage") != null) {
+
+  if (storageRaw) {
     try {
-      let storage = JSON.parse(localStorage.getItem("storage")!);
-      if (storage !== null) {
-        userName = storage.userName || "";
+      const storage = JSON.parse(storageRaw);
+      if (storage) {
+        userName = storage.userLogin || storage.userName || "";
         tenantID = storage.tenantID || 0;
         userId = storage.userId || storage.user_UniqueID || storage.userID || "";
       }
@@ -43,67 +77,59 @@ Instense.interceptors.request.use((config) => {
       console.error("Error parsing storage:", e);
     }
   }
-  
-  // For development: if tenantID is not set, use a default value
-  // Check if we're in development (localhost) or if NODE_ENV is development
-  const isDevelopment = process.env.NODE_ENV === 'development' || 
-                       window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1';
-  
-  if (tenantID === 0 && isDevelopment) {
-    tenantID = 1; // Default tenant ID for development
-    console.log('[Axios Interceptor] tenantID was 0, defaulting to 1 for development. NODE_ENV:', process.env.NODE_ENV, 'hostname:', window.location.hostname);
+
+  const locationId = localStorage.getItem("locationId");
+  if (locationId && locationId !== "0") {
+    config.headers["X-Location-Id"] = locationId;
   }
-  
-  // Always set headers (even if empty, so backend can handle it)
+
   config.headers.Username = userName;
   config.headers.tenantId = tenantID;
   config.headers.userId = userId;
-  
-  // Debug logging for tenant ID
-  if (config.url?.includes('GetShippableItems') || config.url?.includes('GetInvoiceableItems') || config.url?.includes('Shipping') || config.url?.includes('Invoice')) {
-    console.log('[Axios Debug] Request headers:', {
-      url: config.url,
-      tenantId: config.headers.tenantId,
-      username: config.headers.Username,
-      hasToken: !!localStorage.getItem("token"),
-      hasStorage: !!localStorage.getItem("storage")
-    });
-  }
-  
-  return config;
-}, (err) => {
-  console.log(err);
-  return Promise.reject(err);
-});
 
-Instense.interceptors.response.use((response) => {
-  return response;
-}, (error) => {
-  if (error?.response?.data?.message === "under maintenance") {
-    window.location.href = "/Under-Maintenance";
-  }
-  else if (error.response && error?.response?.data && error?.response?.data?.error &&
-    (error.response.data.session === false || error.response.data.session === "false") || (localStorage.getItem("token") === null)) {
-    console.error("Session error:", error.response.data.error.message);
-    forceRedirectToLogin();
-  }
-  else if (error?.response && error?.response?.data && error?.response?.data?.error && error?.response?.data?.error?.message) {
-    console.error("API error:", error.response.data.error.message);
-  }
-  else
-    if ((error?.response && error?.response?.status === 401) || (localStorage.getItem("token") === null)) {
-      console.error("Authentication error:", error.response?.data?.error?.message);
-      forceRedirectToLogin();
-    } else
+  return config;
+}, (err) => Promise.reject(err));
+
+Instense.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config;
+    if (error?.response?.data?.message === "under maintenance") {
+      window.location.href = "/Under-Maintenance";
       return Promise.reject(error);
-});
+    }
+
+    const status = error?.response?.status;
+    const isAuthEndpoint =
+      typeof original?.url === "string" &&
+      (original.url.includes("/Auth/Login") ||
+        original.url.includes("/Auth/VendorLogin") ||
+        original.url.includes("/Auth/Refresh") ||
+        original.url.includes("/Auth/BootstrapPassword"));
+
+    if (status === 401 && original && !original._retry && !isAuthEndpoint) {
+      original._retry = true;
+      const newToken = await tryRefreshToken();
+      if (newToken) {
+        original.headers = original.headers || {};
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return Instense(original);
+      }
+      forceRedirectToLogin();
+      return Promise.reject(error);
+    }
+
+    if (
+      (error.response && error?.response?.data && (error.response.data.session === false || error.response.data.session === "false")) ||
+      status === 401
+    ) {
+      if (!isAuthEndpoint) {
+        forceRedirectToLogin();
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 export default Instense;
-
-
-
-
-
-
-

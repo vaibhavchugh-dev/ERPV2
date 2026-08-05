@@ -7,7 +7,6 @@ import {
   faBriefcase,
   faFileInvoice,
   faTruck,
-  faSpinner,
   faSearch,
   faUniversity,
   faDesktop,
@@ -68,7 +67,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     return (
       <div className="search-results-dropdown">
         <div className="search-results-loading">
-          <FontAwesomeIcon icon={faSpinner} spin />
+          <div className="loading-spinner"></div>
           <span>Searching...</span>
         </div>
       </div>

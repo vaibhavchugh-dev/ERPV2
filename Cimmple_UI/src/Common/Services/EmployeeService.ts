@@ -41,10 +41,72 @@ export interface EmployeeMasterReq {
   Zip: string;
   Country: string;
   LocationId?: number;
+  LocationIds?: number[];
+  DefaultLocationId?: number;
+  CanAccessAllLocations?: boolean;
   TenantID: number;
   DOB: string;
   SSN: string;
 }
+
+export interface EmployeeImportRow {
+  RowNumber?: number;
+  EmpCode?: string;
+  FirstName?: string;
+  LastName?: string;
+  Email?: string;
+  UserName?: string;
+  Status?: string;
+  RoleName?: string;
+  EmployeeType?: string;
+  Phone1?: string;
+  Phone2?: string;
+  DateOfHire?: string;
+  Address?: string;
+  City?: string;
+  State?: string;
+  Zip?: string;
+  LocationName?: string;
+  DOB?: string;
+  SSN?: string;
+}
+
+export interface EmployeeImportRowResult {
+  rowNumber: number;
+  employeeId?: number | null;
+  status: string;
+  message: string;
+  warning?: string | null;
+}
+
+export interface EmployeeImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: EmployeeImportRowResult[];
+}
+
+export const EMPLOYEE_IMPORT_HEADERS = [
+  "EmpCode",
+  "FirstName",
+  "LastName",
+  "Email",
+  "UserName",
+  "Status",
+  "RoleName",
+  "EmployeeType",
+  "Phone1",
+  "Phone2",
+  "DateOfHire",
+  "Address",
+  "City",
+  "State",
+  "Zip",
+  "LocationName",
+  "DOB",
+  "SSN",
+] as const;
 
 export interface Role {
   roleID: number;
@@ -116,10 +178,47 @@ export class EmployeeService {
         Zip: result.zip,
         Country: result.country || "US",
         LocationId: result.locationId,
+        LocationIds: result.locationIds || (result.locationId ? [result.locationId] : []),
+        DefaultLocationId: result.defaultLocationId,
+        CanAccessAllLocations: !!result.canAccessAllLocations,
         TenantID: result.tenantID,
         DOB: result.dob || "",
         SSN: result.ssn || "",
       } as EmployeeMasterReq;
+    });
+  };
+
+  public static ImportEmployees = async (
+    rows: EmployeeImportRow[],
+    options?: { updateExisting?: boolean; stopOnError?: boolean }
+  ): Promise<EmployeeImportResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Employee/ImportEmployees`;
+    return Instense.post(url, {
+      Tenantid: tenantID,
+      UpdateExisting: options?.updateExisting ?? true,
+      StopOnError: options?.stopOnError ?? false,
+      Rows: rows,
+    }).then((response) => {
+      const raw = response.data.result || {};
+      return {
+        created: raw.created ?? raw.Created ?? 0,
+        updated: raw.updated ?? raw.Updated ?? 0,
+        skipped: raw.skipped ?? raw.Skipped ?? 0,
+        failed: raw.failed ?? raw.Failed ?? 0,
+        rows: (raw.rows || raw.Rows || []).map((r: any) => ({
+          rowNumber: r.rowNumber ?? r.RowNumber,
+          employeeId: r.employeeId ?? r.EmployeeId,
+          status: r.status ?? r.Status ?? "",
+          message: r.message ?? r.Message ?? "",
+          warning: r.warning ?? r.Warning ?? null,
+        })),
+      } as EmployeeImportResult;
     });
   };
 

@@ -2,9 +2,25 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProcessMasterSlideout from "./ProcessMasterSlideout";
 import ProcessMasterImportModal from "./ProcessMasterImportModal";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "srno", label: "Sr. No.", sortKey: "srno" },
+  { key: "processCode", label: "Code", sortKey: "processCode", locked: true },
+  { key: "processName", label: "Process Name", sortKey: "processName", locked: true },
+  { key: "processCategory", label: "Category", sortKey: "processCategory" },
+  { key: "defaultEstimatedTimeMinutes", label: "Est. Time", sortKey: "defaultEstimatedTimeMinutes" },
+  { key: "defaultWorkstationName", label: "Workstation", sortKey: "defaultWorkstationName" },
+  { key: "isFixed", label: "Outside", sortKey: "isFixed" },
+  { key: "status", label: "Status", sortKey: "status" },
+];
+
+const DEFAULT_HIDDEN_COLUMNS = ["srno"];
+const COLUMN_PREFERENCE_KEY = "processMaster.hiddenColumns";
 
 const ProcessMasterComponent: React.FC = () => {
   const location = useLocation();
@@ -18,6 +34,15 @@ const ProcessMasterComponent: React.FC = () => {
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof ProcessMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -133,6 +158,48 @@ const ProcessMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (process: ProcessMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "srno":
+        return process.srno || "";
+      case "processCode":
+        return process.processCode || "";
+      case "processName":
+        return process.processName || "";
+      case "processCategory":
+        return process.processCategory || "";
+      case "defaultEstimatedTimeMinutes":
+        return process.defaultEstimatedTimeMinutes != null
+          ? `${process.defaultEstimatedTimeMinutes} min`
+          : "";
+      case "defaultWorkstationName":
+        return process.defaultWorkstationName || "";
+      case "isFixed":
+        return (
+          <span
+            className={`badge ${
+              process.isFixed === 1 ? "badge-info" : "badge-secondary"
+            }`}
+          >
+            {process.isFixed === 1 ? "Yes" : "No"}
+          </span>
+        );
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              process.status === 1 ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {process.statusText ||
+              (process.status === 1 ? "Active" : "Inactive")}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -157,6 +224,14 @@ const ProcessMasterComponent: React.FC = () => {
           >
             <span>Import</span>
           </button>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddProcess} type="button">
             <span>+</span>
             <span>Add Process</span>
@@ -218,36 +293,28 @@ const ProcessMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th className="sortable" onClick={() => handleSort("srno")}>
-                  <div className="th-content">Sr. No.{getSortIcon("srno")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("processCode")}>
-                  <div className="th-content">Code{getSortIcon("processCode")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("processName")}>
-                  <div className="th-content">Process Name{getSortIcon("processName")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("processCategory")}>
-                  <div className="th-content">Category{getSortIcon("processCategory")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("defaultEstimatedTimeMinutes")}>
-                  <div className="th-content">Est. Time{getSortIcon("defaultEstimatedTimeMinutes")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("defaultWorkstationName")}>
-                  <div className="th-content">Workstation{getSortIcon("defaultWorkstationName")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("isFixed")}>
-                  <div className="th-content">Outside{getSortIcon("isFixed")}</div>
-                </th>
-                <th className="sortable" onClick={() => handleSort("status")}>
-                  <div className="th-content">Status{getSortIcon("status")}</div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof ProcessMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof ProcessMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedProcesses.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No processes found</p>
                     <small>Click "Add Process" or "Import" to get started</small>
                   </td>
@@ -255,35 +322,9 @@ const ProcessMasterComponent: React.FC = () => {
               ) : (
                 sortedProcesses.map((process) => (
                   <tr key={process.id} onClick={() => handleRowClick(process)}>
-                    <td>{process.srno || ""}</td>
-                    <td>{process.processCode || ""}</td>
-                    <td>{process.processName || ""}</td>
-                    <td>{process.processCategory || ""}</td>
-                    <td>
-                      {process.defaultEstimatedTimeMinutes != null
-                        ? `${process.defaultEstimatedTimeMinutes} min`
-                        : ""}
-                    </td>
-                    <td>{process.defaultWorkstationName || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          process.isFixed === 1 ? "badge-info" : "badge-secondary"
-                        }`}
-                      >
-                        {process.isFixed === 1 ? "Yes" : "No"}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          process.status === 1 ? "badge-success" : "badge-danger"
-                        }`}
-                      >
-                        {process.statusText ||
-                          (process.status === 1 ? "Active" : "Inactive")}
-                      </span>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(process, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}

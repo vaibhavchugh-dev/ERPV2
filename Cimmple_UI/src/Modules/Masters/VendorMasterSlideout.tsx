@@ -55,6 +55,12 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string }>>([]);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+  const [portalAccessEnabled, setPortalAccessEnabled] = useState(false);
+  const [portalHasPassword, setPortalHasPassword] = useState(false);
+  const [portalPassword, setPortalPassword] = useState("");
+  const [portalPasswordConfirm, setPortalPasswordConfirm] = useState("");
+  const [vendorCode, setVendorCode] = useState("");
+  const [initialPortalAccessEnabled, setInitialPortalAccessEnabled] = useState(false);
 
   const loadCOAAccounts = async () => {
     try {
@@ -85,6 +91,12 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
     if (vendorId > 0) {
       loadVendor();
     } else {
+      setVendorCode("");
+      setPortalAccessEnabled(false);
+      setInitialPortalAccessEnabled(false);
+      setPortalHasPassword(false);
+      setPortalPassword("");
+      setPortalPasswordConfirm("");
       setContacts([
         {
           id: 0,
@@ -143,6 +155,13 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         };
 
         setFormData(vendorData);
+        setVendorCode((vendor as any).vendorcode || "");
+        const enabled = !!(vendor as any).portalAccessEnabled;
+        setPortalAccessEnabled(enabled);
+        setInitialPortalAccessEnabled(enabled);
+        setPortalHasPassword(!!(vendor as any).portalHasPassword);
+        setPortalPassword("");
+        setPortalPasswordConfirm("");
 
         const shippingMatchesBilling =
           vendorData.shippingaddress === vendorData.address &&
@@ -457,6 +476,23 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       if (shippingZipError) newErrors.shippingZipCode = shippingZipError;
     }
 
+    if (portalAccessEnabled) {
+      const needsPassword = !portalHasPassword || portalPassword.trim() !== "" || portalPasswordConfirm.trim() !== "";
+      const enablingFirstTime = !initialPortalAccessEnabled || !portalHasPassword;
+      if (enablingFirstTime || needsPassword) {
+        if (enablingFirstTime && !portalPassword.trim()) {
+          newErrors.portalPassword = "Password is required to enable portal access";
+        } else if (portalPassword.trim() || portalPasswordConfirm.trim() || enablingFirstTime) {
+          if (portalPassword.length < 8) {
+            newErrors.portalPassword = "Password must be at least 8 characters";
+          }
+          if (portalPassword !== portalPasswordConfirm) {
+            newErrors.portalPasswordConfirm = "Passwords do not match";
+          }
+        }
+      }
+    }
+
     contacts.forEach((contact, index) => {
       if (contact.email) {
         const emailError = validateEmail(contact.email);
@@ -480,7 +516,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
 
     if (hasErrors) {
       toast.error("Please fix validation errors before submitting");
-      if (newErrors.email || newErrors.phone_number) {
+      if (newErrors.portalPassword || newErrors.portalPasswordConfirm || newErrors.email || newErrors.phone_number) {
         setActiveTab('vendor');
       } else if (newErrors.zipcode) {
         setActiveTab('billing');
@@ -506,15 +542,50 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       const saveData: VendorMasterReq = {
         ...formData,
         VendorContact: contacts,
+        portalAccessEnabled,
       };
-      await VendorService.SaveVendorData(saveData);
+      if (portalPassword.trim()) {
+        saveData.portalPassword = portalPassword.trim();
+      }
+      const saveResult = await VendorService.SaveVendorData(saveData);
+      const savedVendorId =
+        vendorId > 0
+          ? vendorId
+          : (saveResult?.vendor_id ?? saveResult?.vendorId ?? 0);
+
+      const portalChanged =
+        portalAccessEnabled !== initialPortalAccessEnabled ||
+        (portalAccessEnabled && portalPassword.trim() !== "");
+
+      // Keep dedicated portal call as fallback for older API builds / explicit password reset
+      if (savedVendorId > 0 && portalChanged) {
+        try {
+          await VendorService.SaveVendorPortalAccess({
+            vendorId: savedVendorId,
+            enabled: portalAccessEnabled,
+            newPassword: portalPassword.trim() || undefined,
+          });
+        } catch (portalError: any) {
+          // If SaveVendorData already applied portalAccessEnabled, a 404 here is fine on older partial deploys
+          const status = portalError?.response?.status;
+          if (status && status !== 404) {
+            throw portalError;
+          }
+        }
+      }
+
       toast.success(
         vendorId > 0 ? "Vendor updated successfully" : "Vendor created successfully"
       );
       setIsStateChanged(false);
       onClose();
     } catch (error: any) {
-      toast.error(`Error saving vendor: ${error.message}`);
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Error saving vendor: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -745,6 +816,110 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                   </select>
                 </div>
               </div>
+            </div>
+
+            <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: portalAccessEnabled ? '1rem' : 0 }}>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#111827', margin: 0 }}>
+                    Vendor Portal Access
+                  </h3>
+                  <p style={{ fontSize: '0.8125rem', color: '#6b7280', margin: '0.25rem 0 0' }}>
+                    Allow this vendor to sign in at /vendor/login with their vendor code.
+                  </p>
+                </div>
+                <label className="checkbox-wrapper" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={portalAccessEnabled}
+                    onChange={(e) => {
+                      setPortalAccessEnabled(e.target.checked);
+                      setPortalPassword("");
+                      setPortalPasswordConfirm("");
+                      setIsStateChanged(true);
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.portalPassword;
+                        delete next.portalPasswordConfirm;
+                        return next;
+                      });
+                    }}
+                  />
+                  <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Enable Portal</span>
+                </label>
+              </div>
+
+              {portalAccessEnabled && (
+                <>
+                  {vendorCode && (
+                    <p style={{ fontSize: '0.8125rem', color: '#374151', marginBottom: '0.75rem' }}>
+                      Login vendor code: <strong>{vendorCode}</strong>
+                      {vendorId === 0 && (
+                        <span style={{ color: '#6b7280' }}> (assigned after save)</span>
+                      )}
+                    </p>
+                  )}
+                  {!vendorCode && vendorId === 0 && (
+                    <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+                      Vendor code will be assigned when the vendor is saved.
+                    </p>
+                  )}
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label htmlFor="portalPassword">
+                        {portalHasPassword ? "New Portal Password" : "Portal Password"}
+                        {(!portalHasPassword || !initialPortalAccessEnabled) && (
+                          <span className="required"> *</span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        id="portalPassword"
+                        name="portalPassword"
+                        className={`form-input ${errors.portalPassword ? "error" : ""}`}
+                        autoComplete="new-password"
+                        placeholder={
+                          portalHasPassword
+                            ? "Leave blank to keep current password"
+                            : "Enter portal password"
+                        }
+                        value={portalPassword}
+                        onChange={(e) => {
+                          setPortalPassword(e.target.value);
+                          setIsStateChanged(true);
+                        }}
+                      />
+                      {errors.portalPassword && (
+                        <span className="error-message">{errors.portalPassword}</span>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="portalPasswordConfirm">
+                        Confirm Password
+                        {(!portalHasPassword || !initialPortalAccessEnabled || portalPassword.trim() !== "") && (
+                          <span className="required"> *</span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        id="portalPasswordConfirm"
+                        name="portalPasswordConfirm"
+                        className={`form-input ${errors.portalPasswordConfirm ? "error" : ""}`}
+                        autoComplete="new-password"
+                        placeholder="Confirm portal password"
+                        value={portalPasswordConfirm}
+                        onChange={(e) => {
+                          setPortalPasswordConfirm(e.target.value);
+                          setIsStateChanged(true);
+                        }}
+                      />
+                      {errors.portalPasswordConfirm && (
+                        <span className="error-message">{errors.portalPasswordConfirm}</span>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

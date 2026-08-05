@@ -55,13 +55,17 @@ namespace CimmpleAPI.Data.Models
         public string? SearchSSN { get; set; }
         public string? EmpCode { get; set; }
         public int? Empid { get; set; }
-        public string? ProfilePic { get; set; }
-        // public string? AzurePersonId { get; set; }
-        // public string? AzurePersistedFaceId { get; set; }
-        // public bool? AzureFaceRegistered { get; set; }
-        // public DateTime? AzureFaceLastSync { get; set; }
-        // public bool? FaceApprovalPending { get; set; }
-        // public string? PendingImagePath { get; set; }
+
+        /// <summary>Preferred active location after login.</summary>
+        public int? DefaultLocationId { get; set; }
+
+        /// <summary>When true, user may switch to any location in the tenant.</summary>
+        public bool CanAccessAllLocations { get; set; }
+
+        public int FailedLoginCount { get; set; }
+
+        /// <summary>UTC time until which the account remains locked after failed attempts.</summary>
+        public DateTime? LockoutEndUtc { get; set; }
     }
 
     public class UserRole

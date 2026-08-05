@@ -1,0 +1,365 @@
+import React, { useMemo, useState } from "react";
+import { toast } from "react-toastify";
+import {
+  VendorService,
+  VendorImportRow,
+  VendorImportResult,
+  VENDOR_IMPORT_HEADERS,
+} from "../../Common/Services/VendorService";
+import {
+  buildCsv,
+  downloadCsv,
+  mapCsvRows,
+  parseCsv,
+} from "../../Common/Utils/CsvImport";
+import { VENDOR_TEMPLATE_ROWS } from "./VendorMasterTemplateData";
+import "./CustomerMasterSlideout.scss";
+
+interface VendorMasterImportModalProps {
+  onClose: () => void;
+  onImported: () => void;
+}
+
+type PreviewRow = VendorImportRow & { _errors: string[] };
+
+const HEADER_ALIASES: Record<string, string> = {
+  vendorcode: "VendorCode",
+  code: "VendorCode",
+  companyname: "CompanyName",
+  vendorname: "CompanyName",
+  name: "CompanyName",
+  companyalias: "CompanyAlias",
+  alias: "CompanyAlias",
+  email: "Email",
+  phone: "Phone",
+  phonenumber: "Phone",
+  address: "Address",
+  apartment: "Apartment",
+  city: "City",
+  state: "State",
+  states: "State",
+  zip: "Zip",
+  zipcode: "Zip",
+  country: "Country",
+  shippingaddress: "ShippingAddress",
+  shippingapartment: "ShippingApartment",
+  shippingcity: "ShippingCity",
+  shippingstate: "ShippingState",
+  shippingstates: "ShippingState",
+  shippingzip: "ShippingZip",
+  shippingzipcode: "ShippingZip",
+  shippingcountry: "ShippingCountry",
+  term: "Term",
+  terms: "Term",
+  shipvia: "ShipVia",
+  ship_via: "ShipVia",
+  status: "Status",
+  contacttitle: "ContactTitle",
+  title: "ContactTitle",
+  contactfirstname: "ContactFirstName",
+  firstname: "ContactFirstName",
+  contactlastname: "ContactLastName",
+  lastname: "ContactLastName",
+  contactphone: "ContactPhone",
+  contactemail: "ContactEmail",
+};
+
+const VendorMasterImportModal: React.FC<VendorMasterImportModalProps> = ({
+  onClose,
+  onImported,
+}) => {
+  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [updateExisting, setUpdateExisting] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<VendorImportResult | null>(null);
+
+  const validCount = useMemo(
+    () => previewRows.filter((r) => r._errors.length === 0).length,
+    [previewRows]
+  );
+  const errorCount = useMemo(
+    () => previewRows.filter((r) => r._errors.length > 0).length,
+    [previewRows]
+  );
+
+  const downloadTemplate = () => {
+    const contents = buildCsv(
+      VENDOR_IMPORT_HEADERS,
+      VENDOR_TEMPLATE_ROWS.map((row) => [
+        row.code,
+        row.companyName,
+        row.companyAlias,
+        row.email,
+        row.phone,
+        row.address,
+        row.apartment,
+        row.city,
+        row.state,
+        row.zip,
+        row.country,
+        row.shippingAddress,
+        row.shippingApartment,
+        row.shippingCity,
+        row.shippingState,
+        row.shippingZip,
+        row.shippingCountry,
+        row.term,
+        row.shipVia,
+        "Active",
+        row.contactTitle,
+        row.contactFirstName,
+        row.contactLastName,
+        row.contactPhone,
+        row.contactEmail,
+      ])
+    );
+    downloadCsv("vendor-master-import-template.csv", contents);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setResult(null);
+    setFileName(file.name);
+
+    try {
+      const text = await file.text();
+      const parsed = mapCsvRows(parseCsv(text), HEADER_ALIASES, "CompanyName");
+
+      if (parsed.length === 0) {
+        toast.error("No data rows found in the CSV");
+        setPreviewRows([]);
+        return;
+      }
+
+      const seenNames = new Set<string>();
+      const seenCodes = new Set<string>();
+      const mapped: PreviewRow[] = parsed.map(({ rowNumber, values }) => {
+        const errors: string[] = [];
+        const companyName = (values.CompanyName || "").trim();
+        const vendorCode = (values.VendorCode || "").trim();
+
+        if (!companyName) {
+          errors.push("Company Name is required");
+        } else if (seenNames.has(companyName.toLowerCase())) {
+          errors.push("Duplicate company name in this file");
+        } else {
+          seenNames.add(companyName.toLowerCase());
+        }
+
+        if (vendorCode) {
+          if (seenCodes.has(vendorCode.toLowerCase())) {
+            errors.push("Duplicate vendor code in this file");
+          } else {
+            seenCodes.add(vendorCode.toLowerCase());
+          }
+        }
+
+        return {
+          RowNumber: rowNumber,
+          ...(values as VendorImportRow),
+          _errors: errors,
+        };
+      });
+
+      setPreviewRows(mapped);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to parse CSV");
+      setPreviewRows([]);
+    }
+  };
+
+  const handleImport = async () => {
+    const rowsToImport = previewRows.filter((r) => r._errors.length === 0);
+    if (rowsToImport.length === 0) {
+      toast.error("No valid rows to import");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const payload: VendorImportRow[] = rowsToImport.map(
+        ({ _errors, ...rest }) => rest
+      );
+      const importResult = await VendorService.ImportVendors(payload, {
+        updateExisting,
+        stopOnError: false,
+      });
+      setResult(importResult);
+
+      const summary = `Created ${importResult.created}, updated ${importResult.updated}, skipped ${importResult.skipped}, failed ${importResult.failed}`;
+      if (importResult.failed > 0) {
+        toast.warning(`Import completed with errors. ${summary}`);
+      } else {
+        toast.success(`Import successful. ${summary}`);
+      }
+      onImported();
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error || error?.message || "Import failed";
+      toast.error(message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="slideout-overlay" onClick={onClose}>
+      <div
+        className="form-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "960px", width: "95vw" }}
+      >
+        <div className="form-header">
+          <h2>Import Vendors</h2>
+          <button type="button" className="btn-close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+
+        <div className="tab-content" style={{ padding: "0 1.5rem 1rem" }}>
+          <p style={{ color: "#6b7280", fontSize: "0.875rem", marginTop: 0 }}>
+            Upload a CSV file to create or update vendors. Matching uses Vendor Code when present,
+            otherwise Company Name. Codes are auto-generated when left blank on create.
+          </p>
+
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <button type="button" className="btn-cancel" onClick={downloadTemplate}>
+              Download Template
+            </button>
+            <label className="btn-submit">
+              Choose CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleFileChange}
+                style={{ display: "none" }}
+              />
+            </label>
+            {fileName && (
+              <span style={{ alignSelf: "center", fontSize: "0.875rem", color: "#374151" }}>
+                {fileName}
+              </span>
+            )}
+          </div>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              fontSize: "0.875rem",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={updateExisting}
+              onChange={(e) => setUpdateExisting(e.target.checked)}
+            />
+            Update existing vendors when matched
+          </label>
+
+          {previewRows.length > 0 && (
+            <>
+              <div style={{ marginBottom: "0.75rem", fontSize: "0.875rem", color: "#374151" }}>
+                Preview: {previewRows.length} rows ({validCount} valid, {errorCount} with errors)
+              </div>
+              <div
+                style={{
+                  maxHeight: "280px",
+                  overflow: "auto",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.5rem",
+                }}
+              >
+                <table className="customers-table" style={{ margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Code</th>
+                      <th>Company Name</th>
+                      <th>City</th>
+                      <th>Contact</th>
+                      <th>Phone</th>
+                      <th>Status</th>
+                      <th>Issues</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row, idx) => (
+                      <tr
+                        key={idx}
+                        style={row._errors.length ? { background: "#fef2f2" } : undefined}
+                      >
+                        <td>{idx + 1}</td>
+                        <td>{row.VendorCode || ""}</td>
+                        <td>{row.CompanyName || ""}</td>
+                        <td>{row.City || ""}</td>
+                        <td>
+                          {[row.ContactFirstName, row.ContactLastName]
+                            .filter(Boolean)
+                            .join(" ") || ""}
+                        </td>
+                        <td>{row.ContactPhone || row.Phone || ""}</td>
+                        <td>{row.Status || "Active"}</td>
+                        <td style={{ color: "#dc2626", fontSize: "0.8125rem" }}>
+                          {row._errors.join("; ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {result && (
+            <div
+              style={{
+                marginTop: "1rem",
+                padding: "0.75rem 1rem",
+                background: "#f9fafb",
+                borderRadius: "0.5rem",
+                fontSize: "0.875rem",
+              }}
+            >
+              <strong>Import result:</strong> Created {result.created}, Updated {result.updated},
+              Skipped {result.skipped}, Failed {result.failed}
+              {result.rows?.some((r) => r.status === "Error") && (
+                <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.25rem", color: "#dc2626" }}>
+                  {result.rows
+                    .filter((r) => r.status === "Error")
+                    .slice(0, 10)
+                    .map((r) => (
+                      <li key={`error-${r.rowNumber}`}>
+                        Row {r.rowNumber}: {r.message}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="form-actions" style={{ flexShrink: 0 }}>
+          <button type="button" className="btn-cancel" onClick={onClose}>
+            Close
+          </button>
+          <button
+            type="button"
+            className="btn-submit"
+            disabled={importing || validCount === 0}
+            onClick={handleImport}
+          >
+            {importing ? "Importing..." : `Import ${validCount || ""} Vendors`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default VendorMasterImportModal;

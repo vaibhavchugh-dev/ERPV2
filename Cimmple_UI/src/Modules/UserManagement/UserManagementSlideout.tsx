@@ -394,8 +394,9 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     return (
       <div className="slideout-overlay">
         <div className="slideout-panel">
-          <div className="slideout-loading">
-            <i className="fas fa-spinner fa-spin"></i> Loading user data...
+          <div className="page-loading">
+            <div className="loading-spinner"></div>
+            <p>Loading user data...</p>
           </div>
         </div>
       </div>
@@ -445,11 +446,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
             onClick={handleSave}
             disabled={saving}
           >
-            {saving ? (
-              <>
-                <i className="fas fa-spinner fa-spin"></i> Saving...
-              </>
-            ) : (
+            {saving ? "Saving..." : (
               <>
                 <i className="fas fa-save"></i> Update Account
               </>

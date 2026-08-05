@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -8,6 +9,7 @@ using System.Text.Json;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Repositories;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Auth;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -64,28 +66,46 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
 
-// Register User Repository
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<IUserRepository, UserRepository>();
+// Auth services
+builder.Services.Configure<TokenConfigOptions>(builder.Configuration.GetSection(TokenConfigOptions.SectionName));
+builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 // Configure JWT Authentication
-var tokenConfig = builder.Configuration.GetSection("TokenConfig");
-var key = Encoding.ASCII.GetBytes(tokenConfig["Key"] ?? "DefaultKey");
+var tokenConfig = builder.Configuration.GetSection(TokenConfigOptions.SectionName);
+var keyString = tokenConfig["Key"] ?? "ChangeThisToALongSecureSecretKeyAtLeast32Chars!";
+var key = Encoding.UTF8.GetBytes(keyString);
+if (key.Length < 32)
+{
+    Array.Resize(ref key, 32);
+}
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
     .AddJwtBearer(cfg =>
     {
         cfg.TokenValidationParameters = new TokenValidationParameters()
         {
             ValidateIssuer = true,
-            ValidIssuer = tokenConfig["Issuer"],
+            ValidIssuer = tokenConfig["Issuer"] ?? "CimmpleAPI",
             ValidateAudience = true,
-            ValidAudience = tokenConfig["Audience"],
+            ValidAudience = tokenConfig["Audience"] ?? "CimmpleUI",
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(key),
-            ValidateLifetime = true
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // Configure Swagger
 builder.Services.AddEndpointsApiExplorer();
