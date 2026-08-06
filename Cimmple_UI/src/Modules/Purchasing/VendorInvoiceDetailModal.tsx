@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoice, RecordVendorPaymentRequest } from '../../Common/Services/VendorInvoiceService';
 import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
+import BankAccountSelect from '../../Common/Components/BankAccountSelect';
+import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -18,6 +20,8 @@ interface PaymentModalProps {
     dueDate: string;
     amount: number;
     totalAmount: number;
+    paidAmount?: number;
+    balanceDue?: number;
     status: string;
     paymentMethod?: string;
   };
@@ -33,13 +37,43 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [checkDate, setCheckDate] = useState(new Date().toISOString().split('T')[0]);
   const [pvrNo, setPvrNo] = useState('');
   const [series, setSeries] = useState('AP');
-  const [bankId, setBankId] = useState(1);
+  const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
+  const balanceDue = Math.max(
+    0,
+    Number(invoice.balanceDue ?? invoice.totalAmount - (invoice.paidAmount ?? 0))
+  );
+  const [paymentAmount, setPaymentAmount] = useState(
+    balanceDue > 0 ? balanceDue.toFixed(2) : invoice.totalAmount.toFixed(2)
+  );
+
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!paymentMethod.trim()) {
       toast.error('Payment method is required');
+      return;
+    }
+
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Valid payment amount is required');
+      return;
+    }
+
+    if (amount > balanceDue + 0.009) {
+      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      return;
+    }
+
+    if (!bankId) {
+      toast.error('Please select a bank account');
       return;
     }
 
@@ -53,12 +87,17 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
         CheckDate: checkDate || undefined,
         PvrNo: pvrNo ? parseInt(pvrNo) : undefined,
         Series: series || undefined,
-        BankId: bankId
+        BankId: bankId,
+        PaymentAmount: amount
       };
 
       await VendorInvoiceService.RecordVendorPayment(invoice.id, paymentData);
 
-      toast.success(`Payment recorded for invoice ${invoice.invoiceNo}`);
+      toast.success(
+        amount + 0.009 < balanceDue
+          ? `Partial payment of $${amount.toFixed(2)} recorded for invoice ${invoice.invoiceNo}`
+          : `Payment recorded for invoice ${invoice.invoiceNo}`
+      );
       onPaymentComplete();
     } catch (error: any) {
       console.error('Payment recording failed:', error);
@@ -148,10 +187,18 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Invoice #{invoice.invoiceNo}
                   </div>
+                  {(invoice.paidAmount ?? 0) > 0 && (
+                    <div style={{ fontSize: '0.75rem', color: '#059669' }}>
+                      Paid: {formatCurrency(invoice.paidAmount ?? 0)}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontWeight: '600', fontSize: '1rem', color: '#1f2937' }}>
-                    ${invoice.totalAmount.toFixed(2)}
+                    Balance: {formatCurrency(balanceDue)}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    Total: {formatCurrency(invoice.totalAmount)}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Due: {new Date(invoice.dueDate).toLocaleDateString()}
@@ -165,7 +212,28 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
               <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600' }}>
                 Payment Information
               </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                    Payment Amount <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max={balanceDue}
+                    required
+                    value={paymentAmount}
+                    onChange={(e) => setPaymentAmount(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
                     Payment Method <span style={{ color: '#ef4444' }}>*</span>
@@ -189,6 +257,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                     <option value="Credit Card">Credit Card</option>
                   </select>
                 </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
                     Payment Date
@@ -288,25 +358,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                       }}
                     />
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
-                      Bank
-                    </label>
-                    <select
-                      value={bankId}
-                      onChange={(e) => setBankId(parseInt(e.target.value))}
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '0.25rem',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      <option value={1}>Main Bank Account</option>
-                      <option value={2}>Secondary Account</option>
-                    </select>
-                  </div>
+                  <BankAccountSelect
+                    banks={banks}
+                    value={bankId}
+                    onChange={setBankId}
+                    loading={banksLoading}
+                  />
                 </div>
               </div>
             </div>
@@ -363,24 +420,55 @@ interface VendorInvoiceDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   invoiceId: number;
+  /** When true, opens the payment form after the invoice loads */
+  initialShowPayment?: boolean;
+  onPaymentComplete?: () => void;
 }
 
 const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   isOpen,
   onClose,
-  invoiceId
+  invoiceId,
+  initialShowPayment = false,
+  onPaymentComplete
 }) => {
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+  const paymentPromptedRef = useRef(false);
 
   useEffect(() => {
-    if (isOpen && invoiceId) {
+    if (!isOpen) {
+      setInvoice(null);
+      setShowPaymentModal(false);
+      paymentPromptedRef.current = false;
+      return;
+    }
+    if (invoiceId) {
+      setInvoice(null);
+      setShowPaymentModal(false);
+      paymentPromptedRef.current = false;
       loadInvoiceDetails();
     }
   }, [isOpen, invoiceId]);
+
+  useEffect(() => {
+    if (
+      isOpen &&
+      initialShowPayment &&
+      !paymentPromptedRef.current &&
+      invoice &&
+      invoice.id === invoiceId &&
+      invoice.isApproved &&
+      invoice.status !== 'Paid' &&
+      invoice.status !== 'Void'
+    ) {
+      paymentPromptedRef.current = true;
+      setShowPaymentModal(true);
+    }
+  }, [isOpen, initialShowPayment, invoiceId, invoice?.id, invoice?.status, invoice?.isApproved]);
 
   const loadInvoiceDetails = async () => {
     if (!invoiceId) return;
@@ -429,12 +517,16 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
 
     if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
+    } else if (statusLower === 'partially paid') {
+      return <span className="badge badge-info">Partially Paid</span>;
     } else if (statusLower === 'overdue') {
       return <span className="badge badge-danger">Overdue</span>;
     } else if (statusLower === 'void') {
       return <span className="badge badge-secondary">Void</span>;
+    } else if (statusLower === 'approved') {
+      return <span className="badge badge-success">Approved</span>;
     } else {
-      return <span className="badge badge-warning">Unpaid</span>;
+      return <span className="badge badge-warning">{status || 'Unpaid'}</span>;
     }
   };
 
@@ -513,6 +605,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
     setShowPaymentModal(false);
     // Reload invoice details to show updated status
     loadInvoiceDetails();
+    onPaymentComplete?.();
   };
 
   if (!isOpen) return null;
@@ -566,7 +659,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
             </p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && (
+            {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && invoice?.isApproved && (
               <button
                 onClick={handlePayInvoice}
                 style={{
@@ -583,6 +676,18 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faCreditCard} style={{ marginRight: '0.5rem' }} />
                 Pay Invoice
               </button>
+            )}
+            {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && !invoice?.isApproved && (
+              <span style={{
+                padding: '0.5rem 1rem',
+                fontSize: '0.875rem',
+                color: '#92400e',
+                backgroundColor: '#fef3c7',
+                borderRadius: '0.375rem',
+                alignSelf: 'center'
+              }}>
+                Awaiting approval before payment
+              </span>
             )}
             <button
               onClick={handlePrintInvoice}
@@ -725,6 +830,25 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Total Amount:</span>
                       <span style={{ fontWeight: '600', fontSize: '1.125rem' }}>{formatCurrency(invoice.totalAmount)}</span>
                     </div>
+                    {(invoice.paidAmount ?? 0) > 0 && (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                          <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Paid:</span>
+                          <span>{formatCurrency(invoice.paidAmount ?? 0)}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                          <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Balance Due:</span>
+                          <span style={{ fontWeight: '600' }}>
+                            {formatCurrency(
+                              invoice.balanceDue ??
+                                Math.max(0, invoice.totalAmount - (invoice.paidAmount ?? 0))
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -834,6 +958,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
             dueDate: invoice.dueDate,
             amount: invoice.amount,
             totalAmount: invoice.totalAmount,
+            paidAmount: invoice.paidAmount,
+            balanceDue: invoice.balanceDue,
             status: invoice.status,
             paymentMethod: invoice.paymentMethod
           }}

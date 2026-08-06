@@ -2676,6 +2676,7 @@ namespace CimmpleAPI.Controllers
                         AccountingPeriod = accountingPeriod,
                         Amount = subtotal,
                         TotalAmount = subtotal,
+                        PaidAmount = 0,
                         Approved = false,
                         CkNo = "",
                         Series = "",
@@ -2899,13 +2900,13 @@ namespace CimmpleAPI.Controllers
                         dueDate = invoice.Invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Invoice.Amount,
                         totalAmount = invoice.TotalAmount,
-                        status = invoice.Invoice.isPaid == 1 ? "Paid" :
-                                invoice.Invoice.isPaid == 2 ? "Void" :
-                                invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                        paidAmount = GetEffectiveVendorPaidAmount(invoice.Invoice),
+                        balanceDue = GetVendorBalanceDue(invoice.Invoice),
+                        status = ResolveVendorInvoiceListStatus(invoice.Invoice, now),
+                        isApproved = invoice.Invoice.Approved == true,
                         paymentMethod = invoice.Invoice.PaymentMethod ?? "",
                         orderId = invoice.OrderIds.Count == 1 ? (int?)orderId : null,
-                        daysOverdue = invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ?
-                            (int)(now - invoice.Invoice.DueDate).TotalDays : (int?)null
+                        daysOverdue = GetVendorDaysOverdue(invoice.Invoice, now)
                     });
                 }
 
@@ -2964,9 +2965,10 @@ namespace CimmpleAPI.Controllers
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
-                    status = invoice.isPaid == 1 ? "Paid" :
-                            invoice.isPaid == 2 ? "Void" :
-                            invoice.DueDate < DateTime.Now && invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                    paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                    balanceDue = GetVendorBalanceDue(invoice),
+                    status = ResolveVendorInvoiceListStatus(invoice, DateTime.Now),
+                    isApproved = invoice.Approved == true,
                     paymentMethod = invoice.PaymentMethod ?? "",
                     vendorName = invoice.VendorName ?? "",
                     vendorCode = invoice.VendorCode ?? "",
@@ -3113,17 +3115,58 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
+        {
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
+            if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
+                return invoice.TotalAmount;
+            return 0m;
+        }
+
+        private static decimal GetVendorBalanceDue(VendorInvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectiveVendorPaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetVendorDaysOverdue(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (GetVendorBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= now)
+                return null;
+            return (int)(now - invoice.DueDate).TotalDays;
+        }
+
+        private static string ResolveVendorInvoiceListStatus(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
+                return "Paid";
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.DueDate < now)
+                return "Overdue";
+            return "Unpaid";
+        }
+
         private string GetVendorInvoiceStatus(VendorInvoiceMaster invoice)
         {
-            // Simple status logic - could be expanded
-            if (invoice.isPaid.HasValue && invoice.isPaid.Value == 1)
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
                 return "Paid";
-            else if (DateTime.Now > invoice.DueDate)
-                return "Overdue";
-            else if (invoice.Approved.HasValue && invoice.Approved.Value)
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.Approved == true)
                 return "Approved";
-            else
-                return "Pending";
+            if (DateTime.Now > invoice.DueDate)
+                return "Overdue";
+            return "Pending";
         }
 
         private static string BuildAutoPostingReference(string prefix, string? invoiceNo, int invoiceId)

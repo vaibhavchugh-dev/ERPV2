@@ -63,6 +63,8 @@ export interface InvoiceDetail {
   saleTaxAmount: number;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   paymentMethod?: string;
   paymentDate?: string;
   checkNo?: string;
@@ -94,6 +96,8 @@ export interface InvoiceSummary {
   itemCount: number;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   status: string;
   daysOverdue?: number;
 }
@@ -104,6 +108,7 @@ export interface RecordCustomerPaymentRequest {
   CheckNo?: string;
   PaymentAmount?: number;
   Notes?: string;
+  BankId?: number;
 }
 
 export class InvoiceService {

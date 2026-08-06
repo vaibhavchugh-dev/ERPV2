@@ -8,6 +8,8 @@ import { CustomerInvoicesService, CustomerInvoiceSummary } from "../../Common/Se
 import { InvoiceService } from "../../Common/Services/InvoiceService";
 import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
+import BankAccountSelect from "../../Common/Components/BankAccountSelect";
+import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -21,8 +23,16 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [checkNo, setCheckNo] = useState('');
-  const [paymentAmount, setPaymentAmount] = useState(invoice.amount.toString());
+  const invoiceTotal = invoice.totalAmount ?? invoice.amount;
+  const balanceDue = Math.max(
+    0,
+    Number(invoice.balanceDue ?? invoiceTotal - (invoice.paidAmount ?? 0))
+  );
+  const [paymentAmount, setPaymentAmount] = useState(
+    balanceDue > 0 ? balanceDue.toFixed(2) : invoiceTotal.toFixed(2)
+  );
   const [notes, setNotes] = useState('');
+  const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
 
   const formatDate = (dateStr: string): string => {
     if (!dateStr) return '';
@@ -35,6 +45,13 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
     } catch {
       return dateStr;
     }
+  };
+
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,8 +68,13 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
       return;
     }
 
-    if (amount > invoice.amount) {
-      toast.error('Payment amount cannot exceed invoice total');
+    if (amount > balanceDue + 0.009) {
+      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      return;
+    }
+
+    if (!bankId) {
+      toast.error('Please select a bank account');
       return;
     }
 
@@ -64,7 +86,8 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
         PaymentDate: paymentDate,
         CheckNo: checkNo || undefined,
         PaymentAmount: amount,
-        Notes: notes || undefined
+        Notes: notes || undefined,
+        BankId: bankId
       };
 
       await InvoiceService.RecordCustomerPayment(invoice.id, paymentData);
@@ -162,7 +185,10 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontWeight: '600', fontSize: '1rem', color: '#1f2937' }}>
-                    ${invoice.amount.toFixed(2)}
+                    Balance: {formatCurrency(balanceDue)}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    Total: {formatCurrency(invoiceTotal)}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Due: {formatDate(invoice.dueDate)}
@@ -229,7 +255,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                       type="number"
                       step="0.01"
                       min="0"
-                      max={invoice.amount}
+                      max={balanceDue}
                       required
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
@@ -264,6 +290,15 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div style={{ marginTop: '1rem' }}>
+                <BankAccountSelect
+                  banks={banks}
+                  value={bankId}
+                  onChange={setBankId}
+                  loading={banksLoading}
+                />
               </div>
 
               <div style={{ marginTop: '1rem' }}>
@@ -448,6 +483,12 @@ const CustomerInvoices: React.FC = () => {
 
     if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
+    } else if (statusLower === 'partially paid') {
+      return (
+        <span className="badge badge-info">
+          Partially Paid{daysOverdue && daysOverdue > 0 ? ` · ${daysOverdue}d overdue` : ''}
+        </span>
+      );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
       return <span className="badge badge-danger">Overdue {daysOverdue ? `(${daysOverdue}d)` : ''}</span>;
     } else if (statusLower === 'void') {
@@ -714,6 +755,7 @@ const CustomerInvoices: React.FC = () => {
         isOpen={showDetailModal}
         onClose={handleCloseDetailModal}
         invoiceId={selectedInvoiceId}
+        onPaymentComplete={loadInvoices}
       />
 
       {/* Order Slideout */}
