@@ -113,7 +113,7 @@ export interface VendorOrderDetailReq {
 
 export class VendorOrderService {
   public static GetVendorOrders = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<VendorOrderMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -131,9 +131,11 @@ export class VendorOrderService {
 
     // Use vendor-specific endpoint (backend has separate VendorOrders table)
     const url = `/Order/GetVendorOrders`;
-    const response = await Instense.get(url, {
-      params: { tenantid: tenantID },
-    });
+    const params: Record<string, number> = { tenantId: tenantID };
+    if (request.locationId && request.locationId > 0) {
+      params.locationId = request.locationId;
+    }
+    const response = await Instense.get(url, { params });
 
     const result = response.data.result as VendorOrderMaster[];
     return result;

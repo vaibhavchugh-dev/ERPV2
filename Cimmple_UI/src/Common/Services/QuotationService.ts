@@ -184,7 +184,7 @@ export interface QuotationDetailReq {
 
 export class QuotationService {
   public static GetQuotations = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<QuotationMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -201,9 +201,11 @@ export class QuotationService {
     }
 
     const url = `/Quotation/GetQuotations`;
-    return Instense.get(url, {
-      params: { tenantid: tenantID },
-    }).then((response) => {
+    const params: Record<string, number> = { tenantid: tenantID };
+    if (request.locationId && request.locationId > 0) {
+      params.locationId = request.locationId;
+    }
+    return Instense.get(url, { params }).then((response) => {
       const result = response.data.result as QuotationMaster[];
       return result;
     });

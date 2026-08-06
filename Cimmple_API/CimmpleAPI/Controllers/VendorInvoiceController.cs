@@ -22,16 +22,30 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetVendorInvoices")]
-        public IActionResult GetVendorInvoices([FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public IActionResult GetVendorInvoices(
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? vendorId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
 
-                var invoices = _context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId)
-                    .ToList();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var invoicesQuery = _context.VendorInvoiceMaster
+                    .Where(vim => vim.TenantId == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    invoicesQuery = invoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                }
+
+                var invoices = invoicesQuery.ToList();
 
                 Console.WriteLine($"Found {invoices.Count} vendor invoices in database");
 
@@ -47,12 +61,13 @@ namespace CimmpleAPI.Controllers
                         dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Amount,
                         totalAmount = invoice.TotalAmount,
+                        paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                        balanceDue = GetVendorBalanceDue(invoice),
                         status = GetVendorInvoiceStatus(invoice),
                         isApproved = invoice.Approved,
-                        paymentStatus = invoice.isPaid == 1 ? "Paid" :
-                                       invoice.Paydate.HasValue ? "Paid" : "Unpaid",
-                        daysOverdue = invoice.Paydate == null && invoice.DueDate < DateTime.Now ?
-                                     (int)(DateTime.Now - invoice.DueDate).TotalDays : (int?)null
+                        paymentStatus = GetEffectiveVendorPaidAmount(invoice) >= invoice.TotalAmount - 0.009m ? "Paid" :
+                                       GetEffectiveVendorPaidAmount(invoice) > 0.009m ? "Partially Paid" : "Unpaid",
+                        daysOverdue = GetVendorDaysOverdue(invoice)
                     })
                     .OrderByDescending(x => x.invoiceDate)
                     .ToList();
@@ -101,6 +116,8 @@ namespace CimmpleAPI.Controllers
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
+                    paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                    balanceDue = GetVendorBalanceDue(invoice),
                     paymentMethod = invoice.PaymentMethod,
                     paymentDate = invoice.Paydate?.ToString("yyyy-MM-dd"),
                     checkNo = invoice.CkNo,
@@ -146,6 +163,9 @@ namespace CimmpleAPI.Controllers
                     // Generate invoice number
                     var invoiceNumber = GenerateVendorInvoiceNumber(tenantId);
 
+                    if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
+                        return forbidLoc!;
+
                     // Create vendor invoice header
                     var invoice = new VendorInvoiceMaster
                     {
@@ -158,9 +178,10 @@ namespace CimmpleAPI.Controllers
                         VendorCode = request.VendorCode,
                         VendorName = request.VendorName,
                         vid = request.VendorId,
-                        locationId = request.LocationId ?? 1,
+                        locationId = resolvedInvoiceLoc,
                         Amount = request.LineItems.Sum(item => item.Amount),
                         TotalAmount = request.LineItems.Sum(item => item.Amount),
+                        PaidAmount = 0,
                         PaymentMethod = "",
                         CkNo = "",
                         Approved = false,
@@ -452,13 +473,23 @@ namespace CimmpleAPI.Controllers
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
 
-                    if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
-                        return BadRequest(new { error = "Vendor invoice is already marked as paid." });
+                    if (invoice.isPaid == 2)
+                        return BadRequest(new { error = "Cannot record payment on a voided vendor invoice." });
+
+                    if (invoice.Approved != true)
+                        return BadRequest(new { error = "Vendor invoice must be approved before payment can be recorded." });
+
+                    var alreadyPaid = GetEffectiveVendorPaidAmount(invoice);
+                    var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);
+                    if (balanceDue <= 0.009m)
+                        return BadRequest(new { error = "Vendor invoice is already fully paid." });
 
                     var paymentDate = request.PaymentDate ?? DateTime.Now;
-                    var paymentAmount = invoice.TotalAmount;
+                    var paymentAmount = Math.Round(request.PaymentAmount ?? balanceDue, 2);
                     if (paymentAmount <= 0)
-                        return BadRequest(new { error = "Vendor invoice amount must be greater than 0." });
+                        return BadRequest(new { error = "Payment amount must be greater than 0." });
+                    if (paymentAmount > balanceDue + 0.009m)
+                        return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
                     var bankAccountId = ResolveBankGlAccountId(tenantId, bankId);
@@ -491,17 +522,23 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    invoice.PaymentMethod = request.PaymentMethod ?? "";
-                    invoice.Paydate = paymentDate;
-                    invoice.CkNo = request.CheckNo ?? "";
-                    invoice.CkDate = request.CheckDate;
-                    invoice.PvrNo = request.PvrNo;
-                    invoice.Series = request.Series ?? "";
+                    var newPaidTotal = Math.Round(alreadyPaid + paymentAmount, 2);
+                    var isFullyPaid = newPaidTotal >= invoice.TotalAmount - 0.009m;
+
+                    invoice.PaymentMethod = request.PaymentMethod ?? invoice.PaymentMethod ?? "";
+                    invoice.CkNo = request.CheckNo ?? invoice.CkNo ?? "";
+                    invoice.CkDate = request.CheckDate ?? invoice.CkDate;
+                    invoice.PvrNo = request.PvrNo ?? invoice.PvrNo;
+                    invoice.Series = request.Series ?? invoice.Series ?? "";
                     invoice.Bankid = bankId;
-                    invoice.isPaid = 1;
+                    invoice.PaidAmount = isFullyPaid ? invoice.TotalAmount : newPaidTotal;
+                    invoice.isPaid = isFullyPaid ? 1 : 0;
+                    invoice.Paydate = isFullyPaid ? paymentDate : (DateTime?)null;
 
                     var referenceNo = BuildAutoPaymentReference("APPMT", invoice.prefixinvoiceno ?? invoice.InvoiceNo, invoice.Id);
-                    var description = $"Auto-posted vendor payment for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}";
+                    var description = isFullyPaid
+                        ? $"Auto-posted vendor payment for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}"
+                        : $"Auto-posted partial vendor payment ({paymentAmount:0.00}) for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}";
                     var locationId = invoice.locationId > 0 ? invoice.locationId : 1;
                     if (bankId.HasValue)
                     {
@@ -568,12 +605,18 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                     transaction.Commit();
 
+                    var remaining = Math.Round(invoice.TotalAmount - invoice.PaidAmount, 2);
                     return Ok(new
                     {
                         result = new
                         {
-                            message = "Vendor payment recorded and posted to GL successfully",
-                            journalEntryId = journalHeader.Id
+                            message = isFullyPaid
+                                ? "Vendor payment recorded and posted to GL successfully"
+                                : $"Partial payment of {paymentAmount:0.00} recorded. Remaining balance: {remaining:0.00}",
+                            journalEntryId = journalHeader.Id,
+                            paidAmount = invoice.PaidAmount,
+                            balanceDue = remaining,
+                            status = GetVendorInvoiceStatus(invoice)
                         }
                     });
                 }
@@ -776,16 +819,45 @@ namespace CimmpleAPI.Controllers
             return (maxInvoiceNo + 1);
         }
 
+        private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
+        {
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
+            if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
+                return invoice.TotalAmount;
+            return 0m;
+        }
+
+        private static decimal GetVendorBalanceDue(VendorInvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectiveVendorPaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetVendorDaysOverdue(VendorInvoiceMaster invoice)
+        {
+            if (GetVendorBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= DateTime.Now)
+                return null;
+            return (int)(DateTime.Now - invoice.DueDate).TotalDays;
+        }
+
         private string GetVendorInvoiceStatus(VendorInvoiceMaster invoice)
         {
-            if (invoice.isPaid == 1)
+            if (invoice.isPaid == 2)
+                return "Void";
+
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
                 return "Paid";
-            else if (invoice.Approved == true)
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.Approved == true)
                 return "Approved";
-            else if (DateTime.Now > invoice.DueDate)
+            if (DateTime.Now > invoice.DueDate)
                 return "Overdue";
-            else
-                return "Pending Approval";
+            return "Pending Approval";
         }
     }
 
@@ -833,5 +905,6 @@ namespace CimmpleAPI.Controllers
         public int? PvrNo { get; set; }
         public string Series { get; set; }
         public int? BankId { get; set; }
+        public decimal? PaymentAmount { get; set; }
     }
 }

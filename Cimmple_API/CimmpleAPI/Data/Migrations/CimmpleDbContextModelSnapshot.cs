@@ -1830,6 +1830,9 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<decimal>("PaidAmount")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<int?>("Bankid")
                         .HasColumnType("int");
 
@@ -4359,6 +4362,9 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("PaidAmount")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<bool?>("Approved")

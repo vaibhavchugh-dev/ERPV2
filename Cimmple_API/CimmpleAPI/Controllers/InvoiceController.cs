@@ -148,6 +148,7 @@ namespace CimmpleAPI.Controllers
                         SaleTaxAmount = 0,
                         Amount = subtotal,
                         TotalAmount = subtotal, // Could add tax, shipping, etc. later
+                        PaidAmount = 0,
                         InternalNotes = request.Notes ?? "",
                         CheckNo = "", // Initialize required string field
                         PaymentMethod = "", // Initialize required string field
@@ -226,6 +227,8 @@ namespace CimmpleAPI.Controllers
 
                     var postingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
                     var postingDesc = $"Auto-posted customer invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
+                    if (!TryResolveLocationId(null, out var jeLocationId, out var forbidJeLoc, fallback: 1))
+                        return forbidJeLoc!;
                     var invoiceHeader = new JournalEntry
                     {
                         EntryDate = invoice.InvoiceDate.Date,
@@ -233,7 +236,7 @@ namespace CimmpleAPI.Controllers
                         Description = postingDesc,
                         AccountingPeriod = invoicePeriodKey,
                         TenantId = tenantId,
-                        locationId = 1,
+                        locationId = jeLocationId,
                         createdby = GetUserId(),
                         createdDate = DateTime.UtcNow
                     };
@@ -339,14 +342,14 @@ namespace CimmpleAPI.Controllers
                     saleTaxAmount = invoice.SaleTaxAmount,
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
+                    paidAmount = GetEffectivePaidAmount(invoice),
+                    balanceDue = GetBalanceDue(invoice),
                     paymentMethod = invoice.PaymentMethod,
                     paymentDate = invoice.PaymentDate != null ? invoice.PaymentDate.Value.ToString("yyyy-MM-dd") : null,
                     checkNo = invoice.CheckNo,
                     internalNotes = invoice.InternalNotes,
-                    status = invoice.PaymentDate != null ? "Paid" :
-                            (invoice.DueDate < DateTime.Now && invoice.PaymentDate == null) ? "Overdue" : "Unpaid",
-                    daysOverdue = invoice.PaymentDate == null && invoice.DueDate < DateTime.Now ?
-                                 (int)(DateTime.Now - invoice.DueDate).TotalDays : (int?)null,
+                    status = ResolveCustomerInvoiceStatus(invoice),
+                    daysOverdue = GetDaysOverdue(invoice),
                     items = items
                 };
 
@@ -393,7 +396,9 @@ namespace CimmpleAPI.Controllers
                     dueDate = im.DueDate,
                     amount = im.Amount,
                     totalAmount = im.TotalAmount,
-                    status = GetInvoiceStatus(im),
+                    paidAmount = GetEffectivePaidAmount(im),
+                    balanceDue = GetBalanceDue(im),
+                    status = ResolveCustomerInvoiceStatus(im),
                     items = invoiceDetails
                         .Where(id => id.InvoiceId == im.Id)
                         .Select(id => new
@@ -520,10 +525,10 @@ namespace CimmpleAPI.Controllers
                         itemCount = x.ItemCount,
                         amount = x.Invoice.Amount,
                         totalAmount = x.TotalAmount,
-                        status = x.Invoice.PaymentDate != null ? "Paid" :
-                                (x.Invoice.DueDate < DateTime.Now && x.Invoice.PaymentDate == null) ? "Overdue" : "Unpaid",
-                        daysOverdue = x.Invoice.PaymentDate == null && x.Invoice.DueDate < DateTime.Now ?
-                                     (int)(DateTime.Now - x.Invoice.DueDate).TotalDays : (int?)null
+                        paidAmount = GetEffectivePaidAmount(x.Invoice),
+                        balanceDue = GetBalanceDue(x.Invoice),
+                        status = ResolveCustomerInvoiceStatus(x.Invoice),
+                        daysOverdue = GetDaysOverdue(x.Invoice)
                     })
                     .OrderByDescending(x => x.invoiceDate)
                     .ToList();
@@ -853,13 +858,17 @@ namespace CimmpleAPI.Controllers
                     if (invoice == null)
                         return NotFound(new { error = "Customer invoice not found" });
 
-                    if (invoice.PaymentDate.HasValue)
-                        return BadRequest(new { error = "Customer invoice is already marked as paid." });
+                    var alreadyPaid = GetEffectivePaidAmount(invoice);
+                    var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);
+                    if (balanceDue <= 0.009m)
+                        return BadRequest(new { error = "Customer invoice is already fully paid." });
 
                     var paymentDate = request.PaymentDate ?? DateTime.Now;
-                    var paymentAmount = request.PaymentAmount ?? invoice.TotalAmount;
+                    var paymentAmount = Math.Round(request.PaymentAmount ?? balanceDue, 2);
                     if (paymentAmount <= 0)
                         return BadRequest(new { error = "Payment amount must be greater than 0." });
+                    if (paymentAmount > balanceDue + 0.009m)
+                        return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
                     var bankAccountId = ResolveBankGlAccountId(tenantId, bankId);
@@ -892,15 +901,28 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    // Record the payment on the invoice.
-                    invoice.PaymentMethod = request.PaymentMethod ?? "";
-                    invoice.PaymentDate = paymentDate;
-                    invoice.CheckNo = request.CheckNo ?? "";
-                    invoice.Amount = paymentAmount;
+                    var newPaidTotal = Math.Round(alreadyPaid + paymentAmount, 2);
+                    var isFullyPaid = newPaidTotal >= invoice.TotalAmount - 0.009m;
+
+                    // Accumulate payment; never overwrite invoice Amount (subtotal).
+                    invoice.PaymentMethod = request.PaymentMethod ?? invoice.PaymentMethod ?? "";
+                    invoice.CheckNo = request.CheckNo ?? invoice.CheckNo ?? "";
                     invoice.Bankid = bankId;
+                    invoice.PaidAmount = isFullyPaid ? invoice.TotalAmount : newPaidTotal;
+                    invoice.PaymentDate = isFullyPaid ? paymentDate : (DateTime?)null;
+
+                    if (!string.IsNullOrWhiteSpace(request.Notes))
+                    {
+                        var noteLine = $"[{paymentDate:yyyy-MM-dd}] Payment {paymentAmount:0.00}: {request.Notes.Trim()}";
+                        invoice.InternalNotes = string.IsNullOrWhiteSpace(invoice.InternalNotes)
+                            ? noteLine
+                            : $"{invoice.InternalNotes}\n{noteLine}";
+                    }
 
                     var referenceNo = BuildAutoPaymentReference("ARPMT", invoice.PrefixInvoiceNo, invoice.Id);
-                    var description = $"Auto-posted customer payment for invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
+                    var description = isFullyPaid
+                        ? $"Auto-posted customer payment for invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}"
+                        : $"Auto-posted partial customer payment ({paymentAmount:0.00}) for invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
                     var locationId = 1;
                     if (bankId.HasValue)
                     {
@@ -966,12 +988,18 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                     transaction.Commit();
 
+                    var remaining = Math.Round(invoice.TotalAmount - invoice.PaidAmount, 2);
                     return Ok(new
                     {
                         result = new
                         {
-                            message = "Customer payment recorded and posted to GL successfully",
-                            journalEntryId = journalHeader.Id
+                            message = isFullyPaid
+                                ? "Customer payment recorded and posted to GL successfully"
+                                : $"Partial payment of {paymentAmount:0.00} recorded. Remaining balance: {remaining:0.00}",
+                            journalEntryId = journalHeader.Id,
+                            paidAmount = invoice.PaidAmount,
+                            balanceDue = remaining,
+                            status = ResolveCustomerInvoiceStatus(invoice)
                         }
                     });
                 }
@@ -1093,16 +1121,48 @@ namespace CimmpleAPI.Controllers
             return reference.Length > 200 ? reference[..200] : reference;
         }
 
-        private string GetInvoiceStatus(InvoiceMaster invoice)
+        /// <summary>
+        /// Effective paid-to-date. Legacy rows used PaymentDate alone (PaidAmount = 0).
+        /// </summary>
+        private static decimal GetEffectivePaidAmount(InvoiceMaster invoice)
         {
-            // Simple status logic - could be expanded
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
             if (invoice.PaymentDate.HasValue)
-                return "Paid";
-            else if (DateTime.Now > invoice.DueDate)
-                return "Overdue";
-            else
-                return "Sent";
+                return invoice.TotalAmount;
+            return 0m;
         }
+
+        private static decimal GetBalanceDue(InvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectivePaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetDaysOverdue(InvoiceMaster invoice)
+        {
+            if (GetBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= DateTime.Now)
+                return null;
+            return (int)(DateTime.Now - invoice.DueDate).TotalDays;
+        }
+
+        private static string ResolveCustomerInvoiceStatus(InvoiceMaster invoice)
+        {
+            var paid = GetEffectivePaidAmount(invoice);
+            var total = invoice.TotalAmount;
+
+                        if (paid >= total - 0.009m && total > 0)
+                return "Paid";
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.DueDate < DateTime.Now)
+                return "Overdue";
+            return "Unpaid";
+        }
+
+        private string GetInvoiceStatus(InvoiceMaster invoice) => ResolveCustomerInvoiceStatus(invoice);
     }
 
     // DTOs

@@ -4,6 +4,8 @@ import { faSave, faCog, faBuilding, faClock, faDollarSign, faShieldAlt, faEnvelo
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { SystemSettingsService, SystemSettings } from "../../Common/Services/SystemSettingsService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import { AuthService } from "../../Common/Services/AuthService";
+import { notifyLocationChanged } from "../../Common/Hooks/useActiveLocation";
 import { useHistory } from "react-router-dom";
 import "./SystemSettings.scss";
 
@@ -118,21 +120,22 @@ const SystemSettingsComponent: React.FC = () => {
 
     setSaving(true);
     try {
-      // Store default location in localStorage
-      localStorage.setItem('defaultLocationId', defaultLocationId.toString());
-      
+      await AuthService.setDefaultLocation(defaultLocationId);
+
       // Also set it as the current location if no current location is set
       const currentLocationId = localStorage.getItem('locationId');
       if (!currentLocationId || currentLocationId === '0') {
-        localStorage.setItem('locationId', defaultLocationId.toString());
-        // Dispatch event to update Redux store
-        window.dispatchEvent(new CustomEvent('locationChanged', { detail: { locationId: defaultLocationId } }));
+        notifyLocationChanged(defaultLocationId);
       }
-      
+
       toast.success('Default location saved successfully');
     } catch (error: any) {
       console.error('Error saving default location:', error);
-      toast.error(`Failed to save default location: ${error.message || 'Unknown error'}`);
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Unknown error';
+      toast.error(`Failed to save default location: ${message}`);
     } finally {
       setSaving(false);
     }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import JobOrderSlideout from "./JobOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import "./JobOrders.scss";
@@ -9,6 +10,7 @@ import "./JobOrders.scss";
 const JobOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
@@ -17,7 +19,7 @@ const JobOrders: React.FC = () => {
 
   useEffect(() => {
     loadJobOrders();
-  }, []);
+  }, [locationIdParam]);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -54,7 +56,10 @@ const JobOrders: React.FC = () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const result = await JobOrderService.GetJobOrders({ tenantid: tenantID });
+      const result = await JobOrderService.GetJobOrders({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       
       if (result && Array.isArray(result)) {
         setJobOrders(result);
@@ -225,6 +230,7 @@ const JobOrders: React.FC = () => {
         }}
         onRowClick={handleRowClick}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [

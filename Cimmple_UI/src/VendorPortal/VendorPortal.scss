@@ -1,28 +1,16 @@
-.vendor-login-container {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-}
-
-.vendor-login-card {
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-  border: none;
-  border-radius: 0.5rem;
-}
-
 .vendor-portal-container {
   min-height: 100vh;
-  background-color: #f5f7fa;
+  background-color: #f8fafc;
+  font-family: "Satoshi", system-ui, sans-serif;
 }
 
 .vendor-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background:
+    radial-gradient(ellipse 60% 120% at 0% 50%, rgba(10, 124, 255, 0.28), transparent 55%),
+    linear-gradient(135deg, #0d0e10 0%, #0f172a 55%, #063874 100%);
   color: white;
   padding: 1.5rem 2rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(13, 14, 16, 0.18);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -30,8 +18,10 @@
 
 .vendor-header h1 {
   margin: 0;
+  font-family: "Cabinet Grotesk", "Satoshi", system-ui, sans-serif;
   font-size: 1.5rem;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .vendor-content {
@@ -53,7 +43,7 @@
   &:hover {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     transform: translateY(-2px);
-    border-color: #6366f1;
+    border-color: #0a7cff;
   }
 }
 
@@ -300,7 +290,7 @@
 }
 
 .input-group .form-input:focus {
-  border-color: #6366f1;
+  border-color: #0a7cff;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
@@ -363,7 +353,7 @@
 
     &:focus {
       outline: none;
-      border-color: #6366f1;
+      border-color: #0a7cff;
       box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
     }
   }

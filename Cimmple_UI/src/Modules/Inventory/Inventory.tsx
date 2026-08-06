@@ -8,6 +8,7 @@ import {
   getTenantId,
 } from "../../Common/Services/InventoryService";
 import { LocationService } from "../../Common/Services/LocationService";
+import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import StockMovementModal from "./StockMovementModal";
 import "./Inventory.scss";
 
@@ -15,12 +16,15 @@ type MovementType = "receive" | "issue" | "transfer" | "adjust" | null;
 
 const Inventory: React.FC = () => {
   const history = useHistory();
+  const { locationId: activeLocationId } = useActiveLocation();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [alerts, setAlerts] = useState<LowStockAlert[]>([]);
   const [locations, setLocations] = useState<{ locationId: number; name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [locationFilter, setLocationFilter] = useState<number | "">("");
+  const [locationFilter, setLocationFilter] = useState<number | "">(
+    () => (activeLocationId > 0 ? activeLocationId : "")
+  );
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [showMovementModal, setShowMovementModal] = useState(false);
   const [movementType, setMovementType] = useState<MovementType>(null);
@@ -191,6 +195,7 @@ const Inventory: React.FC = () => {
             {locations.map((loc) => (
               <option key={loc.locationId} value={loc.locationId}>
                 {loc.name}
+                {activeLocationId === loc.locationId ? " (working site)" : ""}
               </option>
             ))}
           </select>

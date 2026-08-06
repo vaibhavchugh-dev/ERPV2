@@ -1,7 +1,7 @@
 import React from "react";
-import { useLocation } from "react-router-dom";
 import Sidebar from "../Sidebar";
 import TopBar from "../TopBar";
+import { useActiveLocation } from "../../Hooks/useActiveLocation";
 import "./Layout.scss";
 
 interface LayoutProps {
@@ -9,14 +9,15 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
-  const location = useLocation();
+  const { locationId: activeLocationId } = useActiveLocation();
 
   return (
     <div className="admin-layout">
       <Sidebar />
       <div className="main-content">
         <TopBar />
-        <main className="page-content">
+        {/* Remount page content when working site changes (inventory default, stamped creates) */}
+        <main className="page-content" key={activeLocationId || "no-location"}>
           {children}
         </main>
       </div>

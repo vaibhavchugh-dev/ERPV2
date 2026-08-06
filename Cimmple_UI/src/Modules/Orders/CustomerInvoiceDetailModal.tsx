@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faHashtag, faUser, faClipboardList, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -6,6 +6,8 @@ import { CustomerInvoicesService, CustomerInvoiceDetail } from '../../Common/Ser
 import { InvoiceService } from '../../Common/Services/InvoiceService';
 import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
+import BankAccountSelect from '../../Common/Components/BankAccountSelect';
+import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -19,8 +21,18 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [checkNo, setCheckNo] = useState('');
-  const [paymentAmount, setPaymentAmount] = useState(invoice.totalAmount.toString());
+  const balanceDue = Math.max(
+    0,
+    Number(
+      invoice.balanceDue ??
+        invoice.totalAmount - (invoice.paidAmount ?? 0)
+    )
+  );
+  const [paymentAmount, setPaymentAmount] = useState(
+    balanceDue > 0 ? balanceDue.toFixed(2) : invoice.totalAmount.toFixed(2)
+  );
   const [notes, setNotes] = useState('');
+  const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,8 +48,13 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
       return;
     }
 
-    if (amount > invoice.totalAmount) {
-      toast.error('Payment amount cannot exceed invoice total');
+    if (amount > balanceDue + 0.009) {
+      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      return;
+    }
+
+    if (!bankId) {
+      toast.error('Please select a bank account');
       return;
     }
 
@@ -49,7 +66,8 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
         PaymentDate: paymentDate,
         CheckNo: checkNo || undefined,
         PaymentAmount: amount,
-        Notes: notes || undefined
+        Notes: notes || undefined,
+        BankId: bankId
       };
 
       await InvoiceService.RecordCustomerPayment(invoice.id, paymentData);
@@ -163,8 +181,16 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Total: {formatCurrency(invoice.totalAmount)}
                   </div>
+                  {(invoice.paidAmount ?? 0) > 0 && (
+                    <div style={{ fontSize: '0.75rem', color: '#059669' }}>
+                      Paid: {formatCurrency(invoice.paidAmount ?? 0)}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: '600', fontSize: '0.875rem', color: '#1f2937' }}>
+                    Balance due: {formatCurrency(balanceDue)}
+                  </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Due: {formatDate(invoice.dueDate)}
                   </div>
@@ -233,7 +259,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                       type="number"
                       step="0.01"
                       min="0"
-                      max={invoice.totalAmount}
+                      max={balanceDue}
                       required
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
@@ -268,6 +294,15 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div style={{ marginTop: '1rem' }}>
+                <BankAccountSelect
+                  banks={banks}
+                  value={bankId}
+                  onChange={setBankId}
+                  loading={banksLoading}
+                />
               </div>
 
               <div style={{ marginTop: '1rem' }}>
@@ -343,24 +378,54 @@ interface CustomerInvoiceDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   invoiceId: number;
+  /** When true, opens the payment form after the invoice loads */
+  initialShowPayment?: boolean;
+  onPaymentComplete?: () => void;
 }
 
 const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   isOpen,
   onClose,
-  invoiceId
+  invoiceId,
+  initialShowPayment = false,
+  onPaymentComplete
 }) => {
   const [invoice, setInvoice] = useState<CustomerInvoiceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+  const paymentPromptedRef = useRef(false);
 
   useEffect(() => {
-    if (isOpen && invoiceId) {
+    if (!isOpen) {
+      setInvoice(null);
+      setShowPaymentModal(false);
+      paymentPromptedRef.current = false;
+      return;
+    }
+    if (invoiceId) {
+      setInvoice(null);
+      setShowPaymentModal(false);
+      paymentPromptedRef.current = false;
       loadInvoiceDetails();
     }
   }, [isOpen, invoiceId]);
+
+  useEffect(() => {
+    if (
+      isOpen &&
+      initialShowPayment &&
+      !paymentPromptedRef.current &&
+      invoice &&
+      invoice.id === invoiceId &&
+      invoice.status !== 'Paid' &&
+      invoice.status !== 'Void'
+    ) {
+      paymentPromptedRef.current = true;
+      setShowPaymentModal(true);
+    }
+  }, [isOpen, initialShowPayment, invoiceId, invoice?.id, invoice?.status]);
 
   const loadInvoiceDetails = async () => {
     if (!invoiceId) return;
@@ -409,6 +474,12 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
 
     if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
+    } else if (statusLower === 'partially paid') {
+      return (
+        <span className="badge badge-info">
+          Partially Paid{daysOverdue && daysOverdue > 0 ? ` · ${daysOverdue}d overdue` : ''}
+        </span>
+      );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
       return <span className="badge badge-danger">Overdue {daysOverdue ? `(${daysOverdue}d)` : ''}</span>;
     } else if (statusLower === 'void') {
@@ -497,6 +568,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
     setShowPaymentModal(false);
     // Reload invoice details to show updated status
     loadInvoiceDetails();
+    onPaymentComplete?.();
   };
 
   if (!isOpen) return null;
@@ -650,6 +722,15 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                   <p style={{ margin: '0.25rem 0 0 0', fontSize: '1.25rem', fontWeight: '700', color: '#059669' }}>
                     {formatCurrency(invoice.totalAmount)}
                   </p>
+                  {(invoice.paidAmount ?? 0) > 0 && (
+                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#6b7280' }}>
+                      Paid {formatCurrency(invoice.paidAmount ?? 0)} · Due{' '}
+                      {formatCurrency(
+                        invoice.balanceDue ??
+                          Math.max(0, invoice.totalAmount - (invoice.paidAmount ?? 0))
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
 

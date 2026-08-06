@@ -26,13 +26,21 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetOrders")]
-        public IActionResult GetOrders([FromQuery] int tenantid)
+        public IActionResult GetOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                // Load all orders
-                var orders = _context.CustomerOrder
-                    .Where(o => o.Tenantid == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                // Shared multi-site: return all tenant orders unless an explicit location filter is passed.
+                var ordersQuery = _context.CustomerOrder.Where(o => o.Tenantid == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    ordersQuery = ordersQuery.Where(o => o.locationId == filterLocationId.Value);
+                }
+
+                var orders = ordersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .ToList();
 
@@ -424,7 +432,9 @@ namespace CimmpleAPI.Controllers
                 order.BuyerName = request.BuyerName ?? "";
                 order.quotationId = request.QuotationId;
                 order.QuotationNo = request.QuotationNo ?? "";
-                order.locationId = request.LocationId ?? 0;
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLocationId, out var forbidLoc))
+                    return forbidLoc!;
+                order.locationId = resolvedLocationId;
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -781,13 +791,23 @@ namespace CimmpleAPI.Controllers
         // =============================================
 
         [HttpGet("GetVendorOrders")]
-        public async Task<IActionResult> GetVendorOrders(int tenantId)
+        public async Task<IActionResult> GetVendorOrders([FromQuery] int tenantId, [FromQuery] int? locationId = null)
         {
             try
             {
-                var vendorOrders = await _context.VendorOrders
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var vendorOrdersQuery = _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId)
+                    .Where(o => o.Tenantid == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    vendorOrdersQuery = vendorOrdersQuery.Where(o => o.LocationId == filterLocationId.Value);
+                }
+
+                var vendorOrders = await vendorOrdersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .Select(o => new
                     {
@@ -1154,6 +1174,11 @@ namespace CimmpleAPI.Controllers
                     ParentQuotationID = orderData.TryGetProperty("ParentQuotationID", out JsonElement parentQuotationIDElem) && parentQuotationIDElem.ValueKind == JsonValueKind.Number ? parentQuotationIDElem.GetInt32() : (int?)null,
                     AdditionalNotes = orderData.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : ""
                 };
+
+                if (!TryResolveLocationId(order.LocationId, out var resolvedVendorLocationId, out var forbidVendorLoc))
+                    return forbidVendorLoc!;
+                if (resolvedVendorLocationId > 0)
+                    order.LocationId = resolvedVendorLocationId;
 
                 Console.WriteLine($"SaveVendorOrder: Assigned to order - QuotationId = {order.QuotationId}, QuotationNo = '{order.QuotationNo}', TenantId = {order.Tenantid}");
 
@@ -2651,6 +2676,7 @@ namespace CimmpleAPI.Controllers
                         AccountingPeriod = accountingPeriod,
                         Amount = subtotal,
                         TotalAmount = subtotal,
+                        PaidAmount = 0,
                         Approved = false,
                         CkNo = "",
                         Series = "",
@@ -2874,13 +2900,13 @@ namespace CimmpleAPI.Controllers
                         dueDate = invoice.Invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Invoice.Amount,
                         totalAmount = invoice.TotalAmount,
-                        status = invoice.Invoice.isPaid == 1 ? "Paid" :
-                                invoice.Invoice.isPaid == 2 ? "Void" :
-                                invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                        paidAmount = GetEffectiveVendorPaidAmount(invoice.Invoice),
+                        balanceDue = GetVendorBalanceDue(invoice.Invoice),
+                        status = ResolveVendorInvoiceListStatus(invoice.Invoice, now),
+                        isApproved = invoice.Invoice.Approved == true,
                         paymentMethod = invoice.Invoice.PaymentMethod ?? "",
                         orderId = invoice.OrderIds.Count == 1 ? (int?)orderId : null,
-                        daysOverdue = invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ?
-                            (int)(now - invoice.Invoice.DueDate).TotalDays : (int?)null
+                        daysOverdue = GetVendorDaysOverdue(invoice.Invoice, now)
                     });
                 }
 
@@ -2939,9 +2965,10 @@ namespace CimmpleAPI.Controllers
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
-                    status = invoice.isPaid == 1 ? "Paid" :
-                            invoice.isPaid == 2 ? "Void" :
-                            invoice.DueDate < DateTime.Now && invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                    paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                    balanceDue = GetVendorBalanceDue(invoice),
+                    status = ResolveVendorInvoiceListStatus(invoice, DateTime.Now),
+                    isApproved = invoice.Approved == true,
                     paymentMethod = invoice.PaymentMethod ?? "",
                     vendorName = invoice.VendorName ?? "",
                     vendorCode = invoice.VendorCode ?? "",
@@ -3088,17 +3115,58 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
+        {
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
+            if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
+                return invoice.TotalAmount;
+            return 0m;
+        }
+
+        private static decimal GetVendorBalanceDue(VendorInvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectiveVendorPaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetVendorDaysOverdue(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (GetVendorBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= now)
+                return null;
+            return (int)(now - invoice.DueDate).TotalDays;
+        }
+
+        private static string ResolveVendorInvoiceListStatus(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
+                return "Paid";
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.DueDate < now)
+                return "Overdue";
+            return "Unpaid";
+        }
+
         private string GetVendorInvoiceStatus(VendorInvoiceMaster invoice)
         {
-            // Simple status logic - could be expanded
-            if (invoice.isPaid.HasValue && invoice.isPaid.Value == 1)
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
                 return "Paid";
-            else if (DateTime.Now > invoice.DueDate)
-                return "Overdue";
-            else if (invoice.Approved.HasValue && invoice.Approved.Value)
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.Approved == true)
                 return "Approved";
-            else
-                return "Pending";
+            if (DateTime.Now > invoice.DueDate)
+                return "Overdue";
+            return "Pending";
         }
 
         private static string BuildAutoPostingReference(string prefix, string? invoiceNo, int invoiceId)

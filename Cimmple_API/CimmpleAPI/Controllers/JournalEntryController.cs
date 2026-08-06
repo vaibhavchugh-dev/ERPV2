@@ -35,7 +35,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] DateTime? endDate,
             [FromQuery] int skip = 0,
             [FromQuery] int take = 100,
-            [FromQuery] int tenantId = 0)
+            [FromQuery] int tenantId = 0,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -43,11 +44,19 @@ namespace CimmpleAPI.Controllers
                 if (tid <= 0)
                     return BadRequest(new { error = "Tenant id is required." });
 
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 take = Math.Clamp(take, 1, 500);
                 skip = Math.Max(0, skip);
 
                 var query = _context.JournalEntries.AsNoTracking()
                     .Where(j => j.TenantId == tid);
+
+                if (filterLocationId.HasValue)
+                {
+                    query = query.Where(j => j.locationId == filterLocationId.Value);
+                }
 
                 if (startDate.HasValue)
                     query = query.Where(j => j.EntryDate >= startDate.Value.Date);
@@ -236,7 +245,9 @@ namespace CimmpleAPI.Controllers
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, lockPeriodKey))
                     return BadRequest(new { error = $"Accounting period {lockPeriodKey} is closed. Open the period or pick another date to post." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 1;
+                var locId = request.LocationId > 0 ? request.LocationId : 0;
+                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                    return forbidLoc!;
 
                 using var tx = _context.Database.BeginTransaction();
                 try
@@ -457,7 +468,13 @@ namespace CimmpleAPI.Controllers
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, lockKey))
                     return BadRequest(new { error = $"Cannot post reversal: period {lockKey} is closed." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : source.locationId;
+                var locId = request.LocationId > 0 ? request.LocationId : 0;
+                if (!TryResolveLocationId(
+                        locId > 0 ? locId : null,
+                        out locId,
+                        out var forbidRevLoc,
+                        fallback: source.locationId > 0 ? source.locationId : 1))
+                    return forbidRevLoc!;
 
                 using var tx = _context.Database.BeginTransaction();
                 try

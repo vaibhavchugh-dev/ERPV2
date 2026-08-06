@@ -12,6 +12,9 @@ export interface CustomerInvoiceSummary {
   totalItems: number;
   itemCount: number;
   amount: number;
+  totalAmount?: number;
+  paidAmount?: number;
+  balanceDue?: number;
   status: string;
   daysOverdue?: number;
 }
@@ -32,6 +35,8 @@ export interface CustomerInvoiceDetail {
   saleTaxAmount: number;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   paymentMethod: string;
   paymentDate?: string;
   checkNo: string;

@@ -85,13 +85,24 @@ export class AuthService {
     localStorage.setItem(PERMS_KEY, JSON.stringify(user.permissions || []));
     localStorage.setItem(LOCATIONS_KEY, JSON.stringify(user.locations || []));
 
-    const locationId =
+    const serverDefault =
       user.defaultLocationId ||
       user.locations?.[0]?.locationId ||
       0;
-    if (locationId > 0) {
-      localStorage.setItem("locationId", String(locationId));
-      localStorage.setItem("defaultLocationId", String(locationId));
+    if (serverDefault > 0) {
+      localStorage.setItem("defaultLocationId", String(serverDefault));
+    }
+
+    // Preserve an existing working location across token refresh when still allowed.
+    // Seed from server default only when missing or no longer in the allowed set.
+    const existingLocationId = Number(localStorage.getItem("locationId") || 0);
+    const allowedIds = new Set((user.locations || []).map((l) => l.locationId));
+    const existingStillValid =
+      existingLocationId > 0 &&
+      (user.canAccessAllLocations || allowedIds.has(existingLocationId));
+
+    if (!existingStillValid && serverDefault > 0) {
+      localStorage.setItem("locationId", String(serverDefault));
     }
   }
 
@@ -109,6 +120,8 @@ export class AuthService {
     if (portal === "all" || portal === "erp") {
       localStorage.removeItem(PERMS_KEY);
       localStorage.removeItem(LOCATIONS_KEY);
+      localStorage.removeItem("locationId");
+      localStorage.removeItem("defaultLocationId");
     }
   }
 
@@ -199,6 +212,19 @@ export class AuthService {
 
   public static async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     await Instense.post("/Auth/ChangePassword", { currentPassword, newPassword });
+  }
+
+  public static async setDefaultLocation(locationId: number): Promise<void> {
+    await Instense.post("/Auth/SetDefaultLocation", { locationId });
+
+    localStorage.setItem("defaultLocationId", String(locationId));
+    try {
+      const storage = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      storage.defaultLocationId = locationId;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
+    } catch {
+      // ignore malformed storage
+    }
   }
 
   public static async me(): Promise<AuthUser> {

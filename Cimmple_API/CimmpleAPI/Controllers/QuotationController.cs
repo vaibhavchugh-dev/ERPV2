@@ -30,12 +30,20 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetQuotations")]
-        public IActionResult GetQuotations([FromQuery] int tenantid)
+        public IActionResult GetQuotations([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                var quotations = _context.QuotationOrder
-                    .Where(q => q.Tenantid == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var quotationsQuery = _context.QuotationOrder.Where(q => q.Tenantid == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    quotationsQuery = quotationsQuery.Where(q => q.Locationid == filterLocationId.Value);
+                }
+
+                var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
                     .Select(q => new
                     {
@@ -328,7 +336,9 @@ namespace CimmpleAPI.Controllers
                 quotation.ExternalOrderDate = request.ExternalOrderDate;
                 quotation.BuyerName = request.BuyerName ?? "";
                 quotation.CustomerRefNo = request.CustomerRefNo ?? "";
-                quotation.Locationid = request.LocationId;
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLocationId, out var forbidLoc))
+                    return forbidLoc!;
+                quotation.Locationid = resolvedLocationId > 0 ? resolvedLocationId : request.LocationId;
 
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
@@ -625,13 +635,23 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetVendorQuotations")]
-        public IActionResult GetVendorQuotations([FromQuery] int tenantid)
+        public IActionResult GetVendorQuotations([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 // Filter out response-only quotations - these are child quotations that shouldn't appear in listing
-                var quotations = _context.VendorQuotations
-                    .Where(q => q.Tenantid == tenantid && (q.IsResponseOnly == null || q.IsResponseOnly == false))
+                var quotationsQuery = _context.VendorQuotations
+                    .Where(q => q.Tenantid == tenantid && (q.IsResponseOnly == null || q.IsResponseOnly == false));
+
+                if (filterLocationId.HasValue)
+                {
+                    quotationsQuery = quotationsQuery.Where(q => q.locationid == filterLocationId.Value);
+                }
+
+                var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
                     .Select(q => new
                     {
@@ -1130,7 +1150,12 @@ namespace CimmpleAPI.Controllers
                 quotation.contactName = request.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "";
                 quotation.VendorOrderType = request.TryGetProperty("QuotationType", out JsonElement quotationTypeElem2) ? quotationTypeElem2.GetString() ?? "Material" : "Material";
                 quotation.AdditionalNotes = request.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : null;
-                quotation.locationid = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number ? locationIdElem.GetInt32() : (int?)null;
+                var requestedVendorQuoteLoc = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number
+                    ? locationIdElem.GetInt32()
+                    : (int?)null;
+                if (!TryResolveLocationId(requestedVendorQuoteLoc, out var resolvedVendorQuoteLoc, out var forbidVendorQuoteLoc))
+                    return forbidVendorQuoteLoc!;
+                quotation.locationid = resolvedVendorQuoteLoc > 0 ? resolvedVendorQuoteLoc : requestedVendorQuoteLoc;
                 // Only update convertedOrderId if it's provided and valid
                 // CRITICAL: Backend SaveVendorOrder already sets this correctly with PONumber
                 // If convertedOrderId is already set and the incoming value is an OrderID (likely > 1000 or matches a pattern),
