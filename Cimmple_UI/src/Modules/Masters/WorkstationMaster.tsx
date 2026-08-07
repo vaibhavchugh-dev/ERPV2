@@ -2,19 +2,41 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
+import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
+import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "workstationName", label: "Workstation Name", sortKey: "workstationName", locked: true },
+  { key: "userName", label: "Assigned Users" },
+  { key: "isActive", label: "Status", sortKey: "isActive" },
+];
+const DEFAULT_HIDDEN_COLUMNS: string[] = [];
+const COLUMN_PREFERENCE_KEY = "workstationMaster.hiddenColumns";
 
 const WorkstationMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedWorkstationId, setSelectedWorkstationId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof WorkstationMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -140,6 +162,31 @@ const WorkstationMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (workstation: WorkstationMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "workstationName":
+        return (
+          <div className="customer-name">
+            <strong>{workstation.workstationName}</strong>
+          </div>
+        );
+      case "userName":
+        return workstation.userName || "No users assigned";
+      case "isActive":
+        return (
+          <span
+            className={`badge ${
+              workstation.isActive ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {workstation.isActive ? "Active" : "Inactive"}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -158,6 +205,17 @@ const WorkstationMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your workstations and user assignments</p>
         </div>
         <div className="page-actions">
+          <button className="btn-secondary" onClick={() => setShowImport(true)} type="button">
+            <span>Import</span>
+          </button>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddWorkstation}>
             <span>+</span>
             <span>Add Workstation</span>
@@ -220,31 +278,28 @@ const WorkstationMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("workstationName" as keyof WorkstationMaster)}
-                >
-                  <div className="th-content">
-                    Workstation Name
-                    {getSortIcon("workstationName" as keyof WorkstationMaster)}
-                  </div>
-                </th>
-                <th>Assigned Users</th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("isActive" as keyof WorkstationMaster)}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("isActive" as keyof WorkstationMaster)}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof WorkstationMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof WorkstationMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedWorkstations.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No workstations found</p>
                     <small>Click "Add Workstation" to get started</small>
                   </td>
@@ -252,21 +307,9 @@ const WorkstationMasterComponent: React.FC = () => {
               ) : (
                 sortedWorkstations.map((workstation) => (
                   <tr key={workstation.id} onClick={() => handleRowClick(workstation)}>
-                    <td>
-                      <div className="customer-name">
-                        <strong>{workstation.workstationName}</strong>
-                      </div>
-                    </td>
-                    <td>{workstation.userName || "No users assigned"}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          workstation.isActive ? "badge-success" : "badge-danger"
-                        }`}
-                      >
-                        {workstation.isActive ? "Active" : "Inactive"}
-                      </span>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(workstation, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}
@@ -279,6 +322,13 @@ const WorkstationMasterComponent: React.FC = () => {
         <WorkstationMasterSlideout
           workstationId={selectedWorkstationId}
           onClose={handleCloseSlideout}
+        />
+      )}
+
+      {showImport && (
+        <WorkstationMasterImportModal
+          onClose={() => setShowImport(false)}
+          onImported={loadWorkstations}
         />
       )}
     </div>

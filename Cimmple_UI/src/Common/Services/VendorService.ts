@@ -62,8 +62,104 @@ export interface VendorMasterReq {
   ship_via: string;
   TenantID: number;
   VendorContact?: VendorContact[];
-  coaAccountId?: number; // Optional Chart of Accounts ID
+  coaAccountId?: number;
+  vendorcode?: string;
+  portalAccessEnabled?: boolean;
+  portalHasPassword?: boolean;
+  portalUserId?: number;
+  portalUserName?: string;
+  /** Plaintext portal password sent only when enabling/resetting access */
+  portalPassword?: string;
 }
+
+export interface SaveVendorPortalAccessRequest {
+  vendorId: number;
+  tenantId?: number;
+  enabled: boolean;
+  newPassword?: string;
+}
+
+export interface VendorPortalAccessResult {
+  message: string;
+  portalAccessEnabled: boolean;
+  portalHasPassword: boolean;
+  portalUserId?: number;
+  portalUserName?: string;
+  vendorCode?: string;
+}
+
+export interface VendorImportRow {
+  RowNumber?: number;
+  VendorCode?: string;
+  CompanyName?: string;
+  CompanyAlias?: string;
+  Email?: string;
+  Phone?: string;
+  Address?: string;
+  Apartment?: string;
+  City?: string;
+  State?: string;
+  Zip?: string;
+  Country?: string;
+  ShippingAddress?: string;
+  ShippingApartment?: string;
+  ShippingCity?: string;
+  ShippingState?: string;
+  ShippingZip?: string;
+  ShippingCountry?: string;
+  Term?: string;
+  ShipVia?: string;
+  Status?: string;
+  ContactTitle?: string;
+  ContactFirstName?: string;
+  ContactLastName?: string;
+  ContactPhone?: string;
+  ContactEmail?: string;
+}
+
+export interface VendorImportRowResult {
+  rowNumber: number;
+  vendorId?: number | null;
+  status: string;
+  message: string;
+  warning?: string | null;
+}
+
+export interface VendorImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: VendorImportRowResult[];
+}
+
+export const VENDOR_IMPORT_HEADERS = [
+  "VendorCode",
+  "CompanyName",
+  "CompanyAlias",
+  "Email",
+  "Phone",
+  "Address",
+  "Apartment",
+  "City",
+  "State",
+  "Zip",
+  "Country",
+  "ShippingAddress",
+  "ShippingApartment",
+  "ShippingCity",
+  "ShippingState",
+  "ShippingZip",
+  "ShippingCountry",
+  "Term",
+  "ShipVia",
+  "Status",
+  "ContactTitle",
+  "ContactFirstName",
+  "ContactLastName",
+  "ContactPhone",
+  "ContactEmail",
+] as const;
 
 export class VendorService {
   public static GetVendorlist = async (
@@ -119,6 +215,40 @@ export class VendorService {
     });
   };
 
+  public static ImportVendors = async (
+    rows: VendorImportRow[],
+    options?: { updateExisting?: boolean; stopOnError?: boolean }
+  ): Promise<VendorImportResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Vendor/ImportVendors`;
+    return Instense.post(url, {
+      Tenantid: tenantID,
+      UpdateExisting: options?.updateExisting ?? true,
+      StopOnError: options?.stopOnError ?? false,
+      Rows: rows,
+    }).then((response) => {
+      const raw = response.data.result || {};
+      return {
+        created: raw.created ?? raw.Created ?? 0,
+        updated: raw.updated ?? raw.Updated ?? 0,
+        skipped: raw.skipped ?? raw.Skipped ?? 0,
+        failed: raw.failed ?? raw.Failed ?? 0,
+        rows: (raw.rows || raw.Rows || []).map((r: any) => ({
+          rowNumber: r.rowNumber ?? r.RowNumber,
+          vendorId: r.vendorId ?? r.VendorId,
+          status: r.status ?? r.Status ?? "",
+          message: r.message ?? r.Message ?? "",
+          warning: r.warning ?? r.Warning ?? null,
+        })),
+      } as VendorImportResult;
+    });
+  };
+
   public static SaveVendorData = async (
     request: VendorMasterReq
   ): Promise<any> => {
@@ -136,6 +266,34 @@ export class VendorService {
     return Instense.post(url, request).then((response) => {
       const result = response.data.result;
       return result;
+    });
+  };
+
+  public static SaveVendorPortalAccess = async (
+    request: SaveVendorPortalAccessRequest
+  ): Promise<VendorPortalAccessResult> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = request.tenantId || storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Vendor/SaveVendorPortalAccess`;
+    return Instense.post(url, {
+      VendorId: request.vendorId,
+      TenantId: tenantID,
+      Enabled: request.enabled,
+      NewPassword: request.newPassword || null,
+    }).then((response) => {
+      const raw = response.data.result || response.data || {};
+      return {
+        message: raw.message ?? raw.Message ?? "",
+        portalAccessEnabled: raw.portalAccessEnabled ?? raw.PortalAccessEnabled ?? false,
+        portalHasPassword: raw.portalHasPassword ?? raw.PortalHasPassword ?? false,
+        portalUserId: raw.portalUserId ?? raw.PortalUserId,
+        portalUserName: raw.portalUserName ?? raw.PortalUserName,
+        vendorCode: raw.vendorCode ?? raw.VendorCode,
+      } as VendorPortalAccessResult;
     });
   };
 

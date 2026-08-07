@@ -49,8 +49,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   const loadQuotation = async () => {
     setLoading(true);
     try {
-      // Get tenantId from storage (same as main application)
-      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      // Get tenantId from vendor portal storage
+      const storage = JSON.parse(localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}");
       const tenantId = storage?.tenantID || 0;
       console.log("VendorQuotationResponse: Using tenantId:", tenantId, "for quotationId:", quotationId);
 

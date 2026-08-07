@@ -2,6 +2,7 @@ import axios from "axios";
 import { IUser } from "../Contracts/IUser";
 import { API_ROOT } from "./Api-config";
 import Instense from "./Axios-config";
+import { AuthService } from "./AuthService";
 
 export class User {
   public static isAuthenticated = localStorage.getItem("token") !== null;
@@ -125,14 +126,17 @@ export class User {
   };
 
   public static RemoveAuthToken = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("storage");
+    AuthService.clearSession("erp");
     User.isAuthenticated = false;
-    User.apiLoginResponse = null;
   };
 
   public static removeToken = async (): Promise<any> => {
-    User.RemoveAuthToken();
+    try {
+      await AuthService.logout();
+    } catch {
+      // ignore
+    }
+    User.isAuthenticated = false;
     return {};
   };
 }

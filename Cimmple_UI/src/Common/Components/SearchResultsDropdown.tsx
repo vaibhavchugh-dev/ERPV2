@@ -7,7 +7,6 @@ import {
   faBriefcase,
   faFileInvoice,
   faTruck,
-  faSpinner,
   faSearch,
   faUniversity,
   faDesktop,
@@ -51,6 +50,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     results.workstations.length +
     results.locations.length +
     results.processes.length +
+    (results.jobTemplates?.length || 0) +
     results.priceBreakdowns.length +
     results.creditCards.length +
     results.chartOfAccounts.length +
@@ -67,7 +67,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     return (
       <div className="search-results-dropdown">
         <div className="search-results-loading">
-          <FontAwesomeIcon icon={faSpinner} spin />
+          <div className="loading-spinner"></div>
           <span>Searching...</span>
         </div>
       </div>
@@ -304,6 +304,18 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
             <span>Processes ({results.processes.length})</span>
           </div>
           {results.processes.map(result => renderResultItem(result, faCog))}
+        </div>
+      )}
+
+      {(results.jobTemplates?.length || 0) > 0 && (
+        <div className="search-results-section" key="jobtemplates-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="jobtemplates-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faClipboardList} />
+            </div>
+            <span>Job Templates ({results.jobTemplates.length})</span>
+          </div>
+          {results.jobTemplates.map(result => renderResultItem(result, faClipboardList))}
         </div>
       )}
 

@@ -2,8 +2,21 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { CreditCardService, CreditCardMaster } from "../../Common/Services/CreditCardService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import CreditCardMasterSlideout from "./CreditCardMasterSlideout";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "cardNumber", label: "Card Number", sortKey: "cardNumber", locked: true },
+  { key: "cardholderName", label: "Cardholder Name", sortKey: "cardholderName", locked: true },
+  { key: "cardType", label: "Card Type", sortKey: "cardType" },
+  { key: "expiry", label: "Expiry", sortKey: "expiryMonth" },
+  { key: "nickName", label: "Nick Name", sortKey: "nickName" },
+  { key: "status", label: "Status", sortKey: "status" },
+];
+const DEFAULT_HIDDEN_COLUMNS = ["nickName"];
+const COLUMN_PREFERENCE_KEY = "creditCardMaster.hiddenColumns";
 
 const CreditCardMasterComponent: React.FC = () => {
   const location = useLocation();
@@ -16,6 +29,15 @@ const CreditCardMasterComponent: React.FC = () => {
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof CreditCardMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -142,6 +164,35 @@ const CreditCardMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (creditCard: CreditCardMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "cardNumber":
+        return creditCard.cardNumber || "";
+      case "cardholderName":
+        return creditCard.cardholderName || "";
+      case "cardType":
+        return creditCard.cardType || "";
+      case "expiry":
+        return creditCard.expiryMonth && creditCard.expiryYear
+          ? `${creditCard.expiryMonth}/${creditCard.expiryYear}`
+          : "";
+      case "nickName":
+        return creditCard.nickName || "";
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              creditCard.status === 1 ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {creditCard.statusText || (creditCard.status === 1 ? "Active" : "Inactive")}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -160,6 +211,14 @@ const CreditCardMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your credit cards</p>
         </div>
         <div className="page-actions">
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddCreditCard}>
             <span>+</span>
             <span>Add Credit Card</span>
@@ -222,66 +281,28 @@ const CreditCardMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("cardNumber")}
-                >
-                  <div className="th-content">
-                    Card Number
-                    {getSortIcon("cardNumber")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("cardholderName")}
-                >
-                  <div className="th-content">
-                    Cardholder Name
-                    {getSortIcon("cardholderName")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("cardType")}
-                >
-                  <div className="th-content">
-                    Card Type
-                    {getSortIcon("cardType")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("expiryMonth")}
-                >
-                  <div className="th-content">
-                    Expiry
-                    {getSortIcon("expiryMonth")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("nickName")}
-                >
-                  <div className="th-content">
-                    Nick Name
-                    {getSortIcon("nickName")}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("status")}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("status")}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof CreditCardMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof CreditCardMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedCreditCards.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No credit cards found</p>
                     <small>Click "Add Credit Card" to get started</small>
                   </td>
@@ -289,24 +310,9 @@ const CreditCardMasterComponent: React.FC = () => {
               ) : (
                 sortedCreditCards.map((creditCard) => (
                   <tr key={creditCard.id} onClick={() => handleRowClick(creditCard)}>
-                    <td>{creditCard.cardNumber || ""}</td>
-                    <td>{creditCard.cardholderName || ""}</td>
-                    <td>{creditCard.cardType || ""}</td>
-                    <td>
-                      {creditCard.expiryMonth && creditCard.expiryYear
-                        ? `${creditCard.expiryMonth}/${creditCard.expiryYear}`
-                        : ""}
-                    </td>
-                    <td>{creditCard.nickName || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          creditCard.status === 1 ? "badge-success" : "badge-danger"
-                        }`}
-                      >
-                        {creditCard.statusText || (creditCard.status === 1 ? "Active" : "Inactive")}
-                      </span>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(creditCard, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}

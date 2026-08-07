@@ -169,9 +169,6 @@ const AttachmentUploadSection: React.FC<Props> = ({
 
   const handleDelete = async (attachment: ModuleAttachment) => {
     setMenuOpenId(null);
-    if (!window.confirm(`Delete attachment "${attachment.name}"?`)) {
-      return;
-    }
 
     if (attachment.isPending || !attachment.fileUniqueno) {
       if (attachment.localUrl) {
@@ -328,38 +325,44 @@ const AttachmentUploadSection: React.FC<Props> = ({
                 </div>
 
                 <div className="attachment-upload-section__item-actions">
-                  {/* <button
+                  <button
                     type="button"
-                    className="link-btn"
+                    className="attachment-action-btn attachment-action-btn--view"
+                    title="View document"
                     onClick={() => openViewer(index)}
                   >
-                    View
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
                   </button>
                   {(orderId > 0 || attachment.isPending) && (
                     <button
                       type="button"
-                      className="link-btn"
+                      className="attachment-action-btn attachment-action-btn--download"
+                      title="Download"
                       onClick={() => handleDownload(attachment)}
                     >
-                      Download
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
                     </button>
-                  )} */}
-                  <div className="more-menu">
-                    <button
-                      type="button"
-                      className="more-btn"
-                      onClick={() => setMenuOpenId(menuOpenId === attachment.id ? null : attachment.id)}
-                    >
-                      ⋮
-                    </button>
-                    {menuOpenId === attachment.id && (
-                      <div className="more-menu__dropdown">
-                        <button type="button" onClick={() => openViewer(index)}>View</button>
-                        <button type="button" onClick={() => handleDownload(attachment)}>Download</button>
-                        <button type="button" className="danger" onClick={() => handleDelete(attachment)}>Delete</button>
-                      </div>
-                    )}
-                  </div>
+                  )}
+                  <button
+                    type="button"
+                    className="attachment-action-btn attachment-action-btn--delete"
+                    title="Delete attachment"
+                    onClick={() => handleDelete(attachment)}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             ))}

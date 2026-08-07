@@ -359,6 +359,365 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("ImportCustomers")]
+        public IActionResult ImportCustomers([FromBody] CustomerImportRequest request)
+        {
+            try
+            {
+                if (request == null || request.Rows == null || request.Rows.Count == 0)
+                {
+                    return BadRequest(new { error = "No rows to import" });
+                }
+
+                if (request.Tenantid <= 0)
+                {
+                    return BadRequest(new { error = "Tenantid is required" });
+                }
+
+                var existing = _context.CustomerMaster
+                    .Where(c => c.Tenantid == request.Tenantid)
+                    .ToList();
+
+                var existingIds = existing.Select(c => c.customer_id).ToList();
+                var existingContacts = existingIds.Count == 0
+                    ? new List<CustomerContact>()
+                    : _context.CustomerContact
+                        .Where(cc => existingIds.Contains(cc.customer_id))
+                        .ToList();
+
+                var existingBilling = existingIds.Count == 0
+                    ? new List<CustomerBillingAddress>()
+                    : _context.CustomerBillingAddress
+                        .Where(cb => existingIds.Contains(cb.customer_id))
+                        .ToList();
+
+                int nextCodeSeq = existing.Count + 1001;
+                var result = new CustomerImportResult();
+                var rowResults = new List<CustomerImportRowResult>();
+                var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var batchCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                using var tx = _context.Database.BeginTransaction();
+                try
+                {
+                    for (int i = 0; i < request.Rows.Count; i++)
+                    {
+                        var row = request.Rows[i];
+                        var rowNumber = row.RowNumber ?? (i + 2);
+                        var rowResult = new CustomerImportRowResult { RowNumber = rowNumber };
+
+                        var companyName = (row.CompanyName ?? "").Trim();
+                        var customerCode = (row.CustomerCode ?? "").Trim();
+
+                        if (string.IsNullOrWhiteSpace(companyName))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = "Company Name is required";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(customerCode) && !batchCodes.Add(customerCode))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Duplicate Customer Code '{customerCode}' in import file";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!batchNames.Add(companyName))
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Duplicate Company Name '{companyName}' in import file";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        CustomerMaster? match = null;
+                        if (!string.IsNullOrEmpty(customerCode))
+                        {
+                            match = existing.FirstOrDefault(c =>
+                                string.Equals(c.customercode, customerCode, StringComparison.OrdinalIgnoreCase));
+                        }
+                        if (match == null)
+                        {
+                            match = existing.FirstOrDefault(c =>
+                                string.Equals(c.company_name, companyName, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        var nameConflict = existing.FirstOrDefault(c =>
+                            (match == null || c.customer_id != match.customer_id) &&
+                            string.Equals(c.company_name, companyName, StringComparison.OrdinalIgnoreCase));
+                        if (nameConflict != null)
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = $"Company Name '{companyName}' already exists";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        if (!string.IsNullOrEmpty(customerCode))
+                        {
+                            var codeConflict = existing.FirstOrDefault(c =>
+                                (match == null || c.customer_id != match.customer_id) &&
+                                !string.IsNullOrEmpty(c.customercode) &&
+                                string.Equals(c.customercode, customerCode, StringComparison.OrdinalIgnoreCase));
+                            if (codeConflict != null)
+                            {
+                                rowResult.Status = "Error";
+                                rowResult.Message = $"Customer Code '{customerCode}' already exists";
+                                result.Failed++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+                        }
+
+                        var status = ParseCustomerStatus(row.Status);
+                        var country = string.IsNullOrWhiteSpace(row.Country) ? null : row.Country.Trim();
+                        var shippingCountry = string.IsNullOrWhiteSpace(row.ShippingCountry) ? null : row.ShippingCountry.Trim();
+
+                        CustomerMaster customer;
+                        bool isNew = match == null;
+
+                        if (match != null)
+                        {
+                            if (!request.UpdateExisting)
+                            {
+                                rowResult.Status = "Skipped";
+                                rowResult.Message = "Customer already exists";
+                                rowResult.CustomerId = match.customer_id;
+                                result.Skipped++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+
+                            customer = match;
+                            if (!string.IsNullOrEmpty(customerCode)) customer.customercode = customerCode;
+                            customer.company_name = companyName;
+                            if (row.CompanyAlias != null) customer.companyAlias = row.CompanyAlias.Trim();
+                            if (row.Email != null) customer.email = row.Email.Trim();
+                            if (row.Phone != null) customer.phone_number = row.Phone.Trim();
+                            if (row.Address != null) customer.address = row.Address.Trim();
+                            if (row.Apartment != null) customer.apartment = row.Apartment.Trim();
+                            if (row.City != null) customer.city = row.City.Trim();
+                            if (row.State != null) customer.state = row.State.Trim();
+                            if (row.Zip != null) customer.zip = row.Zip.Trim();
+                            if (country != null) customer.country = country;
+                            if (row.ShippingAddress != null) customer.shippingAddress = row.ShippingAddress.Trim();
+                            if (row.ShippingApartment != null) customer.shippingApartment = row.ShippingApartment.Trim();
+                            if (row.ShippingCity != null) customer.shippingCity = row.ShippingCity.Trim();
+                            if (row.ShippingState != null) customer.shippingStates = row.ShippingState.Trim();
+                            if (row.ShippingZip != null) customer.shippingZipCode = row.ShippingZip.Trim();
+                            if (shippingCountry != null) customer.shippingCountry = shippingCountry;
+                            if (status != null) customer.status = status;
+                            customer.ContactEmail = customer.email ?? "";
+
+                            rowResult.Status = "Updated";
+                            rowResult.Message = "Updated";
+                            rowResult.CustomerId = customer.customer_id;
+                            result.Updated++;
+                        }
+                        else
+                        {
+                            customer = new CustomerMaster
+                            {
+                                Tenantid = request.Tenantid,
+                                customercode = string.IsNullOrEmpty(customerCode) ? $"C{nextCodeSeq++}" : customerCode,
+                                company_name = companyName,
+                                companyAlias = row.CompanyAlias?.Trim() ?? "",
+                                email = row.Email?.Trim() ?? "",
+                                phone_number = row.Phone?.Trim() ?? "",
+                                address = row.Address?.Trim() ?? "",
+                                apartment = row.Apartment?.Trim() ?? "",
+                                city = row.City?.Trim() ?? "",
+                                state = row.State?.Trim() ?? "",
+                                zip = row.Zip?.Trim() ?? "",
+                                country = country ?? "US",
+                                shippingAddress = row.ShippingAddress?.Trim() ?? "",
+                                shippingApartment = row.ShippingApartment?.Trim() ?? "",
+                                shippingCity = row.ShippingCity?.Trim() ?? "",
+                                shippingStates = row.ShippingState?.Trim() ?? "",
+                                shippingZipCode = row.ShippingZip?.Trim() ?? "",
+                                shippingCountry = shippingCountry ?? "US",
+                                status = status ?? "Active",
+                                ContactEmail = row.Email?.Trim() ?? "",
+                                Pointofcontact = "",
+                                WebAddress = "",
+                                firstname = row.ContactFirstName?.Trim() ?? "",
+                                last_name = row.ContactLastName?.Trim() ?? ""
+                            };
+                            _context.CustomerMaster.Add(customer);
+                            existing.Add(customer);
+                            _context.SaveChanges();
+
+                            rowResult.Status = "Created";
+                            rowResult.Message = "Created";
+                            rowResult.CustomerId = customer.customer_id;
+                            result.Created++;
+                        }
+
+                        UpsertImportedContact(customer, row, existingContacts, isNew);
+                        UpsertImportedBilling(customer, row, existingBilling, request.Tenantid, isNew);
+
+                        rowResults.Add(rowResult);
+                    }
+
+                    if (request.StopOnError && result.Failed > 0)
+                    {
+                        tx.Rollback();
+                        return BadRequest(new
+                        {
+                            error = "Import cancelled due to validation errors",
+                            result = new
+                            {
+                                created = 0,
+                                updated = 0,
+                                skipped = 0,
+                                failed = result.Failed,
+                                rows = rowResults
+                            }
+                        });
+                    }
+
+                    _context.SaveChanges();
+                    tx.Commit();
+
+                    result.Rows = rowResults;
+                    return Ok(new { result });
+                }
+                catch
+                {
+                    tx.Rollback();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        private void UpsertImportedContact(
+            CustomerMaster customer,
+            CustomerImportRow row,
+            List<CustomerContact> existingContacts,
+            bool isNew)
+        {
+            var hasContactData =
+                !string.IsNullOrWhiteSpace(row.ContactFirstName) ||
+                !string.IsNullOrWhiteSpace(row.ContactLastName) ||
+                !string.IsNullOrWhiteSpace(row.ContactPhone) ||
+                !string.IsNullOrWhiteSpace(row.ContactEmail) ||
+                !string.IsNullOrWhiteSpace(row.ContactTitle);
+
+            if (!hasContactData && !isNew) return;
+
+            var contact = existingContacts.FirstOrDefault(c =>
+                c.customer_id == customer.customer_id && c.isDefault);
+
+            if (contact == null && !isNew)
+            {
+                contact = existingContacts.FirstOrDefault(c => c.customer_id == customer.customer_id);
+            }
+
+            if (contact == null)
+            {
+                if (!hasContactData) return;
+
+                contact = new CustomerContact
+                {
+                    customer_id = customer.customer_id,
+                    title = row.ContactTitle?.Trim() ?? "",
+                    firstname = row.ContactFirstName?.Trim() ?? "",
+                    lastname = row.ContactLastName?.Trim() ?? "",
+                    phoneno = row.ContactPhone?.Trim() ?? row.Phone?.Trim() ?? "",
+                    email = row.ContactEmail?.Trim() ?? row.Email?.Trim() ?? "",
+                    isDefault = true
+                };
+                _context.CustomerContact.Add(contact);
+                existingContacts.Add(contact);
+            }
+            else if (hasContactData)
+            {
+                if (row.ContactTitle != null) contact.title = row.ContactTitle.Trim();
+                if (row.ContactFirstName != null) contact.firstname = row.ContactFirstName.Trim();
+                if (row.ContactLastName != null) contact.lastname = row.ContactLastName.Trim();
+                if (row.ContactPhone != null) contact.phoneno = row.ContactPhone.Trim();
+                if (row.ContactEmail != null) contact.email = row.ContactEmail.Trim();
+                contact.isDefault = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(contact.firstname))
+            {
+                customer.firstname = contact.firstname;
+            }
+            if (!string.IsNullOrWhiteSpace(contact.lastname))
+            {
+                customer.last_name = contact.lastname;
+            }
+        }
+
+        private void UpsertImportedBilling(
+            CustomerMaster customer,
+            CustomerImportRow row,
+            List<CustomerBillingAddress> existingBilling,
+            int tenantId,
+            bool isNew)
+        {
+            var hasBilling =
+                !string.IsNullOrWhiteSpace(row.Address) ||
+                !string.IsNullOrWhiteSpace(row.City) ||
+                !string.IsNullOrWhiteSpace(row.State) ||
+                !string.IsNullOrWhiteSpace(row.Zip) ||
+                !string.IsNullOrWhiteSpace(row.Country) ||
+                !string.IsNullOrWhiteSpace(row.Apartment);
+
+            if (!hasBilling && !isNew) return;
+
+            var billing = existingBilling.FirstOrDefault(b => b.customer_id == customer.customer_id);
+            if (billing == null)
+            {
+                billing = new CustomerBillingAddress
+                {
+                    customer_id = customer.customer_id,
+                    billing_address_line1 = customer.address ?? "",
+                    billing_address_line2 = customer.apartment ?? "",
+                    billing_city = customer.city ?? "",
+                    billing_state = customer.state ?? "",
+                    billing_postal_code = customer.zip ?? "",
+                    billing_country = customer.country ?? "US",
+                    IsDefault = 1,
+                    TenantId = tenantId
+                };
+                _context.CustomerBillingAddress.Add(billing);
+                existingBilling.Add(billing);
+            }
+            else if (hasBilling)
+            {
+                if (row.Address != null) billing.billing_address_line1 = row.Address.Trim();
+                if (row.Apartment != null) billing.billing_address_line2 = row.Apartment.Trim();
+                if (row.City != null) billing.billing_city = row.City.Trim();
+                if (row.State != null) billing.billing_state = row.State.Trim();
+                if (row.Zip != null) billing.billing_postal_code = row.Zip.Trim();
+                if (row.Country != null) billing.billing_country = row.Country.Trim();
+                billing.IsDefault = 1;
+                billing.TenantId = tenantId;
+            }
+        }
+
+        private static string? ParseCustomerStatus(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var v = value.Trim().ToLowerInvariant();
+            if (v is "active" or "1" or "yes" or "true") return "Active";
+            if (v is "inactive" or "0" or "no" or "false") return "Inactive";
+            return null;
+        }
+
         [HttpGet("CheckCustomerDeletionImpact")]
         public IActionResult CheckCustomerDeletionImpact([FromQuery] int customerId, [FromQuery] int tenantId)
         {
@@ -651,6 +1010,60 @@ namespace CimmpleAPI.Controllers
         public string phoneno { get; set; }
         public string email { get; set; }
         public bool isDefault { get; set; }
+    }
+
+    public class CustomerImportRequest
+    {
+        public int Tenantid { get; set; }
+        public bool UpdateExisting { get; set; } = true;
+        public bool StopOnError { get; set; } = false;
+        public List<CustomerImportRow> Rows { get; set; } = new();
+    }
+
+    public class CustomerImportRow
+    {
+        public int? RowNumber { get; set; }
+        public string? CustomerCode { get; set; }
+        public string? CompanyName { get; set; }
+        public string? CompanyAlias { get; set; }
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public string? Apartment { get; set; }
+        public string? City { get; set; }
+        public string? State { get; set; }
+        public string? Zip { get; set; }
+        public string? Country { get; set; }
+        public string? ShippingAddress { get; set; }
+        public string? ShippingApartment { get; set; }
+        public string? ShippingCity { get; set; }
+        public string? ShippingState { get; set; }
+        public string? ShippingZip { get; set; }
+        public string? ShippingCountry { get; set; }
+        public string? Status { get; set; }
+        public string? ContactTitle { get; set; }
+        public string? ContactFirstName { get; set; }
+        public string? ContactLastName { get; set; }
+        public string? ContactPhone { get; set; }
+        public string? ContactEmail { get; set; }
+    }
+
+    public class CustomerImportResult
+    {
+        public int Created { get; set; }
+        public int Updated { get; set; }
+        public int Skipped { get; set; }
+        public int Failed { get; set; }
+        public List<CustomerImportRowResult> Rows { get; set; } = new();
+    }
+
+    public class CustomerImportRowResult
+    {
+        public int RowNumber { get; set; }
+        public int? CustomerId { get; set; }
+        public string Status { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string? Warning { get; set; }
     }
 }
 

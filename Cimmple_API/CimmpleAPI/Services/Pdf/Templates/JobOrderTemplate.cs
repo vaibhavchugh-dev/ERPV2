@@ -97,7 +97,18 @@ namespace CimmpleAPI.Services.Pdf.Templates
                                 .FontSize(11)
                                 .Bold()
                                 .FontColor(DarkText);
-                            
+
+                            if (!string.IsNullOrEmpty(DocumentData.RoutingTemplateCode))
+                            {
+                                var templateLabel = DocumentData.RoutingTemplateRevision.HasValue
+                                    ? $"From job template {DocumentData.RoutingTemplateCode} Rev. {DocumentData.RoutingTemplateRevision}"
+                                    : $"From job template {DocumentData.RoutingTemplateCode}";
+
+                                column.Item().PaddingBottom(8).AlignCenter().Text(templateLabel)
+                                    .FontSize(8)
+                                    .FontColor(MediumText);
+                            }
+
                             column.Item().Element(container => container
                                 .Table(table =>
                                 {

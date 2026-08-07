@@ -32,6 +32,7 @@ import {
   faLock
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
+import { AuthService } from "../Services/AuthService";
 import "./Sidebar.scss";
 
 const Sidebar: React.FC = () => {
@@ -45,6 +46,9 @@ const Sidebar: React.FC = () => {
   const toggleSection = (sectionName: string) => {
     setActiveSection(activeSection === sectionName ? null : sectionName);
   };
+
+  const filterByPermission = <T extends { path: string }>(items: T[]): T[] =>
+    items.filter((item) => item.path === "/home" || AuthService.hasPermissionForPath(item.path));
 
   const menuItems = [
     {
@@ -239,6 +243,16 @@ const Sidebar: React.FC = () => {
       path: "/masters/process",
     },
     {
+      icon: faClipboardList,
+      title: "Job Template Master",
+      path: "/masters/jobtemplate",
+    },
+    {
+      icon: faTable,
+      title: "Category Master",
+      path: "/masters/category",
+    },
+    {
       icon: faDollarSign,
       title: "Price Breakdown Master",
       path: "/masters/pricebreakdown",
@@ -257,6 +271,14 @@ const Sidebar: React.FC = () => {
 
   console.log("Sidebar rendering - Sales & Orders, Purchasing, Quality, Accounting, Administration");
 
+  const visibleMenuItems = filterByPermission(menuItems);
+  const visibleSalesItems = filterByPermission(salesItems);
+  const visibleQualityItems = filterByPermission(qualityItems);
+  const visibleReportsItems = filterByPermission(reportsItems);
+  const visiblePurchasingItems = filterByPermission(purchasingItems);
+  const visibleAccountingItems = filterByPermission(accountingItems);
+  const visibleDocumentsItems = filterByPermission(documentsItems);
+  const visibleAdministrationItems = filterByPermission(administrationItems);
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -273,7 +295,7 @@ const Sidebar: React.FC = () => {
 
       <nav className="sidebar-nav">
         <div className="nav-section">
-          {menuItems.map((item, index) => (
+          {visibleMenuItems.map((item, index) => (
             <div
               key={index}
               className="nav-dashboard-item"
@@ -304,7 +326,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'sales' && (
             <ul className="nav-list">
-              {salesItems.map((item, index) => (
+              {visibleSalesItems.map((item, index) => (
                 <li key={`sales-${index}`}>
                   <NavLink
                     to={item.path}
@@ -335,7 +357,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'purchasing' && (
             <ul className="nav-list">
-              {purchasingItems.map((item, index) => (
+              {visiblePurchasingItems.map((item, index) => (
                 <li key={`purchasing-${index}`}>
                   <NavLink
                     to={item.path}
@@ -366,7 +388,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'quality' && (
             <ul className="nav-list">
-              {qualityItems.map((item, index) => (
+              {visibleQualityItems.map((item, index) => (
                 <li key={`quality-${index}`}>
                   <NavLink
                     to={item.path}
@@ -397,7 +419,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'documents' && (
             <ul className="nav-list">
-              {documentsItems.map((item, index) => (
+              {visibleDocumentsItems.map((item, index) => (
                 <li key={`documents-${index}`}>
                   <NavLink
                     to={item.path}
@@ -428,7 +450,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'reports' && (
             <ul className="nav-list">
-              {reportsItems.map((item, index) => (
+              {visibleReportsItems.map((item, index) => (
                 <li key={`reports-${index}`}>
                   <NavLink
                     to={item.path}
@@ -459,7 +481,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'accounting' && (
             <ul className="nav-list">
-              {accountingItems.map((item, index) => (
+              {visibleAccountingItems.map((item, index) => (
                 <li key={`accounting-${index}`}>
                   <NavLink
                     to={item.path}
@@ -490,7 +512,7 @@ const Sidebar: React.FC = () => {
           </div>
           {activeSection === 'administration' && (
             <ul className="nav-list">
-              {administrationItems.map((item, index) => (
+              {visibleAdministrationItems.map((item, index) => (
                 <li key={`administration-${index}`}>
                   <NavLink
                     to={item.path}

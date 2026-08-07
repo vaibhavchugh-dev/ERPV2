@@ -7,17 +7,17 @@ import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
 import { PunchLogin } from "./Login/PunchLogin";
 import PunchInOut from "./Modules/PunchInOut/PunchInOut";
+import { ChangePassword } from "./Login/ChangePassword";
 import VendorProtectedLayout from "./VendorPortal/VendorProtectedLayout";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
 import "./App.scss";
 import "react-toastify/dist/ReactToastify.css";
-import moment from 'moment-timezone';
+import moment from "moment-timezone";
 
 const AppContent: React.FC = () => {
   const settings = useSettingsSafe();
-  
+
   React.useEffect(() => {
-    // Set default timezone from settings
     const timezone = settings?.timezone || "America/New_York";
     moment.tz.setDefault(timezone);
   }, [settings?.timezone]);
@@ -41,6 +41,7 @@ const AppContent: React.FC = () => {
           <Route exact path="/punch-login" component={PunchLogin} />
           <Route exact path="/punch-in-out" component={PunchInOut} />
           <Route exact path="/logout" component={Logout} />
+          <Route exact path="/change-password" component={ChangePassword} />
           <Route path="/vendor" component={VendorProtectedLayout} />
           <Route path="/" component={ProtectedLayout} />
         </Switch>

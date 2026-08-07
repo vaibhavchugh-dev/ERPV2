@@ -2,20 +2,44 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorService, VendorMaster } from "../../Common/Services/VendorService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import VendorMasterSlideout from "./VendorMasterSlideout";
+import VendorMasterImportModal from "./VendorMasterImportModal";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "vendorcode", label: "Vendor Code", sortKey: "vendorcode", locked: true },
+  { key: "company_name", label: "Vendor Name", sortKey: "company_name", locked: true },
+  { key: "fullAddress", label: "Address", sortKey: "fullAddress" },
+  { key: "contactPerson", label: "Contact Person" },
+  { key: "phone_number", label: "Contact Phone" },
+  { key: "status", label: "Status", sortKey: "status" },
+];
+const DEFAULT_HIDDEN_COLUMNS: string[] = [];
+const COLUMN_PREFERENCE_KEY = "vendorMaster.hiddenColumns";
 
 const VendorMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof VendorMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     loadVendors();
@@ -148,6 +172,37 @@ const VendorMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (vendor: VendorMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "vendorcode":
+        return vendor.vendorcode || "";
+      case "company_name":
+        return (
+          <div className="customer-name">
+            <strong>{vendor.company_name}</strong>
+          </div>
+        );
+      case "fullAddress":
+        return vendor.fullAddress || "";
+      case "contactPerson":
+        return vendor.contactPerson || "";
+      case "phone_number":
+        return vendor.phone_number || "";
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              vendor.status === "Active" ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {vendor.status || ""}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -166,6 +221,21 @@ const VendorMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your vendor database</p>
         </div>
         <div className="page-actions">
+          <button
+            className="btn-secondary"
+            onClick={() => setShowImport(true)}
+            type="button"
+          >
+            <span>Import</span>
+          </button>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddVendor}>
             <span>+</span>
             <span>Add Vendor</span>
@@ -228,72 +298,38 @@ const VendorMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("vendorcode" as keyof VendorMaster)}
-                >
-                  <div className="th-content">
-                    Vendor Code
-                    {getSortIcon("vendorcode" as keyof VendorMaster)}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("company_name" as keyof VendorMaster)}
-                >
-                  <div className="th-content">
-                    Vendor Name
-                    {getSortIcon("company_name" as keyof VendorMaster)}
-                  </div>
-                </th>
-                <th onClick={() => handleSort("fullAddress" as keyof VendorMaster)}>
-                  <div className="th-content">
-                    Address
-                    {getSortIcon("fullAddress" as keyof VendorMaster)}
-                  </div>
-                </th>
-                <th>Contact Person</th>
-                <th>Contact Phone</th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("status" as keyof VendorMaster)}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("status" as keyof VendorMaster)}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof VendorMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof VendorMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedVendors.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No vendors found</p>
-                    <small>Click "Add Vendor" to get started</small>
+                    <small>Click "Add Vendor" or "Import" to get started</small>
                   </td>
                 </tr>
               ) : (
                 sortedVendors.map((vendor) => (
                   <tr key={vendor.vendor_id} onClick={() => handleRowClick(vendor)}>
-                    <td>{vendor.vendorcode || ""}</td>
-                    <td>
-                      <div className="customer-name">
-                        <strong>{vendor.company_name}</strong>
-                      </div>
-                    </td>
-                    <td>{vendor.fullAddress || ""}</td>
-                    <td>{vendor.contactPerson || ""}</td>
-                    <td>{vendor.phone_number || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          vendor.status === "Active" ? "badge-success" : "badge-danger"
-                        }`}
-                      >
-                        {vendor.status || ""}
-                      </span>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(vendor, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}
@@ -306,6 +342,13 @@ const VendorMasterComponent: React.FC = () => {
         <VendorMasterSlideout
           vendorId={selectedVendorId}
           onClose={handleCloseSlideout}
+        />
+      )}
+
+      {showImport && (
+        <VendorMasterImportModal
+          onClose={() => setShowImport(false)}
+          onImported={loadVendors}
         />
       )}
     </div>

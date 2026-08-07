@@ -2,20 +2,44 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
+import ColumnChooser from "../../Common/Components/ColumnChooser";
+import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import CustomerMasterSlideout from "./CustomerMasterSlideout";
+import CustomerMasterImportModal from "./CustomerMasterImportModal";
 import "./CustomerMaster.scss";
+
+const COLUMNS: ColumnDefinition[] = [
+  { key: "customercode", label: "Customer Code", sortKey: "customercode", locked: true },
+  { key: "company_name", label: "Customer Name", sortKey: "company_name", locked: true },
+  { key: "fullAddress", label: "Address", sortKey: "fullAddress" },
+  { key: "contactPerson", label: "Contact Person" },
+  { key: "phone_number", label: "Contact Phone" },
+  { key: "status", label: "Status", sortKey: "status" },
+];
+const DEFAULT_HIDDEN_COLUMNS: string[] = [];
+const COLUMN_PREFERENCE_KEY = "customerMaster.hiddenColumns";
 
 const CustomerMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof CustomerMaster | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const {
+    hiddenColumns,
+    visibleColumns,
+    showColumnChooser,
+    setShowColumnChooser,
+    columnChooserRef,
+    toggleColumn,
+  } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
 
   useEffect(() => {
     loadCustomers();
@@ -162,6 +186,37 @@ const CustomerMasterComponent: React.FC = () => {
     );
   };
 
+  const renderCell = (customer: CustomerMaster, key: string): React.ReactNode => {
+    switch (key) {
+      case "customercode":
+        return customer.customercode || "";
+      case "company_name":
+        return (
+          <div className="customer-name">
+            <strong>{customer.company_name}</strong>
+          </div>
+        );
+      case "fullAddress":
+        return customer.fullAddress || "";
+      case "contactPerson":
+        return customer.contactPerson || "";
+      case "phone_number":
+        return customer.phone_number || "";
+      case "status":
+        return (
+          <span
+            className={`badge ${
+              customer.status === "Active" ? "badge-success" : "badge-danger"
+            }`}
+          >
+            {customer.status || ""}
+          </span>
+        );
+      default:
+        return "";
+    }
+  };
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -180,6 +235,21 @@ const CustomerMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your customer database</p>
         </div>
         <div className="page-actions">
+          <button
+            className="btn-secondary"
+            onClick={() => setShowImport(true)}
+            type="button"
+          >
+            <span>Import</span>
+          </button>
+          <ColumnChooser
+            columns={COLUMNS}
+            hiddenColumns={hiddenColumns}
+            showMenu={showColumnChooser}
+            onToggleMenu={() => setShowColumnChooser(!showColumnChooser)}
+            onToggleColumn={toggleColumn}
+            containerRef={columnChooserRef}
+          />
           <button className="btn-primary" onClick={handleAddCustomer}>
             <span>+</span>
             <span>Add Customer</span>
@@ -242,72 +312,38 @@ const CustomerMasterComponent: React.FC = () => {
           <table className="customers-table">
             <thead>
               <tr>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("customercode" as keyof CustomerMaster)}
-                >
-                  <div className="th-content">
-                    Customer Code
-                    {getSortIcon("customercode" as keyof CustomerMaster)}
-                  </div>
-                </th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("company_name" as keyof CustomerMaster)}
-                >
-                  <div className="th-content">
-                    Customer Name
-                    {getSortIcon("company_name" as keyof CustomerMaster)}
-                  </div>
-                </th>
-                <th onClick={() => handleSort("fullAddress" as keyof CustomerMaster)}>
-                  <div className="th-content">
-                    Address
-                    {getSortIcon("fullAddress" as keyof CustomerMaster)}
-                  </div>
-                </th>
-                <th>Contact Person</th>
-                <th>Contact Phone</th>
-                <th
-                  className="sortable"
-                  onClick={() => handleSort("status" as keyof CustomerMaster)}
-                >
-                  <div className="th-content">
-                    Status
-                    {getSortIcon("status" as keyof CustomerMaster)}
-                  </div>
-                </th>
+                {visibleColumns.map((column) => (
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey &&
+                      handleSort(column.sortKey as keyof CustomerMaster)
+                    }
+                  >
+                    <div className="th-content">
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as keyof CustomerMaster)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedCustomers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={visibleColumns.length} className="empty-state">
                     <p>No customers found</p>
-                    <small>Click "Add Customer" to get started</small>
+                    <small>Click "Add Customer" or "Import" to get started</small>
                   </td>
                 </tr>
               ) : (
                 sortedCustomers.map((customer) => (
                   <tr key={customer.customer_id} onClick={() => handleRowClick(customer)}>
-                    <td>{customer.customercode || ""}</td>
-                    <td>
-                      <div className="customer-name">
-                        <strong>{customer.company_name}</strong>
-                      </div>
-                    </td>
-                    <td>{customer.fullAddress || ""}</td>
-                    <td>{customer.contactPerson || ""}</td>
-                    <td>{customer.phone_number || ""}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          customer.status === "Active" ? "badge-success" : "badge-danger"
-                        }`}
-                      >
-                        {customer.status || ""}
-                      </span>
-                    </td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.key}>{renderCell(customer, column.key)}</td>
+                    ))}
                   </tr>
                 ))
               )}
@@ -320,6 +356,13 @@ const CustomerMasterComponent: React.FC = () => {
         <CustomerMasterSlideout
           customerId={selectedCustomerId}
           onClose={handleCloseSlideout}
+        />
+      )}
+
+      {showImport && (
+        <CustomerMasterImportModal
+          onClose={() => setShowImport(false)}
+          onImported={loadCustomers}
         />
       )}
     </div>

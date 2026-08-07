@@ -151,7 +151,10 @@ namespace CimmpleAPI.Controllers
                     comments = comments ?? new List<JobOrderCommentDto>(),
                     routingSteps = routingSteps ?? new List<JobOrderRoutingStepDto>(),
                     drawingNumber = jobOrder.DrawingNumber ?? "",
-                    drawingRevision = jobOrder.DrawingRevision ?? ""
+                    drawingRevision = jobOrder.DrawingRevision ?? "",
+                    jobTemplateId = jobOrder.JobTemplateId,
+                    jobTemplateCode = jobOrder.JobTemplateCode ?? "",
+                    jobTemplateRevision = jobOrder.JobTemplateRevision
                 };
 
                 return Ok(new { result = result });
@@ -288,6 +291,9 @@ namespace CimmpleAPI.Controllers
                 jobOrder.Status = request.Status ?? "Draft";
                 jobOrder.DrawingNumber = request.DrawingNumber ?? "";
                 jobOrder.DrawingRevision = request.DrawingRevision ?? "";
+                jobOrder.JobTemplateId = request.JobTemplateId > 0 ? request.JobTemplateId : null;
+                jobOrder.JobTemplateCode = request.JobTemplateId > 0 ? request.JobTemplateCode : null;
+                jobOrder.JobTemplateRevision = request.JobTemplateId > 0 ? request.JobTemplateRevision : null;
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -565,6 +571,9 @@ namespace CimmpleAPI.Controllers
         public List<JobOrderRoutingStepDto> RoutingSteps { get; set; }
         public string DrawingNumber { get; set; }
         public string DrawingRevision { get; set; }
+        public int? JobTemplateId { get; set; }
+        public string JobTemplateCode { get; set; }
+        public int? JobTemplateRevision { get; set; }
     }
 
     public class CreateJobOrderFromDetailReq

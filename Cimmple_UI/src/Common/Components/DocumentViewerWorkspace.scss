@@ -140,9 +140,18 @@
 
   &__body {
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  &__body > .doc-viewer__status {
+    margin: auto;
+    align-self: center;
+    max-width: 90%;
   }
 
   &__document-shell {
@@ -243,6 +252,13 @@
     padding: 1rem;
     position: relative;
     scrollbar-width: thin;
+
+    &:has(> .doc-viewer__status) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
   }
 
   &__pdf {
@@ -250,6 +266,7 @@
     flex-direction: column;
     align-items: center;
     gap: 1rem;
+    width: 100%;
   }
 
   &__page-wrap {
@@ -316,7 +333,8 @@
   }
 
   &__status {
-    min-height: 280px;
+    min-height: 180px;
+    min-width: 240px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -324,20 +342,25 @@
     gap: 0.75rem;
     text-align: center;
     color: #4b5563;
-    padding: 2rem;
+    padding: 2rem 2.5rem;
+    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+    border-radius: 0.5rem;
 
     h4 {
       margin: 0;
       color: #111827;
       font-size: 0.95rem;
       word-break: break-word;
-      max-width: 28rem;
+      max-width: 100%;
     }
 
     p {
       margin: 0;
       font-size: 0.875rem;
-      max-width: 28rem;
+      color: #6b7280;
+      max-width: 100%;
+      font-weight: 500;
+      letter-spacing: 0.3px;
     }
 
     &.error h4 {
@@ -346,11 +369,12 @@
   }
 
   &__spinner {
-    width: 2rem;
-    height: 2rem;
+    width: 2.5rem;
+    height: 2.5rem;
     border-radius: 50%;
     border: 3px solid #e5e7eb;
     border-top-color: #6366f1;
+    border-right-color: #6366f1;
     animation: doc-viewer-spin 0.8s linear infinite;
   }
 
