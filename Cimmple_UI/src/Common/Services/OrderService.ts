@@ -244,7 +244,7 @@ export class OrderService {
 
   public static SaveOrder = async (
     request: OrderMasterReq
-  ): Promise<{ id: number; message: string }> => {
+  ): Promise<{ id: number; poNumber?: number; message: string }> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     
@@ -343,7 +343,11 @@ export class OrderService {
     }).then((response) => {
       const result = response.data.result;
       if (result && result.id) {
-        return { id: result.id, message: result.message || "Order saved successfully" };
+        return {
+          id: result.id,
+          poNumber: result.poNumber,
+          message: result.message || "Order saved successfully",
+        };
       }
       return { id: request.OrderID || 0, message: "Order saved successfully" };
     });

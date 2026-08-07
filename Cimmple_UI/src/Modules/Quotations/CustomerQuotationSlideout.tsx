@@ -1323,10 +1323,11 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           setFormData(updatedQuotation);
         }
         
-        // Format order number for display
-        const orderNumber = result.id < 1000 
-          ? `CO#${result.id + 999}` 
-          : `CO#${result.id}`;
+        // Format order number for display (PONumber, not internal OrderID)
+        const poNumber = result.poNumber ?? result.id;
+        const orderNumber = poNumber < 1000 
+          ? `CO#${poNumber + 999}` 
+          : `CO#${poNumber}`;
         
         toast.success(`Quotation converted to order successfully! Order Number: ${orderNumber}`, {
           autoClose: 5000
@@ -1410,7 +1411,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             {quotationId > 0 && formData.PONumber > 0 && (
               <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
                 Quotation Number: {formData.PONumber < 1000 ? `CQ#${formData.PONumber + 999}` : `CQ#${formData.PONumber}`}
-                {formData.convertedOrderId && (
+                {formData.convertedOrderId && formData.convertedOrderNumber ? (
                   <span style={{ marginLeft: "1rem", color: "#10b981", fontWeight: 500 }}>
                     → Converted to Order:{" "}
                     <span
@@ -1424,10 +1425,12 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                       }}
                       title="Click to view order"
                     >
-                      {formData.convertedOrderId < 1000 ? `CO#${formData.convertedOrderId + 999}` : `CO#${formData.convertedOrderId}`}
+                      {formData.convertedOrderNumber < 1000
+                        ? `CO#${formData.convertedOrderNumber + 999}`
+                        : `CO#${formData.convertedOrderNumber}`}
                     </span>
                   </span>
-                )}
+                ) : null}
               </div>
             )}
           </div>
@@ -1719,8 +1722,20 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                         const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
                         return (
                           <React.Fragment key={index}>
-                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "top" }}>
-                            <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
+                            <td style={{ padding: "0.75rem" }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  minHeight: "2.5rem",
+                                  fontSize: "0.875rem",
+                                  lineHeight: 1.25,
+                                }}
+                              >
+                                {detail.ItemNo}
+                              </div>
+                            </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
                               <CustomerPartCombobox
                                 value={detail.PartNo}
@@ -2173,7 +2188,18 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                               </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                              ${lineTotal.toFixed(2)}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  minHeight: "2.5rem",
+                                  fontSize: "0.875rem",
+                                  lineHeight: 1.25,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                ${lineTotal.toFixed(2)}
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <input

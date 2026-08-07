@@ -47,6 +47,8 @@ export interface QuotationMaster {
   customerRefNo: string;
   isConverted: number;
   convertedOrderId?: number;
+  /** Display CO# — CustomerOrder.PONumber for convertedOrderId */
+  convertedOrderNumber?: number | null;
   locationId?: number;
   Attachments?: QuotationAttachment[];
   Comments?: QuotationComment[];
@@ -91,6 +93,7 @@ export interface QuotationMasterReq {
   CustomerRefNo: string;
   LocationId?: number;
   convertedOrderId?: number;
+  convertedOrderNumber?: number | null;
   Details: QuotationDetailReq[];
   Attachments?: QuotationAttachment[];
   /** Existing attachment DB IDs removed in the UI and pending deletion on save. */
@@ -266,6 +269,7 @@ export class QuotationService {
         CustomerRefNo: result.customerRefNo || "",
         LocationId: result.locationId,
         convertedOrderId: result.convertedOrderId,
+        convertedOrderNumber: result.convertedOrderNumber ?? null,
         Attachments: (() => {
           console.log("Processing attachments from result:", result.attachments, result.Attachments);
           const mapAttachment = (a: any) => ({

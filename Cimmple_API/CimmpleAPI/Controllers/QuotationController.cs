@@ -62,7 +62,42 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                return Ok(new { result = quotations });
+                // convertedOrderId stores CustomerOrder.OrderID; resolve PONumber for display (CO#)
+                var convertedOrderIds = quotations
+                    .Where(q => q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0)
+                    .Select(q => q.convertedOrderId!.Value)
+                    .Distinct()
+                    .ToList();
+                var convertedOrderNumbers = convertedOrderIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : _context.CustomerOrder
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == tenantid && convertedOrderIds.Contains(o.OrderID))
+                        .Select(o => new { o.OrderID, o.PONumber })
+                        .ToList()
+                        .ToDictionary(o => o.OrderID, o => o.PONumber);
+
+                var quotationsWithOrderNumber = quotations.Select(q => new
+                {
+                    q.orderID,
+                    q.quotationNumber,
+                    q.customerID,
+                    q.customerCode,
+                    q.customerName,
+                    q.orderDate,
+                    q.totalAmount,
+                    q.status,
+                    q.customerRefNo,
+                    q.isConverted,
+                    q.convertedOrderId,
+                    convertedOrderNumber = q.convertedOrderId.HasValue &&
+                        convertedOrderNumbers.TryGetValue(q.convertedOrderId.Value, out var po)
+                        ? (int?)po
+                        : null,
+                    q.locationId
+                }).ToList();
+
+                return Ok(new { result = quotationsWithOrderNumber });
             }
             catch (Exception ex)
             {
@@ -194,6 +229,13 @@ namespace CimmpleAPI.Controllers
                     customerRefNo = quotation.CustomerRefNo ?? "",
                     isConverted = quotation.isConverted ?? 0,
                     convertedOrderId = quotation.convertedOrderId,
+                    convertedOrderNumber = quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0
+                        ? _context.CustomerOrder
+                            .AsNoTracking()
+                            .Where(o => o.OrderID == quotation.convertedOrderId.Value && o.Tenantid == tenantId)
+                            .Select(o => (int?)o.PONumber)
+                            .FirstOrDefault()
+                        : null,
                     locationId = quotation.Locationid,
                     details = details,
                     attachments = attachments.Select(a => new

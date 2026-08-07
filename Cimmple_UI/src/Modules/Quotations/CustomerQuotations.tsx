@@ -199,8 +199,9 @@ const CustomerQuotations: React.FC = () => {
       label: "Order #",
       sortable: false,
       render: (value: any, row: any) => {
-        if (row.convertedOrderId) {
-          const orderNum = row.convertedOrderId < 1000 ? row.convertedOrderId + 999 : row.convertedOrderId;
+        if (row.convertedOrderId && row.convertedOrderNumber) {
+          const displayPo = row.convertedOrderNumber;
+          const orderNum = displayPo < 1000 ? displayPo + 999 : displayPo;
           return (
             <span
               style={{

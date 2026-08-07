@@ -662,7 +662,7 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                 }
 
-                return Ok(new { result = new { id = order.OrderID, message = "Order saved successfully" } });
+                return Ok(new { result = new { id = order.OrderID, poNumber = order.PONumber, message = "Order saved successfully" } });
             }
             catch (Exception ex)
             {
