@@ -11,7 +11,8 @@ const COLUMNS: ColumnDefinition[] = [
   { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
   { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
   { key: "unit", label: "Unit", sortKey: "unit" },
-  { key: "totalQtyOrdered", label: "Total Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyOrdered", label: "Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyQuoted", label: "Qty Quoted", sortKey: "totalQtyQuoted" },
   { key: "avgUnitPrice", label: "Avg Unit Price", sortKey: "avgUnitPrice" },
   { key: "orderCount", label: "Orders", sortKey: "orderCount" },
   { key: "quotationCount", label: "Quotations", sortKey: "quotationCount" },
@@ -208,6 +209,8 @@ const ProductMasterComponent: React.FC = () => {
         return product.unit || "";
       case "totalQtyOrdered":
         return product.totalQtyOrdered.toLocaleString();
+      case "totalQtyQuoted":
+        return (product.totalQtyQuoted ?? 0).toLocaleString();
       case "avgUnitPrice":
         return formatCurrency(product.avgUnitPrice);
       case "orderCount":

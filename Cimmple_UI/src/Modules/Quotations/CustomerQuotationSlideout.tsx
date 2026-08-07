@@ -7,11 +7,14 @@ import {
   QuotationDetailReq,
   QuotationAttachment,
   PriceBreakdownMatrix,
+  DiscountType,
 } from "../../Common/Services/QuotationService";
 import { PdfService } from "../../Common/Services/PdfService";
 import { OrderService, OrderMasterReq, OrderDetailReq } from "../../Common/Services/OrderService";
 import { CustomerService } from "../../Common/Services/CustomerService";
+import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import { PriceBreakdownService, PriceBreakdownMaster } from "../../Common/Services/PriceBreakdownService";
+import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
@@ -81,6 +84,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
+  const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
+  const [repeatingLastOrder, setRepeatingLastOrder] = useState(false);
   
   // Default unit options for combobox
   const defaultUnitOptions = [
@@ -190,6 +195,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -212,6 +218,11 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       loadQuotation();
     }
   }, [quotationId]);
+
+  useEffect(() => {
+    // Clear per-row price hints when customer changes; combobox loads history itself
+    setPartHistoryByRow(new Map());
+  }, [formData.CustomerID]);
 
   const loadCustomers = async () => {
     try {
@@ -382,21 +393,141 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     }
   };
 
+  const applyCustomerPart = (index: number, part: CustomerPartOption) => {
+    setFormData((prev) => {
+      const newDetails = [...prev.Details];
+      const current = newDetails[index];
+      if (!current) return prev;
+      newDetails[index] = {
+        ...current,
+        PartNo: part.partNo,
+        PartName: part.partName || current.PartName,
+        Unit: part.unit || current.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
+        ProductId: part.productId ?? current.ProductId,
+        QtyOrdered:
+          part.suggestedQty && part.suggestedQty > 0
+            ? part.suggestedQty
+            : current.QtyOrdered || 1,
+      };
+      const total = newDetails.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: newDetails, TotalAmount: total };
+    });
+    setLineItemErrors((prev) => {
+      const newMap = new Map(prev);
+      const itemErrors = newMap.get(index);
+      if (itemErrors) {
+        delete itemErrors.PartNo;
+        delete itemErrors.PartName;
+        if (Object.keys(itemErrors).length === 0) newMap.delete(index);
+        else newMap.set(index, itemErrors);
+      }
+      return newMap;
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      next.set(index, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const handleRepeatLastOrder = async () => {
+    if (!formData.CustomerID || formData.CustomerID <= 0) {
+      toast.error("Select a customer first");
+      return;
+    }
+    setRepeatingLastOrder(true);
+    try {
+      const result = await OrderService.GetLastOrderLinesByCustomer(formData.CustomerID);
+      if (!result.found || result.lines.length === 0) {
+        toast.info("No previous order found for this customer");
+        return;
+      }
+
+      const today = new Date().toLocaleDateString("en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        year: "2-digit",
+      });
+
+      const formatDue = (raw: string) => {
+        if (!raw) return today;
+        try {
+          const d = new Date(raw);
+          if (isNaN(d.getTime())) return today;
+          return d.toLocaleDateString("en-US", {
+            month: "2-digit",
+            day: "2-digit",
+            year: "2-digit",
+          });
+        } catch {
+          return today;
+        }
+      };
+
+      const blankOnly =
+        formData.Details.length === 0 ||
+        (formData.Details.length === 1 &&
+          !formData.Details[0].PartNo?.trim() &&
+          !formData.Details[0].PartName?.trim());
+
+      const newLines: QuotationDetailReq[] = result.lines.map((l, i) => ({
+        ID: 0,
+        ItemNo: i + 1,
+        PartName: l.partName,
+        PartNo: l.partNo,
+        DueDate: formatDue(l.dueDate),
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: l.qtyOrdered || 1,
+        Unit: l.unit || "EA",
+        UnitPrice: l.unitPrice || 0,
+        JobPriority: 0,
+        Discount: l.discount || 0,
+        DiscountType: (l.discountType === "Amount" ? "Amount" : "Percent") as DiscountType,
+        ProductId: l.productId,
+        LeadTime: formatDue(l.leadTime) || today,
+        Notes: l.notes || "",
+      }));
+
+      setFormData((prev) => {
+        const Details = blankOnly ? newLines : [...prev.Details, ...newLines.map((l, i) => ({
+          ...l,
+          ItemNo: (prev.Details.length > 0
+            ? Math.max(...prev.Details.map((d) => d.ItemNo))
+            : 0) + i + 1,
+        }))];
+        const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+        return { ...prev, Details, TotalAmount };
+      });
+      setPriceBreakdownMatrixData(new Map());
+      setPartHistoryByRow(new Map());
+      setIsStateChanged(true);
+
+      const orderLabel =
+        result.orderNumber < 1000
+          ? `CO#${result.orderNumber + 999}`
+          : `CO#${result.orderNumber}`;
+      toast.success(
+        `Added ${result.lines.length} line(s) from ${orderLabel}${
+          result.orderDate ? ` (${result.orderDate})` : ""
+        }`
+      );
+    } catch (error: any) {
+      console.error("Error repeating last order:", error);
+      toast.error(error?.message || "Failed to load last order");
+    } finally {
+      setRepeatingLastOrder(false);
+    }
+  };
+
   const handleDetailChange = (index: number, field: keyof QuotationDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...prev.Details];
       newDetails[index] = { ...newDetails[index], [field]: value };
-      
-      // Calculate line total
-      if (field === "QtyOrdered" || field === "UnitPrice" || field === "Discount") {
-        const qty = field === "QtyOrdered" ? value : newDetails[index].QtyOrdered;
-        const price = field === "UnitPrice" ? value : newDetails[index].UnitPrice;
-        const discount = field === "Discount" ? value : newDetails[index].Discount;
-        const lineTotal = (qty * price) - discount;
-        // Note: We don't store lineTotal, but we can calculate it for display
-      }
 
-      // Recalculate total using effective prices from tiers
+      // Recalculate header total from line totals (Qty × UnitPrice − discount)
       const total = newDetails.reduce((sum, detail) => {
         return sum + calculateLineTotal(detail);
       }, 0);
@@ -456,6 +587,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -1047,22 +1179,9 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     if (quotationId > 0) {
       setLoading(true);
       try {
-        const quotation = await QuotationService.GetQuotationById(quotationId);
-        if (quotation) {
-          // Create a new quotation with copied data
-          const duplicatedQuotation: QuotationMasterReq = {
-            ...quotation,
-            OrderID: 0,
-            PONumber: 0,
-            Status: "Draft",
-            CustomerRefNo: "",
-          };
-          
-          // Save as new quotation
-          await QuotationService.SaveQuotation(duplicatedQuotation);
-          toast.success("Quotation duplicated successfully");
-          onClose();
-        }
+        await QuotationService.DuplicateQuotation(quotationId);
+        toast.success("Quotation duplicated successfully (including file copies)");
+        onClose();
       } catch (error: any) {
         console.error("Error duplicating quotation:", error);
         toast.error(`Error duplicating quotation: ${error.message || "Unknown error"}`);
@@ -1131,6 +1250,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             UnitPrice: detail.UnitPrice, // Use unit price from line item (not price breakdown)
             JobPriority: detail.JobPriority,
             Discount: detail.Discount,
+            DiscountType: detail.DiscountType === "Amount" ? "Amount" : "Percent",
             ProductId: detail.ProductId,
             LeadTime: detail.LeadTime,
             Notes: detail.Notes,
@@ -1144,7 +1264,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       // Calculate total using line item prices (not price breakdown)
       const totalAmount = orderDetails.reduce((sum, detail) => {
         const subtotal = detail.QtyOrdered * detail.UnitPrice;
-        const discountAmount = (subtotal * detail.Discount) / 100;
+        const discountAmount =
+          detail.DiscountType === "Amount"
+            ? Math.min(detail.Discount, subtotal)
+            : (subtotal * detail.Discount) / 100;
         return sum + (subtotal - discountAmount);
       }, 0);
 
@@ -1171,7 +1294,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         QuotationNo: quotationNumber,
         LocationId: formData.LocationId,
         Details: orderDetails,
-        Attachments: attachments.filter(a => selectedAttachments.has(a.id)) || [], // Only selected attachments
+        Attachments: [], // Files are copied via CopyAttachmentsToOrder after order is created
         Comments: [] // Comments are not carried over - they are native to each slideout
       };
 
@@ -1179,6 +1302,20 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       const result = await OrderService.SaveOrder(orderRequest);
       
       if (result && result.id > 0) {
+        const selectedAttachmentIdList = Array.from(selectedAttachments).filter((id) => id > 0);
+        if (selectedAttachmentIdList.length > 0) {
+          try {
+            await QuotationService.CopyAttachmentsToOrder(
+              quotationId,
+              result.id,
+              selectedAttachmentIdList
+            );
+          } catch (copyErr: any) {
+            console.error("Error copying attachments to order:", copyErr);
+            toast.warning("Order created, but some attachments could not be copied");
+          }
+        }
+
         // Backend automatically updates quotation status and convertedOrderId
         // Reload quotation to get updated data
         const updatedQuotation = await QuotationService.GetQuotationById(quotationId);
@@ -1241,44 +1378,24 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     return firstLine;
   };
 
-  // Get effective unit price based on price breakdown matrix
-  const getEffectiveUnitPrice = (detail: QuotationDetailReq): number => {
-    const matrix = priceBreakdownMatrixData.get(detail.ItemNo);
-    if (!matrix || !matrix.quantities || matrix.quantities.length === 0) {
-      return detail.UnitPrice; // Use default unit price
-    }
-    
-    // Find the closest quantity that matches or is less than the ordered quantity
-    const sortedQuantities = [...matrix.quantities].sort((a, b) => b - a); // Descending order
-    const matchingQuantityIndex = sortedQuantities.findIndex(qty => detail.QtyOrdered >= qty);
-    
-    if (matchingQuantityIndex === -1) {
-      // Ordered quantity is less than all defined quantities, use the smallest quantity column
-      const smallestQtyIndex = matrix.quantities.indexOf(Math.min(...matrix.quantities));
-      const totalPrice = matrix.breakdownPrices.reduce((sum, bp) => {
-        return sum + (bp.prices[smallestQtyIndex] || 0);
-      }, 0);
-      return totalPrice > 0 ? totalPrice : detail.UnitPrice;
-    }
-    
-    // Use the matching quantity column
-    const matchingQty = sortedQuantities[matchingQuantityIndex];
-    const quantityIndex = matrix.quantities.indexOf(matchingQty);
-    
-    // Calculate total price from breakdown prices for this quantity column
-    const totalPrice = matrix.breakdownPrices.reduce((sum, bp) => {
-      return sum + (bp.prices[quantityIndex] || 0);
-    }, 0);
-    
-    return totalPrice > 0 ? totalPrice : detail.UnitPrice;
-  };
-
-  // Calculate line total using effective unit price
+  /**
+   * Row total = Qty × Unit Price − discount.
+   * Uses the line's UnitPrice (same as PDF / convert), not price-breakdown tiers.
+   * DiscountType Percent: discount is % of subtotal; Amount: flat $ capped at subtotal.
+   */
   const calculateLineTotal = (detail: QuotationDetailReq): number => {
-    const effectivePrice = getEffectiveUnitPrice(detail);
-    const subtotal = detail.QtyOrdered * effectivePrice;
-    const discountAmount = (subtotal * detail.Discount) / 100;
-    return subtotal - discountAmount;
+    const qty = Number(detail.QtyOrdered) || 0;
+    const unitPrice = Number(detail.UnitPrice) || 0;
+    const discount = Number(detail.Discount) || 0;
+    const subtotal = qty * unitPrice;
+    if (subtotal <= 0) {
+      return 0;
+    }
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(Math.max(discount, 0), subtotal)
+        : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
   };
 
   return (
@@ -1511,32 +1628,67 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3>Line Items</h3>
-                <button
-                  type="button"
-                  onClick={handleAddDetail}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#6366f1",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = "#4f46e5";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = "#6366f1";
-                  }}
-                >
-                  + Add Item
-                </button>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={handleRepeatLastOrder}
+                    disabled={
+                      repeatingLastOrder ||
+                      !formData.CustomerID ||
+                      formData.CustomerID <= 0
+                    }
+                    title={
+                      formData.CustomerID
+                        ? "Add lines from this customer's most recent order"
+                        : "Select a customer first"
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#ffffff",
+                      color: "#374151",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor:
+                        repeatingLastOrder || !formData.CustomerID
+                          ? "not-allowed"
+                          : "pointer",
+                      opacity: repeatingLastOrder || !formData.CustomerID ? 0.6 : 1,
+                    }}
+                  >
+                    {repeatingLastOrder ? "Loading…" : "Repeat last order"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddDetail}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#6366f1",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "#4f46e5";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "#6366f1";
+                    }}
+                  >
+                    + Add Item
+                  </button>
+                </div>
               </div>
               {errors.Details && <span className="error-message">{errors.Details}</span>}
               
@@ -1552,7 +1704,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount % / $</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Price Breakdown</th>
@@ -1564,22 +1716,27 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                         const lineTotal = calculateLineTotal(detail);
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
                         return (
-                          <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <React.Fragment key={index}>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "top" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
-                              <input
-                                type="text"
-                                className="form-input"
-                                style={{ 
-                                  width: "100%", 
-                                  minWidth: "100px",
-                                  borderColor: hasPartError ? "#ef4444" : undefined,
-                                  borderWidth: hasPartError ? "2px" : "1px"
-                                }}
+                              <CustomerPartCombobox
                                 value={detail.PartNo}
-                                onChange={(e) => handleDetailChange(index, "PartNo", e.target.value)}
-                                placeholder="Part number"
+                                customerId={formData.CustomerID}
+                                customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
+                                hasError={hasPartError}
+                                scrollContainerSelector=".customer-quotation-slideout-content"
+                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
+                                onSelectPart={(part) => applyCustomerPart(index, part)}
+                                onHistoryMatch={(part) => {
+                                  setPartHistoryByRow((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(index, part);
+                                    return next;
+                                  });
+                                }}
                               />
                               {itemErrors.PartNo && (
                                 <div style={{ 
@@ -1959,43 +2116,61 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                               )}
                             </td>
                             <td style={{ padding: "0.75rem" }}>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "100px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  // Update display value immediately
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      handleDetailChange(index, "Discount", 0);
-                                    } else {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      const val = parseFloat(inputVal);
-                                      if (!isNaN(val) && val >= 0) {
-                                        handleDetailChange(index, "Discount", val);
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      (e.target.value === "Amount" ? "Amount" : "Percent") as DiscountType
+                                    )
+                                  }
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    // Update display value immediately
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      if (inputVal === "" || inputVal === ".") {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        handleDetailChange(index, "Discount", 0);
+                                      } else {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        const val = parseFloat(inputVal);
+                                        if (!isNaN(val) && val >= 0) {
+                                          handleDetailChange(index, "Discount", val);
+                                        }
                                       }
-                                    }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  // Convert empty to 0 only on blur and clear display value
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                              />
+                                      return newMap;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    // Convert empty to 0 only on blur and clear display value
+                                    const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                               ${lineTotal.toFixed(2)}
@@ -2068,6 +2243,24 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                               </button>
                             </td>
                           </tr>
+                          {historyHint ? (
+                            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ padding: 0, border: "none" }} />
+                              <td
+                                colSpan={11}
+                                style={{
+                                  padding: "0 0.75rem 0.5rem",
+                                  fontSize: "0.6875rem",
+                                  color: "#6b7280",
+                                  lineHeight: 1.3,
+                                }}
+                                title={historyHint}
+                              >
+                                {historyHint}
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
@@ -2273,22 +2466,39 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           matrix={priceBreakdownMatrixData.get(formData.Details[selectedDetailIndex].ItemNo)}
           onSave={(matrix) => {
             const itemNo = formData.Details[selectedDetailIndex].ItemNo;
-            setPriceBreakdownMatrixData((prev) => {
-              const newMap = new Map(prev);
-              if (matrix) {
-                newMap.set(itemNo, matrix);
-              } else {
-                newMap.delete(itemNo);
+            const nextMatrixMap = new Map(priceBreakdownMatrixData);
+            if (matrix) {
+              nextMatrixMap.set(itemNo, matrix);
+            } else {
+              nextMatrixMap.delete(itemNo);
+            }
+            setPriceBreakdownMatrixData(nextMatrixMap);
+
+            // Optionally sync line UnitPrice from matrix tier for current qty
+            const detail = formData.Details[selectedDetailIndex];
+            let syncedUnitPrice = detail.UnitPrice;
+            if (matrix && matrix.quantities?.length) {
+              const sorted = [...matrix.quantities].sort((a, b) => b - a);
+              const matchQty = sorted.find((q) => detail.QtyOrdered >= q)
+                ?? Math.min(...matrix.quantities);
+              const colIdx = matrix.quantities.indexOf(matchQty);
+              const tierPrice = matrix.breakdownPrices.reduce(
+                (sum, bp) => sum + (bp.prices[colIdx] || 0),
+                0
+              );
+              if (tierPrice > 0) {
+                syncedUnitPrice = tierPrice;
               }
-              return newMap;
-            });
-            // Recalculate total
+            }
+
             setFormData((prev) => {
-              const total = prev.Details.reduce((sum, detail) => {
-                return sum + calculateLineTotal(detail);
-              }, 0);
-              return { ...prev, TotalAmount: total };
+              const newDetails = prev.Details.map((d, i) =>
+                i === selectedDetailIndex ? { ...d, UnitPrice: syncedUnitPrice } : d
+              );
+              const total = newDetails.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+              return { ...prev, Details: newDetails, TotalAmount: total };
             });
+            setIsStateChanged(true);
             setShowPriceBreakdownPopup(false);
             setSelectedDetailIndex(-1);
           }}
@@ -2401,7 +2611,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     {formData.Details.map((detail, index) => {
                       const isSelected = selectedLineItems.has(detail.ItemNo);
                       const subtotal = detail.QtyOrdered * detail.UnitPrice;
-                      const discountAmount = (subtotal * detail.Discount) / 100;
+                      const discountAmount =
+                        detail.DiscountType === "Amount"
+                          ? Math.min(detail.Discount || 0, subtotal)
+                          : (subtotal * (detail.Discount || 0)) / 100;
                       const lineTotal = subtotal - discountAmount;
                       
                       return (
@@ -2450,7 +2663,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                           .filter(d => selectedLineItems.has(d.ItemNo))
                           .reduce((sum, detail) => {
                             const subtotal = detail.QtyOrdered * detail.UnitPrice;
-                            const discountAmount = (subtotal * detail.Discount) / 100;
+                            const discountAmount =
+                              detail.DiscountType === "Amount"
+                                ? Math.min(detail.Discount || 0, subtotal)
+                                : (subtotal * (detail.Discount || 0)) / 100;
                             return sum + (subtotal - discountAmount);
                           }, 0)
                           .toFixed(2)}
@@ -2648,7 +2864,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   const [includeInPrint, setIncludeInPrint] = useState<boolean[]>(
     initialMatrix?.includeInPrint && initialMatrix.includeInPrint.length > 0
       ? initialMatrix.includeInPrint
-      : quantities.map((_, idx) => idx === 0 ? true : true) // All included by default
+      : quantities.map(() => false) // All off by default
   );
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
@@ -2672,17 +2888,17 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
       
       setQuantities(loadedQuantities.length > 0 ? loadedQuantities : defaultQuantities);
       setBreakdownPrices(initialMatrix.breakdownPrices || []);
-      // Load includeInPrint flags, defaulting all to true if not present
+      // Load includeInPrint flags — all off by default when not saved
       if (initialMatrix.includeInPrint && initialMatrix.includeInPrint.length > 0) {
         setIncludeInPrint(initialMatrix.includeInPrint);
       } else {
-        setIncludeInPrint(loadedQuantities.length > 0 ? loadedQuantities.map((_, idx) => idx === 0 ? true : true) : defaultQuantities.map((_, idx) => idx === 0 ? true : true));
+        setIncludeInPrint(loadedQuantities.length > 0 ? loadedQuantities.map(() => false) : defaultQuantities.map(() => false));
       }
     } else {
       // If no initial matrix, ensure default quantities are set
       if (quantities.length === 0) {
         setQuantities(defaultQuantities);
-        setIncludeInPrint(defaultQuantities.map((_, idx) => idx === 0 ? true : true));
+        setIncludeInPrint(defaultQuantities.map(() => false));
       }
     }
   }, [initialMatrix]);
@@ -2750,7 +2966,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
     if (quantities.length !== includeInPrint.length) {
       const newIncludeInPrint = [...includeInPrint];
       while (newIncludeInPrint.length < quantities.length) {
-        newIncludeInPrint.push(true); // Default to included
+        newIncludeInPrint.push(false); // Default new columns off for print
       }
       while (newIncludeInPrint.length > quantities.length) {
         newIncludeInPrint.pop();
@@ -2766,8 +2982,8 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
     // Add a zero price for this new quantity column to all breakdown items
     setBreakdownPrices((prev) => prev.map(bp => ({ ...bp, prices: [...bp.prices, 0] })));
     
-    // Add includeInPrint flag for new column (default to true)
-    setIncludeInPrint([...includeInPrint, true]);
+    // Add includeInPrint flag for new column (default off)
+    setIncludeInPrint([...includeInPrint, false]);
   };
 
   const handleRemoveQuantity = (quantityIndex: number) => {
@@ -2853,10 +3069,6 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   };
 
   const handleTogglePrint = (columnIndex: number) => {
-    // First column (index 0) cannot be toggled - always included
-    if (columnIndex === 0) {
-      return;
-    }
     const newIncludeInPrint = [...includeInPrint];
     newIncludeInPrint[columnIndex] = !newIncludeInPrint[columnIndex];
     setIncludeInPrint(newIncludeInPrint);
@@ -3053,7 +3265,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                                 <label style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.25rem", fontSize: "0.75rem", cursor: "pointer", marginTop: "0.25rem" }}>
                                   <input
                                     type="checkbox"
-                                    checked={includeInPrint[originalIndex] !== false}
+                                    checked={includeInPrint[originalIndex] === true}
                                     onChange={() => handleTogglePrint(originalIndex)}
                                     style={{ cursor: "pointer" }}
                                   />

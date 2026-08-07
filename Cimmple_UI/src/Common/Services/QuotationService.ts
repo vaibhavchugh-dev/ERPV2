@@ -7,8 +7,10 @@ export interface PriceBreakdownMatrix {
     itemName: string;
     prices: number[]; // One price per quantity column
   }>;
-  includeInPrint?: boolean[]; // One flag per quantity column (first column always included)
+  includeInPrint?: boolean[]; // One flag per quantity column (all default off)
 }
+
+export type DiscountType = "Percent" | "Amount";
 
 export interface QuotationAttachment {
   id: number;
@@ -175,6 +177,7 @@ export interface QuotationDetailReq {
   UnitPrice: number; // Default unit price (used when no tiers defined)
   JobPriority: number;
   Discount: number;
+  DiscountType?: DiscountType;
   ProductId?: number;
   LeadTime: string;
   Notes: string;
@@ -315,6 +318,7 @@ export class QuotationService {
           UnitPrice: d.unitPrice || 0,
           JobPriority: d.jobPriority || 0,
           Discount: d.discount || 0,
+          DiscountType: (d.discountType === "Amount" ? "Amount" : "Percent") as DiscountType,
           ProductId: d.productId,
           LeadTime: d.leadTime || "",
           Notes: d.notes || "",
@@ -417,6 +421,7 @@ export class QuotationService {
         UnitPrice: d.UnitPrice || 0,
         JobPriority: d.JobPriority || 0,
         Discount: d.Discount || 0,
+        DiscountType: d.DiscountType === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || null,
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",
@@ -426,7 +431,8 @@ export class QuotationService {
             PriceBreakdownId: bp.priceBreakdownId || 0,
             ItemName: bp.itemName || "",
             Prices: bp.prices || []
-          }))
+          })),
+          IncludeInPrint: d.PriceBreakdownMatrix.includeInPrint || []
         } : null
       })),
       Attachments: existingAttachments.map(a => ({
@@ -691,6 +697,49 @@ export class QuotationService {
       params: { quotationId, tenantId: tenantID },
     }).then((response) => {
       return response.data;
+    });
+  };
+
+  public static DuplicateQuotation = async (
+    quotationId: number
+  ): Promise<{ id: number; message: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/DuplicateQuotation`;
+    return Instense.post(url, null, {
+      params: { quotationId, tenantId: tenantID },
+    }).then((response) => {
+      const result = response.data.result;
+      return {
+        id: result?.id || 0,
+        message: result?.message || "Quotation duplicated successfully",
+      };
+    });
+  };
+
+  public static CopyAttachmentsToOrder = async (
+    quotationId: number,
+    orderId: number,
+    attachmentIds: number[]
+  ): Promise<{ count: number }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/CopyAttachmentsToOrder`;
+    return Instense.post(
+      url,
+      { AttachmentIds: attachmentIds },
+      { params: { quotationId, orderId, tenantId: tenantID } }
+    ).then((response) => {
+      const result = response.data.result;
+      return { count: result?.count || 0 };
     });
   };
 

@@ -142,6 +142,7 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         leadTime = d.leadTime ?? "",
                         notes = d.notes ?? "",
@@ -381,6 +382,7 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detail.UnitPrice,
                             JobPriority = detail.JobPriority,
                             Discount = detail.Discount,
+                            DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
                             Tenantid = request.Tenantid,
                             productid = detail.ProductId,
                             leadTime = detail.LeadTime ?? "",
@@ -573,6 +575,258 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        [HttpPost("DuplicateQuotation")]
+        public async Task<IActionResult> DuplicateQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var source = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Quotation not found" });
+                }
+
+                var sourceDetails = _context.QuotationOrderDetails
+                    .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToList();
+
+                var existingQuotations = _context.QuotationOrder
+                    .Where(q => q.Tenantid == tenantId)
+                    .ToList();
+                int nextPONumber = existingQuotations.Any()
+                    ? Math.Max(1000, existingQuotations.Max(q => q.PONumber) + 1)
+                    : 1000;
+
+                var duplicate = new QuotationOrder
+                {
+                    Tenantid = source.Tenantid,
+                    CustomerID = source.CustomerID,
+                    customercode = source.customercode ?? "",
+                    CustomerName = source.CustomerName ?? "",
+                    address = source.address ?? "",
+                    CustomerPoNumber = source.CustomerPoNumber ?? "",
+                    OrderDate = DateTime.UtcNow.Date,
+                    TotalAmount = source.TotalAmount,
+                    UserId = source.UserId,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    shippingInstructions = source.shippingInstructions ?? "",
+                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
+                    ExternalOrderDate = source.ExternalOrderDate,
+                    BuyerName = source.BuyerName ?? "",
+                    CustomerRefNo = "",
+                    isConverted = 0,
+                    convertedOrderId = null,
+                    Locationid = source.Locationid,
+                    CommentsJson = null,
+                    AttachmentsJson = null,
+                    PONumber = nextPONumber
+                };
+                _context.QuotationOrder.Add(duplicate);
+                _context.SaveChanges();
+
+                foreach (var detail in sourceDetails)
+                {
+                    _context.QuotationOrderDetails.Add(new QuotationOrderDetails
+                    {
+                        OrderID = duplicate.OrderID,
+                        ItemNo = detail.ItemNo,
+                        partname = detail.partname ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = detail.DueDate,
+                        JobNumber = detail.JobNumber ?? "",
+                        JobDesc = detail.JobDesc ?? "",
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "",
+                        UnitPrice = detail.UnitPrice,
+                        JobPriority = detail.JobPriority,
+                        Discount = detail.Discount,
+                        DiscountType = detail.DiscountType,
+                        Tenantid = tenantId,
+                        productid = detail.productid,
+                        leadTime = detail.leadTime ?? "",
+                        notes = detail.notes ?? "",
+                        QuantityTiers = detail.QuantityTiers
+                    });
+                }
+                _context.SaveChanges();
+
+                var sourceAttachments = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToList();
+
+                int createdBy = GetUserId() ?? source.UserId;
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.QuotationOrderAttachment.Any()
+                        ? _context.QuotationOrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    _context.QuotationOrderAttachment.Add(new QuotationOrderAttachment
+                    {
+                        orderid = duplicate.OrderID,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    });
+                    _context.SaveChanges();
+                }
+
+                SyncQuotationAttachmentsJson(duplicate);
+                _context.SaveChanges();
+
+                return Ok(new { result = new { id = duplicate.OrderID, message = "Quotation duplicated successfully" } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
+        public class CopyAttachmentsToOrderRequest
+        {
+            public List<int> AttachmentIds { get; set; } = new List<int>();
+        }
+
+        /// <summary>
+        /// Copies selected quotation attachment blobs into the Orders folder and writes OrderAttachment + AttachmentsJson.
+        /// </summary>
+        [HttpPost("CopyAttachmentsToOrder")]
+        public async Task<IActionResult> CopyAttachmentsToOrder(
+            [FromQuery] int quotationId,
+            [FromQuery] int orderId,
+            [FromQuery] int tenantId,
+            [FromBody] CopyAttachmentsToOrderRequest? request)
+        {
+            try
+            {
+                var quotation = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                var order = _context.CustomerOrder
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (quotation == null || order == null)
+                {
+                    return NotFound(new { error = "Quotation or order not found" });
+                }
+
+                var selectedIds = request?.AttachmentIds ?? new List<int>();
+                var sourceQuery = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId);
+                if (selectedIds.Count > 0)
+                {
+                    sourceQuery = sourceQuery.Where(a => selectedIds.Contains(a.Id));
+                }
+                var sourceAttachments = sourceQuery.OrderBy(a => a.Id).ToList();
+
+                int createdBy = GetUserId() ?? 0;
+                var copiedDtos = new List<QuotationAttachmentDto>();
+
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.OrderAttachment.Any()
+                        ? _context.OrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.OrdersFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    var orderAtt = new OrderAttachment
+                    {
+                        orderid = orderId,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    };
+                    _context.OrderAttachment.Add(orderAtt);
+                    _context.SaveChanges();
+
+                    copiedDtos.Add(new QuotationAttachmentDto
+                    {
+                        Id = orderAtt.Id,
+                        Name = orderAtt.Name,
+                        Size = orderAtt.size,
+                        FileUrl = orderAtt.UploadFile,
+                        FileUniqueno = orderAtt.FileUniqueno,
+                        UploadFile = orderAtt.UploadFile,
+                        PageNo = orderAtt.Pageno,
+                        CreatedBy = orderAtt.createdby
+                    });
+                }
+
+                var attachmentOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    WriteIndented = false
+                };
+                order.AttachmentsJson = copiedDtos.Count > 0
+                    ? JsonSerializer.Serialize(copiedDtos, attachmentOptions)
+                    : null;
+                _context.SaveChanges();
+
+                return Ok(new { result = new { message = "Attachments copied", count = copiedDtos.Count, attachments = copiedDtos } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
             }
         }
 
@@ -2765,6 +3019,8 @@ namespace CimmpleAPI.Controllers
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount.</summary>
+        public string DiscountType { get; set; } = "Percent";
         public int? ProductId { get; set; }
         public string LeadTime { get; set; } = "";
         public string Notes { get; set; } = "";
@@ -2775,6 +3031,8 @@ namespace CimmpleAPI.Controllers
     {
         public List<int> Quantities { get; set; } = new List<int>(); // Simple quantity values for column headers
         public List<BreakdownPriceDto> BreakdownPrices { get; set; } = new List<BreakdownPriceDto>();
+        /// <summary>One flag per quantity column. All default off.</summary>
+        public List<bool> IncludeInPrint { get; set; } = new List<bool>();
     }
 
     public class BreakdownPriceDto

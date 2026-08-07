@@ -91,6 +91,7 @@ export interface OrderDetailReq {
   UnitPrice: number;
   JobPriority: number;
   Discount: number;
+  DiscountType?: "Percent" | "Amount";
   ProductId?: number;
   LeadTime: string;
   Notes: string;
@@ -228,6 +229,7 @@ export class OrderService {
           UnitPrice: d.unitPrice || 0,
           JobPriority: d.jobPriority || 0,
           Discount: d.discount || 0,
+          DiscountType: d.discountType === "Amount" ? "Amount" : "Percent",
           ProductId: d.productId,
           LeadTime: d.leadTime || "",
           Notes: d.notes || "",
@@ -307,6 +309,7 @@ export class OrderService {
         UnitPrice: d.UnitPrice || 0,
         JobPriority: d.JobPriority || 0,
         Discount: d.Discount || 0,
+        DiscountType: d.DiscountType === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || null,
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",
@@ -362,6 +365,88 @@ export class OrderService {
       params: { orderId, tenantId: tenantID },
     }).then((response) => {
       return response.data;
+    });
+  };
+
+  public static DuplicateOrder = async (
+    orderId: number
+  ): Promise<{ id: number; message: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/DuplicateOrder`;
+    return Instense.post(url, null, {
+      params: { orderId, tenantId: tenantID },
+    }).then((response) => {
+      const result = response.data.result;
+      return {
+        id: result?.id || 0,
+        message: result?.message || "Order duplicated successfully",
+      };
+    });
+  };
+
+  public static GetLastOrderLinesByCustomer = async (
+    customerId: number
+  ): Promise<{
+    found: boolean;
+    orderId: number;
+    orderNumber: number;
+    orderDate: string;
+    lines: Array<{
+      itemNo: number;
+      partNo: string;
+      partName: string;
+      unit: string;
+      qtyOrdered: number;
+      unitPrice: number;
+      discount: number;
+      discountType: string;
+      productId?: number;
+      notes: string;
+      leadTime: string;
+      dueDate: string;
+    }>;
+  }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/GetLastOrderLinesByCustomer`;
+    return Instense.get(url, {
+      params: { tenantId: tenantID, customerId },
+    }).then((response) => {
+      const result = response.data?.result;
+      if (!result) {
+        return { found: false, orderId: 0, orderNumber: 0, orderDate: "", lines: [] };
+      }
+      return {
+        found: !!result.found,
+        orderId: result.orderId || 0,
+        orderNumber: result.orderNumber || 0,
+        orderDate: result.orderDate || "",
+        lines: Array.isArray(result.lines)
+          ? result.lines.map((l: any) => ({
+              itemNo: l.itemNo || 0,
+              partNo: l.partNo || "",
+              partName: l.partName || "",
+              unit: l.unit || "EA",
+              qtyOrdered: l.qtyOrdered || 0,
+              unitPrice: l.unitPrice || 0,
+              discount: l.discount || 0,
+              discountType: l.discountType === "Amount" ? "Amount" : "Percent",
+              productId: l.productId,
+              notes: l.notes || "",
+              leadTime: l.leadTime || "",
+              dueDate: l.dueDate || "",
+            }))
+          : [],
+      };
     });
   };
 

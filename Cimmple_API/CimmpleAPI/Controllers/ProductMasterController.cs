@@ -107,6 +107,7 @@ namespace CimmpleAPI.Controllers
                         partName = part.partName,
                         unit = part.unit,
                         totalQtyOrdered = part.totalQtyOrdered,
+                        totalQtyQuoted = 0,
                         avgUnitPrice = part.avgUnitPrice,
                         minUnitPrice = part.minUnitPrice,
                         maxUnitPrice = part.maxUnitPrice,
@@ -132,7 +133,8 @@ namespace CimmpleAPI.Controllers
                             partNo = part.partNo,
                             partName = part.partName,
                             unit = part.unit,
-                            totalQtyOrdered = part.totalQtyOrdered,
+                            totalQtyOrdered = 0,
+                            totalQtyQuoted = part.totalQtyOrdered,
                             avgUnitPrice = part.avgUnitPrice,
                             minUnitPrice = part.minUnitPrice,
                             maxUnitPrice = part.maxUnitPrice,
@@ -145,7 +147,7 @@ namespace CimmpleAPI.Controllers
                     }
                     else
                     {
-                        // Merge: part exists in both orders and quotations
+                        // Merge: part exists in both orders and quotations — keep qty streams separate
                         var existing = allParts[key];
                         var totalCount = existing.orderCount + part.orderCount;
                         
@@ -154,7 +156,8 @@ namespace CimmpleAPI.Controllers
                             partNo = part.partNo,
                             partName = part.partName,
                             unit = part.unit,
-                            totalQtyOrdered = existing.totalQtyOrdered + part.totalQtyOrdered,
+                            totalQtyOrdered = existing.totalQtyOrdered,
+                            totalQtyQuoted = part.totalQtyOrdered,
                             // Weighted average: combine averages from orders and quotations
                             avgUnitPrice = totalCount > 0 ? (existing.avgUnitPrice * existing.orderCount + part.avgUnitPrice * part.orderCount) / totalCount : existing.avgUnitPrice,
                             // Min price: find the absolute minimum across both orders and quotations
@@ -162,7 +165,7 @@ namespace CimmpleAPI.Controllers
                             // Max price: find the absolute maximum across both orders and quotations
                             maxUnitPrice = Math.Max(existing.maxUnitPrice, part.maxUnitPrice),
                             orderCount = existing.orderCount,
-                            quotationCount = existing.quotationCount + part.orderCount,
+                            quotationCount = part.orderCount,
                             firstOrderDate = existing.firstOrderDate < part.firstOrderDate ? existing.firstOrderDate : part.firstOrderDate,
                             lastOrderDate = existing.lastOrderDate > part.lastOrderDate ? existing.lastOrderDate : part.lastOrderDate,
                             productId = existing.productId ?? part.productId
@@ -201,6 +204,7 @@ namespace CimmpleAPI.Controllers
                         partName = p.partname ?? "",
                         unit = p.Unit ?? "",
                         totalQtyOrdered = 0,
+                        totalQtyQuoted = 0,
                         avgUnitPrice = p.UnitPrice,
                         minUnitPrice = p.UnitPrice,
                         maxUnitPrice = p.UnitPrice,
@@ -433,6 +437,185 @@ namespace CimmpleAPI.Controllers
                 }
 
                 return NotFound(new { error = $"Product with part number '{partNoTrimmed}' not found" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Distinct parts previously used for a customer (from quotations and orders),
+        /// with last quote/order price, counts, and totals for combobox / history UX.
+        /// </summary>
+        [HttpGet("GetPartsByCustomer")]
+        public IActionResult GetPartsByCustomer(
+            [FromQuery] int tenantId,
+            [FromQuery] int customerId,
+            [FromQuery] string? q = null,
+            [FromQuery] int limit = 50)
+        {
+            try
+            {
+                if (customerId <= 0)
+                {
+                    return BadRequest(new { error = "Customer is required" });
+                }
+
+                if (limit <= 0) limit = 50;
+                if (limit > 200) limit = 200;
+
+                var search = (q ?? "").Trim();
+
+                var quotations = _context.QuotationOrder
+                    .AsNoTracking()
+                    .Where(x => x.Tenantid == tenantId && x.CustomerID == customerId)
+                    .Select(x => new { x.OrderID, x.OrderDate })
+                    .ToList();
+                var quotationIds = quotations.Select(x => x.OrderID).ToList();
+                var quotationDateById = quotations.ToDictionary(x => x.OrderID, x => x.OrderDate);
+
+                var orders = _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
+                    .Select(o => new { o.OrderID, o.OrderDate })
+                    .ToList();
+                var orderIds = orders.Select(o => o.OrderID).ToList();
+                var orderDateById = orders.ToDictionary(o => o.OrderID, o => o.OrderDate);
+
+                var quotationDetailsQuery = _context.QuotationOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.Tenantid == tenantId
+                        && quotationIds.Contains(d.OrderID)
+                        && !string.IsNullOrEmpty(d.PartNo)
+                        && !d.PartNo.Contains("#JO")
+                        && !d.PartNo.Contains("JO#"));
+
+                var orderDetailsQuery = _context.CustomerOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.Tenantid == tenantId
+                        && orderIds.Contains(d.OrderID)
+                        && !string.IsNullOrEmpty(d.PartNo)
+                        && !d.PartNo.Contains("#JO")
+                        && !d.PartNo.Contains("JO#"));
+
+                if (!string.IsNullOrEmpty(search))
+                {
+                    quotationDetailsQuery = quotationDetailsQuery.Where(d =>
+                        (d.PartNo != null && d.PartNo.Contains(search)) ||
+                        (d.partname != null && d.partname.Contains(search)));
+                    orderDetailsQuery = orderDetailsQuery.Where(d =>
+                        (d.PartNo != null && d.PartNo.Contains(search)) ||
+                        (d.partname != null && d.partname.Contains(search)));
+                }
+
+                var fromQuotations = quotationDetailsQuery
+                    .Select(d => new
+                    {
+                        partNo = (d.PartNo ?? "").Trim(),
+                        partName = (d.partname ?? "").Trim(),
+                        unit = (d.Unit ?? "").Trim(),
+                        unitPrice = d.UnitPrice,
+                        qty = d.QtyOrdered,
+                        productId = d.productid,
+                        orderId = d.OrderID,
+                        dueDate = d.DueDate
+                    })
+                    .ToList();
+
+                var fromOrders = orderDetailsQuery
+                    .Select(d => new
+                    {
+                        partNo = (d.PartNo ?? "").Trim(),
+                        partName = (d.partname ?? "").Trim(),
+                        unit = (d.Unit ?? "").Trim(),
+                        unitPrice = d.UnitPrice,
+                        qty = d.QtyOrdered,
+                        productId = d.productid,
+                        orderId = d.OrderID,
+                        dueDate = d.DueDate
+                    })
+                    .ToList();
+
+                var allPartNos = fromQuotations.Select(p => p.partNo)
+                    .Concat(fromOrders.Select(p => p.partNo))
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(p => p.ToUpperInvariant())
+                    .Distinct()
+                    .ToList();
+
+                var parts = allPartNos
+                    .Select(key =>
+                    {
+                        var qLines = fromQuotations
+                            .Where(p => string.Equals(p.partNo, key, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        var oLines = fromOrders
+                            .Where(p => string.Equals(p.partNo, key, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        var latestQuote = qLines
+                            .Select(p =>
+                            {
+                                var docDate = quotationDateById.TryGetValue(p.orderId, out var od) ? od : p.dueDate;
+                                return new { line = p, docDate };
+                            })
+                            .OrderByDescending(x => x.docDate)
+                            .FirstOrDefault();
+
+                        var latestOrder = oLines
+                            .Select(p =>
+                            {
+                                var docDate = orderDateById.TryGetValue(p.orderId, out var od) ? od : p.dueDate;
+                                return new { line = p, docDate };
+                            })
+                            .OrderByDescending(x => x.docDate)
+                            .FirstOrDefault();
+
+                        var identity = latestOrder?.line ?? latestQuote?.line;
+                        if (identity == null)
+                        {
+                            return null;
+                        }
+
+                        var lastOrderedPrice = latestOrder?.line.unitPrice;
+                        var lastQuotedPrice = latestQuote?.line.unitPrice;
+                        var unitPrice = lastOrderedPrice ?? lastQuotedPrice ?? 0m;
+                        var suggestedQty = latestOrder?.line.qty
+                            ?? latestQuote?.line.qty
+                            ?? 1;
+
+                        return new
+                        {
+                            partNo = identity.partNo,
+                            partName = identity.partName,
+                            unit = string.IsNullOrWhiteSpace(identity.unit) ? "EA" : identity.unit,
+                            unitPrice = unitPrice,
+                            productId = identity.productId
+                                ?? latestOrder?.line.productId
+                                ?? latestQuote?.line.productId,
+                            lastQuotedPrice = lastQuotedPrice,
+                            lastQuotedDate = latestQuote != null
+                                ? latestQuote.docDate.ToString("MM/dd/yyyy")
+                                : (string?)null,
+                            lastOrderedPrice = lastOrderedPrice,
+                            lastOrderedQty = latestOrder?.line.qty,
+                            lastOrderedDate = latestOrder != null
+                                ? latestOrder.docDate.ToString("MM/dd/yyyy")
+                                : (string?)null,
+                            suggestedQty = suggestedQty,
+                            orderCount = oLines.Select(l => l.orderId).Distinct().Count(),
+                            quotationCount = qLines.Select(l => l.orderId).Distinct().Count(),
+                            totalQtyOrdered = oLines.Sum(l => l.qty),
+                            totalQtyQuoted = qLines.Sum(l => l.qty)
+                        };
+                    })
+                    .Where(p => p != null)
+                    .OrderBy(p => p!.partNo)
+                    .Take(limit)
+                    .ToList();
+
+                return Ok(new { result = parts });
             }
             catch (Exception ex)
             {

@@ -9,12 +9,14 @@ import {
 import { PdfService } from "../../Common/Services/PdfService";
 import { JobOrderService } from "../../Common/Services/JobOrderService";
 import { CustomerService } from "../../Common/Services/CustomerService";
+import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import { ShippingService, ShippableItem, Shipment } from "../../Common/Services/ShippingService";
 import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/InvoiceService";
 import JobOrderSlideout from "../JobOrders/JobOrderSlideout";
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import "./CustomerOrderSlideout.scss";
 
@@ -67,6 +69,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
+  const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
+  const [repeatingLastOrder, setRepeatingLastOrder] = useState(false);
   const [showJobOrderSlideout, setShowJobOrderSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
   const [jobOrderDetailIds, setJobOrderDetailIds] = useState<Map<number, number>>(new Map()); // Map of detail ID to job order ID
@@ -193,6 +197,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -219,6 +224,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       loadOrder();
     }
   }, [orderId]);
+
+  useEffect(() => {
+    setPartHistoryByRow(new Map());
+  }, [formData.CustomerID]);
 
   const loadCustomers = async () => {
     try {
@@ -459,6 +468,146 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
+  const applyCustomerPart = (index: number, part: CustomerPartOption) => {
+    setFormData((prev) => {
+      const newDetails = [...prev.Details];
+      const current = newDetails[index];
+      if (!current) return prev;
+      newDetails[index] = {
+        ...current,
+        PartNo: part.partNo,
+        PartName: part.partName || current.PartName,
+        Unit: part.unit || current.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
+        ProductId: part.productId ?? current.ProductId,
+        QtyOrdered:
+          part.suggestedQty && part.suggestedQty > 0
+            ? part.suggestedQty
+            : current.QtyOrdered || 1,
+      };
+      const total = newDetails.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: newDetails, TotalAmount: total };
+    });
+    setLineItemErrors((prev) => {
+      const newMap = new Map(prev);
+      const itemErrors = newMap.get(index);
+      if (itemErrors) {
+        delete itemErrors.PartNo;
+        delete itemErrors.PartName;
+        if (Object.keys(itemErrors).length === 0) newMap.delete(index);
+        else newMap.set(index, itemErrors);
+      }
+      return newMap;
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      next.set(index, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const handleRepeatLastOrder = async () => {
+    if (!formData.CustomerID || formData.CustomerID <= 0) {
+      toast.error("Select a customer first");
+      return;
+    }
+    setRepeatingLastOrder(true);
+    try {
+      const result = await OrderService.GetLastOrderLinesByCustomer(formData.CustomerID);
+      if (!result.found || result.lines.length === 0) {
+        toast.info("No previous order found for this customer");
+        return;
+      }
+
+      const today = new Date().toLocaleDateString("en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        year: "2-digit",
+      });
+
+      const formatDue = (raw: string) => {
+        if (!raw) return today;
+        try {
+          const d = new Date(raw);
+          if (isNaN(d.getTime())) return today;
+          return d.toLocaleDateString("en-US", {
+            month: "2-digit",
+            day: "2-digit",
+            year: "2-digit",
+          });
+        } catch {
+          return today;
+        }
+      };
+
+      const blankOnly =
+        formData.Details.length === 0 ||
+        (formData.Details.length === 1 &&
+          !formData.Details[0].PartNo?.trim() &&
+          !formData.Details[0].PartName?.trim());
+
+      const newLines: OrderDetailReq[] = result.lines.map((l, i) => ({
+        ID: 0,
+        ItemNo: i + 1,
+        PartName: l.partName,
+        PartNo: l.partNo,
+        DueDate: formatDue(l.dueDate),
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: l.qtyOrdered || 1,
+        Unit: l.unit || "EA",
+        UnitPrice: l.unitPrice || 0,
+        JobPriority: 0,
+        Discount: l.discount || 0,
+        DiscountType: l.discountType === "Amount" ? "Amount" : "Percent",
+        ProductId: l.productId,
+        LeadTime: formatDue(l.leadTime) || today,
+        Notes: l.notes || "",
+        ShippedQty: 0,
+        ShippingStatus: "Not Started",
+        InvoicedQty: 0,
+        InvoiceStatus: "Not Invoiced",
+      }));
+
+      setFormData((prev) => {
+        const Details = blankOnly
+          ? newLines
+          : [
+              ...prev.Details,
+              ...newLines.map((l, i) => ({
+                ...l,
+                ItemNo:
+                  (prev.Details.length > 0
+                    ? Math.max(...prev.Details.map((d) => d.ItemNo))
+                    : 0) +
+                  i +
+                  1,
+              })),
+            ];
+        const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+        return { ...prev, Details, TotalAmount };
+      });
+      setPartHistoryByRow(new Map());
+      setIsStateChanged(true);
+
+      const orderLabel =
+        result.orderNumber < 1000
+          ? `CO#${result.orderNumber + 999}`
+          : `CO#${result.orderNumber}`;
+      toast.success(
+        `Added ${result.lines.length} line(s) from ${orderLabel}${
+          result.orderDate ? ` (${result.orderDate})` : ""
+        }`
+      );
+    } catch (error: any) {
+      console.error("Error repeating last order:", error);
+      toast.error(error?.message || "Failed to load last order");
+    } finally {
+      setRepeatingLastOrder(false);
+    }
+  };
+
   const handleDetailChange = (index: number, field: keyof OrderDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...prev.Details];
@@ -533,6 +682,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -1122,21 +1272,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     if (orderId > 0) {
       setLoading(true);
       try {
-        const order = await OrderService.GetOrderById(orderId);
-        if (order) {
-          // Create a new order with copied data
-          const duplicatedOrder: OrderMasterReq = {
-            ...order,
-            OrderID: 0,
-            PONumber: 0,
-            Status: "Draft",
-          };
-          
-          // Save as new order
-          await OrderService.SaveOrder(duplicatedOrder);
-          toast.success("Order duplicated successfully");
-          onClose();
-        }
+        await OrderService.DuplicateOrder(orderId);
+        toast.success("Order duplicated successfully (including file copies)");
+        onClose();
       } catch (error: any) {
         console.error("Error duplicating order:", error);
         toast.error(`Error duplicating order: ${error.message || "Unknown error"}`);
@@ -1182,10 +1320,13 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     return firstLine;
   };
 
-  // Calculate line total (simple calculation without price breakdown)
+  // Calculate line total (supports Percent or Amount discount)
   const calculateLineTotal = (detail: OrderDetailReq): number => {
     const subtotal = detail.QtyOrdered * detail.UnitPrice;
-    const discountAmount = (subtotal * detail.Discount) / 100;
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(detail.Discount || 0, subtotal)
+        : (subtotal * (detail.Discount || 0)) / 100;
     return subtotal - discountAmount;
   };
 
@@ -1363,32 +1504,67 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3>Line Items</h3>
-                <button
-                  type="button"
-                  onClick={handleAddDetail}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#6366f1",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = "#4f46e5";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = "#6366f1";
-                  }}
-                >
-                  + Add Item
-                </button>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={handleRepeatLastOrder}
+                    disabled={
+                      repeatingLastOrder ||
+                      !formData.CustomerID ||
+                      formData.CustomerID <= 0
+                    }
+                    title={
+                      formData.CustomerID
+                        ? "Add lines from this customer's most recent order"
+                        : "Select a customer first"
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#ffffff",
+                      color: "#374151",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor:
+                        repeatingLastOrder || !formData.CustomerID
+                          ? "not-allowed"
+                          : "pointer",
+                      opacity: repeatingLastOrder || !formData.CustomerID ? 0.6 : 1,
+                    }}
+                  >
+                    {repeatingLastOrder ? "Loading…" : "Repeat last order"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddDetail}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#6366f1",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "#4f46e5";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "#6366f1";
+                    }}
+                  >
+                    + Add Item
+                  </button>
+                </div>
               </div>
               {errors.Details && <span className="error-message">{errors.Details}</span>}
               
@@ -1404,7 +1580,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount % / $</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Job Order</th>
@@ -1418,22 +1594,27 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         const lineTotal = calculateLineTotal(detail);
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
                         return (
-                          <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <React.Fragment key={index}>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "top" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
-                              <input
-                                type="text"
-                                className="form-input"
-                                style={{ 
-                                  width: "100%", 
-                                  minWidth: "100px",
-                                  borderColor: hasPartError ? "#ef4444" : undefined,
-                                  borderWidth: hasPartError ? "2px" : "1px"
-                                }}
+                              <CustomerPartCombobox
                                 value={detail.PartNo}
-                                onChange={(e) => handleDetailChange(index, "PartNo", e.target.value)}
-                                placeholder="Part number"
+                                customerId={formData.CustomerID}
+                                customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
+                                hasError={hasPartError}
+                                scrollContainerSelector=".customer-order-slideout-content"
+                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
+                                onSelectPart={(part) => applyCustomerPart(index, part)}
+                                onHistoryMatch={(part) => {
+                                  setPartHistoryByRow((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(index, part);
+                                    return next;
+                                  });
+                                }}
                               />
                               {itemErrors.PartNo && (
                                 <div style={{ 
@@ -1813,43 +1994,61 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               )}
                             </td>
                             <td style={{ padding: "0.75rem" }}>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "100px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  // Update display value immediately
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      handleDetailChange(index, "Discount", 0);
-                                    } else {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      const val = parseFloat(inputVal);
-                                      if (!isNaN(val) && val >= 0) {
-                                        handleDetailChange(index, "Discount", val);
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      e.target.value === "Amount" ? "Amount" : "Percent"
+                                    )
+                                  }
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    // Update display value immediately
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      if (inputVal === "" || inputVal === ".") {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        handleDetailChange(index, "Discount", 0);
+                                      } else {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        const val = parseFloat(inputVal);
+                                        if (!isNaN(val) && val >= 0) {
+                                          handleDetailChange(index, "Discount", val);
+                                        }
                                       }
-                                    }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  // Convert empty to 0 only on blur and clear display value
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                              />
+                                      return newMap;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    // Convert empty to 0 only on blur and clear display value
+                                    const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                               ${lineTotal.toFixed(2)}
@@ -2006,6 +2205,24 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               </div>
                             </td>
                           </tr>
+                          {historyHint ? (
+                            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ padding: 0, border: "none" }} />
+                              <td
+                                colSpan={13}
+                                style={{
+                                  padding: "0 0.75rem 0.5rem",
+                                  fontSize: "0.6875rem",
+                                  color: "#6b7280",
+                                  lineHeight: 1.3,
+                                }}
+                                title={historyHint}
+                              >
+                                {historyHint}
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>

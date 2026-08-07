@@ -5,6 +5,7 @@ export interface ProductMaster {
   partName: string;
   unit: string;
   totalQtyOrdered: number;
+  totalQtyQuoted?: number;
   avgUnitPrice: number;
   minUnitPrice: number;
   maxUnitPrice: number;
@@ -13,6 +14,25 @@ export interface ProductMaster {
   firstOrderDate: string;
   lastOrderDate: string;
   productId?: number;
+}
+
+export interface CustomerPartOption {
+  partNo: string;
+  partName: string;
+  unit: string;
+  /** Suggested fill price: last ordered, else last quoted */
+  unitPrice: number;
+  productId?: number;
+  lastQuotedPrice?: number | null;
+  lastQuotedDate?: string | null;
+  lastOrderedPrice?: number | null;
+  lastOrderedQty?: number | null;
+  lastOrderedDate?: string | null;
+  suggestedQty?: number;
+  orderCount?: number;
+  quotationCount?: number;
+  totalQtyOrdered?: number;
+  totalQtyQuoted?: number;
 }
 
 export interface CustomerOrderInfo {
@@ -168,6 +188,49 @@ export class ProductMasterService {
           })) : undefined
         })) : undefined
       } as ProductMasterDetail;
+    });
+  };
+
+  public static GetPartsByCustomer = async (
+    customerId: number,
+    options?: { q?: string; limit?: number }
+  ): Promise<CustomerPartOption[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/ProductMaster/GetPartsByCustomer`;
+    const params: Record<string, string | number> = {
+      tenantId: tenantID,
+      customerId,
+      limit: options?.limit ?? 50,
+    };
+    if (options?.q && options.q.trim()) {
+      params.q = options.q.trim();
+    }
+
+    return Instense.get(url, { params }).then((response) => {
+      const result = response.data?.result;
+      if (!Array.isArray(result)) return [];
+      return result.map((p: any) => ({
+        partNo: p.partNo || "",
+        partName: p.partName || "",
+        unit: p.unit || "EA",
+        unitPrice: p.unitPrice ?? 0,
+        productId: p.productId,
+        lastQuotedPrice: p.lastQuotedPrice ?? null,
+        lastQuotedDate: p.lastQuotedDate ?? null,
+        lastOrderedPrice: p.lastOrderedPrice ?? null,
+        lastOrderedQty: p.lastOrderedQty ?? null,
+        lastOrderedDate: p.lastOrderedDate ?? null,
+        suggestedQty: p.suggestedQty ?? 1,
+        orderCount: p.orderCount ?? 0,
+        quotationCount: p.quotationCount ?? 0,
+        totalQtyOrdered: p.totalQtyOrdered ?? 0,
+        totalQtyQuoted: p.totalQtyQuoted ?? 0,
+      }));
     });
   };
 }
