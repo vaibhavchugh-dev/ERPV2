@@ -1,6 +1,6 @@
 # Cimmple Shop Floor PWA — Developer Specification
 
-**App folder:** `Cimmple_ShopFloor/` only  
+**App folder:** `Cimmple_PWA/` only  
 **Backend:** Existing `Cimmple_API` (do not duplicate business logic)  
 **Office app:** `Cimmple_UI` — do not modify unless explicitly asked  
 
@@ -131,7 +131,7 @@ Study these for behavior and payloads (do not copy desktop UI):
 If timer actions need dedicated endpoints, request them from the API owner; do not invent a second backend.
 ---
 ## 7. Deliverables (MVP definition of done)
-- [ ] App runs locally from `Cimmple_ShopFloor/`
+- [ ] App runs locally from `Cimmple_PWA/`
 - [ ] Login works against staging/dev API
 - [ ] My Jobs list loads for tenant/location
 - [ ] Job detail shows routing steps
@@ -156,7 +156,7 @@ If timer actions need dedicated endpoints, request them from the API owner; do n
 - Don’t block waiting for a perfect offline design before MVP  
 ---
 ## 10. First week suggested plan
-1. Confirm `Cimmple_ShopFloor/` exists on `main`; branch `shop-pwa`  
+1. Confirm `Cimmple_PWA/` exists on `main`; branch `shop-pwa`  
 2. Scaffold Vite React TS app in that folder  
 3. Wire env + login + authenticated API client  
 4. My Jobs list from `GetJobOrders`  
@@ -168,6 +168,6 @@ If timer actions need dedicated endpoints, request them from the API owner; do n
 ## 11. Contacts / ownership
 - **PM:** owns `main`, priorities, test users  
 - **ERP branch owner:** office UI + API contract for Job Orders  
-- **PWA developer:** everything under `Cimmple_ShopFloor/`  
+- **PWA developer:** everything under `Cimmple_PWA/`  
 ---
-**One-line summary:** Build a phone PWA in `Cimmple_ShopFloor/` that lets technicians run Job Order steps via the existing API — not a mobile clone of the full ERP.
+**One-line summary:** Build a phone PWA in `Cimmple_PWA/` that lets technicians run Job Order steps via the existing API — not a mobile clone of the full ERP.
