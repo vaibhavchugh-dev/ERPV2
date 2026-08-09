@@ -11,6 +11,7 @@ import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -20,6 +21,7 @@ interface CustomerPaymentModalProps {
 }
 
 const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -34,26 +36,6 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
   );
   const [notes, setNotes] = useState('');
   const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -381,6 +363,7 @@ interface FilterOptions {
 const CustomerInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -456,26 +439,6 @@ const CustomerInvoices: React.FC = () => {
       setInvoices([]);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
     }
   };
 

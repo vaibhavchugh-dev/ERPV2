@@ -3,6 +3,7 @@ import { Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { User } from "../Common/Services/User";
 import { AuthService } from "../Common/Services/AuthService";
+import { protectedRoutes } from "../Common/Routes";
 import { useSettings } from "../Common/Contexts/SettingsContext";
 import { toast } from "react-toastify";
 import "./Login.scss";
@@ -61,7 +62,10 @@ export const Login: React.FC = () => {
       }
 
       toast.success("Login successful!");
-      history.push("/home");
+      const landing = AuthService.getDefaultLandingPath(
+        protectedRoutes.map((r) => r.path as string)
+      );
+      history.push(landing);
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||

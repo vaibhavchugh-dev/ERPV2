@@ -82,7 +82,12 @@ const JobOrders: React.FC = () => {
       }
     } catch (error: any) {
       console.error("[JobOrders] Error loading job orders:", error);
-      toast.error(`Error loading job orders: ${error.message || "Unknown error"}`);
+      const apiMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Error loading job orders: ${apiMessage}`);
       setJobOrders([]);
     } finally {
       setLoading(false);

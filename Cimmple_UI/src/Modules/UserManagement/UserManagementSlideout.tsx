@@ -7,6 +7,7 @@ import {
   Role,
   Permission
 } from "../../Common/Services/UserManagementService";
+import { AuthService } from "../../Common/Services/AuthService";
 import "./UserManagementSlideout.scss";
 
 interface UserManagementSlideoutProps {
@@ -181,6 +182,19 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       };
 
       await UserManagementService.UpdateUser(updateData);
+
+      // Keep top-right menu in sync when editing the logged-in user
+      const currentUserId = Number(storage?.userId || storage?.user_UniqueID || 0);
+      if (currentUserId > 0 && currentUserId === userData.userUniqueID) {
+        const selectedRole = roles.find((r) => Number(r.id) === Number(userData.role));
+        AuthService.patchStorageFromUser({
+          roleId: userData.role,
+          roleName: selectedRole?.name || userData.roleName || "",
+        });
+        // Pull canAccessAllLocations / permissions from server after role change
+        void AuthService.syncCurrentUserProfile();
+      }
+
       toast.success("User account updated successfully");
       onSave();
     } catch (error: any) {
@@ -460,7 +474,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
           <div className="slideout-panel" style={{ maxWidth: '600px', maxHeight: '80vh' }}>
             <div className="slideout-header">
               <h3>
-                Permissions for: {roles.find(r => r.id === userData.role)?.name || 'Unknown Role'}
+                Permissions for: {roles.find(r => Number(r.id) === Number(userData.role))?.name || userData.roleName || 'Unknown Role'}
               </h3>
               <button className="slideout-close" onClick={() => setShowPermissionViewer(false)}>
                 <i className="fas fa-times"></i>

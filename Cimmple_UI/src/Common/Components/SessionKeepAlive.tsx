@@ -1,6 +1,7 @@
 import React from "react";
 import { AuthService } from "../Services/AuthService";
 import { User } from "../Services/User";
+import { useSettingsSafe } from "../Contexts/SettingsContext";
 
 const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = [
   "mousedown",
@@ -18,6 +19,7 @@ const REFRESH_SKEW_MS = 2 * 60 * 1000;
  * and logs out only after true idle (Session Timeout setting).
  */
 export const SessionKeepAlive: React.FC = () => {
+  const settings = useSettingsSafe();
   const lastActivityRef = React.useRef(Date.now());
   const refreshingRef = React.useRef(false);
 
@@ -55,11 +57,25 @@ export const SessionKeepAlive: React.FC = () => {
       }
     };
 
+    const resolveTimeoutMinutes = (): number => {
+      if (Number(settings?.sessionTimeoutMinutes) > 0) {
+        return Number(settings.sessionTimeoutMinutes);
+      }
+      try {
+        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+        if (Number(storage.sessionTimeoutMinutes) > 0) {
+          return Number(storage.sessionTimeoutMinutes);
+        }
+      } catch {
+        // ignore
+      }
+      return 30;
+    };
+
     const tick = async () => {
       if (!localStorage.getItem("token")) return;
 
       let storage: {
-        sessionTimeoutMinutes?: number;
         expiresAtUtc?: string;
       } = {};
       try {
@@ -68,10 +84,7 @@ export const SessionKeepAlive: React.FC = () => {
         return;
       }
 
-      const timeoutMinutes =
-        Number(storage.sessionTimeoutMinutes) > 0
-          ? Number(storage.sessionTimeoutMinutes)
-          : 30;
+      const timeoutMinutes = resolveTimeoutMinutes();
       const idleLimitMs = timeoutMinutes * 60 * 1000;
       const idleForMs = Date.now() - lastActivityRef.current;
 
@@ -110,7 +123,7 @@ export const SessionKeepAlive: React.FC = () => {
     void tick();
 
     return () => window.clearInterval(id);
-  }, []);
+  }, [settings?.sessionTimeoutMinutes]);
 
   return null;
 };

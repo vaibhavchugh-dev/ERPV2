@@ -5,6 +5,7 @@ import { ProductMasterService, ProductMaster } from "../../Common/Services/Produ
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProductMasterSlideout from "./ProductMasterSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -24,6 +25,7 @@ const COLUMN_PREFERENCE_KEY = "productMaster.hiddenColumns";
 const ProductMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedPartNo, setSelectedPartNo] = useState<string>("");
@@ -180,25 +182,6 @@ const ProductMasterComponent: React.FC = () => {
     ) : (
       <span className="sort-icon active">↓</span>
     );
-  };
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
-    }
   };
 
   const renderCell = (product: ProductMaster, key: string): React.ReactNode => {

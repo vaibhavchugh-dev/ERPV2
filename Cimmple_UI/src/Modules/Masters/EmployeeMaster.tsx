@@ -13,7 +13,9 @@ const COLUMNS: ColumnDefinition[] = [
   { key: "lastName", label: "Last Name", sortKey: "lastName" },
   { key: "roleName", label: "Role", sortKey: "roleName" },
   { key: "employeeType", label: "Employee Type", sortKey: "employeeType" },
+  { key: "locationName", label: "Location", sortKey: "locationName" },
   { key: "userName", label: "User Name", sortKey: "userName" },
+  { key: "hasLoginAccess", label: "Login Access", sortKey: "hasLoginAccess" },
   { key: "email", label: "Email", sortKey: "email" },
   { key: "status", label: "Status", sortKey: "status" },
 ];
@@ -61,7 +63,24 @@ const EmployeeMasterComponent: React.FC = () => {
       console.log('[EmployeeMaster] API response:', result);
       
       if (result && Array.isArray(result)) {
-        setEmployees(result);
+        setEmployees(
+          result.map((employee: any) => {
+            const hasPassword = !!(employee.hasPassword ?? employee.HasPassword);
+            const hasLoginAccess = !!(
+              employee.hasLoginAccess ??
+              employee.HasLoginAccess ??
+              (hasPassword &&
+                String(employee.userName ?? employee.UserName ?? "").trim() !== "")
+            );
+            return {
+              ...employee,
+              hasPassword,
+              hasLoginAccess,
+              locationName:
+                employee.locationName ?? employee.LocationName ?? "",
+            } as EmployeeMaster;
+          })
+        );
         console.log('[EmployeeMaster] Loaded', result.length, 'employees');
       } else {
         console.warn('[EmployeeMaster] Invalid response from API:', result);
@@ -109,7 +128,8 @@ const EmployeeMasterComponent: React.FC = () => {
       employee.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.roleName?.toLowerCase().includes(searchTerm.toLowerCase());
+      employee.roleName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.locationName?.toLowerCase().includes(searchTerm.toLowerCase());
 
     if (filterValue === "all") {
       return matchesSearch;
@@ -169,8 +189,20 @@ const EmployeeMasterComponent: React.FC = () => {
         return employee.roleName || "";
       case "employeeType":
         return employee.employeeType || "";
+      case "locationName":
+        return employee.locationName || "—";
       case "userName":
         return employee.userName || "";
+      case "hasLoginAccess":
+        return (
+          <span
+            className={`badge ${
+              employee.hasLoginAccess ? "badge-success" : "badge-secondary"
+            }`}
+          >
+            {employee.hasLoginAccess ? "Yes" : "No"}
+          </span>
+        );
       case "email":
         return employee.email || "";
       case "status":

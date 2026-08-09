@@ -6,11 +6,13 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerOrders.scss";
 
 const CustomerOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<OrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -97,14 +99,6 @@ const CustomerOrders: React.FC = () => {
 
   const formatDate = (dateStr: string): string =>
     formatDateOnlyFromApi(dateStr, true) || dateStr;
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
-  };
 
   const getStatusBadge = (status: string) => {
     if (!status || status.trim() === "") {

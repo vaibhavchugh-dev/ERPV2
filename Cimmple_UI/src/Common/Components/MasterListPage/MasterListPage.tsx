@@ -124,6 +124,10 @@ const MasterListPage = <T extends Record<string, any>>({
   const effectivePageSize = pageSize || (enablePagination ? settings?.defaultPageSize || 10 : data.length);
 
   useEffect(() => {
+    setCurrentPage(1);
+  }, [effectivePageSize]);
+
+  useEffect(() => {
     if (onLoadData) {
       onLoadData();
     }

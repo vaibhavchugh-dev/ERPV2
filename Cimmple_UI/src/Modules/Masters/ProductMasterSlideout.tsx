@@ -7,6 +7,7 @@ import {
 } from "../../Common/Services/ProductMasterService";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import CustomerQuotationSlideout from "../Quotations/CustomerQuotationSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMasterSlideout.scss";
 
 interface ProductMasterSlideoutProps {
@@ -18,6 +19,11 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
   partNo,
   onClose,
 }) => {
+  const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
+  const formatCurrency = (value?: number) => {
+    if (value === undefined || value === null) return "N/A";
+    return formatCurrencyRaw(value);
+  };
   const handleDismiss = () => onClose(false);
   const [productData, setProductData] = useState<ProductMasterDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,26 +54,6 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
       onClose();
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (value?: number) => {
-    if (value === undefined || value === null) return "N/A";
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
     }
   };
 

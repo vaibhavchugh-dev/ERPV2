@@ -1,4 +1,5 @@
 -- Manual apply if EF migrations are not run against this database.
+USE ERPv2Db
 IF OBJECT_ID(N'dbo.AccountingDefaults', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.AccountingDefaults

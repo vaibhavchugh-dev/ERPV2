@@ -52,10 +52,12 @@ import {
   QualityStatus,
   UpcomingDeadline
 } from "../../Common/Services/DashboardService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./Dashboard.scss";
 
 const Dashboard: React.FC = () => {
   const history = useHistory();
+  const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("This Month");
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -104,15 +106,6 @@ const Dashboard: React.FC = () => {
     if (!metricsFailed && results.some((r) => r.status === "rejected")) {
       console.error("Some dashboard widgets failed to load", results);
     }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount);
   };
 
   const formatDate = (dateString: string): string => {

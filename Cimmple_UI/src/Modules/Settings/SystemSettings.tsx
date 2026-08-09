@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { faSave, faCog, faBuilding, faClock, faDollarSign, faShieldAlt, faEnvelope, faMapMarkerAlt, faExternalLinkAlt } from "@fortawesome/free-solid-svg-icons";
+import { faSave, faCog, faClock, faDollarSign, faShieldAlt, faEnvelope, faMapMarkerAlt, faExternalLinkAlt } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { SystemSettingsService, SystemSettings } from "../../Common/Services/SystemSettingsService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
 import { AuthService } from "../../Common/Services/AuthService";
 import { notifyLocationChanged } from "../../Common/Hooks/useActiveLocation";
+import { useSettings } from "../../Common/Contexts/SettingsContext";
+import { toastAlwaysSuccess } from "../../Common/Utils/settingsRuntime";
 import { useHistory } from "react-router-dom";
 import "./SystemSettings.scss";
 
 const SystemSettingsComponent: React.FC = () => {
   const history = useHistory();
+  const { refreshSettings } = useSettings();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [defaultLocationId, setDefaultLocationId] = useState<number>(0);
@@ -103,7 +106,8 @@ const SystemSettingsComponent: React.FC = () => {
         ...settings,
         tenantId
       });
-      toast.success('System settings saved successfully');
+      await refreshSettings();
+      toastAlwaysSuccess('System settings saved successfully');
     } catch (error: any) {
       console.error('Error saving settings:', error);
       toast.error(`Failed to save settings: ${error.message || 'Unknown error'}`);
@@ -995,32 +999,46 @@ const SystemSettingsComponent: React.FC = () => {
                     <option value="100">100 items per page</option>
                   </select>
                   <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.5rem' }}>
-                    Default number of items displayed in list views
+                    Applied immediately after save to paginated list views (Master lists).
                   </small>
                 </div>
                 <div style={{ gridColumn: '1 / -1', marginTop: '1rem' }}>
-                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                  <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
                     Notification Preferences
                   </h4>
+                  <p style={{ margin: '0 0 1rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
+                    Controls success/info toasts (in-app) and outbound email actions such as payment reminders.
+                    Error messages always show so failures are not hidden.
+                  </p>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.enableEmailNotifications}
-                        onChange={(e) => updateSetting('enableEmailNotifications', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Enable email notifications</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.enableInAppNotifications}
-                        onChange={(e) => updateSetting('enableInAppNotifications', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Enable in-app notifications</span>
-                    </label>
+                    <div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.enableEmailNotifications}
+                          onChange={(e) => updateSetting('enableEmailNotifications', e.target.checked)}
+                          style={{ width: '1rem', height: '1rem' }}
+                        />
+                        <span style={{ fontSize: '0.875rem' }}>Enable email notifications</span>
+                      </label>
+                      <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.35rem', marginLeft: '1.5rem' }}>
+                        When off, email actions (e.g. AR payment reminders) are blocked.
+                      </small>
+                    </div>
+                    <div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.enableInAppNotifications}
+                          onChange={(e) => updateSetting('enableInAppNotifications', e.target.checked)}
+                          style={{ width: '1rem', height: '1rem' }}
+                        />
+                        <span style={{ fontSize: '0.875rem' }}>Enable in-app notifications</span>
+                      </label>
+                      <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.35rem', marginLeft: '1.5rem' }}>
+                        When off, success/info toasts are suppressed. Errors still appear.
+                      </small>
+                    </div>
                   </div>
                 </div>
               </div>

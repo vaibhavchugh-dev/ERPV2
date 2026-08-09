@@ -3,10 +3,12 @@ import { toast } from "react-toastify";
 import { faDollarSign, faArrowUp, faArrowDown, faClock, faCheckCircle, faExclamationTriangle, faCalendar, faFilter } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, PaymentDashboardMetrics, RecentTransaction } from "../../Common/Services/AccountingService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 // Using interfaces from AccountingService
 
 const PaymentDashboard: React.FC = () => {
+  const { formatCurrency: formatCurrencySettings, formatDate } = useFormatting();
   const [summary, setSummary] = useState<PaymentDashboardMetrics | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,19 +44,8 @@ const PaymentDashboard: React.FC = () => {
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(Math.abs(amount));
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
-    });
-  };
+  const formatCurrency = (amount: number): string =>
+    formatCurrencySettings(Math.abs(amount));
 
   const getStatusColor = (status: string) => {
     switch (status) {

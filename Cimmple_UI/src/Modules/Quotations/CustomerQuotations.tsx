@@ -7,11 +7,13 @@ import CustomerQuotationSlideout from "./CustomerQuotationSlideout";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerQuotations.scss";
 
 const CustomerQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [quotations, setQuotations] = useState<QuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -106,14 +108,6 @@ const CustomerQuotations: React.FC = () => {
 
   const formatDate = (dateStr: string): string =>
     formatDateOnlyFromApi(dateStr, true) || dateStr;
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
-  };
 
   const getStatusBadge = (status: string) => {
     if (!status || status.trim() === "") {

@@ -1,4 +1,5 @@
 -- Manual apply if EF migrations are not run against this database.
+USE ERPv2Db
 IF COL_LENGTH('dbo.AccountingDefaults', 'DefaultFreightOutAccountId') IS NULL
 BEGIN
     ALTER TABLE dbo.AccountingDefaults ADD DefaultFreightOutAccountId INT NULL;

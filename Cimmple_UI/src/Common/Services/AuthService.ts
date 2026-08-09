@@ -95,6 +95,7 @@ export class AuthService {
 
     // Preserve an existing working location across token refresh when still allowed.
     // Seed from server default only when missing or no longer in the allowed set.
+    // Always clear a stale site left by a previous user (e.g. admin → shopfloor).
     const existingLocationId = Number(localStorage.getItem("locationId") || 0);
     const allowedIds = new Set((user.locations || []).map((l) => l.locationId));
     const existingStillValid =
@@ -110,6 +111,71 @@ export class AuthService {
           detail: { locationId: workingLocationId },
         })
       );
+    } else {
+      localStorage.removeItem("locationId");
+      localStorage.removeItem("defaultLocationId");
+      window.dispatchEvent(
+        new CustomEvent("locationChanged", {
+          detail: { locationId: 0 },
+        })
+      );
+    }
+  }
+
+  /** Merge current-user profile fields into localStorage (keeps role/name in sync after Me / role change). */
+  public static patchStorageFromUser(user: Partial<AuthUser>) {
+    try {
+      const storage = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+
+      if (user.firstName !== undefined || user.lastName !== undefined) {
+        const displayName =
+          [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+          user.userName ||
+          storage.userLogin ||
+          storage.userName ||
+          "User";
+        storage.userName = displayName;
+      } else if (user.userName) {
+        storage.userName = storage.userName || user.userName;
+      }
+
+      if (user.userName !== undefined) storage.userLogin = user.userName;
+      if (user.email !== undefined) storage.email = user.email || "";
+      if (user.roleId !== undefined) storage.rolId = user.roleId || 0;
+      if (user.roleName !== undefined) storage.role = user.roleName || "";
+      if (user.tenantId !== undefined) storage.tenantID = user.tenantId;
+      if (user.userId !== undefined) {
+        storage.userId = user.userId;
+        storage.user_UniqueID = String(user.userId);
+      }
+      if (user.canAccessAllLocations !== undefined) {
+        storage.canAccessAllLocations = user.canAccessAllLocations;
+      }
+      if (user.defaultLocationId !== undefined) {
+        storage.defaultLocationId = user.defaultLocationId || 0;
+      }
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
+      window.dispatchEvent(new CustomEvent("sessionProfileUpdated"));
+    } catch {
+      // ignore malformed storage
+    }
+  }
+
+  /** Refresh role/name/email from server into localStorage and return the user. */
+  public static async syncCurrentUserProfile(): Promise<AuthUser | null> {
+    try {
+      const user = await AuthService.me();
+      AuthService.patchStorageFromUser(user);
+      if (user.permissions) {
+        localStorage.setItem(PERMS_KEY, JSON.stringify(user.permissions));
+      }
+      if (user.locations) {
+        localStorage.setItem(LOCATIONS_KEY, JSON.stringify(user.locations));
+      }
+      return user;
+    } catch {
+      return null;
     }
   }
 
@@ -173,6 +239,18 @@ export class AuthService {
       const url = p.url.replace(/\/$/, "") || "/";
       return url === normalized || normalized.startsWith(url + "/");
     });
+  }
+
+  /** First permitted app path from candidates (used after login / denied-route redirect). */
+  public static getDefaultLandingPath(candidatePaths: string[] = ["/home"]): string {
+    for (const path of candidatePaths) {
+      if (AuthService.hasPermissionForPath(path)) {
+        return path;
+      }
+    }
+    // Role has permissions, but none match known routes — use first permission URL if any
+    const firstPermUrl = AuthService.getPermissions().find((p) => !!p.url)?.url;
+    return firstPermUrl || candidatePaths[0] || "/home";
   }
 
   public static async login(username: string, password: string, tenantId?: number): Promise<LoginResponse> {

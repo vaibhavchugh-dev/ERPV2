@@ -1,13 +1,25 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useHistory, useLocation } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faSearch, faUser, faSignOutAlt, faChevronDown, faMapMarkerAlt } from "@fortawesome/free-solid-svg-icons";
+import {
+  faSearch,
+  faUser,
+  faSignOutAlt,
+  faChevronDown,
+  faMapMarkerAlt,
+  faIdCard,
+  faKey,
+  faCog,
+  faKeyboard,
+  faInfoCircle,
+} from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
 import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
+import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import "./TopBar.scss";
 
 /** Working locations for the switcher: sites and warehouses (not bins/shelves/zones). */
@@ -27,6 +39,7 @@ const TopBar: React.FC = () => {
   const { locationId: currentLocationId, setLocationId } = useActiveLocation();
   
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
@@ -62,10 +75,32 @@ const TopBar: React.FC = () => {
   const locationMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-  const userName = storage?.userName || "User";
-  const userEmail = storage?.email || "";
-  const tenantId = storage?.tenantID || (process.env.NODE_ENV === 'development' ? 1 : 0);
+  const readStorageProfile = () => {
+    const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+    return {
+      userName: storageObj?.userName || "User",
+      userEmail: storageObj?.email || "",
+      userRole: storageObj?.role || "",
+      tenantId: storageObj?.tenantID || (process.env.NODE_ENV === "development" ? 1 : 0),
+    };
+  };
+  const [profile, setProfile] = useState(readStorageProfile);
+  const { userName, userEmail, userRole, tenantId } = profile;
+  const canOpenSettings = AuthService.hasPermissionForPath("/settings");
+
+  useEffect(() => {
+    const refreshProfile = () => setProfile(readStorageProfile());
+    refreshProfile();
+    void AuthService.syncCurrentUserProfile().then((user) => {
+      if (user) refreshProfile();
+    });
+    window.addEventListener("sessionProfileUpdated", refreshProfile);
+    window.addEventListener("storage", refreshProfile);
+    return () => {
+      window.removeEventListener("sessionProfileUpdated", refreshProfile);
+      window.removeEventListener("storage", refreshProfile);
+    };
+  }, []);
 
   // Debounced search
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -235,23 +270,26 @@ const TopBar: React.FC = () => {
         return;
       }
 
+      // Restricted users with no assigned sites must not see the full tenant list
+      // (that would pick a site their JWT rejects with 403 on list APIs).
+      if (!canAccessAll) {
+        setLocations([]);
+        return;
+      }
+
       if (tenantId === 0) return;
 
       const locationsData = await LocationService.GetLocations({ tenantid: tenantId });
       if (locationsData && Array.isArray(locationsData)) {
-        let list: LocationMaster[] =
-          canAccessAll || cached.length === 0
-            ? locationsData
-            : locationsData.filter((l: LocationMaster) =>
-                cached.some((a) => a.locationId === l.locationId)
-              );
-        setLocations(list.filter(isWorkingLocation));
+        setLocations(locationsData.filter(isWorkingLocation));
       }
     } catch (error) {
       console.error("Error loading locations:", error);
       const cached = AuthService.getAllowedLocations();
       if (cached.length > 0) {
         setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
+      } else {
+        setLocations([]);
       }
     } finally {
       setLoadingLocations(false);
@@ -268,7 +306,7 @@ const TopBar: React.FC = () => {
     const allowed = AuthService.getAllowedLocations();
     const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
     const canAccessAll = !!storageObj.canAccessAllLocations;
-    if (!canAccessAll && allowed.length > 0 && !allowed.some((l) => l.locationId === locationId)) {
+    if (!canAccessAll && (allowed.length === 0 || !allowed.some((l) => l.locationId === locationId))) {
       return;
     }
 
@@ -283,7 +321,18 @@ const TopBar: React.FC = () => {
 
   // Ensure working site is selected after login (Redux can lag behind localStorage).
   useEffect(() => {
-    if (locations.length === 0) return;
+    if (locations.length === 0) {
+      // Restricted / unassigned: clear any stale working site so list APIs don't 403.
+      if (currentLocationId > 0) {
+        const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+        const canAccessAll = !!storageObj.canAccessAllLocations;
+        const allowed = AuthService.getAllowedLocations();
+        if (!canAccessAll && allowed.length === 0) {
+          setLocationId(0);
+        }
+      }
+      return;
+    }
 
     const storedLocationId = Number(localStorage.getItem("locationId") || 0);
     const defaultLocationId = Number(localStorage.getItem("defaultLocationId") || 0);
@@ -305,7 +354,7 @@ const TopBar: React.FC = () => {
     if (targetId > 0 && targetId !== currentLocationId) {
       handleLocationChange(targetId);
     }
-  }, [locations, currentLocationId, handleLocationChange]);
+  }, [locations, currentLocationId, handleLocationChange, setLocationId]);
 
   // Update current location label when locationId changes or locations are loaded
   useEffect(() => {
@@ -383,6 +432,18 @@ const TopBar: React.FC = () => {
     localStorage.clear();
     User.isAuthenticated = false;
     history.push("/login");
+  };
+
+  const closeUserMenu = () => setUserMenuOpen(false);
+
+  const openAccountModal = (kind: Exclude<UserAccountModalKind, null>) => {
+    closeUserMenu();
+    setAccountModal(kind);
+  };
+
+  const navigateFromMenu = (path: string) => {
+    closeUserMenu();
+    history.push(path);
   };
 
   const totalResults = 
@@ -497,13 +558,58 @@ const TopBar: React.FC = () => {
                 <div className="user-avatar-small">
                   <FontAwesomeIcon icon={faUser} size="sm" />
                 </div>
-                <div>
+                <div className="dropdown-user-meta">
                   <div className="dropdown-name">{userName}</div>
                   {userEmail && <div className="dropdown-email">{userEmail}</div>}
+                  {userRole && <div className="dropdown-role">Role: {userRole}</div>}
                 </div>
               </div>
               <div className="dropdown-divider"></div>
-              <button className="dropdown-item" onClick={handleLogout}>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("profile")}
+              >
+                <FontAwesomeIcon icon={faIdCard} size="sm" />
+                <span>My Profile</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => navigateFromMenu("/change-password")}
+              >
+                <FontAwesomeIcon icon={faKey} size="sm" />
+                <span>Change Password</span>
+              </button>
+              {canOpenSettings && (
+                <button
+                  type="button"
+                  className="dropdown-item"
+                  onClick={() => navigateFromMenu("/settings")}
+                >
+                  <FontAwesomeIcon icon={faCog} size="sm" />
+                  <span>System Settings</span>
+                </button>
+              )}
+              <div className="dropdown-divider"></div>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("help")}
+              >
+                <FontAwesomeIcon icon={faKeyboard} size="sm" />
+                <span>Help &amp; Shortcuts</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("about")}
+              >
+                <FontAwesomeIcon icon={faInfoCircle} size="sm" />
+                <span>About</span>
+              </button>
+              <div className="dropdown-divider"></div>
+              <button type="button" className="dropdown-item dropdown-item-danger" onClick={handleLogout}>
                 <FontAwesomeIcon icon={faSignOutAlt} size="sm" />
                 <span>Logout</span>
               </button>
@@ -511,6 +617,15 @@ const TopBar: React.FC = () => {
           )}
         </div>
       </div>
+
+      <UserAccountModals
+        kind={accountModal}
+        onClose={() => setAccountModal(null)}
+        onChangePassword={() => {
+          setAccountModal(null);
+          history.push("/change-password");
+        }}
+      />
     </header>
   );
 };

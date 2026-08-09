@@ -9,6 +9,7 @@ import { ShippingService } from "../../Common/Services/ShippingService";
 import { PdfService } from "../../Common/Services/PdfService";
 import CustomerShipmentDetailModal from "./CustomerShipmentDetailModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 interface FilterOptions {
   dateRange: string;
@@ -17,6 +18,7 @@ interface FilterOptions {
 }
 
 const CustomerShipments: React.FC = () => {
+  const { formatCurrency, formatDate } = useFormatting();
   const location = useLocation();
   const history = useHistory();
   const [shipments, setShipments] = useState<CustomerShipmentSummary[]>([]);
@@ -76,26 +78,6 @@ const CustomerShipments: React.FC = () => {
       setShipments([]);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
     }
   };
 

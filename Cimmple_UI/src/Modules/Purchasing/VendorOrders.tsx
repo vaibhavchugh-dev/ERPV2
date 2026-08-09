@@ -5,10 +5,12 @@ import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/Ven
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
   const processedOrderIdRef = useRef<string | null>(null);
+  const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<VendorOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -95,27 +97,6 @@ const VendorOrders: React.FC = () => {
     if (refreshList) {
       loadOrders();
     }
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
   };
 
   const getStatusBadge = (status: string) => {

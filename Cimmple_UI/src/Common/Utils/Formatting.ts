@@ -1,5 +1,31 @@
 import moment from 'moment-timezone';
 import { SystemSettings } from '../Services/SystemSettingsService';
+import { getCachedSettings } from './settingsRuntime';
+
+/** UI / .NET-style date formats → moment tokens (d≠day-of-week in moment). */
+const MOMENT_DATE_FORMATS: Record<string, string> = {
+  'M/d/yyyy': 'M/D/YYYY',
+  'MM/dd/yyyy': 'MM/DD/YYYY',
+  'dd/MM/yyyy': 'DD/MM/YYYY',
+  'yyyy-MM-dd': 'YYYY-MM-DD',
+  'MMM d, yyyy': 'MMM D, YYYY',
+  'MMMM d, yyyy': 'MMMM D, YYYY',
+  'MM/DD/YY': 'MM/DD/YY',
+  'MM/DD/YYYY': 'MM/DD/YYYY',
+};
+
+export const toMomentDateFormat = (dateFormat?: string | null): string => {
+  if (!dateFormat) return 'M/D/YYYY';
+  if (MOMENT_DATE_FORMATS[dateFormat]) return MOMENT_DATE_FORMATS[dateFormat];
+  return dateFormat
+    .replace(/yyyy/g, 'YYYY')
+    .replace(/yy/g, 'YY')
+    .replace(/dd/g, 'DD')
+    .replace(/(^|[^D])d([^D]|$)/g, '$1D$2');
+};
+
+const resolveSettings = (settings?: SystemSettings | null): SystemSettings | null =>
+  settings ?? getCachedSettings();
 
 /**
  * Format currency using system settings
@@ -9,10 +35,11 @@ export const formatCurrency = (
   value: number,
   settings?: SystemSettings | null
 ): string => {
-  const currency = settings?.defaultCurrency || 'USD';
-  const locale = settings?.locale || 'en-US';
-  const decimalPlaces = settings?.decimalPlaces ?? 2;
-  const currencySymbol = settings?.currencySymbol || '$';
+  const resolved = resolveSettings(settings);
+  const currency = resolved?.defaultCurrency || 'USD';
+  const locale = resolved?.locale || 'en-US';
+  const decimalPlaces = resolved?.decimalPlaces ?? 2;
+  const currencySymbol = resolved?.currencySymbol || '$';
   
   try {
     // Try using Intl.NumberFormat first (supports most currencies)
@@ -27,7 +54,7 @@ export const formatCurrency = (
   } catch (error) {
     // Fallback to manual formatting if Intl fails
     console.warn('Error formatting currency with Intl, using fallback:', error);
-    const formatted = formatNumber(value, settings);
+    const formatted = formatNumber(value, resolved);
     return `${currencySymbol}${formatted}`;
   }
 };
@@ -40,9 +67,10 @@ export const formatNumber = (
   value: number,
   settings?: SystemSettings | null
 ): string => {
-  const decimalPlaces = settings?.decimalPlaces ?? 2;
-  const decimalSeparator = settings?.decimalSeparator || '.';
-  const thousandsSeparator = settings?.thousandsSeparator || ',';
+  const resolved = resolveSettings(settings);
+  const decimalPlaces = resolved?.decimalPlaces ?? 2;
+  const decimalSeparator = resolved?.decimalSeparator || '.';
+  const thousandsSeparator = resolved?.thousandsSeparator || ',';
   
   // Format with correct decimal places
   const fixed = value.toFixed(decimalPlaces);
@@ -70,8 +98,9 @@ export const formatDate = (
   if (!date) return '';
   
   try {
-    const dateFormat = settings?.dateFormat || 'M/d/yyyy';
-    const timezone = settings?.timezone || 'America/New_York';
+    const resolved = resolveSettings(settings);
+    const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+    const timezone = resolved?.timezone || 'America/New_York';
     
     // Parse the date
     const dateObj = moment(date);
@@ -104,9 +133,10 @@ export const formatDateTime = (
   if (!date) return '';
   
   try {
-    const dateFormat = settings?.dateFormat || 'M/d/yyyy';
-    const timeFormat = settings?.timeFormat || '12';
-    const timezone = settings?.timezone || 'America/New_York';
+    const resolved = resolveSettings(settings);
+    const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+    const timeFormat = resolved?.timeFormat || '12';
+    const timezone = resolved?.timezone || 'America/New_York';
     
     const dateObj = moment(date);
     
@@ -144,8 +174,9 @@ export const formatUtcToTimezone = (
   customTimezone?: string
 ): string => {
   try {
-    const timezone = customTimezone || settings?.timezone || 'America/New_York';
-    const dateFormat = settings?.dateFormat || 'MM/DD/YY';
+    const resolved = resolveSettings(settings);
+    const timezone = customTimezone || resolved?.timezone || 'America/New_York';
+    const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'MM/DD/YY');
     
     return moment.utc(utcDateTime).tz(timezone).format(dateFormat);
   } catch (error) {
