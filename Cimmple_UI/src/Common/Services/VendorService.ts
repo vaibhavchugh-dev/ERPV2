@@ -62,7 +62,10 @@ export interface VendorMasterReq {
   ship_via: string;
   TenantID: number;
   VendorContact?: VendorContact[];
+  /** Accounts Payable control account */
   coaAccountId?: number;
+  /** Default expense account when PO lines have no glcode */
+  defaultExpenseAccountId?: number;
   vendorcode?: string;
   portalAccessEnabled?: boolean;
   portalHasPassword?: boolean;

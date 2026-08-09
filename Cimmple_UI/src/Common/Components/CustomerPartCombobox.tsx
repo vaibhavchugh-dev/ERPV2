@@ -5,10 +5,17 @@ import {
   ProductMasterService,
 } from "../Services/ProductMasterService";
 
+export type PartHistoryParty = "customer" | "vendor";
+
 export interface CustomerPartComboboxProps {
   value: string;
-  customerId: number;
-  customerSelected: boolean;
+  /** @deprecated Prefer partyId + party when using vendor mode */
+  customerId?: number;
+  customerSelected?: boolean;
+  vendorId?: number;
+  vendorSelected?: boolean;
+  /** Defaults to customer when customerId is provided */
+  party?: PartHistoryParty;
   hasError?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -27,12 +34,15 @@ const formatMoney = (n?: number | null) => {
 const DEBOUNCE_MS = 300;
 
 /**
- * Part No combobox with debounced server search against customer history.
+ * Part No combobox with debounced server search against customer or vendor history.
  */
 const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   value,
-  customerId,
-  customerSelected,
+  customerId = 0,
+  customerSelected = false,
+  vendorId = 0,
+  vendorSelected = false,
+  party: partyProp,
   hasError,
   placeholder,
   disabled,
@@ -41,6 +51,12 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   onHistoryMatch,
   scrollContainerSelector,
 }) => {
+  const party: PartHistoryParty =
+    partyProp ?? (vendorSelected || vendorId > 0 ? "vendor" : "customer");
+  const partyId = party === "vendor" ? vendorId : customerId;
+  const partySelected = party === "vendor" ? vendorSelected : customerSelected;
+  const partyNoun = party === "vendor" ? "vendor" : "customer";
+
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [parts, setParts] = useState<CustomerPartOption[]>([]);
@@ -79,7 +95,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
 
   const fetchParts = useCallback(
     async (q: string) => {
-      if (!customerSelected || customerId <= 0) {
+      if (!partySelected || partyId <= 0) {
         setParts([]);
         partsRef.current = [];
         return;
@@ -87,17 +103,23 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
       const reqId = ++requestIdRef.current;
       setLoading(true);
       try {
-        const result = await ProductMasterService.GetPartsByCustomer(customerId, {
-          q: q || undefined,
-          limit: 50,
-        });
+        const result =
+          party === "vendor"
+            ? await ProductMasterService.GetPartsByVendor(partyId, {
+                q: q || undefined,
+                limit: 50,
+              })
+            : await ProductMasterService.GetPartsByCustomer(partyId, {
+                q: q || undefined,
+                limit: 50,
+              });
         if (reqId !== requestIdRef.current) return;
         setParts(result);
         partsRef.current = result;
         emitHistoryMatch(value, result);
       } catch (err) {
         if (reqId !== requestIdRef.current) return;
-        console.error("Error searching customer parts:", err);
+        console.error(`Error searching ${partyNoun} parts:`, err);
         setParts([]);
         partsRef.current = [];
       } finally {
@@ -106,12 +128,11 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         }
       }
     },
-    [customerId, customerSelected, emitHistoryMatch, value]
+    [party, partyId, partySelected, partyNoun, emitHistoryMatch, value]
   );
 
-  // Load initial / refresh when customer changes
   useEffect(() => {
-    if (!customerSelected || customerId <= 0) {
+    if (!partySelected || partyId <= 0) {
       setParts([]);
       partsRef.current = [];
       onHistoryMatch?.(null);
@@ -119,11 +140,10 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     }
     fetchParts("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, customerSelected]);
+  }, [partyId, partySelected, party]);
 
-  // Debounced search when typing / opening with a term
   useEffect(() => {
-    if (!customerSelected || customerId <= 0) return;
+    if (!partySelected || partyId <= 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       fetchParts(searchTerm);
@@ -131,12 +151,11 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [searchTerm, customerId, customerSelected, fetchParts]);
+  }, [searchTerm, partyId, partySelected, fetchParts]);
 
-  // Re-resolve hint when value changes against current list (exact match / fetch exact)
   useEffect(() => {
     const trimmed = (value || "").trim();
-    if (!trimmed || !customerSelected) {
+    if (!trimmed || !partySelected) {
       onHistoryMatch?.(null);
       return;
     }
@@ -147,14 +166,19 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
       onHistoryMatch?.(local);
       return;
     }
-    // Exact lookup when not in current page of results
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        const result = await ProductMasterService.GetPartsByCustomer(customerId, {
-          q: trimmed,
-          limit: 20,
-        });
+        const result =
+          party === "vendor"
+            ? await ProductMasterService.GetPartsByVendor(partyId, {
+                q: trimmed,
+                limit: 20,
+              })
+            : await ProductMasterService.GetPartsByCustomer(partyId, {
+                q: trimmed,
+                limit: 20,
+              });
         if (cancelled) return;
         const match =
           result.find((p) => p.partNo.toLowerCase() === trimmed.toLowerCase()) || null;
@@ -167,7 +191,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [value, customerId, customerSelected, onHistoryMatch]);
+  }, [value, partyId, partySelected, party, onHistoryMatch]);
 
   useEffect(() => {
     if (!open) return;
@@ -202,8 +226,8 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     };
   }, [open, scrollContainerSelector]);
 
-  const resolvedPlaceholder = !customerSelected
-    ? "Select a customer first"
+  const resolvedPlaceholder = !partySelected
+    ? `Select a ${partyNoun} first`
     : placeholder || "Search or select part…";
 
   return (
@@ -212,7 +236,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         ref={inputRef}
         type="text"
         className="form-input"
-        disabled={disabled || !customerSelected}
+        disabled={disabled || !partySelected}
         style={{
           width: "100%",
           paddingRight: "2rem",
@@ -237,16 +261,16 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         placeholder={resolvedPlaceholder}
         autoComplete="off"
         title={
-          customerSelected
-            ? "Select from this customer's history or type a new part"
-            : "Select a customer to load part history"
+          partySelected
+            ? `Select from this ${partyNoun}'s history or type a new part`
+            : `Select a ${partyNoun} to load part history`
         }
       />
       <button
         type="button"
-        disabled={disabled || !customerSelected}
+        disabled={disabled || !partySelected}
         onClick={() => {
-          if (!customerSelected) return;
+          if (!partySelected) return;
           updatePosition();
           setOpen((prev) => !prev);
           setSearchTerm(value || "");
@@ -259,19 +283,19 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
           transform: "translateY(-50%)",
           background: "none",
           border: "none",
-          cursor: customerSelected ? "pointer" : "not-allowed",
+          cursor: partySelected ? "pointer" : "not-allowed",
           fontSize: "0.7rem",
           color: "#6b7280",
           padding: "0.25rem",
-          opacity: customerSelected ? 1 : 0.5,
+          opacity: partySelected ? 1 : 0.5,
         }}
-        title="Show customer parts"
+        title={`Show ${partyNoun} parts`}
         tabIndex={-1}
       >
         ▼
       </button>
 
-      {open && customerSelected && position &&
+      {open && partySelected && position &&
         createPortal(
           <div
             ref={listRef}
@@ -305,7 +329,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
                 justifyContent: "space-between",
               }}
             >
-              <span>Customer part history</span>
+              <span>{party === "vendor" ? "Vendor part history" : "Customer part history"}</span>
               <span>{loading ? "Searching…" : `${parts.length} shown`}</span>
             </div>
             {loading && parts.length === 0 ? (
@@ -316,12 +340,12 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
               <div style={{ padding: "0.75rem", fontSize: "0.8125rem", color: "#6b7280" }}>
                 {searchTerm.trim()
                   ? "No matching parts. Keep typing to use a new part number."
-                  : "No prior parts for this customer. Type a new part number."}
+                  : `No prior parts for this ${partyNoun}. Type a new part number.`}
               </div>
             ) : (
-              parts.map((p) => (
+              parts.map((p, idx) => (
                 <button
-                  key={p.partNo}
+                  key={`${p.partNo}-${idx}`}
                   type="button"
                   onClick={() => {
                     onSelectPart(p);
@@ -390,7 +414,33 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   );
 };
 
+/** Convenience wrapper for vendor quotations / orders */
+export const VendorPartCombobox: React.FC<
+  Omit<CustomerPartComboboxProps, "customerId" | "customerSelected" | "party"> & {
+    vendorId: number;
+    vendorSelected: boolean;
+  }
+> = ({ vendorId, vendorSelected, ...rest }) => (
+  <CustomerPartCombobox
+    {...rest}
+    party="vendor"
+    vendorId={vendorId}
+    vendorSelected={vendorSelected}
+    customerId={0}
+    customerSelected={false}
+  />
+);
+
 export default CustomerPartCombobox;
+
+/** True when PartNo looks like a job-order reference (legacy vendor Part/Job No storage). */
+export const looksLikeJobPartNo = (value?: string | null): boolean => {
+  if (!value?.trim()) return false;
+  const tokens = value.split(",").map((s) => s.trim()).filter(Boolean);
+  return tokens.some(
+    (t) => /JO#/i.test(t) || /#JO/i.test(t) || /^JO\d/i.test(t) || /^JO[-_\s]/i.test(t)
+  );
+};
 
 /** Small inline hint for last ordered / last quoted price */
 export const formatPartHistoryHint = (part: CustomerPartOption | null | undefined): string => {

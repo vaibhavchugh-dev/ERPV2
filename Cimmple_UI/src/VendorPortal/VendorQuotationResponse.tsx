@@ -5,13 +5,14 @@ import "./VendorPortal.scss";
 
 interface VendorQuotationResponseProps {
   quotationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   quotationId,
   onClose,
 }) => {
+  const handleDismiss = () => onClose(false);
   console.log("VendorQuotationResponse: Received quotationId:", quotationId);
   const [formData, setFormData] = useState<VendorQuotationMasterReq & { QuotationType?: string }>({
     OrderID: 0,
@@ -190,7 +191,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
       console.log("VendorQuotationResponse: dataToSave.ParentQuotationID:", dataToSave.ParentQuotationID);
       await QuotationService.SaveVendorQuotation(dataToSave);
       toast.success("Your response has been submitted successfully!");
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving quotation:", error);
       console.error("Error response:", error.response?.data);
@@ -274,11 +275,11 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   }
 
   return (
-    <div className="vendor-response-overlay" onClick={onClose}>
+    <div className="vendor-response-overlay" onClick={handleDismiss}>
       <div className="vendor-response-container" onClick={(e) => e.stopPropagation()}>
         <div className="vendor-response-header">
           <h2>Respond to Quotation - {formatQuotationNumber(formData.PONumber)}</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -642,7 +643,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
           </div>
 
           <div className="vendor-response-footer">
-            <button type="button" className="btn-cancel" onClick={onClose} disabled={saving}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss} disabled={saving}>
               Cancel
             </button>
             <button type="submit" className="btn-submit" disabled={saving || formData.Details.length === 0}>

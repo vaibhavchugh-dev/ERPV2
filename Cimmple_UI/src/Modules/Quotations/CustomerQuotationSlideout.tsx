@@ -21,16 +21,23 @@ import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Componen
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
+import {
+  todayDateOnlyDisplay,
+  toHtmlDateInputValue,
+  fromHtmlDateInputValue,
+} from "../../Common/Utils/Formatting";
 import "./CustomerQuotationSlideout.scss";
 
 interface CustomerQuotationSlideoutProps {
   quotationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
+  onSaved?: (quotationId: number) => void;
 }
 
 const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   quotationId,
   onClose,
+  onSaved,
 }) => {
   const [formData, setFormData] = useState<QuotationMasterReq>({
     OrderID: 0,
@@ -57,6 +64,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
+  const listNeedsRefreshRef = useRef(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
@@ -178,7 +186,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-    const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+    const today = todayDateOnlyDisplay();
     
     setFormData((prev) => {
       // If it's a new quotation (quotationId === 0) and no details exist, add one default line item
@@ -206,16 +214,19 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         Tenantid: storage?.tenantID || 0,
         UserId: storage?.userId || 0,
         UserToken: storage?.userToken || 0,
-        OrderDate: today,
-        // Add default line item only for new quotations
-        Details: quotationId === 0 && prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+        ...(quotationId === 0
+          ? {
+              OrderDate: prev.OrderDate || today,
+              Details: prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+            }
+          : {}),
       };
     });
 
     loadCustomers();
 
     if (quotationId > 0) {
-      loadQuotation();
+      loadQuotation(quotationId);
     }
   }, [quotationId]);
 
@@ -241,14 +252,21 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     }
   };
 
-  const loadQuotation = async () => {
+  const loadQuotation = async (
+    targetQuotationId?: number,
+    options?: { resetViewer?: boolean }
+  ) => {
+    const idToLoad = targetQuotationId ?? quotationId;
+    if (!idToLoad || idToLoad <= 0) return;
     setLoading(true);
-    setDocumentViewerOpen(false);
-    setViewerDocuments([]);
-    setActiveViewerIndex(0);
-    documentCacheRef.current.clear();
+    if (options?.resetViewer !== false) {
+      setDocumentViewerOpen(false);
+      setViewerDocuments([]);
+      setActiveViewerIndex(0);
+      documentCacheRef.current.clear();
+    }
     try {
-      const quotation = await QuotationService.GetQuotationById(quotationId);
+      const quotation = await QuotationService.GetQuotationById(idToLoad);
       if (quotation) {
         console.log("[CustomerQuotationSlideout] Loaded quotation:", {
           orderID: quotation.OrderID,
@@ -759,11 +777,18 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       // Single SaveQuotation request: quotation + new files + existing refs + deleted IDs.
       const result = await QuotationService.SaveQuotation(formDataWithMatrix, pendingFiles);
 
-      if (result.id > 0 && formData.OrderID !== result.id) {
+      const savedId = result.id > 0 ? result.id : formDataWithMatrix.OrderID;
+      if (savedId > 0) {
+        listNeedsRefreshRef.current = true;
+        const wasNew = quotationId === 0;
         setFormData((prev) => ({
           ...prev,
-          OrderID: result.id,
+          OrderID: savedId,
+          ...(result.poNumber ? { PONumber: result.poNumber } : {}),
         }));
+        if (wasNew) {
+          onSaved?.(savedId);
+        }
       }
 
       attachments
@@ -787,7 +812,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           }))
         );
       } else if (pendingFiles.length > 0 || deletedAttachmentIds.length > 0) {
-        const refreshed = await QuotationService.GetQuotationById(result.id);
+        const refreshed = await QuotationService.GetQuotationById(savedId);
         if (refreshed?.Attachments) {
           setAttachments(
             refreshed.Attachments.map((a) => ({
@@ -813,7 +838,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         const savedList =
           result.attachments ||
           (
-            await QuotationService.GetQuotationById(result.id)
+            await QuotationService.GetQuotationById(savedId)
           )?.Attachments ||
           [];
         if (savedList.length === 0) {
@@ -831,6 +856,14 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             }))
           );
           setActiveViewerIndex((idx) => Math.min(idx, savedList.length - 1));
+        }
+      }
+
+      if (savedId > 0) {
+        // For existing quotations always reload here. For new ones, parent onSaved
+        // bumps quotationId and useEffect loads — skip duplicate reload.
+        if (quotationId > 0) {
+          await loadQuotation(savedId, { resetViewer: false });
         }
       }
 
@@ -1023,13 +1056,13 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         discardPendingAttachments();
         closeDocumentViewer();
         clearDocumentSessionCache();
-        onClose();
+        onClose(listNeedsRefreshRef.current);
       }
     } else {
       discardPendingAttachments();
       closeDocumentViewer();
       clearDocumentSessionCache();
-      onClose();
+      onClose(listNeedsRefreshRef.current);
     }
   };
 
@@ -1045,7 +1078,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         : `CQ#${formData.PONumber}`;
 
       // Generate PDF using API
-      const blob = await PdfService.GenerateQuotation(quotationId);
+      const blob = await PdfService.GenerateQuotation(formData.OrderID > 0 ? formData.OrderID : quotationId);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -1132,7 +1165,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         await QuotationService.DeleteQuotation(quotationId);
         toast.success("All dependencies and quotation deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         setDeletionImpact(updatedImpact);
         toast.warning("Some dependencies could not be deleted. Please try again.");
@@ -1166,7 +1199,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       await QuotationService.DeleteQuotation(quotationId);
       toast.success("Quotation deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting quotation:", error);
       toast.error(`Error deleting quotation: ${error.message || "Unknown error"}`);
@@ -1176,12 +1209,13 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
-    if (quotationId > 0) {
+    const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
+    if (id > 0) {
       setLoading(true);
       try {
-        await QuotationService.DuplicateQuotation(quotationId);
+        await QuotationService.DuplicateQuotation(id);
         toast.success("Quotation duplicated successfully (including file copies)");
-        onClose();
+        onClose(true);
       } catch (error: any) {
         console.error("Error duplicating quotation:", error);
         toast.error(`Error duplicating quotation: ${error.message || "Unknown error"}`);
@@ -1281,7 +1315,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         CustomerName: formData.CustomerName,
         Address: formData.Address,
         CustomerPoNumber: formData.CustomerPoNumber,
-        OrderDate: new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }),
+        OrderDate: todayDateOnlyDisplay(),
         TotalAmount: totalAmount,
         UserId: formData.UserId,
         UserToken: formData.UserToken,
@@ -1290,7 +1324,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         ExternalCustomerPO: formData.ExternalCustomerPO,
         ExternalOrderDate: formData.ExternalOrderDate,
         BuyerName: formData.BuyerName,
-        QuotationId: quotationId, // Link to source quotation
+        QuotationId: formData.OrderID > 0 ? formData.OrderID : quotationId, // Link to source quotation
         QuotationNo: quotationNumber,
         LocationId: formData.LocationId,
         Details: orderDetails,
@@ -1302,11 +1336,12 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       const result = await OrderService.SaveOrder(orderRequest);
       
       if (result && result.id > 0) {
+        const sourceQuotationId = formData.OrderID > 0 ? formData.OrderID : quotationId;
         const selectedAttachmentIdList = Array.from(selectedAttachments).filter((id) => id > 0);
         if (selectedAttachmentIdList.length > 0) {
           try {
             await QuotationService.CopyAttachmentsToOrder(
-              quotationId,
+              sourceQuotationId,
               result.id,
               selectedAttachmentIdList
             );
@@ -1318,9 +1353,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
         // Backend automatically updates quotation status and convertedOrderId
         // Reload quotation to get updated data
-        const updatedQuotation = await QuotationService.GetQuotationById(quotationId);
+        const updatedQuotation = await QuotationService.GetQuotationById(sourceQuotationId);
         if (updatedQuotation) {
           setFormData(updatedQuotation);
+          listNeedsRefreshRef.current = true;
         }
         
         // Format order number for display (PONumber, not internal OrderID)
@@ -1343,34 +1379,11 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     }
   };
 
-  const convertToDateInputFormat = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const parts = dateStr.split("/");
-      if (parts.length === 3) {
-        const month = parts[0].padStart(2, "0");
-        const day = parts[1].padStart(2, "0");
-        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-        return `${year}-${month}-${day}`;
-      }
-      return dateStr;
-    } catch {
-      return "";
-    }
-  };
+  const convertToDateInputFormat = (dateStr: string): string =>
+    toHtmlDateInputValue(dateStr);
 
-  const convertFromDateInputFormat = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear()).slice(-2);
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
-    }
-  };
+  const convertFromDateInputFormat = (dateStr: string): string =>
+    fromHtmlDateInputValue(dateStr);
 
   const getFirstLine = (text: string): string => {
     if (!text) return "";
@@ -1399,6 +1412,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     return Math.max(0, subtotal - discountAmount);
   };
 
+  const effectiveQuotationId = formData.OrderID > 0 ? formData.OrderID : quotationId;
+
   return (
     <div className="customer-quotation-slideout-overlay" onClick={handleCancel}>
       <div
@@ -1407,8 +1422,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       >
         <div className="customer-quotation-slideout-header">
           <div>
-            <h2>{quotationId > 0 ? "Edit Quotation" : "New Quotation"}</h2>
-            {quotationId > 0 && formData.PONumber > 0 && (
+            <h2>{effectiveQuotationId > 0 ? "Edit Quotation" : "New Quotation"}</h2>
+            {effectiveQuotationId > 0 && formData.PONumber > 0 && (
               <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
                 Quotation Number: {formData.PONumber < 1000 ? `CQ#${formData.PONumber + 999}` : `CQ#${formData.PONumber}`}
                 {formData.convertedOrderId && formData.convertedOrderNumber ? (
@@ -1435,7 +1450,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-            {quotationId > 0 && (
+            {effectiveQuotationId > 0 && (
               <>
                 <button
                   type="button"
@@ -1468,11 +1483,11 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                   onClick={handleConvertToOrder}
                   title={formData.Status === "Converted" ? "Already Converted" : "Convert to Order"}
                   style={{ 
-                    color: quotationId === 0 || formData.Status === "Converted" ? "#9ca3af" : "#10b981",
-                    cursor: quotationId === 0 || formData.Status === "Converted" ? "not-allowed" : "pointer",
-                    opacity: quotationId === 0 || formData.Status === "Converted" ? 0.5 : 1
+                    color: effectiveQuotationId === 0 || formData.Status === "Converted" ? "#9ca3af" : "#10b981",
+                    cursor: effectiveQuotationId === 0 || formData.Status === "Converted" ? "not-allowed" : "pointer",
+                    opacity: effectiveQuotationId === 0 || formData.Status === "Converted" ? 0.5 : 1
                   }}
-                  disabled={quotationId === 0 || formData.Status === "Converted"}
+                  disabled={effectiveQuotationId === 0 || formData.Status === "Converted"}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M9 11l3 3L22 4"></path>
@@ -2158,21 +2173,19 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                     const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
                                       return string.indexOf('.') === offset ? match : '';
                                     });
-                                    // Update display value immediately
                                     setNumericDisplayValues(prev => {
                                       const newMap = new Map(prev);
-                                      if (inputVal === "" || inputVal === ".") {
-                                        newMap.set(`discount-${index}`, inputVal);
-                                        handleDetailChange(index, "Discount", 0);
-                                      } else {
-                                        newMap.set(`discount-${index}`, inputVal);
-                                        const val = parseFloat(inputVal);
-                                        if (!isNaN(val) && val >= 0) {
-                                          handleDetailChange(index, "Discount", val);
-                                        }
-                                      }
+                                      newMap.set(`discount-${index}`, inputVal);
                                       return newMap;
                                     });
+                                    if (inputVal === "" || inputVal === ".") {
+                                      handleDetailChange(index, "Discount", 0);
+                                    } else {
+                                      const val = parseFloat(inputVal);
+                                      if (!isNaN(val) && val >= 0) {
+                                        handleDetailChange(index, "Discount", val);
+                                      }
+                                    }
                                   }}
                                   onBlur={(e) => {
                                     // Convert empty to 0 only on blur and clear display value

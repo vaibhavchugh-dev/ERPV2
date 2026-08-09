@@ -37,6 +37,15 @@ export function useActiveLocation() {
     [dispatch, locationId]
   );
 
+  // Login/persistSession writes localStorage before Redux updates; hydrate if store is stale.
+  useEffect(() => {
+    if (locationId > 0) return;
+    const stored = Number(localStorage.getItem("locationId") || 0);
+    if (stored > 0) {
+      dispatch({ type: "SET_LOCATION", payload: stored });
+    }
+  }, [dispatch, locationId]);
+
   useEffect(() => {
     const handler = (event: Event) => {
       const newId = Number((event as CustomEvent).detail?.locationId) || 0;

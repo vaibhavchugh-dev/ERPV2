@@ -229,7 +229,8 @@ const TopBar: React.FC = () => {
       const canAccessAll = !!storageObj.canAccessAllLocations;
       const cached = AuthService.getAllowedLocations();
 
-      if (!canAccessAll && cached.length > 0) {
+      // Login/refresh already embeds locations — prefer cache to avoid competing with list APIs.
+      if (cached.length > 0) {
         setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
         return;
       }
@@ -280,30 +281,33 @@ const TopBar: React.FC = () => {
     loadLocations();
   }, [loadLocations]);
 
-  // Initialize location from defaultLocationId if no current location
+  // Ensure working site is selected after login (Redux can lag behind localStorage).
   useEffect(() => {
-    const storedLocationId = localStorage.getItem('locationId');
-    const locationIdFromStorage = storedLocationId ? parseInt(storedLocationId, 10) : 0;
-    
-    if ((!locationIdFromStorage || locationIdFromStorage === 0) && locations.length > 0) {
-      const defaultLocationId = localStorage.getItem('defaultLocationId');
-      if (defaultLocationId) {
-        const locationId = parseInt(defaultLocationId, 10);
-        if (!isNaN(locationId) && locationId > 0) {
-          // Check if the default location exists in the loaded locations
-          const locationExists = locations.some(loc => loc.locationId === locationId);
-          if (locationExists) {
-            handleLocationChange(locationId);
-          }
-        }
-      } else if (locations.length > 0) {
-        // If no default location is set, use the first location
-        handleLocationChange(locations[0].locationId);
-      }
-    }
-  }, [locations, handleLocationChange]); // Run when locations are loaded
+    if (locations.length === 0) return;
 
-  // Update current location when locationId changes or locations are loaded
+    const storedLocationId = Number(localStorage.getItem("locationId") || 0);
+    const defaultLocationId = Number(localStorage.getItem("defaultLocationId") || 0);
+
+    let targetId =
+      currentLocationId > 0
+        ? currentLocationId
+        : storedLocationId > 0
+          ? storedLocationId
+          : defaultLocationId > 0
+            ? defaultLocationId
+            : locations[0].locationId;
+
+    const exists = locations.some((loc) => loc.locationId === targetId);
+    if (!exists) {
+      targetId = locations[0].locationId;
+    }
+
+    if (targetId > 0 && targetId !== currentLocationId) {
+      handleLocationChange(targetId);
+    }
+  }, [locations, currentLocationId, handleLocationChange]);
+
+  // Update current location label when locationId changes or locations are loaded
   useEffect(() => {
     if (currentLocationId > 0 && locations.length > 0) {
       const location = locations.find(loc => loc.locationId === currentLocationId);
@@ -434,7 +438,7 @@ const TopBar: React.FC = () => {
                   <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
                   <div>
                     <div className="dropdown-name">Working site</div>
-                    <div className="dropdown-email">Used for new documents, inventory default, and PDF branding</div>
+                    <div className="dropdown-email">Lists follow this site; choose All sites on a page for tenant-wide view</div>
                   </div>
                 </div>
                 <div className="dropdown-divider"></div>

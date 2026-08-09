@@ -3,11 +3,13 @@ import { Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { User } from "../Common/Services/User";
 import { AuthService } from "../Common/Services/AuthService";
+import { useSettings } from "../Common/Contexts/SettingsContext";
 import { toast } from "react-toastify";
 import "./Login.scss";
 
 export const Login: React.FC = () => {
   const history = useHistory();
+  const { refreshSettings } = useSettings();
   const [userName, setUserName] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [tenantId, setTenantId] = React.useState("");
@@ -48,6 +50,9 @@ export const Login: React.FC = () => {
 
       User.isAuthenticated = true;
       User.apiLoginResponse = response;
+
+      // Load tenant settings now that a token exists (provider only ran at cold boot).
+      void refreshSettings();
 
       if (response.user.mustChangePassword) {
         toast.info("Please change your password");

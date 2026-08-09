@@ -306,16 +306,26 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetAccountingSettings called - TenantId: {tenantId}");
+                var defaults = _context.AccountingDefaults
+                    .AsNoTracking()
+                    .FirstOrDefault(d => d.TenantId == tenantId);
 
-                // For now, return default settings. In a real implementation,
-                // this would retrieve from a dedicated accounting settings table
-                var defaultSettings = new
+                var settings = new
                 {
-                    companyName = "Cimmple Corp",
-                    fiscalYearStart = "01-01",
-                    defaultCurrency = "USD",
-                    taxRate = 8.25,
+                    companyName = defaults?.CompanyName ?? "Cimmple Corp",
+                    fiscalYearStart = defaults?.FiscalYearStart ?? "01-01",
+                    defaultCurrency = defaults?.DefaultCurrency ?? "USD",
+                    taxRate = defaults?.TaxRate ?? 8.25m,
+                    defaultAccountsReceivableAccountId = defaults?.DefaultAccountsReceivableAccountId,
+                    defaultAccountsPayableAccountId = defaults?.DefaultAccountsPayableAccountId,
+                    defaultRevenueAccountId = defaults?.DefaultRevenueAccountId,
+                    defaultExpenseAccountId = defaults?.DefaultExpenseAccountId,
+                    defaultInventoryAccountId = defaults?.DefaultInventoryAccountId,
+                    defaultSalesTaxPayableAccountId = defaults?.DefaultSalesTaxPayableAccountId,
+                    defaultInputTaxAccountId = defaults?.DefaultInputTaxAccountId,
+                    defaultFreightOutAccountId = defaults?.DefaultFreightOutAccountId,
+                    defaultOtherChargeAccountId = defaults?.DefaultOtherChargeAccountId,
+                    defaultFreightInAccountId = defaults?.DefaultFreightInAccountId,
                     paymentTerms = new[]
                     {
                         new { id = 1, name = "Net 15", days = 15, description = "Payment due within 15 days" },
@@ -332,7 +342,7 @@ namespace CimmpleAPI.Controllers
                     }
                 };
 
-                return Ok(new { result = defaultSettings });
+                return Ok(new { result = settings });
             }
             catch (Exception ex)
             {
@@ -347,16 +357,12 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"SaveAccountingSettings called - TenantId: {tenantId}");
 
-                // In a real implementation, this would save to a dedicated accounting settings table
-                // For now, we'll just validate and return success
                 if (request == null)
                 {
                     return BadRequest(new { error = "Request is null" });
                 }
 
-                // Basic validation
                 if (string.IsNullOrWhiteSpace(request.CompanyName))
                 {
                     return BadRequest(new { error = "Company name is required" });
@@ -367,6 +373,57 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Tax rate must be between 0 and 100" });
                 }
 
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultAccountsReceivableAccountId, "Accounts Receivable", out var arId, out var arError))
+                    return BadRequest(new { error = arError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultAccountsPayableAccountId, "Accounts Payable", out var apId, out var apError))
+                    return BadRequest(new { error = apError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultRevenueAccountId, "Revenue", out var revId, out var revError))
+                    return BadRequest(new { error = revError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultExpenseAccountId, "Expense", out var expId, out var expError))
+                    return BadRequest(new { error = expError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultInventoryAccountId, "Inventory", out var invId, out var invError))
+                    return BadRequest(new { error = invError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultSalesTaxPayableAccountId, "Sales Tax Payable", out var taxPayId, out var taxPayError))
+                    return BadRequest(new { error = taxPayError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultInputTaxAccountId, "Input Tax", out var inputTaxId, out var inputTaxError))
+                    return BadRequest(new { error = inputTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultFreightOutAccountId, "Freight Out", out var freightOutId, out var freightOutError))
+                    return BadRequest(new { error = freightOutError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultOtherChargeAccountId, "Other Charge", out var otherChargeId, out var otherChargeError))
+                    return BadRequest(new { error = otherChargeError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultFreightInAccountId, "Freight In", out var freightInId, out var freightInError))
+                    return BadRequest(new { error = freightInError });
+
+                var defaults = _context.AccountingDefaults.FirstOrDefault(d => d.TenantId == tenantId);
+                var now = DateTime.UtcNow;
+                if (defaults == null)
+                {
+                    defaults = new AccountingDefaults
+                    {
+                        TenantId = tenantId,
+                        CreatedDate = now
+                    };
+                    _context.AccountingDefaults.Add(defaults);
+                }
+
+                defaults.CompanyName = request.CompanyName.Trim();
+                defaults.FiscalYearStart = string.IsNullOrWhiteSpace(request.FiscalYearStart) ? "01-01" : request.FiscalYearStart.Trim();
+                defaults.DefaultCurrency = string.IsNullOrWhiteSpace(request.DefaultCurrency) ? "USD" : request.DefaultCurrency.Trim();
+                defaults.TaxRate = request.TaxRate;
+                defaults.DefaultAccountsReceivableAccountId = arId;
+                defaults.DefaultAccountsPayableAccountId = apId;
+                defaults.DefaultRevenueAccountId = revId;
+                defaults.DefaultExpenseAccountId = expId;
+                defaults.DefaultInventoryAccountId = invId;
+                defaults.DefaultSalesTaxPayableAccountId = taxPayId;
+                defaults.DefaultInputTaxAccountId = inputTaxId;
+                defaults.DefaultFreightOutAccountId = freightOutId;
+                defaults.DefaultOtherChargeAccountId = otherChargeId;
+                defaults.DefaultFreightInAccountId = freightInId;
+                defaults.UpdatedDate = now;
+
+                _context.SaveChanges();
+
                 return Ok(new { result = new { message = "Accounting settings saved successfully" } });
             }
             catch (Exception ex)
@@ -374,6 +431,28 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine($"Error in SaveAccountingSettings: {ex.Message}");
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private bool TryNormalizeOptionalAccountId(
+            int tenantId,
+            int? accountId,
+            string label,
+            out int? normalized,
+            out string? error)
+        {
+            normalized = null;
+            error = null;
+            if (!accountId.HasValue || accountId.Value <= 0)
+                return true;
+
+            if (!GlAccountResolutionService.IsActiveAccountForTenant(_context, tenantId, accountId.Value))
+            {
+                error = $"{label} account is invalid or inactive for this tenant.";
+                return false;
+            }
+
+            normalized = accountId.Value;
+            return true;
         }
 
         [HttpPost("GenerateFinancialReport")]
@@ -1557,6 +1636,16 @@ namespace CimmpleAPI.Controllers
         public string FiscalYearStart { get; set; }
         public string DefaultCurrency { get; set; }
         public decimal TaxRate { get; set; }
+        public int? DefaultAccountsReceivableAccountId { get; set; }
+        public int? DefaultAccountsPayableAccountId { get; set; }
+        public int? DefaultRevenueAccountId { get; set; }
+        public int? DefaultExpenseAccountId { get; set; }
+        public int? DefaultInventoryAccountId { get; set; }
+        public int? DefaultSalesTaxPayableAccountId { get; set; }
+        public int? DefaultInputTaxAccountId { get; set; }
+        public int? DefaultFreightOutAccountId { get; set; }
+        public int? DefaultOtherChargeAccountId { get; set; }
+        public int? DefaultFreightInAccountId { get; set; }
         public PaymentTermRequest[] PaymentTerms { get; set; }
         public ApprovalLimitRequest[] ApprovalLimits { get; set; }
     }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
 import { QuotationService } from "../../Common/Services/QuotationService";
 import { VendorOrderService, VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
@@ -7,7 +7,7 @@ import "./VendorQuotationComparison.scss";
 
 interface VendorQuotationComparisonProps {
   parentQuotationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
   onQuotationSelected?: (quotationId: number) => void;
 }
 
@@ -40,6 +40,7 @@ interface DetailData {
   discount: number;
   dueDate: string;
   notes: string;
+  glcode?: string;
   attachments?: Array<{id: number; name: string; size: number; fileUrl?: string}>;
 }
 
@@ -48,6 +49,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   onClose,
   onQuotationSelected,
 }) => {
+  const listNeedsRefreshRef = useRef(false);
   const [quotations, setQuotations] = useState<QuotationData[]>([]);
   const [details, setDetails] = useState<DetailData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +107,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             discount: d.discount || d.Discount || 0,
             dueDate: d.dueDate || d.DueDate || "",
             notes: d.notes || d.Notes || "",
+            glcode: d.glcode || d.Glcode || "",
             attachments: attachments && attachments.length > 0 ? attachments : undefined
           };
         });
@@ -354,11 +357,18 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     });
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedQuotationId(null);
     setIsViewingQuotation(false); // Show comparison overlay again
-    loadComparisonData(); // Refresh data after closing
+    if (refreshList) {
+      listNeedsRefreshRef.current = true;
+      loadComparisonData();
+    }
+  };
+
+  const handleCloseComparison = () => {
+    onClose(listNeedsRefreshRef.current);
   };
 
   const handleConvertQuotationToOrder = async (quotationId: number) => {
@@ -471,7 +481,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             ShippingStatus: "",
             InvoicedQty: 0,
             InvoiceStatus: "",
-            glcode: "", // Required field
+            glcode: detail.glcode || "",
             Received: "No", // Required field
           };
         }),
@@ -485,6 +495,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       if (result && result.id) {
         toast.success(`Successfully converted quotation to order (Order #${result.poNumber || result.PONumber || result.id})`);
         // Refresh data to show updated status
+        listNeedsRefreshRef.current = true;
         loadComparisonData();
       } else {
         toast.error("Failed to convert quotation to order");
@@ -657,7 +668,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
               ShippingStatus: "Not Started",
               InvoicedQty: 0,
               InvoiceStatus: "Not Invoiced",
-              glcode: "", // Required field
+              glcode: item.detail.glcode || "",
               Received: "No", // Required field
             };
           }),
@@ -681,6 +692,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
         // Clear selections
         setLineItemSelections(new Map());
         // Refresh data
+        listNeedsRefreshRef.current = true;
         loadComparisonData();
       } else {
         toast.error("Failed to create orders");
@@ -716,7 +728,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                 "All quotations in this group have been converted to orders." : 
                 "This quotation may have been converted or deleted."}
             </p>
-            <button onClick={onClose} className="btn-cancel" style={{ marginTop: "1rem" }}>
+            <button onClick={handleCloseComparison} className="btn-cancel" style={{ marginTop: "1rem" }}>
               Close
             </button>
           </div>
@@ -728,7 +740,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   return (
     <>
       {!isViewingQuotation && (
-        <div className="comparison-overlay" onClick={onClose}>
+        <div className="comparison-overlay" onClick={handleCloseComparison}>
         <div className="comparison-container" onClick={(e) => e.stopPropagation()}>
           <div className="comparison-header">
             <h2>Compare Vendor Quotations - {formatQuotationNumber(quotations[0]?.quotationNumber || 0)}</h2>
@@ -789,7 +801,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                   Table View
                 </button>
               </div>
-              <button type="button" className="btn-close" onClick={onClose}>
+              <button type="button" className="btn-close" onClick={handleCloseComparison}>
                 ×
               </button>
             </div>
@@ -1449,7 +1461,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           )}
 
           <div className="comparison-footer">
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleCloseComparison}>
               Close
             </button>
             {lineItemSelections.size > 0 && (

@@ -14,13 +14,23 @@ const isWorkingSite = (loc: { locType?: number | null }) => {
 };
 
 /**
- * Optional site filter for shared multi-site list pages.
- * Defaults to All sites (tenant-wide). Working site is available as a quick choice.
+ * Site filter for shared multi-site list pages.
+ * Defaults to the TopBar working site so switching location reloads that site's data.
+ * Users can still choose "All sites" for a tenant-wide view.
  */
 export function useSiteListFilter() {
   const { locationId: workingSiteId } = useActiveLocation();
   const [sites, setSites] = useState<LocationMaster[]>([]);
-  const [locationFilter, setLocationFilter] = useState<number | "">("");
+  const [locationFilter, setLocationFilter] = useState<number | "">(
+    () => (workingSiteId > 0 ? workingSiteId : "")
+  );
+
+  // Follow TopBar working site when it changes (including after Layout remount).
+  useEffect(() => {
+    if (workingSiteId > 0) {
+      setLocationFilter(workingSiteId);
+    }
+  }, [workingSiteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,7 +42,8 @@ export function useSiteListFilter() {
         const cached = AuthService.getAllowedLocations();
 
         let list: LocationMaster[] = [];
-        if (!canAccessAll && cached.length > 0) {
+        // Prefer login-cached locations (including admins) to skip a redundant GetLocations call.
+        if (cached.length > 0) {
           list = cached.map((l) => ({
             locationId: l.locationId,
             name: l.name || "",
@@ -89,7 +100,7 @@ export function useSiteListFilter() {
 
   /** Pass to list APIs; undefined means all sites. */
   const locationIdParam =
-    locationFilter === "" || locationFilter <= 0 ? undefined : locationFilter;
+    locationFilter === "" || locationFilter <= 0 ? undefined : Number(locationFilter);
 
   const masterListFilter = useMemo(
     () => ({

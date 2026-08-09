@@ -119,9 +119,11 @@ const CustomerMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadCustomers();
+    if (refreshList) {
+      loadCustomers();
+    }
   };
 
   const handleSort = (column: keyof CustomerMaster) => {

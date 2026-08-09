@@ -452,8 +452,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.Notes ?? ""
                     }).ToList(),
                     TotalAmount = order.TotalAmount
@@ -524,8 +524,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.notes ?? ""
                     }).ToList(),
                     TotalAmount = quotation.TotalAmount

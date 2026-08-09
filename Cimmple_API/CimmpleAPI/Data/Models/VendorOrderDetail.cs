@@ -52,7 +52,11 @@ namespace CimmpleAPI.Data.Models
         
         [Column("Discount")]
         public decimal Discount { get; set; } = 0;
-        
+
+        /// <summary>Percent (default) or Amount ($).</summary>
+        [Column("DiscountType")]
+        public string? DiscountType { get; set; }
+
         // Map to existing productid column (case-insensitive in SQL Server, but explicit is better)
         [Column("productid")]
         public int? ProductId { get; set; }

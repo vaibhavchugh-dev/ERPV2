@@ -1,4 +1,5 @@
 import Instense from "./Axios-config";
+import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
 
 export interface OrderAttachment {
   id: number;
@@ -148,19 +149,9 @@ export class OrderService {
     }).then((response) => {
       const result = response.data.result as any;
       
-      // Format dates
-      const formatDate = (dateStr: string | null | undefined): string => {
-        if (!dateStr) return "";
-        try {
-          const date = new Date(dateStr);
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const year = String(date.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        } catch {
-          return "";
-        }
-      };
+      // Format dates (calendar parts only — no timezone shift)
+      const formatDate = (dateStr: string | null | undefined): string =>
+        formatDateOnlyFromApi(dateStr);
 
       return {
         OrderID: result.orderID,
@@ -255,25 +246,8 @@ export class OrderService {
 
     request.Tenantid = tenantID;
 
-    // Convert date strings to ISO format
-    const convertDate = (dateStr: string): string => {
-      if (!dateStr) return new Date().toISOString();
-      try {
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1;
-          const day = parseInt(parts[1]);
-          const year = parseInt(parts[2]) + 2000;
-          return new Date(year, month, day).toISOString();
-        }
-        if (dateStr.includes('T') || dateStr.includes('Z')) {
-          return new Date(dateStr).toISOString();
-        }
-        return new Date(dateStr).toISOString();
-      } catch {
-        return new Date().toISOString();
-      }
-    };
+    // Convert date strings to date-only yyyy-MM-dd (no timezone shift)
+    const convertDate = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
     const payload: any = {
       OrderID: request.OrderID || 0,
@@ -301,7 +275,7 @@ export class OrderService {
         ItemNo: d.ItemNo || 0,
         PartName: d.PartName || "",
         PartNo: d.PartNo || "",
-        DueDate: convertDate(d.DueDate || d.LeadTime || new Date().toISOString()),
+        DueDate: convertDate(d.DueDate || d.LeadTime || ""),
         JobNumber: d.JobNumber || "",
         JobDesc: d.JobDesc || "",
         QtyOrdered: d.QtyOrdered || 0,

@@ -10,7 +10,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface ChartofAccountsMasterSlideoutProps {
   accountId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 interface GroupOption {
@@ -321,7 +321,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
           : "Chart of Account created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving chart of account:", error);
       toast.error(`Error saving chart of account: ${error.message || "Unknown error"}`);
@@ -365,7 +365,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       toast.success("Chart of Account deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting chart of account:", error);
       toast.error(`Error deleting chart of account: ${error.message || "Unknown error"}`);

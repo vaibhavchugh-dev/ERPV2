@@ -359,7 +359,7 @@ namespace CimmpleAPI.Controllers
                     quotation = new QuotationOrder
                     {
                         Tenantid = request.Tenantid,
-                        OrderDate = request.OrderDate,
+                        OrderDate = request.OrderDate.Date,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
                         PONumber = nextPONumber
@@ -367,6 +367,7 @@ namespace CimmpleAPI.Controllers
                     _context.QuotationOrder.Add(quotation);
                 }
 
+                quotation.OrderDate = request.OrderDate.Date;
                 quotation.CustomerID = request.CustomerID;
                 quotation.customercode = request.CustomerCode ?? "";
                 quotation.CustomerName = request.CustomerName ?? "";
@@ -416,7 +417,7 @@ namespace CimmpleAPI.Controllers
                             ItemNo = detail.ItemNo,
                             partname = detail.PartName ?? "",
                             PartNo = detail.PartNo ?? "",
-                            DueDate = detail.DueDate,
+                            DueDate = detail.DueDate.Date,
                             JobNumber = detail.JobNumber ?? "",
                             JobDesc = detail.JobDesc ?? "",
                             QtyOrdered = detail.QtyOrdered,
@@ -475,6 +476,7 @@ namespace CimmpleAPI.Controllers
                     result = new
                     {
                         id = quotation.OrderID,
+                        poNumber = quotation.PONumber,
                         message = "Quotation saved successfully",
                         attachments = attachments.Select(a => new
                         {
@@ -652,7 +654,7 @@ namespace CimmpleAPI.Controllers
                     CustomerName = source.CustomerName ?? "",
                     address = source.address ?? "",
                     CustomerPoNumber = source.CustomerPoNumber ?? "",
-                    OrderDate = DateTime.UtcNow.Date,
+                    OrderDate = DateTime.Now.Date,
                     TotalAmount = source.TotalAmount,
                     UserId = source.UserId,
                     UserToken = source.UserToken,
@@ -1131,9 +1133,11 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         leadTime = "",
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson) 
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null
@@ -1628,7 +1632,11 @@ namespace CimmpleAPI.Controllers
                             Tenantid = tenantid,
                             ItemNo = detailElem.TryGetProperty("ItemNo", out JsonElement itemNoElem) ? itemNoElem.GetInt32() : (detailElem.TryGetProperty("itemNo", out JsonElement itemNoElemLower) ? itemNoElemLower.GetInt32() : 0),
                             itemname = detailElem.TryGetProperty("PartName", out JsonElement partNameElem) ? partNameElem.GetString() ?? "" : (detailElem.TryGetProperty("partName", out JsonElement partNameElemLower) ? partNameElemLower.GetString() ?? "" : ""),
-                            glcode = "",
+                            glcode = detailElem.TryGetProperty("glcode", out JsonElement glcodeElem) && glcodeElem.ValueKind == JsonValueKind.String
+                                ? (glcodeElem.GetString() ?? "")
+                                : (detailElem.TryGetProperty("Glcode", out JsonElement glcodeElemUpper) && glcodeElemUpper.ValueKind == JsonValueKind.String
+                                    ? (glcodeElemUpper.GetString() ?? "")
+                                    : ""),
                             JobId = 0,
                             JobNumber = detailElem.TryGetProperty("JobNumber", out JsonElement jobNumberElem) ? jobNumberElem.GetString() ?? "" : (detailElem.TryGetProperty("jobNumber", out JsonElement jobNumberElemLower) ? jobNumberElemLower.GetString() ?? "" : ""),
                             JobDesc = detailElem.TryGetProperty("JobDesc", out JsonElement jobDescElem) ? jobDescElem.GetString() ?? "" : (detailElem.TryGetProperty("jobDesc", out JsonElement jobDescElemLower) ? jobDescElemLower.GetString() ?? "" : ""),
@@ -1637,6 +1645,11 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement unitPriceElem) ? unitPriceElem.GetDecimal() : (detailElem.TryGetProperty("unitPrice", out JsonElement unitPriceElemLower) ? unitPriceElemLower.GetDecimal() : 0),
                             JobPriority = detailElem.TryGetProperty("JobPriority", out JsonElement jobPriorityElem) ? jobPriorityElem.GetInt32() : (detailElem.TryGetProperty("jobPriority", out JsonElement jobPriorityElemLower) ? jobPriorityElemLower.GetInt32() : 0),
                             Discount = detailElem.TryGetProperty("Discount", out JsonElement discountElem) ? discountElem.GetDecimal() : (detailElem.TryGetProperty("discount", out JsonElement discountElemLower) ? discountElemLower.GetDecimal() : 0),
+                            DiscountType = detailElem.TryGetProperty("DiscountType", out JsonElement discountTypeElem) && discountTypeElem.ValueKind == JsonValueKind.String
+                                ? (string.Equals(discountTypeElem.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                : (detailElem.TryGetProperty("discountType", out JsonElement discountTypeElemLower) && discountTypeElemLower.ValueKind == JsonValueKind.String
+                                    ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                    : "Percent"),
                             Received = "",
                             productid = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (detailElem.TryGetProperty("productId", out JsonElement productIdElemLower) && productIdElemLower.ValueKind == JsonValueKind.Number ? productIdElemLower.GetInt32() : (int?)null),
                             notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) && notesElem.ValueKind == JsonValueKind.String ? notesElem.GetString() : (detailElem.TryGetProperty("notes", out JsonElement notesElemLower) && notesElemLower.ValueKind == JsonValueKind.String ? notesElemLower.GetString() : null),
@@ -1997,6 +2010,7 @@ namespace CimmpleAPI.Controllers
                         UnitPrice = quoteDetail.UnitPrice,
                         JobPriority = quoteDetail.JobPriority,
                         Discount = quoteDetail.Discount,
+                        DiscountType = string.IsNullOrWhiteSpace(quoteDetail.DiscountType) ? "Percent" : quoteDetail.DiscountType,
                         ProductId = quoteDetail.productid,
                         LeadTime = "",
                         Notes = quoteDetail.notes ?? "",
@@ -2252,6 +2266,7 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = 0, // Start with 0 - vendors enter actual pricing
                             JobPriority = sourceDetail.JobPriority,
                             Discount = 0, // Start with 0 - vendors enter actual discounts
+                            DiscountType = "Percent",
                             Tenantid = tenantid,
                             productid = sourceDetail.productid,
                             notes = sourceDetail.notes,
@@ -2396,8 +2411,10 @@ namespace CimmpleAPI.Controllers
                         unit = d.Unit ?? "EA",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         dueDate = d.DueDate,
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson)
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null

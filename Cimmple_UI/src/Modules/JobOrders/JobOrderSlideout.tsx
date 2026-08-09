@@ -9,8 +9,12 @@ import { OrderService, OrderMasterReq } from "../../Common/Services/OrderService
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
-import { JobTemplateService, JobTemplate } from "../../Common/Services/JobTemplateService";
+import { JobTemplateService, JobTemplate, JobTemplateReq } from "../../Common/Services/JobTemplateService";
 import JobTemplatePickerDialog from "../../Common/Components/JobTemplatePickerDialog";
+import {
+  JOB_PRIORITY_OPTIONS,
+  normalizeJobPriority,
+} from "../../Common/Constants/jobPriorities";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
@@ -21,17 +25,33 @@ import "./JobOrderSlideout.scss";
 
 interface JobOrderSlideoutProps {
   jobOrderId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
+  /** Optional list-row values so the header can render without waiting on GetJobOrderById. */
+  headerPreview?: {
+    jobOrderNumber?: number;
+    customerOrderId?: number;
+  };
 }
+
+const formatDisplayJobOrderNumber = (number: number): string => {
+  if (!number || number <= 0) return "";
+  return number < 1000 ? `JO#${number + 999}` : `JO#${number}`;
+};
+
+const formatDisplayCustomerOrderNumber = (number: number): string => {
+  if (!number || number <= 0) return "";
+  return number < 1000 ? `CO#${number + 999}` : `CO#${number}`;
+};
 
 const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   jobOrderId,
   onClose,
+  headerPreview,
 }) => {
   const [formData, setFormData] = useState<JobOrderMasterReq>({
     JobOrderID: 0,
-    JobOrderNumber: 0,
-    CustomerOrderID: 0,
+    JobOrderNumber: headerPreview?.jobOrderNumber || 0,
+    CustomerOrderID: headerPreview?.customerOrderId || 0,
     CustomerOrderDetailID: 0,
     CustomerID: 0,
     CustomerName: "",
@@ -58,6 +78,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     JobTemplateId: null,
     JobTemplateCode: "",
     JobTemplateRevision: null,
+    EnableJobTracking: false,
   });
 
   const [loading, setLoading] = useState(false);
@@ -70,7 +91,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
-  const [customerOrderNumber, setCustomerOrderNumber] = useState<string>("");
+  const [customerOrderNumber, setCustomerOrderNumber] = useState<string>(
+    formatDisplayCustomerOrderNumber(headerPreview?.customerOrderId || 0)
+  );
   const [customerOrderDetails, setCustomerOrderDetails] = useState<OrderMasterReq | null>(null);
   const [routingSteps, setRoutingSteps] = useState<JobOrderRoutingStep[]>([]);
   const [newRoutingStep, setNewRoutingStep] = useState<Partial<JobOrderRoutingStep>>({
@@ -89,6 +112,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<JobTemplate | null>(null);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [showSaveAsTemplateDialog, setShowSaveAsTemplateDialog] = useState(false);
+  const [savingAsTemplate, setSavingAsTemplate] = useState(false);
+  const [saveAsTemplateForm, setSaveAsTemplateForm] = useState({
+    TemplateCode: "",
+    TemplateName: "",
+    Revision: 1,
+  });
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -191,27 +221,24 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     try {
       const jobOrder = await JobOrderService.GetJobOrderById(jobOrderId);
       if (jobOrder) {
-        // The customer order is fetched before anything is committed to state, so both
-        // detail panels appear in the same render instead of Part Details laying out
-        // alone in the left column and then jumping right.
-        let order: OrderMasterReq | null = null;
-        if (jobOrder.CustomerOrderID > 0) {
-          try {
-            order = await OrderService.GetOrderById(jobOrder.CustomerOrderID);
-          } catch (err) {
-            console.error("Error loading customer order:", err);
-          }
-        }
-
+        // Apply the job order immediately so the header (JO #) can paint without
+        // waiting on the linked customer order fetch.
         setFormData(jobOrder);
         setAttachments(jobOrder.Attachments || []);
         setComments(jobOrder.Comments || []);
         setRoutingSteps(jobOrder.RoutingSteps || []);
+        setEnableJobTracking(!!jobOrder.EnableJobTracking);
 
-        if (order) {
-          setCustomerOrderDetails(order);
-          const orderNum = order.PONumber < 1000 ? order.PONumber + 999 : order.PONumber;
-          setCustomerOrderNumber(`CO#${orderNum}`);
+        if (jobOrder.CustomerOrderID > 0) {
+          try {
+            const order = await OrderService.GetOrderById(jobOrder.CustomerOrderID);
+            if (order) {
+              setCustomerOrderDetails(order);
+              setCustomerOrderNumber(formatDisplayCustomerOrderNumber(order.PONumber));
+            }
+          } catch (err) {
+            console.error("Error loading customer order:", err);
+          }
         }
       }
     } catch (error: any) {
@@ -247,10 +274,16 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setLoading(true);
 
     try {
-      const result = await JobOrderService.SaveJobOrder(formData);
+      const result = await JobOrderService.SaveJobOrder({
+        ...formData,
+        EnableJobTracking: enableJobTracking,
+        RoutingSteps: routingSteps,
+        Attachments: attachments,
+        Comments: comments,
+      });
       if (result && result.id > 0) {
         toast.success("Job order saved successfully");
-        onClose();
+        onClose(true);
       } else {
         toast.error("Failed to save job order");
       }
@@ -294,7 +327,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       await JobOrderService.DeleteJobOrder(jobOrderId);
       toast.success("Job order deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting job order:", error);
       toast.error(`Error deleting job order: ${error.message || "Unknown error"}`);
@@ -304,7 +337,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleCancel = () => {
-    onClose();
+    onClose(false);
   };
 
   const handleAddAttachment = () => {
@@ -361,13 +394,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setCommentIdCounter((prev) => prev + 1);
   };
 
-  const handleTemplatePicked = (template: JobTemplate) => {
-    setSelectedTemplate(template);
-    setShowTemplatePicker(false);
-  };
-
-  const handleApplyJobTemplate = async () => {
-    if (!selectedTemplate) {
+  const handleApplyJobTemplate = async (pickedTemplate?: JobTemplate) => {
+    const sourceTemplate = pickedTemplate || selectedTemplate;
+    if (!sourceTemplate) {
       toast.error("Please select a job template");
       return;
     }
@@ -375,7 +404,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     if (
       routingSteps.length > 0 &&
       !window.confirm(
-        `This will replace the ${routingSteps.length} existing router step(s), including any tracked progress, with the steps from template ${selectedTemplate.templateCode}. Continue?`
+        `This will replace the ${routingSteps.length} existing router step(s), including any tracked progress, with the steps from template ${sourceTemplate.templateCode}. Continue?`
       )
     ) {
       return;
@@ -383,7 +412,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
     setApplyingTemplate(true);
     try {
-      const template = await JobTemplateService.GetJobTemplateById(selectedTemplate.id);
+      const template = await JobTemplateService.GetJobTemplateById(sourceTemplate.id);
       const operations = template?.Operations || [];
 
       if (operations.length === 0) {
@@ -432,12 +461,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       setStepTimers(new Map());
 
       setRoutingSteps(steps);
+      setSelectedTemplate(sourceTemplate);
       setFormData((prev) => ({
         ...prev,
         RoutingSteps: steps,
-        JobTemplateId: template?.Id || selectedTemplate.id,
-        JobTemplateCode: template?.TemplateCode || selectedTemplate.templateCode,
-        JobTemplateRevision: template?.Revision ?? selectedTemplate.revision ?? null,
+        JobTemplateId: template?.Id || sourceTemplate.id,
+        JobTemplateCode: template?.TemplateCode || sourceTemplate.templateCode,
+        JobTemplateRevision: template?.Revision ?? sourceTemplate.revision ?? null,
       }));
       setNewRoutingStep({
         sequence: Math.max(...steps.map((s) => s.sequence)) + 10,
@@ -462,6 +492,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
   };
 
+  const handleTemplatePicked = async (template: JobTemplate) => {
+    setSelectedTemplate(template);
+    setShowTemplatePicker(false);
+    await handleApplyJobTemplate(template);
+  };
+
   const handleClearJobTemplateLink = () => {
     setFormData((prev) => ({
       ...prev,
@@ -469,6 +505,149 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       JobTemplateCode: "",
       JobTemplateRevision: null,
     }));
+  };
+
+  const openSaveAsTemplateDialog = () => {
+    if (!routingSteps.length) {
+      toast.error("Add at least one routing step before saving as a template");
+      return;
+    }
+    const missingProcess = routingSteps.find((s) => !s.processId);
+    if (missingProcess) {
+      toast.error(
+        `Step ${missingProcess.sequence} is missing a process. Select a process for every step before saving as a template.`
+      );
+      return;
+    }
+
+    const joLabel =
+      formData.JobOrderNumber > 0
+        ? formData.JobOrderNumber < 1000
+          ? `JO${formData.JobOrderNumber + 999}`
+          : `JO${formData.JobOrderNumber}`
+        : "JO";
+    const partHint = (formData.PartNo || formData.PartName || "Router").trim();
+    setSaveAsTemplateForm({
+      TemplateCode: `${joLabel}-${partHint}`.replace(/\s+/g, "-").slice(0, 40),
+      TemplateName: `${partHint} Router`.slice(0, 100),
+      Revision: 1,
+    });
+    setShowSaveAsTemplateDialog(true);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    const code = saveAsTemplateForm.TemplateCode.trim();
+    const name = saveAsTemplateForm.TemplateName.trim();
+    const revision = Number(saveAsTemplateForm.Revision) || 0;
+
+    if (!code) {
+      toast.error("Template code is required");
+      return;
+    }
+    if (!name) {
+      toast.error("Template name is required");
+      return;
+    }
+    if (revision < 1) {
+      toast.error("Revision must be 1 or greater");
+      return;
+    }
+    if (!routingSteps.length) {
+      toast.error("Add at least one routing step before saving as a template");
+      return;
+    }
+
+    const missingProcess = routingSteps.find((s) => !s.processId);
+    if (missingProcess) {
+      toast.error(
+        `Step ${missingProcess.sequence} is missing a process. Select a process for every step before saving as a template.`
+      );
+      return;
+    }
+
+    // JO stores a single estimatedTime; reverse the apply formula by treating it as
+    // cycle time for the ordered qty (setup = 0) so re-applying with the same qty recovers it.
+    const qtyMultiplier = Math.max(1, formData.QtyOrdered || 0);
+    const operations = [...routingSteps]
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((step) => ({
+        Id: 0,
+        SequenceNumber: step.sequence > 0 ? step.sequence : 10,
+        ProcessId: step.processId || null,
+        ProcessName: step.processName || "",
+        WorkstationId: step.workstationId || null,
+        WorkstationName: step.workstationName || "",
+        SetupTimeMinutes: 0,
+        CycleTimeMinutes: Math.round(((step.estimatedTime || 0) / qtyMultiplier) * 100) / 100,
+        Instructions: step.description || "",
+        IsMandatory: true,
+        QualityCheckRequired: false,
+      }));
+
+    const firstWithProcess = routingSteps.find((s) => s.processId);
+    const payload: JobTemplateReq = {
+      Id: 0,
+      Tenantid: formData.Tenantid || 0,
+      TemplateCode: code,
+      TemplateName: name,
+      Description: `Saved from Job Order ${
+        formData.JobOrderNumber > 0
+          ? formData.JobOrderNumber < 1000
+            ? `JO#${formData.JobOrderNumber + 999}`
+            : `JO#${formData.JobOrderNumber}`
+          : ""
+      }`.trim(),
+      Status: "Active",
+      Revision: revision,
+      EffectiveFrom: null,
+      EffectiveTo: null,
+      PrimaryProcessId: firstWithProcess?.processId || null,
+      WorkstationId: firstWithProcess?.workstationId || null,
+      EstimatedSetupTimeMinutes: null,
+      EstimatedCycleTimeMinutes: null,
+      EstimatedLabourTimeMinutes: null,
+      EstimatedMachineTimeMinutes: null,
+      DefaultMaterial: "",
+      MaterialGrade: "",
+      RawMaterialSize: "",
+      MaterialNotes: "",
+      Tool: "",
+      Fixture: "",
+      Workholding: "",
+      Gauge: "",
+      ToolingNotes: "",
+      InspectionType: "",
+      FirstArticleRequired: false,
+      InProcessInspection: false,
+      FinalInspection: false,
+      CmmRequired: false,
+      InspectionNotes: "",
+      Operations: operations,
+      CategoryValueIds: [],
+      IsSystem: false,
+    };
+
+    setSavingAsTemplate(true);
+    try {
+      const result = await JobTemplateService.SaveJobTemplate(payload);
+      const newId = result?.id || 0;
+      toast.success(`Job template ${code} saved successfully`);
+      setShowSaveAsTemplateDialog(false);
+
+      if (newId > 0) {
+        setFormData((prev) => ({
+          ...prev,
+          JobTemplateId: newId,
+          JobTemplateCode: code,
+          JobTemplateRevision: revision,
+        }));
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || "Unknown error";
+      toast.error(`Error saving job template: ${message}`);
+    } finally {
+      setSavingAsTemplate(false);
+    }
   };
 
   const handleAddRoutingStep = () => {
@@ -800,15 +979,27 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     <div className="job-order-slideout-overlay" onClick={handleCancel}>
       <div className="job-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="job-order-slideout-header">
-          <div>
+          <div className="jo-header-title-block">
             <h2>{jobOrderId > 0 ? "Edit Job Order" : "New Job Order"}</h2>
-            {jobOrderId > 0 && formData.JobOrderNumber > 0 && (
-              <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
-                Job Order Number: {formData.JobOrderNumber < 1000 ? `JO#${formData.JobOrderNumber + 999}` : `JO#${formData.JobOrderNumber}`}
-                {customerOrderNumber && (
-                  <span style={{ marginLeft: "1rem", color: "#6366f1" }}>
-                    → From Order: {customerOrderNumber}
-                  </span>
+            {jobOrderId > 0 && (
+              <div className="jo-header-meta" aria-live="polite">
+                {formatDisplayJobOrderNumber(formData.JobOrderNumber) ? (
+                  <>
+                    <span>
+                      Job Order Number: {formatDisplayJobOrderNumber(formData.JobOrderNumber)}
+                    </span>
+                    {(customerOrderNumber ||
+                      formData.CustomerOrderID > 0 ||
+                      initialLoading) && (
+                      <span
+                        className={`jo-header-meta-co ${customerOrderNumber ? "" : "is-pending"}`}
+                      >
+                        → From Order: {customerOrderNumber || "CO#----"}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="jo-header-meta-placeholder">Loading job details…</span>
                 )}
               </div>
             )}
@@ -849,6 +1040,32 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
               </>
             )}
             <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+              <div className="status-field-inline" title="Job priority for shop-floor assignment">
+                <div
+                  className={`input-group jo-priority-group jo-priority-group--${normalizeJobPriority(formData.JobPriority)}`}
+                  style={{ maxWidth: "130px" }}
+                >
+                  <div className="input-group-prepend">
+                    <span className="input-group-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z" />
+                      </svg>
+                    </span>
+                  </div>
+                  <select
+                    className="form-input"
+                    value={normalizeJobPriority(formData.JobPriority)}
+                    onChange={(e) => handleInputChange("JobPriority", parseInt(e.target.value, 10))}
+                    aria-label="Job priority"
+                  >
+                    {JOB_PRIORITY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div className="status-field-inline">
                 <div className={`input-group ${formData.Status === "In Progress" || formData.Status === "Partially Shipped" || formData.Status === "Shipped" || formData.Status === "Completed" ? "status-active-group" : "status-inactive-group"}`} style={{ maxWidth: "150px" }}>
                   <div className="input-group-prepend">
@@ -872,7 +1089,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   </select>
                 </div>
               </div>
-              {formData.Status !== "Completed" && (
+              {!initialLoading && formData.Status !== "Completed" && (
                 <button
                   type="button"
                   onClick={handleMarkJobComplete}
@@ -1181,15 +1398,50 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     </div>
                   )}
                 </div>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.875rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={enableJobTracking}
-                    onChange={(e) => setEnableJobTracking(e.target.checked)}
-                    style={{ width: "1rem", height: "1rem", cursor: "pointer" }}
-                  />
-                  <span>Enable Job Tracking</span>
-                </label>
+                <div className="jo-router-header-actions">
+                  <button
+                    type="button"
+                    className="jo-router-action-btn jo-router-action-btn--build"
+                    title="Build router from a job template"
+                    disabled={applyingTemplate}
+                    onClick={() => setShowTemplatePicker(true)}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    {applyingTemplate ? "Applying..." : "Build"}
+                  </button>
+                  <button
+                    type="button"
+                    className="jo-router-action-btn jo-router-action-btn--save-template"
+                    title="Save current router as a new job template"
+                    disabled={savingAsTemplate || routingSteps.length === 0}
+                    onClick={openSaveAsTemplateDialog}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    {savingAsTemplate ? "Saving..." : "Save Template"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`jo-router-action-btn jo-router-action-btn--track ${enableJobTracking ? "is-active" : ""}`}
+                    title={enableJobTracking ? "Disable job tracking" : "Enable job tracking"}
+                    aria-pressed={enableJobTracking}
+                    onClick={() => {
+                      const checked = !enableJobTracking;
+                      setEnableJobTracking(checked);
+                      setFormData((prev) => ({ ...prev, EnableJobTracking: checked }));
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
+                      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                    </svg>
+                    Track
+                  </button>
+                </div>
               </div>
               
               <div style={{ marginBottom: "1.5rem", overflowX: "auto" }}>
@@ -1276,85 +1528,58 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                   }}
                                 />
                               </td>
-                              <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>
-                                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                                  <div style={{ display: "flex", gap: "0.25rem" }}>
-                                    {(step.progressState === 'idle' || step.progressState === 'stopped' || !step.progressState) ? (
+                              <td style={{ padding: "0.75rem", fontSize: "0.875rem", whiteSpace: "nowrap" }}>
+                                <div className="jo-progress-controls">
+                                  {(step.progressState === "idle" || step.progressState === "stopped" || !step.progressState) ? (
+                                    <button
+                                      type="button"
+                                      className="jo-progress-btn jo-progress-btn--start"
+                                      onClick={() => handleStartStep(step.id)}
+                                      title="Start"
+                                    >
+                                      ▶
+                                    </button>
+                                  ) : step.progressState === "running" ? (
+                                    <>
                                       <button
                                         type="button"
-                                        onClick={() => handleStartStep(step.id)}
-                                        style={{
-                                          padding: "0.25rem 0.5rem",
-                                          backgroundColor: "#10b981",
-                                          color: "white",
-                                          border: "none",
-                                          borderRadius: "0.25rem",
-                                          cursor: "pointer",
-                                          fontSize: "0.75rem",
-                                          fontWeight: 500,
-                                        }}
+                                        className="jo-progress-btn jo-progress-btn--pause"
+                                        onClick={() => handlePauseStep(step.id)}
+                                        title="Pause"
                                       >
-                                        ▶ Start
+                                        ⏸
                                       </button>
-                                    ) : step.progressState === 'running' ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => handlePauseStep(step.id)}
-                                          style={{
-                                            padding: "0.25rem 0.5rem",
-                                            backgroundColor: "#f59e0b",
-                                            color: "white",
-                                            border: "none",
-                                            borderRadius: "0.25rem",
-                                            cursor: "pointer",
-                                            fontSize: "0.75rem",
-                                            fontWeight: 500,
-                                          }}
-                                        >
-                                          ⏸ Pause
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleStopStep(step.id)}
-                                          style={{
-                                            padding: "0.25rem 0.5rem",
-                                            backgroundColor: "#ef4444",
-                                            color: "white",
-                                            border: "none",
-                                            borderRadius: "0.25rem",
-                                            cursor: "pointer",
-                                            fontSize: "0.75rem",
-                                            fontWeight: 500,
-                                          }}
-                                        >
-                                          ⏹ Stop
-                                        </button>
-                                      </>
-                                    ) : (
                                       <button
                                         type="button"
-                                        onClick={() => handleResumeStep(step.id)}
-                                        style={{
-                                          padding: "0.25rem 0.5rem",
-                                          backgroundColor: "#10b981",
-                                          color: "white",
-                                          border: "none",
-                                          borderRadius: "0.25rem",
-                                          cursor: "pointer",
-                                          fontSize: "0.75rem",
-                                          fontWeight: 500,
-                                        }}
+                                        className="jo-progress-btn jo-progress-btn--stop"
+                                        onClick={() => handleStopStep(step.id)}
+                                        title="Stop"
                                       >
-                                        ▶ Resume
+                                        ⏹
                                       </button>
-                                    )}
-                                  </div>
-                                  {step.progressState === 'running' && (
-                                    <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem" }}>
-                                      Elapsed: {step.elapsedTime || 0} min
-                                    </div>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="jo-progress-btn jo-progress-btn--start"
+                                      onClick={() => handleResumeStep(step.id)}
+                                      title="Resume"
+                                    >
+                                      ▶
+                                    </button>
                                   )}
+                                  <span
+                                    className={`jo-progress-elapsed ${
+                                      step.progressState === "running" ? "is-visible" : ""
+                                    }`}
+                                    title={
+                                      step.progressState === "running"
+                                        ? `Elapsed: ${step.elapsedTime || 0} min`
+                                        : undefined
+                                    }
+                                  >
+                                    {step.progressState === "running" ? `${step.elapsedTime || 0}m` : ""}
+                                  </span>
                                 </div>
                               </td>
                             </>
@@ -1439,94 +1664,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                             fontSize: "0.875rem" 
                           }}
                         >
-                          No routing steps added yet. Build the router from a job template, or add manufacturing steps one at a time below.
+                          No routing steps added yet. Click Build to use a job template, or add manufacturing steps one at a time below.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
-              </div>
-
-              {/* Build Router from a Job Template */}
-              <div style={{ padding: "1rem", marginBottom: "1rem", backgroundColor: "#ffffff", borderRadius: "0.375rem", border: "1px solid #e5e7eb" }}>
-                <h4 style={{ margin: "0 0 1rem 0", fontSize: "0.875rem", fontWeight: 600 }}>Build Router from Job Template</h4>
-                <div style={{ display: "flex", alignItems: "stretch", gap: "0.75rem", flexWrap: "wrap" }}>
-                  <div
-                    style={{
-                      flex: "1 1 260px",
-                      minWidth: 0,
-                      padding: "0.625rem 0.75rem",
-                      border: `1px solid ${selectedTemplate ? "#c7d2fe" : "#d1d5db"}`,
-                      borderRadius: "0.375rem",
-                      backgroundColor: selectedTemplate ? "#eef2ff" : "#f9fafb",
-                    }}
-                  >
-                    {selectedTemplate ? (
-                      <>
-                        <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "#111827" }}>
-                          {`${selectedTemplate.templateCode} — ${selectedTemplate.templateName}`}
-                        </div>
-                        <div style={{ fontSize: "0.75rem", color: "#4b5563", marginTop: "0.25rem" }}>
-                          {[
-                            `Rev ${selectedTemplate.revision}`,
-                            `${selectedTemplate.operationCount ?? 0} step${selectedTemplate.operationCount === 1 ? "" : "s"}`,
-                            selectedTemplate.primaryProcessName,
-                            (selectedTemplate.categories || [])
-                              .map((c) => c.categoryValueName)
-                              .join(", "),
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </div>
-                      </>
-                    ) : (
-                      <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
-                        No template selected
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <button
-                      type="button"
-                      onClick={() => setShowTemplatePicker(true)}
-                      disabled={applyingTemplate}
-                      style={{
-                        padding: "0.5rem 1rem",
-                        backgroundColor: "#ffffff",
-                        color: "#374151",
-                        border: "1px solid #d1d5db",
-                        borderRadius: "0.375rem",
-                        fontSize: "0.875rem",
-                        fontWeight: 500,
-                        cursor: applyingTemplate ? "not-allowed" : "pointer",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {selectedTemplate ? "Change Template..." : "Browse Templates..."}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleApplyJobTemplate}
-                      disabled={applyingTemplate || !selectedTemplate}
-                      style={{
-                        padding: "0.5rem 1rem",
-                        backgroundColor: applyingTemplate || !selectedTemplate ? "#a5b4fc" : "#6366f1",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "0.375rem",
-                        fontSize: "0.875rem",
-                        fontWeight: 500,
-                        cursor: applyingTemplate || !selectedTemplate ? "not-allowed" : "pointer",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {applyingTemplate ? "Applying..." : "Apply Template"}
-                    </button>
-                  </div>
-                </div>
-                <p style={{ margin: "0.75rem 0 0 0", fontSize: "0.75rem", color: "#6b7280" }}>
-                  {`Replaces every step above with the template's operations. Estimated time per step is one setup plus one cycle for each of the ${Math.max(1, formData.QtyOrdered || 0)} ${formData.Unit || "unit"} ordered, and stays editable afterwards.`}
-                </p>
               </div>
 
               {/* Add New Routing Step Form */}
@@ -1795,6 +1938,91 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             setEditingPartDesc("");
           }}
         />
+      )}
+
+      {/* Save Router as Job Template */}
+      {showSaveAsTemplateDialog && (
+        <div className="text-editor-popup-overlay" onClick={() => !savingAsTemplate && setShowSaveAsTemplateDialog(false)}>
+          <div className="text-editor-popup jo-save-template-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="text-editor-popup-header">
+              <h3>Save Router as Job Template</h3>
+              <button
+                type="button"
+                className="btn-close"
+                disabled={savingAsTemplate}
+                onClick={() => setShowSaveAsTemplateDialog(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="text-editor-popup-content">
+              <p className="jo-save-template-hint">
+                Creates a new template in Job Template Master from the {routingSteps.length} step
+                {routingSteps.length === 1 ? "" : "s"} on this job order. Estimated times are stored as
+                cycle time so they scale with quantity when reused.
+              </p>
+              <div className="form-group" style={{ marginBottom: "1rem" }}>
+                <label>Template Code *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={saveAsTemplateForm.TemplateCode}
+                  onChange={(e) =>
+                    setSaveAsTemplateForm((prev) => ({ ...prev, TemplateCode: e.target.value }))
+                  }
+                  placeholder="e.g. JT-BRACKET-01"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: "1rem" }}>
+                <label>Template Name *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={saveAsTemplateForm.TemplateName}
+                  onChange={(e) =>
+                    setSaveAsTemplateForm((prev) => ({ ...prev, TemplateName: e.target.value }))
+                  }
+                  placeholder="e.g. Bracket Router"
+                />
+              </div>
+              <div className="form-group">
+                <label>Revision *</label>
+                <input
+                  type="number"
+                  className="form-input no-spinner"
+                  min={1}
+                  value={saveAsTemplateForm.Revision}
+                  onChange={(e) =>
+                    setSaveAsTemplateForm((prev) => ({
+                      ...prev,
+                      Revision: parseInt(e.target.value, 10) || 1,
+                    }))
+                  }
+                  onWheel={(e) => e.currentTarget.blur()}
+                />
+              </div>
+            </div>
+            <div className="text-editor-popup-footer">
+              <button
+                type="button"
+                className="btn-cancel"
+                disabled={savingAsTemplate}
+                onClick={() => setShowSaveAsTemplateDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-submit"
+                disabled={savingAsTemplate}
+                onClick={handleSaveAsTemplate}
+              >
+                {savingAsTemplate ? "Saving..." : "Save Template"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Job Template Picker */}

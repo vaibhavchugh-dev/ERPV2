@@ -14,13 +14,14 @@ import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
 interface BankMasterSlideoutProps {
   bankId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   bankId,
   onClose,
 }) => {
+  const handleDismiss = () => onClose(false);
   const [formData, setFormData] = useState<BankMasterReq>({
     Id: 0,
     BankName: "",
@@ -270,7 +271,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
         toast.success(
           bankId > 0 ? "Bank updated successfully" : "Bank created successfully"
         );
-        onClose();
+        onClose(true);
       }
     } catch (error: any) {
       toast.error(`Error saving bank: ${error.message}`);
@@ -304,7 +305,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
       toast.success("Bank deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting bank:", error);
       toast.error(`Error deleting bank: ${error.message || "Unknown error"}`);
@@ -380,11 +381,11 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   };
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>{bankId > 0 ? "Edit Bank" : "Add New Bank"}</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -910,7 +911,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
                 Delete
               </button>
             )}
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Cancel
             </button>
             <button type="submit" className="btn-submit" disabled={loading}>

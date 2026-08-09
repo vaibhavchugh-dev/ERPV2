@@ -5,6 +5,7 @@ import { OrderService, OrderMaster } from "../../Common/Services/OrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./CustomerOrders.scss";
 
 const CustomerOrders: React.FC = () => {
@@ -86,24 +87,16 @@ const CustomerOrders: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedOrderId(0);
-    loadOrders();
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
+    if (refreshList) {
+      loadOrders();
     }
   };
+
+  const formatDate = (dateStr: string): string =>
+    formatDateOnlyFromApi(dateStr, true) || dateStr;
 
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat("en-US", {
@@ -195,6 +188,7 @@ const CustomerOrders: React.FC = () => {
         columns={columns}
         data={filteredOrders}
         loading={loading}
+        enablePagination
         onAdd={handleAddOrder}
         onRowClick={handleRowClick}
         filters={[
@@ -224,6 +218,7 @@ const CustomerOrders: React.FC = () => {
         <CustomerOrderSlideout
           orderId={selectedOrderId}
           onClose={handleCloseSlideout}
+          onSaved={(id) => setSelectedOrderId(id)}
         />
       )}
     </div>

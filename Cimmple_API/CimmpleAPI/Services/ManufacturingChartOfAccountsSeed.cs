@@ -4,26 +4,29 @@ using CimmpleAPI.Data.Models;
 namespace CimmpleAPI.Services;
 
 /// <summary>
-/// Idempotent seed: adds typical manufacturing / job-shop style chart-of-accounts rows
-/// for a tenant when that account code is not already present.
+/// Canonical Chart of Accounts for Cimmple. Idempotent: inserts manufacturing / job-shop
+/// accounts for a tenant when that account code is not already present.
+/// Existing tenant rows (including legacy codes) are never deleted or overwritten.
 /// </summary>
 public static class ManufacturingChartOfAccountsSeed
 {
     private sealed record SeedRow(string Code, string Name, string AccountType, string MainGroup);
 
     /// <summary>
-    /// 4-digit style codes: 1xxx current assets, 15xx fixed assets, 2xxx payables & accruals,
-    /// 3xxx equity, 4xxx revenue, 5xxx COGS, 6xxx shop & SG&A, 7xxx R&amp;D, 8xxx other.
+    /// 4-digit style codes: 1xxx current assets, 15xx fixed assets, 2xxx payables &amp; accruals,
+    /// 3xxx equity, 4xxx revenue, 5xxx COGS, 6xxx shop &amp; SG&amp;A, 7xxx R&amp;D, 8xxx other.
     /// </summary>
     private static readonly SeedRow[] Rows =
     {
         new("1000", "Cash - Operating", "Asset", "Current Assets"),
+        new("1005", "Cash in Bank - Operating", "Asset", "Current Assets"),
         new("1010", "Petty Cash", "Asset", "Current Assets"),
         new("1020", "Accounts Receivable - Trade", "Asset", "Current Assets"),
         new("1030", "Allowance for Doubtful Accounts", "Asset", "Current Assets"),
         new("1100", "Raw Materials Inventory", "Asset", "Current Assets"),
         new("1110", "Work in Process Inventory", "Asset", "Current Assets"),
         new("1120", "Finished Goods Inventory", "Asset", "Current Assets"),
+        new("1140", "Input Tax Recoverable", "Asset", "Current Assets"),
         new("1200", "Prepaid Expenses", "Asset", "Current Assets"),
         new("1210", "Prepaid Insurance", "Asset", "Current Assets"),
         new("1300", "Deposits & Other Current Assets", "Asset", "Current Assets"),
@@ -54,6 +57,8 @@ public static class ManufacturingChartOfAccountsSeed
         new("4010", "Sales - Services / Jobbing", "Revenue", "Operating Revenue"),
         new("4020", "Scrap, Rework & Other Operating Income", "Revenue", "Operating Revenue"),
         new("4030", "Sales Discounts & Allowances", "Revenue", "Operating Revenue"),
+        new("4050", "Shipping / Freight Income", "Revenue", "Operating Revenue"),
+        new("4060", "Other Charges Income", "Revenue", "Operating Revenue"),
         new("5000", "Direct Materials", "Expense", "Cost of Goods Sold"),
         new("5010", "Direct Labor - Production", "Expense", "Cost of Goods Sold"),
         new("5020", "Production Overhead Applied", "Expense", "Cost of Goods Sold"),

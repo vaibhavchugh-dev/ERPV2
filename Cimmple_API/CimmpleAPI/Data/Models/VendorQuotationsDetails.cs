@@ -12,6 +12,9 @@ namespace CimmpleAPI.Data.Models
         [Column(TypeName = "decimal(18,2)")]
         public decimal Discount { get; set; }
 
+        /// <summary>Percent (default) or Amount ($).</summary>
+        public string? DiscountType { get; set; }
+
         public DateTime? DueDate { get; set; }
 
         public int? Groupid { get; set; }

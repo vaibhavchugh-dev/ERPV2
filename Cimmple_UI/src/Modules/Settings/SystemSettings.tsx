@@ -716,6 +716,9 @@ const SystemSettingsComponent: React.FC = () => {
                       fontSize: '0.875rem'
                     }}
                   />
+                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                    Logs out after this many minutes of inactivity. Active users stay signed in.
+                  </small>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>

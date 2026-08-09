@@ -44,6 +44,37 @@
   font-size: 1.5rem;
   font-weight: 600;
   color: #111827;
+  line-height: 1.3;
+}
+
+.jo-header-title-block {
+  min-width: 0;
+  flex: 1;
+  padding-right: 1rem;
+}
+
+.jo-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 1rem;
+  margin-top: 0.25rem;
+  min-height: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #6b7280;
+}
+
+.jo-header-meta-co {
+  color: #6366f1;
+}
+
+.jo-header-meta-co.is-pending {
+  visibility: hidden;
+}
+
+.jo-header-meta-placeholder {
+  color: #9ca3af;
 }
 
 .job-order-slideout-form {
@@ -217,6 +248,188 @@
 .btn-submit:hover {
   background-color: #4f46e5;
   border-color: #4f46e5;
+}
+
+.jo-save-template-dialog {
+  max-width: 480px;
+}
+
+.jo-save-template-hint {
+  margin: 0 0 1.25rem;
+  font-size: 0.8125rem;
+  color: #6b7280;
+  line-height: 1.45;
+}
+
+.jo-priority-group select.form-input {
+  font-weight: 600;
+}
+
+.jo-priority-group--0 .input-group-icon,
+.jo-priority-group--0 select.form-input {
+  color: #4b5563;
+}
+
+.jo-priority-group--1 {
+  border-color: #f59e0b;
+}
+
+.jo-priority-group--1 .input-group-icon,
+.jo-priority-group--1 select.form-input {
+  color: #b45309;
+}
+
+.jo-priority-group--2 {
+  border-color: #ef4444;
+}
+
+.jo-priority-group--2 .input-group-icon,
+.jo-priority-group--2 select.form-input {
+  color: #b91c1c;
+}
+
+
+/* Job Router header short actions */
+.jo-router-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.jo-router-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.jo-router-action-btn svg {
+  flex-shrink: 0;
+}
+
+.jo-router-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.jo-router-action-btn--build {
+  background: #6366f1;
+  border: 1px solid #6366f1;
+  color: #ffffff;
+}
+
+.jo-router-action-btn--build:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+}
+
+.jo-router-action-btn--save-template {
+  background: #ffffff;
+  border: 1px solid #6366f1;
+  color: #4f46e5;
+}
+
+.jo-router-action-btn--save-template:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #4f46e5;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.2);
+}
+
+.jo-router-action-btn--track {
+  background: #ffffff;
+  border: 1px solid #a5b4fc;
+  color: #4338ca;
+}
+
+.jo-router-action-btn--track:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+
+.jo-router-action-btn--track.is-active {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+}
+
+.jo-router-action-btn--track.is-active:hover:not(:disabled) {
+  background: #059669;
+  border-color: #059669;
+}
+
+/* Progress controls stay on one line so tracking rows don't change height */
+.jo-progress-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-height: 1.75rem;
+}
+
+.jo-progress-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.jo-progress-btn--start {
+  background: #10b981;
+}
+
+.jo-progress-btn--start:hover {
+  background: #059669;
+}
+
+.jo-progress-btn--pause {
+  background: #f59e0b;
+}
+
+.jo-progress-btn--pause:hover {
+  background: #d97706;
+}
+
+.jo-progress-btn--stop {
+  background: #ef4444;
+}
+
+.jo-progress-btn--stop:hover {
+  background: #dc2626;
+}
+
+.jo-progress-elapsed {
+  display: inline-block;
+  min-width: 2.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.jo-progress-elapsed.is-visible {
+  color: #374151;
 }
 
 

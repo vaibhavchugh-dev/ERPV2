@@ -6,11 +6,11 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerShipmentsService, CustomerShipmentSummary } from "../../Common/Services/CustomerShipmentsService";
 import { ShippingService } from "../../Common/Services/ShippingService";
+import { PdfService } from "../../Common/Services/PdfService";
 import CustomerShipmentDetailModal from "./CustomerShipmentDetailModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 
 interface FilterOptions {
-  status: string;
   dateRange: string;
   customerId?: number;
   searchTerm: string;
@@ -22,7 +22,6 @@ const CustomerShipments: React.FC = () => {
   const [shipments, setShipments] = useState<CustomerShipmentSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
-    status: 'All',
     dateRange: 'Last 30 Days',
     searchTerm: ''
   });
@@ -57,7 +56,7 @@ const CustomerShipments: React.FC = () => {
     try {
       console.log("[CustomerShipments] Loading shipments with filters:", filters);
       const result = await CustomerShipmentsService.GetAllShipments(
-        filters.status,
+        "All",
         filters.searchTerm,
         filters.customerId,
         filters.dateRange
@@ -110,9 +109,27 @@ const CustomerShipments: React.FC = () => {
     setSelectedShipmentId(0);
   };
 
-  const handlePrintShipment = (shipment: CustomerShipmentSummary) => {
-    // TODO: Open print modal or generate PDF
-    toast.info(`Printing shipment ${shipment.shipmentNo}`);
+  const handlePrintShipment = async (shipment: CustomerShipmentSummary) => {
+    if (!shipment?.id) {
+      toast.error("Shipment not loaded");
+      return;
+    }
+
+    try {
+      const blob = await PdfService.GenerateShipment(shipment.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Shipment_${shipment.shipmentNo || shipment.id}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success("Shipment PDF generated successfully");
+    } catch (error: any) {
+      console.error("Error generating shipment PDF:", error);
+      toast.error(error.response?.data?.error || "Failed to generate shipment PDF");
+    }
   };
 
   const refreshDeletionImpact = async () => {
@@ -297,11 +314,6 @@ const CustomerShipments: React.FC = () => {
     },
   ];
 
-  const statusOptions = [
-    { value: 'All', label: 'All Statuses' },
-    { value: 'Shipped', label: 'Shipped' }
-  ];
-
   const dateRangeOptions = [
     { value: 'All', label: 'All Dates' },
     { value: 'Last 7 Days', label: 'Last 7 Days' },
@@ -318,15 +330,10 @@ const CustomerShipments: React.FC = () => {
         data={shipments}
         columns={columns}
         loading={loading}
+        enablePagination
         searchPlaceholder="Search by shipment #, order #, customer, or tracking #..."
         searchFields={["shipmentNo", "orderNumber", "customerName", "customerCode", "trackingNumber", "courier"]}
         filters={[
-          {
-            label: "Status",
-            options: statusOptions,
-            value: filters.status,
-            onChange: (value) => handleFilterChange('status', value)
-          },
           {
             label: "Date Range",
             options: dateRangeOptions,

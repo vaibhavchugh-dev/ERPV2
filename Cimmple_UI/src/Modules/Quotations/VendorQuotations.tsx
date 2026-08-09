@@ -80,10 +80,12 @@ const VendorQuotations: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedQuotationId(0);
-    loadQuotations();
+    if (refreshList) {
+      loadQuotations();
+    }
   };
 
   const formatDate = (dateStr: string): string => {
@@ -316,6 +318,7 @@ const VendorQuotations: React.FC = () => {
         columns={columns}
         data={filteredQuotations}
         loading={loading}
+        enablePagination
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[
@@ -347,10 +350,12 @@ const VendorQuotations: React.FC = () => {
       {showComparison && (
         <VendorQuotationComparison
           parentQuotationId={comparisonParentId}
-          onClose={() => {
+          onClose={(refreshList = false) => {
             setShowComparison(false);
             setComparisonParentId(0);
-            loadQuotations(); // Refresh to show updated statuses
+            if (refreshList) {
+              loadQuotations();
+            }
           }}
           onQuotationSelected={(quotationId) => {
             // Optionally open the selected quotation

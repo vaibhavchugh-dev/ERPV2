@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/VendorOrderService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
   const processedOrderIdRef = useRef<string | null>(null);
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<VendorOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -16,7 +18,7 @@ const VendorOrders: React.FC = () => {
 
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [locationIdParam]);
 
   // Check for orderId or open in URL parameters and open slideout
   useEffect(() => {
@@ -42,7 +44,10 @@ const VendorOrders: React.FC = () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const result = await VendorOrderService.GetVendorOrders({ tenantid: tenantID });
+      const result = await VendorOrderService.GetVendorOrders({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
 
       if (result && Array.isArray(result)) {
         // Debug: Log all orders to check data structure, especially quotationNo
@@ -83,12 +88,13 @@ const VendorOrders: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedOrderId(0);
     processedOrderIdRef.current = null; // Reset so we can process new orderIds
-
-    loadOrders();
+    if (refreshList) {
+      loadOrders();
+    }
   };
 
   const formatDate = (dateStr: string): string => {
@@ -252,9 +258,11 @@ const VendorOrders: React.FC = () => {
         columns={columns}
         data={filteredOrders}
         loading={loading}
+        enablePagination
         onAdd={handleAddOrder}
         onRowClick={handleRowClick}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [

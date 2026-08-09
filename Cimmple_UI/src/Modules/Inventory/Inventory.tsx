@@ -30,6 +30,13 @@ const Inventory: React.FC = () => {
   const [movementType, setMovementType] = useState<MovementType>(null);
   const [selectedBalance, setSelectedBalance] = useState<InventoryBalance | null>(null);
 
+  // Keep inventory filter aligned with TopBar working site.
+  useEffect(() => {
+    if (activeLocationId > 0) {
+      setLocationFilter(activeLocationId);
+    }
+  }, [activeLocationId]);
+
   useEffect(() => {
     loadData();
   }, [locationFilter, lowStockOnly]);
@@ -75,6 +82,10 @@ const Inventory: React.FC = () => {
     setShowMovementModal(false);
     setMovementType(null);
     setSelectedBalance(null);
+  };
+
+  const handleMovementSuccess = () => {
+    handleCloseMovement();
     loadData();
   };
 
@@ -296,7 +307,7 @@ const Inventory: React.FC = () => {
           fallbackProducts={fallbackProducts}
           locations={locations}
           onClose={handleCloseMovement}
-          onSuccess={handleCloseMovement}
+          onSuccess={handleMovementSuccess}
         />
       )}
     </div>

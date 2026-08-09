@@ -1354,6 +1354,79 @@ namespace CimmpleAPI.Data.Migrations
                     b.ToTable("EntityMaster");
                 });
 
+            modelBuilder.Entity("CimmpleAPI.Data.Models.AccountingDefaults", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CompanyName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DefaultAccountsPayableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultAccountsReceivableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DefaultCurrency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<int?>("DefaultExpenseAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultFreightInAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultFreightOutAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultInputTaxAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultInventoryAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultOtherChargeAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultRevenueAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultSalesTaxPayableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FiscalYearStart")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("AccountingDefaults", (string)null);
+                });
+
             modelBuilder.Entity("CimmpleAPI.Data.Models.GlAccountingPeriodLock", b =>
                 {
                     b.Property<int>("Id")
@@ -2037,6 +2110,9 @@ namespace CimmpleAPI.Data.Migrations
 
                     b.Property<DateTime>("DueDate")
                         .HasColumnType("datetime2");
+
+                    b.Property<bool>("EnableJobTracking")
+                        .HasColumnType("bit");
 
                     b.Property<string>("JobDesc")
                         .HasColumnType("nvarchar(max)");
@@ -4234,6 +4310,9 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<int>("accountid")
                         .HasColumnType("int");
 
+                    b.Property<int?>("expenseAccountId")
+                        .HasColumnType("int");
+
                     b.Property<int>("vendorid")
                         .HasColumnType("int");
 
@@ -4362,6 +4441,9 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("FreightCharge")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("PaidAmount")

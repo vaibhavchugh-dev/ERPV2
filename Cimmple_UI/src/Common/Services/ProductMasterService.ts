@@ -233,6 +233,49 @@ export class ProductMasterService {
       }));
     });
   };
+
+  public static GetPartsByVendor = async (
+    vendorId: number,
+    options?: { q?: string; limit?: number }
+  ): Promise<CustomerPartOption[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/ProductMaster/GetPartsByVendor`;
+    const params: Record<string, string | number> = {
+      tenantId: tenantID,
+      vendorId,
+      limit: options?.limit ?? 50,
+    };
+    if (options?.q && options.q.trim()) {
+      params.q = options.q.trim();
+    }
+
+    return Instense.get(url, { params }).then((response) => {
+      const result = response.data?.result;
+      if (!Array.isArray(result)) return [];
+      return result.map((p: any) => ({
+        partNo: p.partNo || "",
+        partName: p.partName || "",
+        unit: p.unit || "EA",
+        unitPrice: p.unitPrice ?? 0,
+        productId: p.productId,
+        lastQuotedPrice: p.lastQuotedPrice ?? null,
+        lastQuotedDate: p.lastQuotedDate ?? null,
+        lastOrderedPrice: p.lastOrderedPrice ?? null,
+        lastOrderedQty: p.lastOrderedQty ?? null,
+        lastOrderedDate: p.lastOrderedDate ?? null,
+        suggestedQty: p.suggestedQty ?? 1,
+        orderCount: p.orderCount ?? 0,
+        quotationCount: p.quotationCount ?? 0,
+        totalQtyOrdered: p.totalQtyOrdered ?? 0,
+        totalQtyQuoted: p.totalQtyQuoted ?? 0,
+      }));
+    });
+  };
 }
 
 export {};

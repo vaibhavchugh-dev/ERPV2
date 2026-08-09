@@ -6,6 +6,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerInvoicesService, CustomerInvoiceSummary } from "../../Common/Services/CustomerInvoicesService";
 import { InvoiceService } from "../../Common/Services/InvoiceService";
+import { PdfService } from "../../Common/Services/PdfService";
 import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
@@ -525,9 +526,27 @@ const CustomerInvoices: React.FC = () => {
     setShowPaymentModal(true);
   };
 
-  const handlePrintInvoice = (invoice: CustomerInvoiceSummary) => {
-    // TODO: Open print modal or generate PDF
-    toast.info(`Printing invoice ${invoice.invoiceNo}`);
+  const handlePrintInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!invoice?.id) {
+      toast.error("Invoice not loaded");
+      return;
+    }
+
+    try {
+      const blob = await PdfService.GenerateInvoice(invoice.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Invoice_${invoice.invoiceNo || invoice.id}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success("Invoice PDF generated successfully");
+    } catch (error: any) {
+      console.error("Error generating invoice PDF:", error);
+      toast.error(error.response?.data?.error || "Failed to generate invoice PDF");
+    }
   };
 
   const handleVoidInvoice = (invoice: CustomerInvoiceSummary) => {
@@ -731,6 +750,7 @@ const CustomerInvoices: React.FC = () => {
         data={invoices}
         columns={columns}
         loading={loading}
+        enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         filters={[

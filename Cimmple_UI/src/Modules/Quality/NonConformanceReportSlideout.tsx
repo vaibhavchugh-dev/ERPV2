@@ -10,13 +10,14 @@ import "./NonConformanceReportSlideout.scss";
 
 interface NonConformanceReportSlideoutProps {
   ncrId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> = ({
   ncrId,
   onClose
 }) => {
+  const handleDismiss = () => onClose(false);
   console.log("NonConformanceReportSlideout rendered with props:", { ncrId, onClose });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -217,7 +218,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
       }
 
       if (result) {
-        onClose();
+        onClose(true);
       }
     } catch (error: any) {
       console.error("Error saving NCR:", error);
@@ -256,7 +257,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
       await QualityService.DeleteNCR(ncrId, tenantID);
       toast.success("NCR deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting NCR:", error);
       toast.error(`Error deleting NCR: ${error.message || "Unknown error"}`);
@@ -299,7 +300,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   if (loading) {
     return (
       <div className="ncr-slideout">
-        <div className="ncr-slideout-overlay" onClick={onClose} />
+        <div className="ncr-slideout-overlay" onClick={handleDismiss} />
         <div className="ncr-slideout-content">
           <div className="loading-state">
             <div>Loading NCR...</div>
@@ -311,7 +312,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
 
   return (
     <div className="ncr-slideout">
-      <div className="ncr-slideout-overlay" onClick={onClose} />
+      <div className="ncr-slideout-overlay" onClick={handleDismiss} />
       <div className="ncr-slideout-content">
         {/* Header */}
         <div className="ncr-header">
@@ -320,7 +321,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
             <h3>{ncrId > 0 ? 'Edit NCR' : 'Create NCR'}</h3>
             {ncr.ncrNumber && <span className="ncr-number">{ncr.ncrNumber}</span>}
           </div>
-          <button className="close-button" onClick={onClose}>
+          <button className="close-button" onClick={handleDismiss}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -656,7 +657,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           )}
           <button
             className="btn-secondary"
-            onClick={onClose}
+            onClick={handleDismiss}
             disabled={saving}
           >
             Cancel

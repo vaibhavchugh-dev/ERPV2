@@ -101,8 +101,15 @@ export class AuthService {
       existingLocationId > 0 &&
       (user.canAccessAllLocations || allowedIds.has(existingLocationId));
 
-    if (!existingStillValid && serverDefault > 0) {
-      localStorage.setItem("locationId", String(serverDefault));
+    const workingLocationId = existingStillValid ? existingLocationId : serverDefault;
+    if (workingLocationId > 0) {
+      localStorage.setItem("locationId", String(workingLocationId));
+      // Keep Redux/header in sync (store may still be 0 after login).
+      window.dispatchEvent(
+        new CustomEvent("locationChanged", {
+          detail: { locationId: workingLocationId },
+        })
+      );
     }
   }
 

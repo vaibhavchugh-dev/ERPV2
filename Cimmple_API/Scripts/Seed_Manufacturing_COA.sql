@@ -1,10 +1,15 @@
 /*
-  Manufacturing-style Chart of Accounts seed for dbo.ChartofAccounts.
+  Canonical manufacturing Chart of Accounts seed for dbo.ChartofAccounts.
   Idempotent: inserts only rows where (Tenantid, AccountCode) does not already exist.
   Matches ManufacturingChartOfAccountsSeed.cs — keep both in sync when editing.
+  Does not delete or alter existing (including legacy) accounts.
 
   Usage (SSMS / sqlcmd):
     Set @TenantId to your tenant (e.g. 1), then execute the script.
+
+  CLI alternative (repo root):
+    dotnet run --project Cimmple_API/CimmpleAPI -- seed-coa
+    dotnet run --project Cimmple_API/CimmpleAPI -- seed-coa 101
 */
 SET NOCOUNT ON;
 
@@ -29,12 +34,14 @@ SELECT v.AccountCode, v.AccountName, v.AccountType, CAST(1 AS bit),
        v.MainGroup
 FROM (VALUES
     (N'1000', N'Cash - Operating', N'Asset', N'Current Assets'),
+    (N'1005', N'Cash in Bank - Operating', N'Asset', N'Current Assets'),
     (N'1010', N'Petty Cash', N'Asset', N'Current Assets'),
     (N'1020', N'Accounts Receivable - Trade', N'Asset', N'Current Assets'),
     (N'1030', N'Allowance for Doubtful Accounts', N'Asset', N'Current Assets'),
     (N'1100', N'Raw Materials Inventory', N'Asset', N'Current Assets'),
     (N'1110', N'Work in Process Inventory', N'Asset', N'Current Assets'),
     (N'1120', N'Finished Goods Inventory', N'Asset', N'Current Assets'),
+    (N'1140', N'Input Tax Recoverable', N'Asset', N'Current Assets'),
     (N'1200', N'Prepaid Expenses', N'Asset', N'Current Assets'),
     (N'1210', N'Prepaid Insurance', N'Asset', N'Current Assets'),
     (N'1300', N'Deposits & Other Current Assets', N'Asset', N'Current Assets'),
@@ -65,6 +72,8 @@ FROM (VALUES
     (N'4010', N'Sales - Services / Jobbing', N'Revenue', N'Operating Revenue'),
     (N'4020', N'Scrap, Rework & Other Operating Income', N'Revenue', N'Operating Revenue'),
     (N'4030', N'Sales Discounts & Allowances', N'Revenue', N'Operating Revenue'),
+    (N'4050', N'Shipping / Freight Income', N'Revenue', N'Operating Revenue'),
+    (N'4060', N'Other Charges Income', N'Revenue', N'Operating Revenue'),
     (N'5000', N'Direct Materials', N'Expense', N'Cost of Goods Sold'),
     (N'5010', N'Direct Labor - Production', N'Expense', N'Cost of Goods Sold'),
     (N'5020', N'Production Overhead Applied', N'Expense', N'Cost of Goods Sold'),
@@ -102,4 +111,4 @@ WHERE NOT EXISTS (
       AND c.AccountCode = v.AccountCode
 );
 
-PRINT CONCAT('Manufacturing COA seed finished for TenantId=', @TenantId, '. Rows inserted: ', @@ROWCOUNT);
+PRINT CONCAT('Canonical manufacturing COA seed finished for TenantId=', @TenantId, '. Rows inserted: ', @@ROWCOUNT);

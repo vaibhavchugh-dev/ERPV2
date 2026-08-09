@@ -2,14 +2,17 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { QuotationService, QuotationMaster } from "../../Common/Services/QuotationService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import CustomerQuotationSlideout from "./CustomerQuotationSlideout";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./CustomerQuotations.scss";
 
 const CustomerQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [quotations, setQuotations] = useState<QuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
@@ -20,7 +23,7 @@ const CustomerQuotations: React.FC = () => {
 
   useEffect(() => {
     loadQuotations();
-  }, []);
+  }, [locationIdParam]);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -57,7 +60,10 @@ const CustomerQuotations: React.FC = () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const result = await QuotationService.GetQuotations({ tenantid: tenantID });
+      const result = await QuotationService.GetQuotations({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       
       if (result && Array.isArray(result)) {
         // Debug: Log status values and convertedOrderId to check what's being received
@@ -90,24 +96,16 @@ const CustomerQuotations: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedQuotationId(0);
-    loadQuotations();
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
+    if (refreshList) {
+      loadQuotations();
     }
   };
+
+  const formatDate = (dateStr: string): string =>
+    formatDateOnlyFromApi(dateStr, true) || dateStr;
 
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat("en-US", {
@@ -240,9 +238,11 @@ const CustomerQuotations: React.FC = () => {
         columns={columns}
         data={filteredQuotations}
         loading={loading}
+        enablePagination
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [
@@ -265,6 +265,7 @@ const CustomerQuotations: React.FC = () => {
         <CustomerQuotationSlideout
           quotationId={selectedQuotationId}
           onClose={handleCloseSlideout}
+          onSaved={(id) => setSelectedQuotationId(id)}
         />
       )}
 

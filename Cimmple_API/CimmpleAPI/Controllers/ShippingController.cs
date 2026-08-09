@@ -27,18 +27,12 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                
-                // Log for debugging
-                Console.WriteLine($"[GetShippableItems] orderId: {orderId}, tenantId: {tenantId}");
 
                 var detailsList = _context.CustomerOrderDetails
+                    .AsNoTracking()
                     .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
                     .ToList();
-                
-                Console.WriteLine($"[GetShippableItems] Found {detailsList.Count} order details for orderId {orderId} and tenantId {tenantId}");
 
-                // Calculate ShippedQty from ShippingDetails (same as GetOrderById)
-                // This ensures accuracy even if stored value is out of sync
                 var orderDetailIds = detailsList.Select(d => d.ID).ToList();
                 var shippingDetails = _context.ShippingDetails
                     .Where(sd => sd.OrderDetailID.HasValue && orderDetailIds.Contains(sd.OrderDetailID.Value))
@@ -47,11 +41,21 @@ namespace CimmpleAPI.Controllers
                         s => s.Id,
                         (sd, s) => new { sd.OrderDetailID, sd.ShippedQty, s.TenantId })
                     .Where(x => x.TenantId == tenantId)
-                    .GroupBy(x => x.OrderDetailID.Value)
+                    .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
 
-                var shippableItems = detailsList.Select(d => {
+                var jobOrdersByDetail = _context.JobOrderMaster
+                    .AsNoTracking()
+                    .Where(jo => jo.Tenantid == tenantId && orderDetailIds.Contains(jo.CustomerOrderDetailID))
+                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status })
+                    .ToList()
+                    .GroupBy(jo => jo.CustomerOrderDetailID)
+                    .ToDictionary(g => g.Key, g => g.First().Status ?? "Draft");
+
+                var shippableItems = detailsList.Select(d =>
+                {
                     var calculatedShippedQty = shippingDetails.ContainsKey(d.ID) ? shippingDetails[d.ID] : d.ShippedQty;
+                    var hasJobOrder = jobOrdersByDetail.ContainsKey(d.ID);
                     return new
                     {
                         id = d.ID,
@@ -62,12 +66,8 @@ namespace CimmpleAPI.Controllers
                         shippedQty = calculatedShippedQty,
                         availableQty = d.QtyOrdered - calculatedShippedQty,
                         shippingStatus = d.ShippingStatus,
-                        hasJobOrder = _context.JobOrderMaster
-                            .Any(jo => jo.CustomerOrderDetailID == d.ID && jo.Tenantid == tenantId),
-                        jobOrderStatus = _context.JobOrderMaster
-                            .Where(jo => jo.CustomerOrderDetailID == d.ID && jo.Tenantid == tenantId)
-                            .Select(jo => jo.Status)
-                            .FirstOrDefault() ?? "No Job Order"
+                        hasJobOrder,
+                        jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order"
                     };
                 }).ToList();
 

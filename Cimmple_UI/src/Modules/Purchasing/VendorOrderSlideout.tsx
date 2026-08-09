@@ -6,9 +6,12 @@ import {
   VendorOrderMasterReq,
   VendorOrderDetailReq,
 } from "../../Common/Services/VendorOrderService";
+import { DiscountType } from "../../Common/Services/QuotationService";
 import { VendorService } from "../../Common/Services/VendorService";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
 import { VendorInvoiceService, InvoiceableItemForVendor, VendorInvoice } from "../../Common/Services/VendorInvoiceService";
+import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
+import { AccountingService } from "../../Common/Services/AccountingService";
 import VendorInvoiceModal from "./VendorInvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
@@ -17,11 +20,17 @@ import {
   VENDOR_ORDER_LINE_TYPES,
   defaultLineTypeForOrder,
 } from "../../Common/Constants/vendorOrderLineTypes";
+import {
+  VendorPartCombobox,
+  formatPartHistoryHint,
+  looksLikeJobPartNo,
+} from "../../Common/Components/CustomerPartCombobox";
+import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import "./VendorOrderSlideout.scss";
 
 interface VendorOrderSlideoutProps {
   orderId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
@@ -71,6 +80,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const [jobOrderDropdownOpen, setJobOrderDropdownOpen] = useState<Map<number, boolean>>(new Map());
   const [jobOrderDropdownPositions, setJobOrderDropdownPositions] = useState<Map<number, { top: number; left: number; width: number }>>(new Map());
   const [selectedJobOrders, setSelectedJobOrders] = useState<Map<number, Set<number>>>(new Map());
+  const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
 
@@ -80,6 +90,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<InvoiceableItemForVendor[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [invoices, setInvoices] = useState<VendorInvoice[]>([]);
+  const [coaAccounts, setCoaAccounts] = useState<ChartofAccountMaster[]>([]);
+  const [companyDefaultExpenseGlcode, setCompanyDefaultExpenseGlcode] = useState("");
+  const [defaultExpenseGlcode, setDefaultExpenseGlcode] = useState("");
 
   // Print modal state
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -190,6 +203,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   useEffect(() => {
     loadVendors();
     loadJobOrders();
+    loadCoaDefaults();
     if (orderId > 0) {
       loadOrder();
       loadInvoiceData();
@@ -253,6 +267,26 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     }
   };
 
+  const accountIdToGlcode = (accountId?: number | null): string =>
+    accountId && accountId > 0 ? String(accountId) : "";
+
+  const loadCoaDefaults = async () => {
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const tenantID = storage?.tenantID || 0;
+      const [accounts, settings] = await Promise.all([
+        ChartofAccountsService.GetChartofAccounts({ tenantid: tenantID }),
+        AccountingService.GetAccountingSettings(),
+      ]);
+      setCoaAccounts((accounts || []).filter((a) => a.isActive !== false));
+      const companyGl = accountIdToGlcode(settings?.defaultExpenseAccountId);
+      setCompanyDefaultExpenseGlcode(companyGl);
+      setDefaultExpenseGlcode((prev) => prev || companyGl);
+    } catch (error) {
+      console.error("Error loading COA defaults:", error);
+    }
+  };
+
   const getFirstLine = (text: string): string => {
     if (!text) return "";
     const firstLine = text.split(/\r?\n/)[0];
@@ -291,15 +325,39 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           return "";
         };
 
+        const normalizedDetails = (result.Details || []).map((detail: any) => {
+          const partNo = detail.PartNo || "";
+          const jobNumber = detail.JobNumber || "";
+          if (looksLikeJobPartNo(partNo) && !jobNumber.trim()) {
+            return { ...detail, JobNumber: partNo, PartNo: "" };
+          }
+          if (looksLikeJobPartNo(partNo) && jobNumber.trim()) {
+            return { ...detail, PartNo: "" };
+          }
+          return detail;
+        });
+
         const formDataWithDetails = {
           ...result,
           OrderDate: convertToDateInputFormat(result.OrderDate), // Convert to YYYY-MM-DD format
-          Details: result.Details || [],
+          Details: normalizedDetails,
           OrderType: "Vendor", // Always "Vendor" for vendor orders
           MaterialType: result.MaterialType || result.OrderType || "Material",
         };
         setFormData(formDataWithDetails);
+        setPartHistoryByRow(new Map());
 
+        if (formDataWithDetails.VendorID && formDataWithDetails.VendorID > 0) {
+          try {
+            const vendor = await VendorService.GetVendorById(formDataWithDetails.VendorID);
+            const vendorGl =
+              accountIdToGlcode((vendor as any)?.defaultExpenseAccountId) ||
+              companyDefaultExpenseGlcode;
+            setDefaultExpenseGlcode(vendorGl);
+          } catch {
+            /* keep company default */
+          }
+        }
         if (result.Attachments && Array.isArray(result.Attachments)) {
           setAttachments(result.Attachments.map(a => ({
             id: a.id || 0,
@@ -323,28 +381,25 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         }
 
         const newSelectedJobOrders = new Map<number, Set<number>>();
-        if (result.Details && Array.isArray(result.Details)) {
-          result.Details.forEach((detail: any, index: number) => {
-            if (detail.PartNo && detail.PartNo.trim() !== "") {
-              const partNoValue = detail.PartNo.trim();
-              const jobNumbers = partNoValue.split(",").map((s: string) => s.trim());
-              const selectedIds = new Set<number>();
-              jobNumbers.forEach((jobNum: string) => {
-                const matchingJobOrder = jobOrders.find(jo => {
-                  return jo.jobNumber === jobNum ||
-                         `JO#${jo.jobOrderNumber}` === jobNum ||
-                         jo.jobOrderNumber?.toString() === jobNum.replace("JO#", "");
-                });
-                if (matchingJobOrder) {
-                  selectedIds.add(matchingJobOrder.jobOrderID);
-                }
-              });
-              if (selectedIds.size > 0) {
-                newSelectedJobOrders.set(index, selectedIds);
-              }
+        normalizedDetails.forEach((detail: any, index: number) => {
+          const jobSource = (detail.JobNumber || "").trim() || (looksLikeJobPartNo(detail.PartNo) ? (detail.PartNo || "").trim() : "");
+          if (!jobSource) return;
+          const jobNumbers = jobSource.split(",").map((s: string) => s.trim()).filter(Boolean);
+          const selectedIds = new Set<number>();
+          jobNumbers.forEach((jobNum: string) => {
+            const matchingJobOrder = jobOrders.find(jo => {
+              return jo.jobNumber === jobNum ||
+                     `JO#${jo.jobOrderNumber}` === jobNum ||
+                     jo.jobOrderNumber?.toString() === jobNum.replace(/^JO#?/i, "");
+            });
+            if (matchingJobOrder) {
+              selectedIds.add(matchingJobOrder.jobOrderID);
             }
           });
-        }
+          if (selectedIds.size > 0) {
+            newSelectedJobOrders.set(index, selectedIds);
+          }
+        });
         setSelectedJobOrders(newSelectedJobOrders);
       }
     } catch (error: any) {
@@ -393,9 +448,18 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               defaultContactPerson = `${firstContact.firstname} ${firstContact.lastname || ""}`.trim();
             }
           }
+          const vendorExpenseGl =
+            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+            companyDefaultExpenseGlcode;
+          setDefaultExpenseGlcode(vendorExpenseGl);
           setFormData(prev => ({
             ...prev,
             BuyerName: defaultContactPerson,
+            Details: (prev.Details || []).map((d) =>
+              !d.glcode || !String(d.glcode).trim()
+                ? { ...d, glcode: vendorExpenseGl }
+                : d
+            ),
           }));
         }
       } catch (error) {
@@ -415,9 +479,16 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   };
 
   const calculateLineTotal = (detail: VendorOrderDetailReq): number => {
-    const subtotal = detail.QtyOrdered * detail.UnitPrice;
-    const discountAmount = (subtotal * detail.Discount) / 100;
-    return subtotal - discountAmount;
+    const qty = Number(detail.QtyOrdered) || 0;
+    const unitPrice = Number(detail.UnitPrice) || 0;
+    const discount = Number(detail.Discount) || 0;
+    const subtotal = qty * unitPrice;
+    if (subtotal <= 0) return 0;
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(Math.max(discount, 0), subtotal)
+        : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
   };
 
   const handleAddDetail = () => {
@@ -442,6 +513,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -449,6 +521,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         ShippingStatus: "",
         InvoicedQty: 0,
         InvoiceStatus: "",
+        glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
       };
 
       const total = [...details, newDetail].reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
@@ -458,6 +531,34 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         Details: [...details, newDetail],
         TotalAmount: total,
       };
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyVendorPart = (index: number, part: CustomerPartOption) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: part.partNo,
+        PartName: part.partName || current.PartName,
+        Unit: part.unit || current.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
+        ProductId: part.productId ?? current.ProductId,
+        QtyOrdered:
+          part.suggestedQty && part.suggestedQty > 0
+            ? part.suggestedQty
+            : current.QtyOrdered || 1,
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      next.set(index, part);
+      return next;
     });
     setIsStateChanged(true);
   };
@@ -530,7 +631,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           };
           await VendorOrderService.SaveVendorOrder(duplicatedOrder);
           toast.success("Order duplicated successfully");
-          onClose();
+          onClose(true);
         }
       } catch (error: any) {
         console.error("Error duplicating order:", error);
@@ -630,7 +731,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         await VendorOrderService.DeleteVendorOrder(orderId);
         toast.success("All dependencies and order deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         setDeletionImpact(updatedImpact);
         toast.warning("Some dependencies could not be deleted. Please try again.");
@@ -649,7 +750,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       await VendorOrderService.DeleteVendorOrder(orderId);
       toast.success("Order deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting order:", error);
       toast.error(`Error deleting order: ${error.message || "Unknown error"}`);
@@ -764,7 +865,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         }));
       }
 
-      onClose();
+      onClose(true);
     } catch (error: any) {
       toast.error(`Error saving order: ${error.message || "Unknown error"}`);
       console.error("Error saving order:", error);
@@ -983,11 +1084,11 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             </div>
 
             {/* Material Type Selection */}
-            <div className="form-row">
+            <div className="form-row form-row--type-toggle">
               <div className="form-group">
-                <label>Material Type <span className="required">*</span></label>
-                <div className="radio-group">
-                  <label className="radio-label">
+                <label className="field-label">Material Type <span className="required">*</span></label>
+                <div className="type-toggle" role="radiogroup" aria-label="Material Type">
+                  <label className={`type-toggle-option${formData.MaterialType === "Material" ? " is-selected" : ""}`}>
                     <input
                       type="radio"
                       name="materialType"
@@ -995,10 +1096,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                       checked={formData.MaterialType === "Material"}
                       onChange={(e) => handleInputChange("MaterialType", e.target.value)}
                     />
-                    <span style={{ marginRight: "0.5rem" }}>📦</span>
+                    <span className="type-toggle-icon" aria-hidden>📦</span>
                     Material
                   </label>
-                  <label className="radio-label">
+                  <label className={`type-toggle-option${formData.MaterialType === "Service" ? " is-selected" : ""}`}>
                     <input
                       type="radio"
                       name="materialType"
@@ -1006,7 +1107,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                       checked={formData.MaterialType === "Service"}
                       onChange={(e) => handleInputChange("MaterialType", e.target.value)}
                     />
-                    <span style={{ marginRight: "0.5rem" }}>🔧</span>
+                    <span className="type-toggle-icon" aria-hidden>🔧</span>
                     Service
                   </label>
                 </div>
@@ -1045,13 +1146,15 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Item #</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "128px" }}>Line type</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Description</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part/Job No</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Job No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "80px" }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "120px" }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Discount</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>Discount % / $</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "180px" }}>Account</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Action</th>
                       </tr>
@@ -1066,10 +1169,12 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                           .filter(Boolean) as JobOrderMaster[];
                         const displayText = selectedJobOrdersList.length > 0
                           ? selectedJobOrdersList.map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`).join(", ")
-                          : detail.PartNo || "";
+                          : detail.JobNumber || (looksLikeJobPartNo(detail.PartNo) ? detail.PartNo : "");
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
 
                         return (
-                          <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <React.Fragment key={index}>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
@@ -1086,6 +1191,23 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   </option>
                                 ))}
                               </select>
+                            </td>
+                            <td style={{ padding: "0.75rem", position: "relative" }}>
+                              <VendorPartCombobox
+                                value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                vendorId={formData.VendorID}
+                                vendorSelected={!!formData.VendorID && formData.VendorID > 0}
+                                scrollContainerSelector=".vendor-order-slideout-content"
+                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
+                                onSelectPart={(part) => applyVendorPart(index, part)}
+                                onHistoryMatch={(part) => {
+                                  setPartHistoryByRow((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(index, part);
+                                    return next;
+                                  });
+                                }}
+                              />
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
                               <input
@@ -1110,7 +1232,6 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               />
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
-                              {/* Job Order Selection - Same as VendorQuotationSlideout */}
                               <div style={{ position: "relative" }}>
                                 <input
                                   type="text"
@@ -1144,7 +1265,6 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   placeholder="Select job orders"
                                   readOnly
                                 />
-                                {/* Job Order Dropdown - Same as VendorQuotationSlideout */}
                                 {isJobOrderDropdownOpen && jobOrderDropdownPositions.get(index) &&
                                   createPortal(
                                     <div
@@ -1165,7 +1285,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     >
                                     {jobOrders.map((jobOrder) => {
                                       const isSelected = selectedJobOrderIds.has(jobOrder.jobOrderID);
-  return (
+                                      return (
                                         <div
                                           key={jobOrder.jobOrderID}
                                           onMouseDown={(e) => {
@@ -1186,7 +1306,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                               .filter((jo): jo is JobOrderMaster => jo !== undefined)
                                               .map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`)
                                               .join(", ");
-                                            handleDetailChange(index, "PartNo", jobNumbers);
+                                            handleDetailChange(index, "JobNumber", jobNumbers);
                                             setIsStateChanged(true);
                                           }}
                                           style={{
@@ -1454,45 +1574,79 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 }}
                               />
                             </td>
-                            <td style={{ padding: "0.75rem", width: "100px" }}>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "80px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      handleDetailChange(index, "Discount", 0);
-                                    } else {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      const val = parseFloat(inputVal);
-                                      if (!isNaN(val) && val >= 0 && val <= 100) {
-                                        handleDetailChange(index, "Discount", val);
+                            <td style={{ padding: "0.75rem" }}>
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      (e.target.value === "Amount" ? "Amount" : "Percent") as DiscountType
+                                    )
+                                  }
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      if (inputVal === "" || inputVal === ".") {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        handleDetailChange(index, "Discount", 0);
+                                      } else {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        const val = parseFloat(inputVal);
+                                        if (!isNaN(val) && val >= 0) {
+                                          handleDetailChange(index, "Discount", val);
+                                        }
                                       }
-                                    }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                              />
+                                      return newMap;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                               ${lineTotal.toFixed(2)}
+                            </td>
+                            <td style={{ padding: "0.75rem" }}>
+                              <select
+                                className="form-input"
+                                style={{ minWidth: "170px", fontSize: "0.8125rem", padding: "0.35rem 0.5rem" }}
+                                value={detail.glcode || ""}
+                                onChange={(e) => handleDetailChange(index, "glcode", e.target.value)}
+                                title="Expense account for vendor bill posting"
+                              >
+                                <option value="">Company / vendor default</option>
+                                {coaAccounts.map((coa) => (
+                                  <option key={`po-coa-${index}-${coa.accountID}`} value={String(coa.accountID)}>
+                                    {coa.accountCode} - {coa.accountName}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <input
@@ -1522,12 +1676,30 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               </button>
                             </td>
                           </tr>
+                          {historyHint ? (
+                            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td colSpan={2} style={{ padding: 0, border: "none" }} />
+                              <td
+                                colSpan={11}
+                                style={{
+                                  padding: "0 0.75rem 0.5rem",
+                                  fontSize: "0.6875rem",
+                                  color: "#6b7280",
+                                  lineHeight: 1.3,
+                                }}
+                                title={historyHint}
+                              >
+                                {historyHint}
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
                     <tfoot>
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
-                        <td colSpan={7} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
+                        <td colSpan={9} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                           ${formData.TotalAmount.toFixed(2)}
                         </td>

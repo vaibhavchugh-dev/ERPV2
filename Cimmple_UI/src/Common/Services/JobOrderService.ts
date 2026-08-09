@@ -1,4 +1,5 @@
 import Instense from "./Axios-config";
+import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
 
 export interface JobOrderMaster {
   jobOrderID: number;
@@ -51,6 +52,7 @@ export interface JobOrderMasterReq {
   JobTemplateId?: number | null;
   JobTemplateCode?: string;
   JobTemplateRevision?: number | null;
+  EnableJobTracking?: boolean;
 }
 
 export interface JobOrderAttachment {
@@ -115,6 +117,28 @@ export class JobOrderService {
     });
   };
 
+  /** Lightweight: job orders linked to one customer order (detail ID → job order ID). */
+  public static GetJobOrdersByCustomerOrder = async (
+    orderId: number
+  ): Promise<{ jobOrderID: number; customerOrderDetailID: number; status: string }[] | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/JobOrder/GetJobOrdersByCustomerOrder`;
+    return Instense.get(url, {
+      params: { orderId, tenantId: tenantID },
+    }).then((response) => {
+      return (response.data.result || []) as {
+        jobOrderID: number;
+        customerOrderDetailID: number;
+        status: string;
+      }[];
+    });
+  };
+
   public static GetJobOrderById = async (
     jobOrderId: number
   ): Promise<JobOrderMasterReq | null> => {
@@ -133,18 +157,9 @@ export class JobOrderService {
       const result = response.data.result;
       if (!result) return null;
 
-      const formatDate = (dateStr: string | Date): string => {
-        if (!dateStr) return "";
-        try {
-          const date = typeof dateStr === "string" ? new Date(dateStr) : dateStr;
-          const month = String(date.getMonth() + 1).padStart(2, "0");
-          const day = String(date.getDate()).padStart(2, "0");
-          const year = String(date.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        } catch {
-          return "";
-        }
-      };
+      // Calendar parts only — no timezone shift (same pattern as Orders)
+      const formatDate = (dateStr: string | null | undefined): string =>
+        formatDateOnlyFromApi(dateStr);
 
       return {
         JobOrderID: result.jobOrderID,
@@ -209,6 +224,7 @@ export class JobOrderService {
         JobTemplateId: result.jobTemplateId ?? result.JobTemplateId ?? null,
         JobTemplateCode: result.jobTemplateCode || result.JobTemplateCode || "",
         JobTemplateRevision: result.jobTemplateRevision ?? result.JobTemplateRevision ?? null,
+        EnableJobTracking: !!(result.enableJobTracking ?? result.EnableJobTracking),
       };
     });
   };
@@ -217,7 +233,14 @@ export class JobOrderService {
     request: JobOrderMasterReq
   ): Promise<{ id: number; message: string }> => {
     const url = `/JobOrder/SaveJobOrder`;
-    return Instense.post(url, request).then((response) => {
+    // Date-only yyyy-MM-dd (no timezone shift) — same pattern as Orders
+    const payload = {
+      ...request,
+      DueDate: toDateOnlyApiString(request.DueDate),
+      OrderDate: toDateOnlyApiString(request.OrderDate),
+      EnableJobTracking: !!request.EnableJobTracking,
+    };
+    return Instense.post(url, payload).then((response) => {
       const result = response.data.result;
       if (result && result.id) {
         return { id: result.id, message: result.message || "Job order saved successfully" };

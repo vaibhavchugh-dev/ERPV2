@@ -108,9 +108,11 @@ const ProductMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadProducts();
+    if (refreshList) {
+      loadProducts();
+    }
   };
 
   const handleSyncFromOrders = async () => {

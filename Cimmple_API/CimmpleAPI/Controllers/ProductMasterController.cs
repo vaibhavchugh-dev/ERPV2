@@ -623,6 +623,241 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static bool IsJobPartNo(string? partNo)
+        {
+            if (string.IsNullOrWhiteSpace(partNo)) return false;
+            var p = partNo.Trim();
+            return p.Contains("JO#", StringComparison.OrdinalIgnoreCase)
+                || p.Contains("#JO", StringComparison.OrdinalIgnoreCase)
+                || p.StartsWith("JO", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string FirstLine(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+            var s = value.Trim();
+            var idx = s.IndexOfAny(new[] { '\r', '\n' });
+            return (idx >= 0 ? s.Substring(0, idx) : s).Trim();
+        }
+
+        /// <summary>
+        /// Distinct parts previously used for a vendor (from vendor quotations and vendor orders).
+        /// </summary>
+        [HttpGet("GetPartsByVendor")]
+        public IActionResult GetPartsByVendor(
+            [FromQuery] int tenantId,
+            [FromQuery] int vendorId,
+            [FromQuery] string? q = null,
+            [FromQuery] int limit = 50)
+        {
+            try
+            {
+                if (vendorId <= 0)
+                {
+                    return BadRequest(new { error = "Vendor is required" });
+                }
+
+                if (limit <= 0) limit = 50;
+                if (limit > 200) limit = 200;
+
+                var search = (q ?? "").Trim();
+
+                var quotations = _context.VendorQuotations
+                    .AsNoTracking()
+                    .Where(x => x.Tenantid == tenantId && x.VendorID == vendorId)
+                    .Select(x => new { x.OrderID, x.OrderDate })
+                    .ToList();
+                var quotationIds = quotations.Select(x => x.OrderID).ToList();
+                var quotationDateById = quotations.ToDictionary(x => x.OrderID, x => x.OrderDate);
+
+                var orders = _context.VendorOrders
+                    .AsNoTracking()
+                    .Where(o => o.Tenantid == tenantId && o.VendorID == vendorId)
+                    .Select(o => new { o.OrderID, o.OrderDate })
+                    .ToList();
+                var orderIds = orders.Select(o => o.OrderID).ToList();
+                var orderDateById = orders.ToDictionary(o => o.OrderID, o => o.OrderDate);
+
+                var quotationDetailsQuery = _context.VendorQuotationsDetails
+                    .AsNoTracking()
+                    .Where(d => d.Tenantid == tenantId && quotationIds.Contains(d.OrderID));
+
+                var orderDetailsQuery = _context.VendorOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID));
+
+                if (!string.IsNullOrEmpty(search))
+                {
+                    quotationDetailsQuery = quotationDetailsQuery.Where(d =>
+                        (d.PartNo != null && d.PartNo.Contains(search)) ||
+                        (d.itemname != null && d.itemname.Contains(search)));
+                    orderDetailsQuery = orderDetailsQuery.Where(d =>
+                        (d.PartNo != null && d.PartNo.Contains(search)) ||
+                        (d.PartName != null && d.PartName.Contains(search)));
+                }
+
+                var fromQuotations = quotationDetailsQuery
+                    .Select(d => new
+                    {
+                        partNo = (d.PartNo ?? "").Trim(),
+                        partName = (d.itemname ?? "").Trim(),
+                        unit = (d.Unit ?? "").Trim(),
+                        unitPrice = d.UnitPrice,
+                        qty = d.QtyOrdered,
+                        productId = d.productid,
+                        orderId = d.OrderID,
+                        dueDate = d.DueDate
+                    })
+                    .ToList()
+                    .Select(d =>
+                    {
+                        var historyKey = !IsJobPartNo(d.partNo) && !string.IsNullOrWhiteSpace(d.partNo)
+                            ? d.partNo
+                            : FirstLine(d.partName);
+                        return new
+                        {
+                            historyKey,
+                            partNo = !IsJobPartNo(d.partNo) && !string.IsNullOrWhiteSpace(d.partNo)
+                                ? d.partNo
+                                : FirstLine(d.partName),
+                            partName = d.partName,
+                            unit = d.unit,
+                            unitPrice = d.unitPrice,
+                            qty = d.qty,
+                            productId = d.productId,
+                            orderId = d.orderId,
+                            dueDate = d.dueDate
+                        };
+                    })
+                    .Where(d => !string.IsNullOrWhiteSpace(d.historyKey))
+                    .ToList();
+
+                var fromOrders = orderDetailsQuery
+                    .Select(d => new
+                    {
+                        partNo = (d.PartNo ?? "").Trim(),
+                        partName = (d.PartName ?? "").Trim(),
+                        unit = (d.Unit ?? "").Trim(),
+                        unitPrice = d.UnitPrice,
+                        qty = d.QtyOrdered,
+                        productId = d.ProductId,
+                        orderId = d.OrderID,
+                        dueDate = (DateTime?)d.DueDateDateTime
+                    })
+                    .ToList()
+                    .Select(d =>
+                    {
+                        var historyKey = !IsJobPartNo(d.partNo) && !string.IsNullOrWhiteSpace(d.partNo)
+                            ? d.partNo
+                            : FirstLine(d.partName);
+                        return new
+                        {
+                            historyKey,
+                            partNo = !IsJobPartNo(d.partNo) && !string.IsNullOrWhiteSpace(d.partNo)
+                                ? d.partNo
+                                : FirstLine(d.partName),
+                            partName = d.partName,
+                            unit = d.unit,
+                            unitPrice = d.unitPrice,
+                            qty = d.qty,
+                            productId = d.productId,
+                            orderId = d.orderId,
+                            dueDate = d.dueDate
+                        };
+                    })
+                    .Where(d => !string.IsNullOrWhiteSpace(d.historyKey))
+                    .ToList();
+
+                var allKeys = fromQuotations.Select(p => p.historyKey)
+                    .Concat(fromOrders.Select(p => p.historyKey))
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(p => p.ToUpperInvariant())
+                    .Distinct()
+                    .ToList();
+
+                var parts = allKeys
+                    .Select(key =>
+                    {
+                        var qLines = fromQuotations
+                            .Where(p => string.Equals(p.historyKey, key, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        var oLines = fromOrders
+                            .Where(p => string.Equals(p.historyKey, key, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        var latestQuote = qLines
+                            .Select(p =>
+                            {
+                                var docDate = quotationDateById.TryGetValue(p.orderId, out var od) && od.HasValue
+                                    ? od.Value
+                                    : (p.dueDate ?? DateTime.MinValue);
+                                return new { line = p, docDate };
+                            })
+                            .OrderByDescending(x => x.docDate)
+                            .FirstOrDefault();
+
+                        var latestOrder = oLines
+                            .Select(p =>
+                            {
+                                var docDate = orderDateById.TryGetValue(p.orderId, out var od)
+                                    ? od
+                                    : (p.dueDate ?? DateTime.MinValue);
+                                return new { line = p, docDate };
+                            })
+                            .OrderByDescending(x => x.docDate)
+                            .FirstOrDefault();
+
+                        var identity = latestOrder?.line ?? latestQuote?.line;
+                        if (identity == null)
+                        {
+                            return null;
+                        }
+
+                        var lastOrderedPrice = latestOrder?.line.unitPrice;
+                        var lastQuotedPrice = latestQuote?.line.unitPrice;
+                        var unitPrice = lastOrderedPrice ?? lastQuotedPrice ?? 0m;
+                        var suggestedQty = latestOrder?.line.qty
+                            ?? latestQuote?.line.qty
+                            ?? 1;
+
+                        return new
+                        {
+                            partNo = identity.partNo,
+                            partName = identity.partName,
+                            unit = string.IsNullOrWhiteSpace(identity.unit) ? "EA" : identity.unit,
+                            unitPrice = unitPrice,
+                            productId = identity.productId
+                                ?? latestOrder?.line.productId
+                                ?? latestQuote?.line.productId,
+                            lastQuotedPrice = lastQuotedPrice,
+                            lastQuotedDate = latestQuote != null && latestQuote.docDate > DateTime.MinValue
+                                ? latestQuote.docDate.ToString("MM/dd/yyyy")
+                                : (string?)null,
+                            lastOrderedPrice = lastOrderedPrice,
+                            lastOrderedQty = latestOrder?.line.qty,
+                            lastOrderedDate = latestOrder != null && latestOrder.docDate > DateTime.MinValue
+                                ? latestOrder.docDate.ToString("MM/dd/yyyy")
+                                : (string?)null,
+                            suggestedQty = suggestedQty,
+                            orderCount = oLines.Select(l => l.orderId).Distinct().Count(),
+                            quotationCount = qLines.Select(l => l.orderId).Distinct().Count(),
+                            totalQtyOrdered = oLines.Sum(l => l.qty),
+                            totalQtyQuoted = qLines.Sum(l => l.qty)
+                        };
+                    })
+                    .Where(p => p != null)
+                    .OrderBy(p => p!.partNo)
+                    .Take(limit)
+                    .ToList();
+
+                return Ok(new { result = parts });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
         /// <summary>
         /// Syncs ProductMaster with distinct parts from CustomerOrderDetails and QuotationOrderDetails.
         /// Inserts new products that appear on orders/quotations but do not yet exist in ProductMaster.

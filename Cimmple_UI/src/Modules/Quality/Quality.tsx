@@ -98,11 +98,13 @@ const Quality: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedNCRId(0);
-    loadNCRs(); // Refresh the list
-    loadStats(); // Refresh stats
+    if (refreshList) {
+      loadNCRs();
+      loadStats();
+    }
   };
 
   const handleFilterChange = (filterType: keyof typeof filters, value: string) => {
@@ -316,6 +318,7 @@ const Quality: React.FC = () => {
         data={ncrs}
         columns={columns}
         loading={loading}
+        enablePagination
         onAdd={handleCreateNCR}
         onRowClick={handleRowClick}
         addButtonLabel="Create NCR"

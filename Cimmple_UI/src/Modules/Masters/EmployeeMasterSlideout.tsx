@@ -14,7 +14,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface EmployeeMasterSlideoutProps {
   employeeId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
@@ -481,7 +481,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       await EmployeeService.DeleteEmployee(employeeId);
       toast.success("Employee deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting employee:", error);
       toast.error(`Error deleting employee: ${error.message || "Unknown error"}`);
@@ -545,7 +545,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         employeeId > 0 ? "Employee updated successfully" : "Employee created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving employee:", error);
       toast.error(`Error saving employee: ${error.message || "Unknown error"}`);

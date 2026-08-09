@@ -806,6 +806,7 @@ const VendorInvoices: React.FC = () => {
         data={invoices}
         columns={columns}
         loading={loading}
+        enablePagination
         onAdd={handleNewInvoice}
         addButtonLabel="New Invoice"
         searchPlaceholder="Search by invoice #, vendor, or order #..."

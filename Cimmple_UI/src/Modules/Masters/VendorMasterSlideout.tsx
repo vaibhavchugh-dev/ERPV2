@@ -13,13 +13,14 @@ import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
 interface VendorMasterSlideoutProps {
   vendorId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   vendorId,
   onClose,
 }) => {
+  const handleDismiss = () => onClose(false);
   const [formData, setFormData] = useState<VendorMasterReq>({
     vendor_id: 0,
     company_name: "",
@@ -152,6 +153,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
           TenantID: vendor.TenantID || tenantID,
           VendorContact: vendorContacts,
           coaAccountId: (vendor as any).coaAccountId || undefined,
+          defaultExpenseAccountId: (vendor as any).defaultExpenseAccountId || undefined,
         };
 
         setFormData(vendorData);
@@ -342,7 +344,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       await VendorService.DeleteVendor(vendorId);
       toast.success("Vendor deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting vendor:", error);
       toast.error(`Error deleting vendor: ${error.message || "Unknown error"}`);
@@ -434,7 +436,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         await VendorService.DeleteVendor(vendorId);
         toast.success("Vendor and all dependencies deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         // Still have blocking dependencies, refresh the dialog
         setDeletionImpact(updatedImpact);
@@ -578,7 +580,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         vendorId > 0 ? "Vendor updated successfully" : "Vendor created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       const message =
         error?.response?.data?.error ||
@@ -605,11 +607,11 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="slideout-overlay" onClick={(e) => e.target === e.currentTarget && handleDismiss()}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>{vendorId > 0 ? 'Edit Vendor' : 'Add New Vendor'}</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -793,7 +795,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
 
             <div className="form-row" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="form-group">
-                <label htmlFor="coaAccountId">Chart of Accounts</label>
+                <label htmlFor="coaAccountId">Accounts Payable</label>
                 <div className="input-group">
                   <div className="input-group-prepend">
                     <span className="input-group-icon">
@@ -807,7 +809,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                     value={formData.coaAccountId || ""}
                     onChange={(e) => handleInputChange("coaAccountId", e.target.value ? parseInt(e.target.value) : undefined)}
                   >
-                    <option value="">Select Chart of Accounts</option>
+                    <option value="">Use company default AP</option>
                     {coaAccounts.map((coa) => (
                       <option key={coa.accountID} value={coa.accountID}>
                         {coa.accountCode} - {coa.accountName}
@@ -815,6 +817,36 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                     ))}
                   </select>
                 </div>
+                <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                  Liability control account credited on vendor bills.
+                </small>
+              </div>
+              <div className="form-group">
+                <label htmlFor="defaultExpenseAccountId">Default Expense Account</label>
+                <div className="input-group">
+                  <div className="input-group-prepend">
+                    <span className="input-group-icon">
+                      {Icons.Document}
+                    </span>
+                  </div>
+                  <select
+                    id="defaultExpenseAccountId"
+                    name="defaultExpenseAccountId"
+                    className="form-input"
+                    value={formData.defaultExpenseAccountId || ""}
+                    onChange={(e) => handleInputChange("defaultExpenseAccountId", e.target.value ? parseInt(e.target.value) : undefined)}
+                  >
+                    <option value="">Use company default expense</option>
+                    {coaAccounts.map((coa) => (
+                      <option key={`exp-${coa.accountID}`} value={coa.accountID}>
+                        {coa.accountCode} - {coa.accountName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                  Used when a PO line has no GL code.
+                </small>
               </div>
             </div>
 
@@ -1388,7 +1420,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
             <button
               type="button"
               className="btn-cancel"
-              onClick={onClose}
+              onClick={handleDismiss}
               disabled={loading}
             >
               Cancel
