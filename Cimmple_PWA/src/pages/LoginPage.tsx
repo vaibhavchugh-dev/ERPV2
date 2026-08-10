@@ -48,23 +48,26 @@ export function LoginPage() {
   };
 
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <div className="login-brand">
+    <div className="grid min-h-dvh place-items-center bg-[radial-gradient(90%_60%_at_50%_-10%,#dbeafe_0%,transparent_55%),#f4f6f9] p-5">
+      <div className="card w-full max-w-[400px] px-5 py-6">
+        <div className="mb-5 text-center">
           <img
-            className="brand-logo large"
             src="/logo.svg"
             alt="Cimmple"
             width={56}
             height={56}
+            className="mx-auto mb-3 h-14 w-14 object-contain"
           />
-          <h1>Cimmple</h1>
-          <p>Shop Floor</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Cimmple</h1>
+          <p className="mt-1 font-semibold text-slate-500">Shop Floor</p>
         </div>
 
-        <form className="login-form" onSubmit={handleSubmit}>
+        <form className="space-y-3.5" onSubmit={handleSubmit}>
           {error && (
-            <div className="alert alert-error" role="alert">
+            <div
+              className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700"
+              role="alert"
+            >
               {error}
             </div>
           )}
@@ -72,6 +75,7 @@ export function LoginPage() {
           <label className="field">
             <span>Username</span>
             <input
+              className="field-input"
               type="text"
               autoComplete="username"
               value={username}
@@ -83,6 +87,7 @@ export function LoginPage() {
           <label className="field">
             <span>Password</span>
             <input
+              className="field-input"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -95,6 +100,7 @@ export function LoginPage() {
             <label className="field">
               <span>Tenant ID</span>
               <input
+                className="field-input"
                 type="number"
                 inputMode="numeric"
                 value={tenantId}
@@ -104,7 +110,7 @@ export function LoginPage() {
             </label>
           )}
 
-          <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+          <button type="submit" className="btn btn-primary w-full" disabled={loading}>
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>

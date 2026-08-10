@@ -52,6 +52,8 @@ npm run preview
 1. **Login** — `POST /Auth/Login` (same contract as `Cimmple_UI`)
 2. **My Jobs** — `GET /JobOrder/GetJobOrders?tenantid=&locationId=`
 3. **Job Detail** — `GET /JobOrder/GetJobOrderById` + step actions via `POST /JobOrder/SaveJobOrder`
+4. **Quality (NCR)** — list/create/edit via `/Quality/*` (same as office Quality module)
+5. **Navigation** — bottom bar (Jobs | Quality) + slide-out drawer (hamburger) with Logout
 
 ### Step timer behavior
 
