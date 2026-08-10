@@ -39,7 +39,12 @@ export interface JobOrderRoutingStep {
   technicianId?: number;
   progressState?: ProgressState;
   startTime?: string;
+  /** Legacy committed minutes (kept in sync with elapsedSeconds). */
   elapsedTime?: number;
+  /** Committed elapsed seconds (preferred precision). */
+  elapsedSeconds?: number;
+  /** Reason recorded when the step was last paused. */
+  pauseReason?: string;
 }
 
 export interface JobOrderDetail {
@@ -189,6 +194,10 @@ export class JobOrderService {
               "idle") as ProgressState,
             startTime: (r.startTime ?? r.StartTime) as string | undefined,
             elapsedTime: Number(r.elapsedTime ?? r.ElapsedTime ?? 0),
+            elapsedSeconds: (r.elapsedSeconds ?? r.ElapsedSeconds) as
+              | number
+              | undefined,
+            pauseReason: (r.pauseReason ?? r.PauseReason) as string | undefined,
           }))
         : [],
       DrawingNumber: result.drawingNumber || result.DrawingNumber || "",
@@ -218,6 +227,89 @@ export class JobOrderService {
   }
 }
 
+/** Common hold reasons (same list as Cimmple_UI). */
+export const JOB_STEP_PAUSE_REASONS = [
+  "Waiting for material",
+  "Setup / changeover",
+  "Machine down",
+  "Inspection / QA wait",
+  "Break",
+  "Other",
+] as const;
+
+/** Committed seconds: prefer elapsedSeconds; legacy elapsedTime was minutes. */
+export function getCommittedSeconds(
+  step: Pick<JobOrderRoutingStep, "elapsedTime" | "elapsedSeconds">
+): number {
+  if (typeof step.elapsedSeconds === "number" && step.elapsedSeconds >= 0) {
+    return step.elapsedSeconds;
+  }
+  return (step.elapsedTime || 0) * 60;
+}
+
+/** Live elapsed = committed + wall-clock since startTime when running. */
+export function computeElapsedSeconds(
+  step: Pick<
+    JobOrderRoutingStep,
+    "elapsedTime" | "elapsedSeconds" | "progressState" | "startTime"
+  >,
+  nowMs: number = Date.now()
+): number {
+  let base = getCommittedSeconds(step);
+  if (step.progressState === "running" && step.startTime) {
+    const started = new Date(step.startTime).getTime();
+    if (!Number.isNaN(started)) {
+      base += Math.max(0, Math.floor((nowMs - started) / 1000));
+    }
+  }
+  return base;
+}
+
+export function formatElapsedDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+export function toElapsedFields(totalSeconds: number): {
+  elapsedSeconds: number;
+  elapsedTime: number;
+} {
+  const secs = Math.max(0, Math.floor(totalSeconds));
+  return {
+    elapsedSeconds: secs,
+    elapsedTime: Math.floor(secs / 60),
+  };
+}
+
+/** Fold wall-clock into committed fields and reset startTime (for save while running). */
+export function commitLiveElapsed(
+  steps: JobOrderRoutingStep[],
+  now: Date = new Date()
+): JobOrderRoutingStep[] {
+  const nowMs = now.getTime();
+  const nowIso = now.toISOString();
+  return steps.map((s) => {
+    if (s.progressState !== "running" || !s.startTime) return s;
+    return {
+      ...s,
+      ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+      startTime: nowIso,
+    };
+  });
+}
+
+export function isStepCompleted(
+  step: Pick<JobOrderRoutingStep, "status" | "progressState">
+): boolean {
+  return step.status === "Completed" || step.progressState === "stopped";
+}
+
 /** Derive the "current" step for list cards: first running/paused, else first non-completed. */
 export function getCurrentStep(
   steps: JobOrderRoutingStep[] | undefined
@@ -228,56 +320,26 @@ export function getCurrentStep(
     (s) => s.progressState === "running" || s.progressState === "paused"
   );
   if (active) return active;
-  const pending = sorted.find((s) => s.status !== "Completed");
+  const pending = sorted.find((s) => !isStepCompleted(s));
   return pending || sorted[sorted.length - 1] || null;
 }
 
-export function applyStepAction(
-  steps: JobOrderRoutingStep[],
-  stepId: number,
-  action: "start" | "pause" | "resume" | "complete",
-  technicianName?: string
-): JobOrderRoutingStep[] {
-  return steps.map((s) => {
-    if (s.id !== stepId) return s;
-
-    switch (action) {
-      case "start":
-      case "resume":
-        return {
-          ...s,
-          progressState: "running",
-          startTime: new Date().toISOString(),
-          elapsedTime: s.elapsedTime || 0,
-          status: "In Progress",
-          technicianName: technicianName || s.technicianName,
-        };
-      case "pause":
-        return {
-          ...s,
-          progressState: "paused",
-        };
-      case "complete":
-        return {
-          ...s,
-          progressState: "stopped",
-          status: "Completed",
-        };
-      default:
-        return s;
-    }
-  });
-}
-
+/**
+ * Align job Status with routing-step progress (same rules as Cimmple_UI).
+ */
 export function deriveJobStatus(
   currentStatus: string,
   steps: JobOrderRoutingStep[]
 ): string {
-  if (currentStatus === "Cancelled") return currentStatus;
-  if (steps.length === 0) return currentStatus;
+  const status = (currentStatus || "Draft").trim();
+  if (status === "Cancelled") return status;
+  if (status === "Partially Shipped" || status === "Shipped") return status;
+  if (!steps.length) return status;
 
-  const allCompleted = steps.every((s) => s.status === "Completed");
+  const allCompleted = steps.every((s) => isStepCompleted(s));
   if (allCompleted) return "Completed";
+
+  if (status === "Completed") return "In Progress";
 
   const anyStarted = steps.some(
     (s) =>
@@ -287,9 +349,6 @@ export function deriveJobStatus(
       s.status === "In Progress" ||
       s.status === "Completed"
   );
-  if (anyStarted && currentStatus === "Draft") return "In Progress";
-  if (anyStarted && currentStatus !== "Completed") {
-    return currentStatus === "Draft" ? "In Progress" : currentStatus;
-  }
-  return currentStatus;
+  if (anyStarted && status === "Draft") return "In Progress";
+  return status;
 }
