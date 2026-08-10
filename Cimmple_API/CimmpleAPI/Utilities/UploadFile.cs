@@ -143,6 +143,39 @@ namespace CimmpleAPI.Utilities
             }
         }
 
+        public async Task<bool> UploadBytesOnServer(byte[] content, FileInfor fileDet)
+        {
+            try
+            {
+                if (content == null || content.Length == 0 || fileDet == null)
+                {
+                    return false;
+                }
+
+                string CloudConn = GetCloudConnectionString();
+                if (string.IsNullOrEmpty(CloudConn)) return false;
+
+                CloudStorageAccount account = CloudStorageAccount.Parse(CloudConn);
+                CloudBlobClient serviceClient = account.CreateCloudBlobClient();
+                var container = serviceClient.GetContainerReference(fileDet.ContainerName);
+                await container.CreateIfNotExistsAsync();
+                CloudBlobDirectory Dir = container.GetDirectoryReference(fileDet.Dirname);
+                await Dir.Container.CreateIfNotExistsAsync();
+                CloudBlockBlob blob = Dir.GetBlockBlobReference(fileDet.UploadFileName);
+
+                using (var stream = new MemoryStream(content))
+                {
+                    await blob.UploadFromStreamAsync(stream);
+                }
+
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         public async Task<bool> DeleteFileOnServer(List<FileInfor> fileInfo)
         {
             try

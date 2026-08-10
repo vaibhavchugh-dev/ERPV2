@@ -166,6 +166,35 @@ namespace CimmpleAPI.Controllers
                     if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
                         return forbidLoc!;
 
+                    var netAmount = Math.Round(request.LineItems.Sum(item => item.Amount), 2);
+                    var taxRate = request.TaxRate ?? 0m;
+                    if (taxRate < 0m || taxRate > 100m)
+                        return BadRequest(new { error = "Tax rate must be between 0 and 100." });
+
+                    var taxAmount = GlAccountResolutionService.ResolveTaxAmount(
+                        netAmount, taxRate, request.TaxAmount);
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        if (!inputTaxAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Input tax was entered but Input Tax Recoverable is not configured. Set Default Input Tax account in Accounting Setup → Default Accounts."
+                            });
+                        }
+                    }
+
+                    var freightCharge = GlAccountResolutionService.NormalizeChargeAmount(request.FreightCharge);
+                    if (freightCharge > 0m &&
+                        !GlAccountResolutionService.ResolveFreightIn(_context, tenantId).HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Freight was entered but Freight In is not configured. Set Default Freight In in Accounting Setup → Default Accounts."
+                        });
+                    }
+
                     // Create vendor invoice header
                     var invoice = new VendorInvoiceMaster
                     {
@@ -179,8 +208,9 @@ namespace CimmpleAPI.Controllers
                         VendorName = request.VendorName,
                         vid = request.VendorId,
                         locationId = resolvedInvoiceLoc,
-                        Amount = request.LineItems.Sum(item => item.Amount),
-                        TotalAmount = request.LineItems.Sum(item => item.Amount),
+                        Amount = netAmount,
+                        FreightCharge = freightCharge,
+                        TotalAmount = Math.Round(netAmount + taxAmount + freightCharge, 2),
                         PaidAmount = 0,
                         PaymentMethod = "",
                         CkNo = "",
@@ -233,21 +263,21 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Auto-post vendor bill to GL so P&L receives expense activity.
-                    var payableAccountId = ResolveAccountsPayableGlAccountId(tenantId, invoice.vid);
+                    var payableAccountId = GlAccountResolutionService.ResolveAccountsPayable(_context, tenantId, invoice.vid);
                     if (!payableAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine Accounts Payable GL account. Configure vendor COA mapping or an active AP account in Chart of Accounts."
+                            error = "Unable to determine Accounts Payable GL account. Set Default Accounts Payable in Accounting Setup, configure vendor AP mapping, or add an active AP account in Chart of Accounts."
                         });
                     }
 
-                    var defaultExpenseAccountId = ResolveExpenseGlAccountId(tenantId);
+                    var defaultExpenseAccountId = GlAccountResolutionService.ResolveDefaultExpense(_context, tenantId, invoice.vid);
                     if (!defaultExpenseAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine an Expense GL account. Add at least one active Expense account in Chart of Accounts."
+                            error = "Unable to determine an Expense GL account. Set Default Expense in Accounting Setup or add an active Expense account in Chart of Accounts."
                         });
                     }
 
@@ -264,7 +294,8 @@ namespace CimmpleAPI.Controllers
                     }
 
                     var expenseLines = request.LineItems
-                        .GroupBy(item => ResolveLineExpenseAccountId(tenantId, item.AccountId, defaultExpenseAccountId.Value))
+                        .GroupBy(item => GlAccountResolutionService.ResolveLineExpenseAccountId(
+                            _context, tenantId, item.AccountId, defaultExpenseAccountId.Value))
                         .Select(g => new { AccountId = g.Key, Amount = g.Sum(x => x.Amount) })
                         .Where(x => x.Amount > 0)
                         .ToList();
@@ -298,11 +329,35 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = inputTaxAccountId!.Value,
+                            Amount = taxAmount,
+                            Description = $"{postingDesc} (input tax)"
+                        });
+                    }
+
+                    if (freightCharge > 0m)
+                    {
+                        var freightInAccountId = GlAccountResolutionService.ResolveFreightIn(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = freightInAccountId!.Value,
+                            Amount = freightCharge,
+                            Description = $"{postingDesc} (freight)"
+                        });
+                    }
+
                     _context.JournalEntryTo.Add(new JournalDetailsTo
                     {
                         JournalEntryId = invoiceHeader.Id,
                         AccountId = payableAccountId.Value,
-                        Amount = expenseLines.Sum(x => x.Amount),
+                        Amount = invoice.TotalAmount,
                         Description = postingDesc
                     });
 
@@ -492,7 +547,7 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
-                    var bankAccountId = ResolveBankGlAccountId(tenantId, bankId);
+                    var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
                     if (!bankAccountId.HasValue)
                     {
                         return BadRequest(new
@@ -501,12 +556,12 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    var accountsPayableAccountId = ResolveAccountsPayableGlAccountId(tenantId, invoice.vid);
+                    var accountsPayableAccountId = GlAccountResolutionService.ResolveAccountsPayable(_context, tenantId, invoice.vid);
                     if (!accountsPayableAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine Accounts Payable GL account. Configure vendor COA mapping or an active AP account in COA."
+                            error = "Unable to determine Accounts Payable GL account. Set Default Accounts Payable in Accounting Setup, configure vendor AP mapping, or add an active AP account in COA."
                         });
                     }
 
@@ -626,121 +681,6 @@ namespace CimmpleAPI.Controllers
                     return StatusCode(500, new { error = ex.Message });
                 }
             }
-        }
-
-        private int? ResolveBankGlAccountId(int tenantId, int? bankId)
-        {
-            if (bankId.HasValue && bankId.Value > 0)
-            {
-                var mappedAccountId = _context.BankCOAMapping
-                    .Where(m => m.bankid == bankId.Value)
-                    .Select(m => (int?)m.accountid)
-                    .FirstOrDefault();
-
-                if (mappedAccountId.HasValue && IsActiveAccountForTenant(tenantId, mappedAccountId.Value))
-                    return mappedAccountId.Value;
-
-                var bank = _context.BankMaster
-                    .AsNoTracking()
-                    .FirstOrDefault(b => b.Id == bankId.Value && b.TenantId == tenantId);
-                if (bank != null && !string.IsNullOrWhiteSpace(bank.coa))
-                {
-                    if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
-                        IsActiveAccountForTenant(tenantId, parsedAccountId))
-                    {
-                        return parsedAccountId;
-                    }
-
-                    var byCode = _context.ChartofAccounts
-                        .AsNoTracking()
-                        .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == bank.coa.Trim())
-                        .Select(c => (int?)c.AccountID)
-                        .FirstOrDefault();
-                    if (byCode.HasValue)
-                        return byCode;
-                }
-            }
-
-            // Final fallback: allow posting to the first active cash/bank account for the tenant.
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("bank") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("cash") ? 1 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("bank") ? 2 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("cash") ? 3 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("bank") ? 4 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("cash") ? 5 : 6)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && (c.AccountType.ToLower().Contains("bank") || c.AccountType.ToLower().Contains("cash"))) ||
-                    (c.AccountName != null && (c.AccountName.ToLower().Contains("bank") || c.AccountName.ToLower().Contains("cash"))) ||
-                    (c.MainGroup != null && (c.MainGroup.ToLower().Contains("bank") || c.MainGroup.ToLower().Contains("cash"))))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveAccountsPayableGlAccountId(int tenantId, int vendorId)
-        {
-            var vendorMappedAccountId = _context.VendorCOAMapping
-                .AsNoTracking()
-                .Where(v => v.vendorid == vendorId)
-                .Select(v => (int?)v.accountid)
-                .FirstOrDefault();
-            if (vendorMappedAccountId.HasValue && IsActiveAccountForTenant(tenantId, vendorMappedAccountId.Value))
-                return vendorMappedAccountId.Value;
-
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountName != null && c.AccountName.ToLower().Contains("accounts payable") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("payable") ? 1 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("payable") ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountName != null && c.AccountName.ToLower().Contains("payable")) ||
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("payable")) ||
-                    (c.MainGroup != null && c.MainGroup.ToLower().Contains("payable")))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveExpenseGlAccountId(int tenantId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("expense") ? 0 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("expense") ? 1 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("expense") ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("expense")) ||
-                    (c.AccountName != null && c.AccountName.ToLower().Contains("expense")) ||
-                    (c.MainGroup != null && c.MainGroup.ToLower().Contains("expense")))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int ResolveLineExpenseAccountId(int tenantId, int? requestedAccountId, int defaultExpenseAccountId)
-        {
-            if (requestedAccountId.HasValue && requestedAccountId.Value > 0 &&
-                IsActiveAccountForTenant(tenantId, requestedAccountId.Value))
-            {
-                return requestedAccountId.Value;
-            }
-
-            return defaultExpenseAccountId;
-        }
-
-        private bool IsActiveAccountForTenant(int tenantId, int accountId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Any(c => c.Tenantid == tenantId && c.AccountID == accountId && c.IsActive);
         }
 
         private static string BuildAutoPaymentReference(string prefix, string? invoiceNo, int invoiceId)
@@ -871,6 +811,9 @@ namespace CimmpleAPI.Controllers
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
         public string Notes { get; set; }
+        public decimal? TaxRate { get; set; }
+        public decimal? TaxAmount { get; set; }
+        public decimal? FreightCharge { get; set; }
         public List<VendorInvoiceRecordLineItem> LineItems { get; set; } = new List<VendorInvoiceRecordLineItem>();
     }
 

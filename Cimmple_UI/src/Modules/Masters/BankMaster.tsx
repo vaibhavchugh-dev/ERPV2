@@ -116,9 +116,11 @@ const BankMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadBanks();
+    if (refreshList) {
+      loadBanks();
+    }
   };
 
   // Filter banks based on filterValue

@@ -17,6 +17,14 @@ export interface EmployeeMaster {
   city: string;
   state: string;
   zip: string;
+  /** True when a password exists */
+  hasPassword?: boolean;
+  /** True when username + password exist (can authenticate if Active) */
+  hasLoginAccess?: boolean;
+  /** Starting / assigned location label for listing */
+  locationName?: string;
+  defaultLocationId?: number | null;
+  canAccessAllLocations?: boolean;
 }
 
 export interface EmployeeMasterReq {
@@ -47,6 +55,12 @@ export interface EmployeeMasterReq {
   TenantID: number;
   DOB: string;
   SSN: string;
+  /** Plaintext password when enabling/changing login access — never returned from GET */
+  Password?: string;
+  /** True when a password hash exists (can authenticate if username + active) */
+  HasPassword?: boolean;
+  /** True when username + password exist and status is Active */
+  CanLogin?: boolean;
 }
 
 export interface EmployeeImportRow {
@@ -184,6 +198,8 @@ export class EmployeeService {
         TenantID: result.tenantID,
         DOB: result.dob || "",
         SSN: result.ssn || "",
+        HasPassword: !!result.hasPassword,
+        CanLogin: !!result.canLogin,
       } as EmployeeMasterReq;
     });
   };

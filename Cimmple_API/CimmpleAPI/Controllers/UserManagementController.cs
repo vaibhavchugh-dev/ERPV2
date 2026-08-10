@@ -70,6 +70,34 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToListAsync();
 
+                // Resolve role names by RoleID (do not require TenantId match —
+                // legacy Admin roles may have TenantId 0 or a mismatched tenant).
+                var roleIds = users
+                    .Where(u => u.Role.HasValue && u.Role.Value > 0)
+                    .Select(u => u.Role!.Value)
+                    .Distinct()
+                    .ToList();
+
+                if (roleIds.Count > 0)
+                {
+                    var roleNames = await _context.UserRole
+                        .Where(r => roleIds.Contains(r.RoleID))
+                        .Select(r => new { r.RoleID, r.RoleName })
+                        .ToListAsync();
+
+                    var roleMap = roleNames
+                        .GroupBy(r => r.RoleID)
+                        .ToDictionary(g => g.Key, g => g.First().RoleName ?? "");
+
+                    foreach (var user in users)
+                    {
+                        if (user.Role.HasValue && roleMap.TryGetValue(user.Role.Value, out var roleName))
+                        {
+                            user.RoleName = roleName;
+                        }
+                    }
+                }
+
                 var result = new
                 {
                     users,
@@ -133,6 +161,14 @@ namespace CimmpleAPI.Controllers
                 if (user == null)
                 {
                     return NotFound(new { message = "User not found" });
+                }
+
+                if (user.Role.HasValue && user.Role.Value > 0)
+                {
+                    user.RoleName = await _context.UserRole
+                        .Where(r => r.RoleID == user.Role.Value)
+                        .Select(r => r.RoleName)
+                        .FirstOrDefaultAsync();
                 }
 
                 return Ok(user);
@@ -277,9 +313,19 @@ namespace CimmpleAPI.Controllers
             {
                 // If tenantId not provided, try to get from context or use default
                 int effectiveTenantId = tenantId ?? 1; // Default fallback
-                
+
+                // Include tenant roles, global roles (TenantId 0), and any role currently
+                // assigned to a user in this tenant (covers legacy Admin TenantId mismatches).
+                var assignedRoleIds = await _context.UserDetails
+                    .Where(u => u.TenantID == effectiveTenantId && u.Role.HasValue && u.Role.Value > 0)
+                    .Select(u => u.Role!.Value)
+                    .Distinct()
+                    .ToListAsync();
+
                 var roles = await _context.UserRole
-                    .Where(r => r.TenantId == effectiveTenantId)
+                    .Where(r => r.TenantId == effectiveTenantId
+                        || r.TenantId == 0
+                        || assignedRoleIds.Contains(r.RoleID))
                     .OrderBy(r => r.OrderNo)
                     .Select(r => new
                     {
@@ -698,6 +744,7 @@ namespace CimmpleAPI.Controllers
         public string? UserName { get; set; }
         public string? Status { get; set; }
         public int? Role { get; set; }
+        public string? RoleName { get; set; }
         public string? Phone1 { get; set; }
         public string? EmployeeType { get; set; }
         public string? DateOfHire { get; set; }
@@ -715,6 +762,7 @@ namespace CimmpleAPI.Controllers
         public string? Password { get; set; }
         public string? Status { get; set; }
         public int? Role { get; set; }
+        public string? RoleName { get; set; }
         public string? Phone1 { get; set; }
         public string? Phone2 { get; set; }
         public string? EmployeeType { get; set; }

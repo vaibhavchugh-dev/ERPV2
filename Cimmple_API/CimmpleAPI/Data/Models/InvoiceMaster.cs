@@ -66,6 +66,8 @@ namespace CimmpleAPI.Data.Models
         public string AccountingPeriod { get; set; }
         public decimal Amount { get; set; }
         public decimal TotalAmount { get; set; }
+        /// <summary>Freight / shipping charged on the vendor bill (included in TotalAmount).</summary>
+        public decimal FreightCharge { get; set; }
         /// <summary>Cumulative amount paid against this invoice (supports partial payments).</summary>
         public decimal PaidAmount { get; set; }
         public bool? Approved { get; set; }

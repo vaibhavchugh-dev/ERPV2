@@ -27,7 +27,7 @@ import "./JobTemplateMasterSlideout.scss";
 
 interface JobTemplateMasterSlideoutProps {
   jobTemplateId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 type TabId =
@@ -423,7 +423,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         toast.info("You can now attach drawings and documents to this template");
       }
 
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error saving job template:", error);
       const message = error?.response?.data?.error || error?.message || "Unknown error";
@@ -448,7 +448,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         `${formData.TemplateName} (Copy)`
       );
       toast.success("Job template cloned successfully");
-      onClose();
+      onClose(true);
     } catch (error: any) {
       const message = error?.response?.data?.error || error?.message || "Unknown error";
       toast.error(`Error cloning job template: ${message}`);
@@ -483,7 +483,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       await JobTemplateService.DeleteJobTemplate(jobTemplateId);
       toast.success("Job template deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error deleting job template:", error);
       toast.error(`Error deleting job template: ${error.message || "Unknown error"}`);

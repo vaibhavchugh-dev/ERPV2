@@ -7,17 +7,24 @@ import {
 } from "../../Common/Services/ProductMasterService";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import CustomerQuotationSlideout from "../Quotations/CustomerQuotationSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMasterSlideout.scss";
 
 interface ProductMasterSlideoutProps {
   partNo: string;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
   partNo,
   onClose,
 }) => {
+  const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
+  const formatCurrency = (value?: number) => {
+    if (value === undefined || value === null) return "N/A";
+    return formatCurrencyRaw(value);
+  };
+  const handleDismiss = () => onClose(false);
   const [productData, setProductData] = useState<ProductMasterDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
@@ -50,26 +57,6 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
     }
   };
 
-  const formatCurrency = (value?: number) => {
-    if (value === undefined || value === null) return "N/A";
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
-    }
-  };
-
   if (loading) {
     return (
       <div className="slideout-overlay">
@@ -88,11 +75,11 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>Product Details</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -449,7 +436,7 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
 
           {/* Footer */}
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Close
             </button>
           </div>

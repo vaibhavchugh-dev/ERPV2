@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { InvoiceableItem, CreateInvoiceRequest, InvoiceService } from '../../Common/Services/InvoiceService';
+import { AccountingService } from '../../Common/Services/AccountingService';
 
 interface InvoiceModalProps {
   isOpen: boolean;
@@ -27,12 +28,30 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
     return date.toISOString().split('T')[0];
   });
   const [notes, setNotes] = useState('');
+  const [taxRate, setTaxRate] = useState(0);
+  const [taxAmount, setTaxAmount] = useState(0);
+  const [taxAmountManual, setTaxAmountManual] = useState(false);
+  const [shippingCharge, setShippingCharge] = useState(0);
+  const [otherCharge, setOtherCharge] = useState(0);
   const [quantities, setQuantities] = useState<{ [key: number]: number }>({});
   const [unitPrices, setUnitPrices] = useState<{ [key: number]: number }>({});
   const [discounts, setDiscounts] = useState<{ [key: number]: number }>({});
   const [quantityInputs, setQuantityInputs] = useState<{ [key: number]: string }>({});
   const [priceInputs, setPriceInputs] = useState<{ [key: number]: string }>({});
   const [discountInputs, setDiscountInputs] = useState<{ [key: number]: string }>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    AccountingService.GetAccountingSettings()
+      .then((settings) => {
+        const rate = Number(settings?.taxRate) || 0;
+        setTaxRate(rate);
+        setTaxAmountManual(false);
+      })
+      .catch(() => {
+        /* keep 0 */
+      });
+  }, [isOpen]);
 
   // Initialize form data when selected items change
   useEffect(() => {
@@ -59,6 +78,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       setQuantityInputs(initialQuantityInputs);
       setPriceInputs(initialPriceInputs);
       setDiscountInputs(initialDiscountInputs);
+      setTaxAmountManual(false);
     }
   }, [selectedItems]);
 
@@ -93,6 +113,16 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const calculateSubtotal = (): number => {
     return selectedItems.reduce((total, item) => total + calculateLineTotal(item), 0);
   };
+
+  const subtotal = calculateSubtotal();
+
+  useEffect(() => {
+    if (taxAmountManual) return;
+    const computed = Math.round((subtotal * (taxRate / 100)) * 100) / 100;
+    setTaxAmount(computed > 0 ? computed : 0);
+  }, [subtotal, taxRate, taxAmountManual]);
+
+  const invoiceTotal = Math.round((subtotal + taxAmount + shippingCharge + otherCharge) * 100) / 100;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,7 +159,11 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
         lineItems,
         invoiceDate,
         dueDate,
-        notes
+        notes,
+        saleTax: taxRate,
+        saleTaxAmount: taxAmount,
+        shippingCharge,
+        otherCharge
       };
 
       console.log('Creating invoice with request:', request);
@@ -160,7 +194,6 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
   };
 
   const totalItems = selectedItems.length;
-  const subtotal = calculateSubtotal();
 
   if (!isOpen) return null;
 
@@ -447,6 +480,103 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
               </div>
             </div>
 
+            {/* Tax / shipping / other */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                  Tax Rate (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  value={taxRate}
+                  onChange={(e) => {
+                    setTaxRate(parseFloat(e.target.value) || 0);
+                    setTaxAmountManual(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.25rem'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                  Tax Amount
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={taxAmount}
+                  onChange={(e) => {
+                    setTaxAmount(parseFloat(e.target.value) || 0);
+                    setTaxAmountManual(true);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.25rem'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                  Shipping / Freight
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={shippingCharge}
+                  onChange={(e) => setShippingCharge(parseFloat(e.target.value) || 0)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.25rem'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                  Other Charge
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={otherCharge}
+                  onChange={(e) => setOtherCharge(parseFloat(e.target.value) || 0)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.25rem'
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                  Invoice Total
+                </label>
+                <div style={{
+                  padding: '0.5rem',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.25rem',
+                  backgroundColor: '#f9fafb',
+                  fontWeight: 600
+                }}>
+                  ${invoiceTotal.toFixed(2)}
+                </div>
+              </div>
+            </div>
+
             {/* Notes */}
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.25rem' }}>
@@ -509,7 +639,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
                 cursor: loading ? 'not-allowed' : 'pointer'
               }}
             >
-              {loading ? 'Creating Invoice...' : `Create Invoice ($${subtotal.toFixed(2)})`}
+              {loading ? 'Creating Invoice...' : `Create Invoice ($${invoiceTotal.toFixed(2)})`}
             </button>
           </div>
         </form>

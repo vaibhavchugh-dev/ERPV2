@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { InvoiceableItemForVendor, CreateVendorInvoiceRequest, VendorInvoiceService } from '../../Common/Services/VendorInvoiceService';
+import { AccountingService } from '../../Common/Services/AccountingService';
 
 interface VendorInvoiceModalProps {
   isOpen: boolean;
@@ -29,12 +30,29 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
   });
   const [paymentMethod, setPaymentMethod] = useState('');
   const [notes, setNotes] = useState('');
+  const [taxRate, setTaxRate] = useState(0);
+  const [taxAmount, setTaxAmount] = useState(0);
+  const [taxAmountManual, setTaxAmountManual] = useState(false);
+  const [freightCharge, setFreightCharge] = useState(0);
   const [quantities, setQuantities] = useState<{ [key: number]: number }>({});
   const [unitPrices, setUnitPrices] = useState<{ [key: number]: number }>({});
   const [discounts, setDiscounts] = useState<{ [key: number]: number }>({});
   const [quantityInputs, setQuantityInputs] = useState<{ [key: number]: string }>({});
   const [priceInputs, setPriceInputs] = useState<{ [key: number]: string }>({});
   const [discountInputs, setDiscountInputs] = useState<{ [key: number]: string }>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    AccountingService.GetAccountingSettings()
+      .then((settings) => {
+        const rate = Number(settings?.taxRate) || 0;
+        setTaxRate(rate);
+        setTaxAmountManual(false);
+      })
+      .catch(() => {
+        /* keep 0 */
+      });
+  }, [isOpen]);
 
   // Initialize form data when selected items change
   useEffect(() => {
@@ -61,6 +79,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
       setQuantityInputs(initialQuantityInputs);
       setPriceInputs(initialPriceInputs);
       setDiscountInputs(initialDiscountInputs);
+      setTaxAmountManual(false);
     }
   }, [selectedItems]);
 
@@ -95,6 +114,16 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
   const calculateSubtotal = (): number => {
     return selectedItems.reduce((total, item) => total + calculateLineTotal(item), 0);
   };
+
+  const subtotal = calculateSubtotal();
+
+  useEffect(() => {
+    if (taxAmountManual) return;
+    const computed = Math.round((subtotal * (taxRate / 100)) * 100) / 100;
+    setTaxAmount(computed > 0 ? computed : 0);
+  }, [subtotal, taxRate, taxAmountManual]);
+
+  const invoiceTotal = Math.round((subtotal + taxAmount + freightCharge) * 100) / 100;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,7 +167,10 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
         invoiceDate,
         dueDate,
         paymentMethod: paymentMethod || '',
-        notes: notes || ''
+        notes: notes || '',
+        taxRate,
+        taxAmount,
+        freightCharge
       };
 
       console.log('Creating vendor invoice with request:', request);
@@ -169,7 +201,6 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
   };
 
   const totalItems = selectedItems.length;
-  const subtotal = calculateSubtotal();
 
   if (!isOpen) return null;
 
@@ -319,6 +350,87 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                       fontSize: '0.875rem'
                     }}
                   />
+                </div>
+              </div>
+              <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                    Tax Rate (%)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    value={taxRate}
+                    onChange={(e) => {
+                      setTaxRate(parseFloat(e.target.value) || 0);
+                      setTaxAmountManual(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                    Tax Amount
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={taxAmount}
+                    onChange={(e) => {
+                      setTaxAmount(parseFloat(e.target.value) || 0);
+                      setTaxAmountManual(true);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                    Freight / Shipping
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={freightCharge}
+                    onChange={(e) => setFreightCharge(parseFloat(e.target.value) || 0)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.25rem',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
+                    Invoice Total
+                  </label>
+                  <div style={{
+                    padding: '0.5rem',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '0.25rem',
+                    backgroundColor: '#f9fafb',
+                    fontWeight: 600,
+                    fontSize: '0.875rem'
+                  }}>
+                    ${invoiceTotal.toFixed(2)}
+                  </div>
                 </div>
               </div>
               <div style={{ marginTop: '1rem' }}>
@@ -550,7 +662,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                 fontWeight: '500'
               }}
             >
-              {loading ? 'Creating...' : 'Create Invoice'}
+              {loading ? 'Creating...' : `Create Invoice ($${invoiceTotal.toFixed(2)})`}
             </button>
           </div>
         </form>

@@ -4,7 +4,7 @@
 --
 -- POST http://localhost:5172/api/Auth/BootstrapPassword
 -- {
---   "username": "admin",
+--   "username": "admin.user",
 --   "newPassword": "Admin@12345",
 --   "tenantId": 1,
 --   "force": true,

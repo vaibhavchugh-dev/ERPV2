@@ -5,13 +5,15 @@ import { ProductMasterService, ProductMaster } from "../../Common/Services/Produ
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProductMasterSlideout from "./ProductMasterSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
   { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
   { key: "unit", label: "Unit", sortKey: "unit" },
-  { key: "totalQtyOrdered", label: "Total Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyOrdered", label: "Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyQuoted", label: "Qty Quoted", sortKey: "totalQtyQuoted" },
   { key: "avgUnitPrice", label: "Avg Unit Price", sortKey: "avgUnitPrice" },
   { key: "orderCount", label: "Orders", sortKey: "orderCount" },
   { key: "quotationCount", label: "Quotations", sortKey: "quotationCount" },
@@ -23,6 +25,7 @@ const COLUMN_PREFERENCE_KEY = "productMaster.hiddenColumns";
 const ProductMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedPartNo, setSelectedPartNo] = useState<string>("");
@@ -107,9 +110,11 @@ const ProductMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadProducts();
+    if (refreshList) {
+      loadProducts();
+    }
   };
 
   const handleSyncFromOrders = async () => {
@@ -179,25 +184,6 @@ const ProductMasterComponent: React.FC = () => {
     );
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
-    }
-  };
-
   const renderCell = (product: ProductMaster, key: string): React.ReactNode => {
     switch (key) {
       case "partNo":
@@ -208,6 +194,8 @@ const ProductMasterComponent: React.FC = () => {
         return product.unit || "";
       case "totalQtyOrdered":
         return product.totalQtyOrdered.toLocaleString();
+      case "totalQtyQuoted":
+        return (product.totalQtyQuoted ?? 0).toLocaleString();
       case "avgUnitPrice":
         return formatCurrency(product.avgUnitPrice);
       case "orderCount":

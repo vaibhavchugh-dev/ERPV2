@@ -8,7 +8,15 @@ export const LOCATION_CHANGED_EVENT = "locationChanged";
  * Use from non-hook call sites (e.g. System Settings). Prefer setLocationId in components.
  */
 export function notifyLocationChanged(locationId: number) {
-  if (!locationId || locationId <= 0) return;
+  if (!locationId || locationId <= 0) {
+    localStorage.removeItem("locationId");
+    window.dispatchEvent(
+      new CustomEvent(LOCATION_CHANGED_EVENT, {
+        detail: { locationId: 0 },
+      })
+    );
+    return;
+  }
   localStorage.setItem("locationId", String(locationId));
   window.dispatchEvent(
     new CustomEvent(LOCATION_CHANGED_EVENT, {
@@ -29,7 +37,13 @@ export function useActiveLocation() {
 
   const setLocationId = useCallback(
     (nextId: number) => {
-      if (!nextId || nextId <= 0) return;
+      if (!nextId || nextId <= 0) {
+        if (locationId !== 0) {
+          localStorage.removeItem("locationId");
+          dispatch({ type: "SET_LOCATION", payload: 0 });
+        }
+        return;
+      }
       if (nextId === locationId) return;
       // Reducer persists to localStorage; Layout remounts from this state change.
       dispatch({ type: "SET_LOCATION", payload: nextId });
@@ -37,11 +51,25 @@ export function useActiveLocation() {
     [dispatch, locationId]
   );
 
+  // Login/persistSession writes localStorage before Redux updates; hydrate if store is stale.
+  useEffect(() => {
+    if (locationId > 0) return;
+    const stored = Number(localStorage.getItem("locationId") || 0);
+    if (stored > 0) {
+      dispatch({ type: "SET_LOCATION", payload: stored });
+    }
+  }, [dispatch, locationId]);
+
   useEffect(() => {
     const handler = (event: Event) => {
       const newId = Number((event as CustomEvent).detail?.locationId) || 0;
-      if (newId > 0 && newId !== locationId) {
-        dispatch({ type: "SET_LOCATION", payload: newId });
+      if (newId !== locationId) {
+        if (newId > 0) {
+          dispatch({ type: "SET_LOCATION", payload: newId });
+        } else {
+          localStorage.removeItem("locationId");
+          dispatch({ type: "SET_LOCATION", payload: 0 });
+        }
       }
     };
 

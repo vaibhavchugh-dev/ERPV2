@@ -273,6 +273,18 @@
 .line-items-table-container {
   padding-right: 0.5rem;
   margin-right: -0.5rem;
+
+  td {
+    vertical-align: middle;
+  }
+
+  .line-cell-value {
+    display: flex;
+    align-items: center;
+    min-height: 2.5rem;
+    font-size: 0.875rem;
+    line-height: 1.25;
+  }
 }
 
 .line-items-table-container::-webkit-scrollbar {

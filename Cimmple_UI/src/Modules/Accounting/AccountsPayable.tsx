@@ -3,6 +3,7 @@ import { toast } from "react-toastify";
 import { faCheckCircle, faTimesCircle, faDollarSign, faBuilding, faCalendar, faFilter, faEye, faCreditCard, faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoiceSummary } from "../../Common/Services/VendorInvoiceService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 
 interface APFilterOptions {
@@ -14,6 +15,7 @@ interface APFilterOptions {
 }
 
 const AccountsPayable: React.FC = () => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<APFilterOptions>({
@@ -117,21 +119,6 @@ const AccountsPayable: React.FC = () => {
     setShowDetailModal(false);
     setSelectedInvoiceId(0);
     setOpenPaymentOnLoad(false);
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
   };
 
   const getStatusBadge = (status: string) => {

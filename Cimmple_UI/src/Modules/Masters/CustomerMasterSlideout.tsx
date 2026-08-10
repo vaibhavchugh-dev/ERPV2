@@ -13,13 +13,14 @@ import "./CustomerMasterSlideout.scss";
 
 interface CustomerMasterSlideoutProps {
   customerId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   customerId,
   onClose,
 }) => {
+  const handleDismiss = () => onClose(false);
   const [formData, setFormData] = useState<CustomerMasterReq>({
     customer_id: 0,
     company_name: "",
@@ -311,7 +312,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
       await CustomerService.DeleteCustomer(customerId);
       toast.success("Customer deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting customer:", error);
       toast.error(`Error deleting customer: ${error.message || "Unknown error"}`);
@@ -407,7 +408,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
         await CustomerService.DeleteCustomer(customerId);
         toast.success("Customer and all dependencies deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         // Still have blocking dependencies, refresh the dialog
         setDeletionImpact(updatedImpact);
@@ -514,7 +515,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
         customerId > 0 ? "Customer updated successfully" : "Customer created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       toast.error(`Error saving customer: ${error.message}`);
     } finally {
@@ -523,11 +524,11 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   };
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>{customerId > 0 ? 'Edit Customer' : 'Add New Customer'}</h2>
-          <button className="btn-close" onClick={onClose}>×</button>
+          <button className="btn-close" onClick={handleDismiss}>×</button>
         </div>
         <form className="airframe-form" onSubmit={handleSubmit}>
           {/* Tab Navigation */}
@@ -1159,7 +1160,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
             <button
               type="button"
               className="btn-cancel"
-              onClick={onClose}
+              onClick={handleDismiss}
               disabled={loading}
             >
               Cancel

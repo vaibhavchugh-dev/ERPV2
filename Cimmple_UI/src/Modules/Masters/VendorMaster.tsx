@@ -105,9 +105,11 @@ const VendorMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadVendors();
+    if (refreshList) {
+      loadVendors();
+    }
   };
 
   const handleSort = (column: keyof VendorMaster) => {

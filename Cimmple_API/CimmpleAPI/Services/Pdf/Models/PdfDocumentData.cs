@@ -35,6 +35,16 @@ namespace CimmpleAPI.Services.Pdf.Models
         public decimal DiscountAmount { get; set; }
         public decimal Amount { get; set; }
         public string Notes { get; set; } = "";
+        /// <summary>Qty break unit prices marked Include in Print (shown under the line as price gradation).</summary>
+        public List<PdfQtyPriceOption> PrintQtyOptions { get; set; } = new();
+    }
+
+    public class PdfQtyPriceOption
+    {
+        public int Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal DiscountAmount { get; set; }
+        public decimal Amount { get; set; }
     }
 
     public class PdfRoutingStep

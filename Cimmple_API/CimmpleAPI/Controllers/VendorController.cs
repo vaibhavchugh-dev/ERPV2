@@ -161,7 +161,8 @@ namespace CimmpleAPI.Controllers
                     ship_via = vendor.ship_via,
                     TenantID = vendor.Tenantid,
                     VendorContact = contacts,
-                    coaAccountId = coaMapping != null ? (int?)coaMapping.accountid : null,
+                    coaAccountId = coaMapping != null && coaMapping.accountid > 0 ? (int?)coaMapping.accountid : null,
+                    defaultExpenseAccountId = coaMapping?.expenseAccountId,
                     portalAccessEnabled = portalEnabled,
                     portalHasPassword = portalUser != null && !string.IsNullOrEmpty(portalUser.Password),
                     portalUserId = portalUser?.User_UniqueID,
@@ -468,17 +469,7 @@ namespace CimmpleAPI.Controllers
                         _context.SaveChanges();
                     }
 
-                    // Save COA mapping if provided
-                    if (request.coaAccountId.HasValue && request.coaAccountId.Value > 0)
-                    {
-                        var coaMapping = new VendorCOAMapping
-                        {
-                            vendorid = newVendor.vendor_id,
-                            accountid = request.coaAccountId.Value
-                        };
-                        _context.VendorCOAMapping.Add(coaMapping);
-                        _context.SaveChanges();
-                    }
+                    UpsertVendorCoaMapping(newVendor.vendor_id, request.coaAccountId, request.defaultExpenseAccountId);
 
                     if (request.portalAccessEnabled.HasValue)
                     {
@@ -574,38 +565,7 @@ namespace CimmpleAPI.Controllers
                         _context.SaveChanges();
                     }
 
-                    // Update COA mapping
-                    var existingCoaMapping = _context.VendorCOAMapping
-                        .Where(vcm => vcm.vendorid == request.vendor_id)
-                        .FirstOrDefault();
-
-                    if (request.coaAccountId.HasValue && request.coaAccountId.Value > 0)
-                    {
-                        if (existingCoaMapping != null)
-                        {
-                            existingCoaMapping.accountid = request.coaAccountId.Value;
-                            _context.VendorCOAMapping.Update(existingCoaMapping);
-                        }
-                        else
-                        {
-                            var newCoaMapping = new VendorCOAMapping
-                            {
-                                vendorid = request.vendor_id,
-                                accountid = request.coaAccountId.Value
-                            };
-                            _context.VendorCOAMapping.Add(newCoaMapping);
-                        }
-                        _context.SaveChanges();
-                    }
-                    else
-                    {
-                        // Remove COA mapping if no account ID provided
-                        if (existingCoaMapping != null)
-                        {
-                            _context.VendorCOAMapping.Remove(existingCoaMapping);
-                            _context.SaveChanges();
-                        }
-                    }
+                    UpsertVendorCoaMapping(request.vendor_id, request.coaAccountId, request.defaultExpenseAccountId);
 
                     if (request.portalAccessEnabled.HasValue)
                     {
@@ -1148,6 +1108,45 @@ namespace CimmpleAPI.Controllers
             }
             return parts.Count > 0 ? string.Join(", ", parts) : string.Empty;
         }
+
+        /// <summary>
+        /// Upserts vendor AP (accountid) and optional default expense mapping.
+        /// Removes the row when both accounts are cleared.
+        /// </summary>
+        private void UpsertVendorCoaMapping(int vendorId, int? apAccountId, int? expenseAccountId)
+        {
+            var hasAp = apAccountId.HasValue && apAccountId.Value > 0;
+            var hasExpense = expenseAccountId.HasValue && expenseAccountId.Value > 0;
+            var existing = _context.VendorCOAMapping.FirstOrDefault(vcm => vcm.vendorid == vendorId);
+
+            if (!hasAp && !hasExpense)
+            {
+                if (existing != null)
+                {
+                    _context.VendorCOAMapping.Remove(existing);
+                    _context.SaveChanges();
+                }
+                return;
+            }
+
+            if (existing == null)
+            {
+                _context.VendorCOAMapping.Add(new VendorCOAMapping
+                {
+                    vendorid = vendorId,
+                    accountid = hasAp ? apAccountId!.Value : 0,
+                    expenseAccountId = hasExpense ? expenseAccountId : null
+                });
+            }
+            else
+            {
+                existing.accountid = hasAp ? apAccountId!.Value : 0;
+                existing.expenseAccountId = hasExpense ? expenseAccountId : null;
+                _context.VendorCOAMapping.Update(existing);
+            }
+
+            _context.SaveChanges();
+        }
     }
 
     public class VendorMasterReq
@@ -1175,7 +1174,10 @@ namespace CimmpleAPI.Controllers
         public string? ship_via { get; set; }
         public int TenantID { get; set; }
         public List<VendorContactReq>? VendorContact { get; set; }
-        public int? coaAccountId { get; set; } // Optional Chart of Accounts ID
+        /// <summary>Optional Accounts Payable control account.</summary>
+        public int? coaAccountId { get; set; }
+        /// <summary>Optional default expense account when PO lines have no glcode.</summary>
+        public int? defaultExpenseAccountId { get; set; }
 
         /// <summary>When set, enable/disable vendor portal login as part of save.</summary>
         public bool? portalAccessEnabled { get; set; }

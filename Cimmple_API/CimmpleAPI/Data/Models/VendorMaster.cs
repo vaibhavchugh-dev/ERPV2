@@ -84,7 +84,10 @@ namespace CimmpleAPI.Data.Models
         [Key]
         public int id { get; set; }
         public int vendorid { get; set; }
+        /// <summary>Accounts Payable control account for this vendor.</summary>
         public int accountid { get; set; }
+        /// <summary>Optional default expense account when PO line has no glcode.</summary>
+        public int? expenseAccountId { get; set; }
     }
 }
 

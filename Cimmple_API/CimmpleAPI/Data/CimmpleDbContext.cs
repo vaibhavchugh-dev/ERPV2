@@ -141,6 +141,7 @@ namespace CimmpleAPI.Data
         public DbSet<TransCoa> TransCoa { get; set; }
         public DbSet<GlAccountingPeriodLock> GlAccountingPeriodLocks { get; set; }
         public DbSet<GlAuditEvent> GlAuditEvents { get; set; }
+        public DbSet<AccountingDefaults> AccountingDefaults { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -631,6 +632,17 @@ namespace CimmpleAPI.Data
                 entity.ToTable("GlAuditEvents");
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => new { e.TenantId, e.OccurredUtc });
+            });
+
+            modelBuilder.Entity<AccountingDefaults>(entity =>
+            {
+                entity.ToTable("AccountingDefaults");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.TenantId).IsUnique();
+                entity.Property(e => e.CompanyName).HasMaxLength(200);
+                entity.Property(e => e.FiscalYearStart).HasMaxLength(10);
+                entity.Property(e => e.DefaultCurrency).HasMaxLength(10);
+                entity.Property(e => e.TaxRate).HasColumnType("decimal(18,2)");
             });
 
             // Seed default transaction types

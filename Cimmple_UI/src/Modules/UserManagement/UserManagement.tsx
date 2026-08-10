@@ -53,8 +53,9 @@ const UserManagementComponent: React.FC = () => {
     // Create a map of role IDs to role names for quick lookup
     const map: { [key: number]: string } = {};
     roles.forEach(role => {
-      if (role.id && role.name) {
-        map[role.id] = role.name;
+      const roleId = Number(role.id);
+      if (roleId > 0 && role.name) {
+        map[roleId] = role.name;
       }
     });
     setRolesMap(map);
@@ -193,9 +194,11 @@ const UserManagementComponent: React.FC = () => {
     return <span className={`status-badge ${statusClass}`}>{status || 'Unknown'}</span>;
   };
 
-  const getRoleName = (roleId?: number) => {
-    if (!roleId || roleId === 0) return 'Unknown';
-    return rolesMap[roleId] || 'Unknown';
+  const getRoleName = (roleId?: number, roleName?: string) => {
+    if (roleName && roleName.trim()) return roleName;
+    const id = Number(roleId);
+    if (!id || id === 0) return 'Unknown';
+    return rolesMap[id] || 'Unknown';
   };
 
   return (
@@ -287,7 +290,7 @@ const UserManagementComponent: React.FC = () => {
                         <td>{user.email || '-'}</td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <span>{getRoleName(user.role)}</span>
+                            <span>{getRoleName(user.role, user.roleName)}</span>
                             <button
                               className="btn btn-xs btn-info"
                               onClick={() => handleManageRolePermissions(user.role || 0)}
@@ -376,6 +379,20 @@ const UserManagementComponent: React.FC = () => {
         />
       )}
 
+      {showRoleManager && (
+        <RoleManager
+          onClose={() => setShowRoleManager(false)}
+          onSave={() => {
+            loadRoles();
+            loadUsers();
+          }}
+          onManagePermissions={(roleId) => {
+            setSelectedRoleId(roleId);
+            setShowRolePermissionManager(true);
+          }}
+        />
+      )}
+
       {showRolePermissionManager && (
         <RolePermissionManager
           roleId={selectedRoleId}
@@ -387,17 +404,8 @@ const UserManagementComponent: React.FC = () => {
           onSave={() => {
             setShowRolePermissionManager(false);
             setSelectedRoleId(0);
-            loadUsers(); // Refresh user list
-          }}
-        />
-      )}
-
-      {showRoleManager && (
-        <RoleManager
-          onClose={() => setShowRoleManager(false)}
-          onSave={() => {
-            setShowRoleManager(false);
-            loadUsers(); // Refresh to show updated roles
+            loadUsers();
+            loadRoles();
           }}
         />
       )}

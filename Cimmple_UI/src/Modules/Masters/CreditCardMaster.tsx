@@ -97,9 +97,11 @@ const CreditCardMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadCreditCards();
+    if (refreshList) {
+      loadCreditCards();
+    }
   };
 
   const handleSort = (column: keyof CreditCardMaster) => {

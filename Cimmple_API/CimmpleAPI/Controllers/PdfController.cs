@@ -62,17 +62,23 @@ namespace CimmpleAPI.Controllers
                     ShippingAddress = BuildShippingAddress(customer),
                     BuyerName = quotation.BuyerName ?? "",
                     PhoneNumber = customer?.phone_number ?? "",
-                    LineItems = quotationDetails.Select(d => new PdfLineItem
+                    LineItems = quotationDetails.Select(d =>
                     {
-                        PartNo = d.PartNo ?? "",
-                        PartDescription = d.partname ?? "",
-                        Date = FormatDate(d.DueDate),
-                        Unit = d.Unit ?? "EA",
-                        Qty = d.QtyOrdered,
-                        UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
-                        Notes = d.notes ?? ""
+                        var subtotal = d.QtyOrdered * d.UnitPrice;
+                        var discountAmount = CalculateDiscountAmount(subtotal, d.Discount, d.DiscountType);
+                        return new PdfLineItem
+                        {
+                            PartNo = d.PartNo ?? "",
+                            PartDescription = d.partname ?? "",
+                            Date = FormatDate(d.DueDate),
+                            Unit = d.Unit ?? "EA",
+                            Qty = d.QtyOrdered,
+                            UnitPrice = d.UnitPrice,
+                            DiscountAmount = discountAmount,
+                            Amount = subtotal - discountAmount,
+                            Notes = d.notes ?? "",
+                            PrintQtyOptions = BuildPrintQtyOptions(d.QuantityTiers, d.Discount, d.DiscountType)
+                        };
                     }).ToList(),
                     TotalAmount = quotation.TotalAmount
                 };
@@ -133,17 +139,22 @@ namespace CimmpleAPI.Controllers
                     ShippingAddress = BuildShippingAddress(customer),
                     BuyerName = order.BuyerName ?? "",
                     PhoneNumber = customer?.phone_number ?? "",
-                    LineItems = orderDetails.Select(d => new PdfLineItem
+                    LineItems = orderDetails.Select(d =>
                     {
-                        PartNo = d.PartNo ?? "",
-                        PartDescription = d.partname ?? "",
-                        Date = FormatDate(d.DueDate),
-                        Unit = d.Unit ?? "EA",
-                        Qty = d.QtyOrdered,
-                        UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
-                        Notes = d.notes ?? ""
+                        var subtotal = d.QtyOrdered * d.UnitPrice;
+                        var discountAmount = CalculateDiscountAmount(subtotal, d.Discount, d.DiscountType);
+                        return new PdfLineItem
+                        {
+                            PartNo = d.PartNo ?? "",
+                            PartDescription = d.partname ?? "",
+                            Date = FormatDate(d.DueDate),
+                            Unit = d.Unit ?? "EA",
+                            Qty = d.QtyOrdered,
+                            UnitPrice = d.UnitPrice,
+                            DiscountAmount = discountAmount,
+                            Amount = subtotal - discountAmount,
+                            Notes = d.notes ?? ""
+                        };
                     }).ToList(),
                     TotalAmount = order.TotalAmount
                 };
@@ -441,8 +452,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.Notes ?? ""
                     }).ToList(),
                     TotalAmount = order.TotalAmount
@@ -513,8 +524,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.notes ?? ""
                     }).ToList(),
                     TotalAmount = quotation.TotalAmount
@@ -882,6 +893,124 @@ namespace CimmpleAPI.Controllers
             if (!string.IsNullOrEmpty(entity.zip)) parts.Add(entity.zip);
             
             return string.Join(", ", parts);
+        }
+
+        private static decimal CalculateDiscountAmount(decimal subtotal, decimal discount, string? discountType)
+        {
+            if (discount <= 0) return 0;
+            if (string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase))
+            {
+                return Math.Min(discount, subtotal);
+            }
+            return subtotal * (discount / 100m);
+        }
+
+        private static List<PdfQtyPriceOption> BuildPrintQtyOptions(
+            string? quantityTiersJson,
+            decimal discount,
+            string? discountType)
+        {
+            var options = new List<PdfQtyPriceOption>();
+            if (string.IsNullOrWhiteSpace(quantityTiersJson))
+            {
+                return options;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(quantityTiersJson);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    return options;
+                }
+
+                if (!TryGetPropertyIgnoreCase(root, "quantities", out var quantitiesElem) ||
+                    quantitiesElem.ValueKind != JsonValueKind.Array)
+                {
+                    return options;
+                }
+
+                var quantities = quantitiesElem.EnumerateArray()
+                    .Select(e => e.TryGetInt32(out var q) ? q : 0)
+                    .ToList();
+
+                var includeFlags = new List<bool>();
+                if (TryGetPropertyIgnoreCase(root, "includeInPrint", out var includeElem) &&
+                    includeElem.ValueKind == JsonValueKind.Array)
+                {
+                    includeFlags = includeElem.EnumerateArray()
+                        .Select(e => e.ValueKind == JsonValueKind.True ||
+                                     (e.ValueKind == JsonValueKind.False ? false :
+                                      e.ValueKind == JsonValueKind.Number && e.GetInt32() != 0))
+                        .ToList();
+                }
+
+                var unitPrices = new decimal[quantities.Count];
+                if (TryGetPropertyIgnoreCase(root, "breakdownPrices", out var breakdownElem) &&
+                    breakdownElem.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var bp in breakdownElem.EnumerateArray())
+                    {
+                        if (!TryGetPropertyIgnoreCase(bp, "prices", out var pricesElem) ||
+                            pricesElem.ValueKind != JsonValueKind.Array)
+                        {
+                            continue;
+                        }
+
+                        var prices = pricesElem.EnumerateArray()
+                            .Select(p => p.TryGetDecimal(out var val) ? val : 0m)
+                            .ToList();
+
+                        for (int i = 0; i < quantities.Count && i < prices.Count; i++)
+                        {
+                            unitPrices[i] += prices[i];
+                        }
+                    }
+                }
+
+                for (int i = 0; i < quantities.Count; i++)
+                {
+                    var include = i < includeFlags.Count ? includeFlags[i] : false;
+                    if (!include || quantities[i] <= 0)
+                    {
+                        continue;
+                    }
+
+                    var qty = quantities[i];
+                    var unitPrice = unitPrices[i];
+                    var subtotal = qty * unitPrice;
+                    var discountAmount = CalculateDiscountAmount(subtotal, discount, discountType);
+                    options.Add(new PdfQtyPriceOption
+                    {
+                        Qty = qty,
+                        UnitPrice = unitPrice,
+                        DiscountAmount = discountAmount,
+                        Amount = Math.Max(0, subtotal - discountAmount)
+                    });
+                }
+            }
+            catch
+            {
+                // Ignore malformed matrix JSON
+            }
+
+            return options;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+        {
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = prop.Value;
+                    return true;
+                }
+            }
+
+            value = default;
+            return false;
         }
 
         private string FormatDate(DateTime? date)

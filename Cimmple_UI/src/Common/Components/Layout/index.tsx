@@ -1,6 +1,7 @@
 import React from "react";
 import Sidebar from "../Sidebar";
 import TopBar from "../TopBar";
+import { SessionKeepAlive } from "../SessionKeepAlive";
 import { useActiveLocation } from "../../Hooks/useActiveLocation";
 import "./Layout.scss";
 
@@ -13,6 +14,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="admin-layout">
+      <SessionKeepAlive />
       <Sidebar />
       <div className="main-content">
         <TopBar />

@@ -1,10 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import {
+  JOB_PRIORITY,
+  JOB_PRIORITY_OPTIONS,
+  getJobPriorityLabel,
+  normalizeJobPriority,
+} from "../../Common/Constants/jobPriorities";
 import JobOrderSlideout from "./JobOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./JobOrders.scss";
 
 const JobOrders: React.FC = () => {
@@ -14,8 +21,13 @@ const JobOrders: React.FC = () => {
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
+  const [headerPreview, setHeaderPreview] = useState<{
+    jobOrderNumber?: number;
+    customerOrderId?: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
 
   useEffect(() => {
     loadJobOrders();
@@ -24,11 +36,12 @@ const JobOrders: React.FC = () => {
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const openId = params.get('open');
+    const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
         setSelectedJobOrderId(id);
+        setHeaderPreview(null);
         setShowSlideout(true);
         // Clean up URL
         history.replace(location.pathname);
@@ -39,15 +52,16 @@ const JobOrders: React.FC = () => {
   // Listen for custom event from global search
   useEffect(() => {
     const handleOpenEntity = (event: CustomEvent) => {
-      if (event.detail.type === 'jobOrder') {
+      if (event.detail.type === "jobOrder") {
         setSelectedJobOrderId(event.detail.id);
+        setHeaderPreview(null);
         setShowSlideout(true);
       }
     };
 
-    window.addEventListener('openEntity', handleOpenEntity as EventListener);
+    window.addEventListener("openEntity", handleOpenEntity as EventListener);
     return () => {
-      window.removeEventListener('openEntity', handleOpenEntity as EventListener);
+      window.removeEventListener("openEntity", handleOpenEntity as EventListener);
     };
   }, []);
 
@@ -60,7 +74,7 @@ const JobOrders: React.FC = () => {
         tenantid: tenantID,
         locationId: locationIdParam,
       });
-      
+
       if (result && Array.isArray(result)) {
         setJobOrders(result);
       } else {
@@ -68,7 +82,12 @@ const JobOrders: React.FC = () => {
       }
     } catch (error: any) {
       console.error("[JobOrders] Error loading job orders:", error);
-      toast.error(`Error loading job orders: ${error.message || "Unknown error"}`);
+      const apiMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Error loading job orders: ${apiMessage}`);
       setJobOrders([]);
     } finally {
       setLoading(false);
@@ -78,42 +97,31 @@ const JobOrders: React.FC = () => {
   const handleRowClick = (row: Record<string, any>) => {
     const jobOrder = row as JobOrderMaster;
     setSelectedJobOrderId(jobOrder.jobOrderID);
+    setHeaderPreview({
+      jobOrderNumber: jobOrder.jobOrderNumber,
+      customerOrderId: jobOrder.customerOrderID,
+    });
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedJobOrderId(0);
-    loadJobOrders();
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
+    setHeaderPreview(null);
+    if (refreshList) {
+      loadJobOrders();
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
-  };
+  const formatDate = (dateStr: string): string =>
+    formatDateOnlyFromApi(dateStr, true) || dateStr;
 
   const getStatusBadge = (status: string) => {
     if (!status || status.trim() === "") {
       return <span className="badge badge-secondary">-</span>;
     }
     const statusLower = status.toLowerCase().trim();
-    
+
     if (statusLower === "draft") {
       return <span className="badge badge-warning">Draft</span>;
     } else if (statusLower === "in progress" || statusLower === "in-progress") {
@@ -127,8 +135,20 @@ const JobOrders: React.FC = () => {
     } else if (statusLower === "cancelled" || statusLower === "canceled") {
       return <span className="badge badge-danger">Cancelled</span>;
     }
-    
+
     return <span className="badge badge-secondary">{status}</span>;
+  };
+
+  const getPriorityBadge = (priority: number) => {
+    const level = normalizeJobPriority(priority);
+    const label = getJobPriorityLabel(level);
+    if (level === JOB_PRIORITY.Urgent) {
+      return <span className="badge jo-priority-badge jo-priority-badge--urgent">{label}</span>;
+    }
+    if (level === JOB_PRIORITY.High) {
+      return <span className="badge jo-priority-badge jo-priority-badge--high">{label}</span>;
+    }
+    return <span className="badge jo-priority-badge jo-priority-badge--normal">{label}</span>;
   };
 
   const formatJobOrderNumber = (number: number): string => {
@@ -204,6 +224,12 @@ const JobOrders: React.FC = () => {
       render: (value: any) => formatDate(value),
     },
     {
+      key: "jobPriority",
+      label: "Priority",
+      sortable: true,
+      render: (value: any) => getPriorityBadge(Number(value) || 0),
+    },
+    {
       key: "status",
       label: "Status",
       sortable: true,
@@ -211,12 +237,30 @@ const JobOrders: React.FC = () => {
     },
   ];
 
-  const filteredJobOrders = jobOrders.filter((jobOrder) => {
-    if (statusFilter !== "all" && jobOrder.status !== statusFilter) {
-      return false;
-    }
-    return true;
-  });
+  const filteredJobOrders = useMemo(() => {
+    const filtered = jobOrders.filter((jobOrder) => {
+      if (statusFilter !== "all" && jobOrder.status !== statusFilter) {
+        return false;
+      }
+      if (priorityFilter !== "all") {
+        const selected = parseInt(priorityFilter, 10);
+        if (normalizeJobPriority(jobOrder.jobPriority) !== selected) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Default order: Urgent → High → Normal, then earlier due date
+    return [...filtered].sort((a, b) => {
+      const priorityDiff =
+        normalizeJobPriority(b.jobPriority) - normalizeJobPriority(a.jobPriority);
+      if (priorityDiff !== 0) return priorityDiff;
+      const aDue = a.dueDate || "";
+      const bDue = b.dueDate || "";
+      return aDue.localeCompare(bDue);
+    });
+  }, [jobOrders, statusFilter, priorityFilter]);
 
   return (
     <div className="job-orders">
@@ -225,6 +269,7 @@ const JobOrders: React.FC = () => {
         columns={columns}
         data={filteredJobOrders}
         loading={loading}
+        enablePagination
         onAdd={() => {
           toast.info("Create job orders from Customer Order line items");
         }}
@@ -245,6 +290,18 @@ const JobOrders: React.FC = () => {
             value: statusFilter,
             onChange: setStatusFilter,
           },
+          {
+            label: "Priority",
+            options: [
+              { value: "all", label: "All" },
+              ...JOB_PRIORITY_OPTIONS.map((opt) => ({
+                value: String(opt.value),
+                label: opt.label,
+              })),
+            ],
+            value: priorityFilter,
+            onChange: setPriorityFilter,
+          },
         ]}
         searchPlaceholder="Search job orders..."
         getRowId={(row) => (row as JobOrderMaster).jobOrderID}
@@ -253,6 +310,7 @@ const JobOrders: React.FC = () => {
       {showSlideout && (
         <JobOrderSlideout
           jobOrderId={selectedJobOrderId}
+          headerPreview={headerPreview || undefined}
           onClose={handleCloseSlideout}
         />
       )}
@@ -261,5 +319,3 @@ const JobOrders: React.FC = () => {
 };
 
 export default JobOrders;
-
-

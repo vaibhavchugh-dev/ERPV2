@@ -73,6 +73,57 @@ namespace CimmpleAPI.Controllers
                         orderDate = x.Job.OrderDate,
                         locationId = x.OrderLocationId
                     })
+                    .ToList()
+                    .Select(x => new
+                    {
+                        x.jobOrderID,
+                        x.jobOrderNumber,
+                        x.customerOrderID,
+                        x.customerOrderDetailID,
+                        x.customerID,
+                        x.customerName,
+                        x.customerCode,
+                        x.partNo,
+                        x.partName,
+                        x.qtyOrdered,
+                        x.unit,
+                        x.unitPrice,
+                        // Date-only strings avoid timezone off-by-one on the client
+                        dueDate = x.dueDate.ToString("yyyy-MM-dd"),
+                        x.jobNumber,
+                        x.jobDesc,
+                        x.jobPriority,
+                        x.status,
+                        orderDate = x.orderDate.ToString("yyyy-MM-dd"),
+                        x.locationId
+                    })
+                    .ToList();
+
+                return Ok(new { result = jobOrders });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Lightweight map of job orders for a single customer order (avoids loading all tenant JOs).
+        /// </summary>
+        [HttpGet("GetJobOrdersByCustomerOrder")]
+        public IActionResult GetJobOrdersByCustomerOrder([FromQuery] int orderId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var jobOrders = _context.JobOrderMaster
+                    .AsNoTracking()
+                    .Where(j => j.Tenantid == tenantId && j.CustomerOrderID == orderId)
+                    .Select(j => new
+                    {
+                        jobOrderID = j.JobOrderID,
+                        customerOrderDetailID = j.CustomerOrderDetailID,
+                        status = j.Status ?? "Draft"
+                    })
                     .ToList();
 
                 return Ok(new { result = jobOrders });
@@ -161,13 +212,14 @@ namespace CimmpleAPI.Controllers
                     qtyOrdered = jobOrder.QtyOrdered,
                     unit = jobOrder.Unit ?? "",
                     unitPrice = jobOrder.UnitPrice,
-                    dueDate = jobOrder.DueDate,
+                    // Date-only strings avoid timezone off-by-one on the client
+                    dueDate = jobOrder.DueDate.ToString("yyyy-MM-dd"),
                     jobPriority = jobOrder.JobPriority,
                     status = jobOrder.Status ?? "Draft",
                     tenantid = jobOrder.Tenantid,
                     userId = jobOrder.UserId,
                     userToken = jobOrder.UserToken,
-                    orderDate = jobOrder.OrderDate,
+                    orderDate = jobOrder.OrderDate.ToString("yyyy-MM-dd"),
                     attachments = attachments ?? new List<JobOrderAttachmentDto>(),
                     comments = comments ?? new List<JobOrderCommentDto>(),
                     routingSteps = routingSteps ?? new List<JobOrderRoutingStepDto>(),
@@ -175,7 +227,8 @@ namespace CimmpleAPI.Controllers
                     drawingRevision = jobOrder.DrawingRevision ?? "",
                     jobTemplateId = jobOrder.JobTemplateId,
                     jobTemplateCode = jobOrder.JobTemplateCode ?? "",
-                    jobTemplateRevision = jobOrder.JobTemplateRevision
+                    jobTemplateRevision = jobOrder.JobTemplateRevision,
+                    enableJobTracking = jobOrder.EnableJobTracking
                 };
 
                 return Ok(new { result = result });
@@ -186,7 +239,7 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        // Helper method to parse date strings in various formats
+        // Helper method to parse date strings in various formats (date-only, no timezone shift)
         private DateTime? ParseDate(string dateString)
         {
             if (string.IsNullOrWhiteSpace(dateString))
@@ -194,20 +247,25 @@ namespace CimmpleAPI.Controllers
                 return null;
             }
 
-            // Try parsing as ISO format first
-            if (DateTime.TryParse(dateString, out DateTime isoDate))
+            string[] formats =
             {
-                return isoDate;
-            }
-
-            // Try parsing MM/DD/YY or MM/DD/YYYY format
-            string[] formats = { "M/d/yy", "MM/dd/yy", "M/d/yyyy", "MM/dd/yyyy", "M/dd/yy", "MM/d/yy", "M/dd/yyyy", "MM/d/yyyy" };
+                "yyyy-MM-dd",
+                "yyyy-M-d",
+                "M/d/yy", "MM/dd/yy", "M/d/yyyy", "MM/dd/yyyy",
+                "M/dd/yy", "MM/d/yy", "M/dd/yyyy", "MM/d/yyyy"
+            };
             foreach (string format in formats)
             {
-                if (DateTime.TryParseExact(dateString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
+                if (DateTime.TryParseExact(dateString.Trim(), format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsedDate))
                 {
-                    return parsedDate;
+                    return parsedDate.Date;
                 }
+            }
+
+            // Fallback: take calendar date from ISO / DateTime strings (ignore time/zone)
+            if (DateTime.TryParse(dateString, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime isoDate))
+            {
+                return isoDate.Date;
             }
 
             return null;
@@ -315,6 +373,7 @@ namespace CimmpleAPI.Controllers
                 jobOrder.JobTemplateId = request.JobTemplateId > 0 ? request.JobTemplateId : null;
                 jobOrder.JobTemplateCode = request.JobTemplateId > 0 ? request.JobTemplateCode : null;
                 jobOrder.JobTemplateRevision = request.JobTemplateId > 0 ? request.JobTemplateRevision : null;
+                jobOrder.EnableJobTracking = request.EnableJobTracking;
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -446,13 +505,14 @@ namespace CimmpleAPI.Controllers
                     QtyOrdered = orderDetail.QtyOrdered,
                     Unit = orderDetail.Unit ?? "",
                     UnitPrice = orderDetail.UnitPrice,
-                    DueDate = orderDetail.DueDate,
+                    DueDate = orderDetail.DueDate.Date,
                     JobPriority = orderDetail.JobPriority,
                     Status = "Draft",
                     Tenantid = request.Tenantid,
                     UserId = request.UserId,
                     UserToken = request.UserToken,
-                    OrderDate = DateTime.Now,
+                    OrderDate = DateTime.Now.Date,
+                    EnableJobTracking = false,
                     CreatedDate = DateTime.Now
                 };
 
@@ -595,6 +655,7 @@ namespace CimmpleAPI.Controllers
         public int? JobTemplateId { get; set; }
         public string JobTemplateCode { get; set; }
         public int? JobTemplateRevision { get; set; }
+        public bool EnableJobTracking { get; set; }
     }
 
     public class CreateJobOrderFromDetailReq

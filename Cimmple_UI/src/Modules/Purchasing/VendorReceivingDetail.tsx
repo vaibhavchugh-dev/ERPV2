@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -11,7 +11,7 @@ import "./VendorReceivingDetail.scss";
 
 interface VendorReceivingDetailProps {
   orderId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 interface ReceivingFormData {
@@ -26,6 +26,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   orderId,
   onClose,
 }) => {
+  const listNeedsRefreshRef = useRef(false);
   const [order, setOrder] = useState<OrderForReceivingDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [receiving, setReceiving] = useState(false);
@@ -136,6 +137,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
       if (result.success) {
         toast.success(result.message || "Items received successfully");
+        listNeedsRefreshRef.current = true;
         handleCancelReceiving(detail.id);
         loadOrder(); // Reload to get updated quantities
       } else {
@@ -182,6 +184,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       const failed = results.filter(r => !r.success);
       if (failed.length === 0) {
         toast.success(`Successfully received ${formsToSubmit.length} item(s)`);
+        listNeedsRefreshRef.current = true;
         setReceivingForms(new Map());
         setShowReceivingForm(new Map());
         loadOrder();
@@ -220,7 +223,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
   if (loading) {
     return createPortal(
-      <div className="slideout-overlay" onClick={onClose}>
+      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
           <div className="page-loading">
             <div className="loading-spinner"></div>
@@ -234,11 +237,11 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
   if (!order) {
     return createPortal(
-      <div className="slideout-overlay" onClick={onClose}>
+      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
           <div style={{ padding: "2rem", textAlign: "center" }}>
             <p>Order not found</p>
-            <button className="btn-submit" onClick={onClose}>
+            <button className="btn-submit" onClick={() => onClose(listNeedsRefreshRef.current)}>
               Close
             </button>
           </div>
@@ -251,7 +254,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   const hasPendingReceiving = Array.from(receivingForms.values()).some(f => f.receivedQty > 0);
 
   return createPortal(
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
       <div className="receiving-detail-card" onClick={(e) => e.stopPropagation()}>
         <div className="receiving-header">
           <div>
@@ -260,7 +263,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
               {order.vendorName} • Order Date: {formatDate(order.orderDate)}
             </p>
           </div>
-          <button className="btn-close" onClick={onClose}>
+          <button className="btn-close" onClick={() => onClose(listNeedsRefreshRef.current)}>
             ×
           </button>
         </div>

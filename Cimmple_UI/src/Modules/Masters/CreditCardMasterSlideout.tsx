@@ -12,7 +12,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface CreditCardMasterSlideoutProps {
   creditCardId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
@@ -301,7 +301,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
           : "Credit card created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving credit card:", error);
       toast.error(`Error saving credit card: ${error.message || "Unknown error"}`);
@@ -345,7 +345,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       toast.success("Credit Card deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting credit card:", error);
       toast.error(`Error deleting credit card: ${error.message || "Unknown error"}`);

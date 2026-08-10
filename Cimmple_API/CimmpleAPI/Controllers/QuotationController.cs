@@ -62,7 +62,42 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                return Ok(new { result = quotations });
+                // convertedOrderId stores CustomerOrder.OrderID; resolve PONumber for display (CO#)
+                var convertedOrderIds = quotations
+                    .Where(q => q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0)
+                    .Select(q => q.convertedOrderId!.Value)
+                    .Distinct()
+                    .ToList();
+                var convertedOrderNumbers = convertedOrderIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : _context.CustomerOrder
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == tenantid && convertedOrderIds.Contains(o.OrderID))
+                        .Select(o => new { o.OrderID, o.PONumber })
+                        .ToList()
+                        .ToDictionary(o => o.OrderID, o => o.PONumber);
+
+                var quotationsWithOrderNumber = quotations.Select(q => new
+                {
+                    q.orderID,
+                    q.quotationNumber,
+                    q.customerID,
+                    q.customerCode,
+                    q.customerName,
+                    q.orderDate,
+                    q.totalAmount,
+                    q.status,
+                    q.customerRefNo,
+                    q.isConverted,
+                    q.convertedOrderId,
+                    convertedOrderNumber = q.convertedOrderId.HasValue &&
+                        convertedOrderNumbers.TryGetValue(q.convertedOrderId.Value, out var po)
+                        ? (int?)po
+                        : null,
+                    q.locationId
+                }).ToList();
+
+                return Ok(new { result = quotationsWithOrderNumber });
             }
             catch (Exception ex)
             {
@@ -142,6 +177,7 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         leadTime = d.leadTime ?? "",
                         notes = d.notes ?? "",
@@ -193,6 +229,13 @@ namespace CimmpleAPI.Controllers
                     customerRefNo = quotation.CustomerRefNo ?? "",
                     isConverted = quotation.isConverted ?? 0,
                     convertedOrderId = quotation.convertedOrderId,
+                    convertedOrderNumber = quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0
+                        ? _context.CustomerOrder
+                            .AsNoTracking()
+                            .Where(o => o.OrderID == quotation.convertedOrderId.Value && o.Tenantid == tenantId)
+                            .Select(o => (int?)o.PONumber)
+                            .FirstOrDefault()
+                        : null,
                     locationId = quotation.Locationid,
                     details = details,
                     attachments = attachments.Select(a => new
@@ -316,7 +359,7 @@ namespace CimmpleAPI.Controllers
                     quotation = new QuotationOrder
                     {
                         Tenantid = request.Tenantid,
-                        OrderDate = request.OrderDate,
+                        OrderDate = request.OrderDate.Date,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
                         PONumber = nextPONumber
@@ -324,6 +367,7 @@ namespace CimmpleAPI.Controllers
                     _context.QuotationOrder.Add(quotation);
                 }
 
+                quotation.OrderDate = request.OrderDate.Date;
                 quotation.CustomerID = request.CustomerID;
                 quotation.customercode = request.CustomerCode ?? "";
                 quotation.CustomerName = request.CustomerName ?? "";
@@ -373,7 +417,7 @@ namespace CimmpleAPI.Controllers
                             ItemNo = detail.ItemNo,
                             partname = detail.PartName ?? "",
                             PartNo = detail.PartNo ?? "",
-                            DueDate = detail.DueDate,
+                            DueDate = detail.DueDate.Date,
                             JobNumber = detail.JobNumber ?? "",
                             JobDesc = detail.JobDesc ?? "",
                             QtyOrdered = detail.QtyOrdered,
@@ -381,6 +425,7 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detail.UnitPrice,
                             JobPriority = detail.JobPriority,
                             Discount = detail.Discount,
+                            DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
                             Tenantid = request.Tenantid,
                             productid = detail.ProductId,
                             leadTime = detail.LeadTime ?? "",
@@ -431,6 +476,7 @@ namespace CimmpleAPI.Controllers
                     result = new
                     {
                         id = quotation.OrderID,
+                        poNumber = quotation.PONumber,
                         message = "Quotation saved successfully",
                         attachments = attachments.Select(a => new
                         {
@@ -573,6 +619,258 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        [HttpPost("DuplicateQuotation")]
+        public async Task<IActionResult> DuplicateQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var source = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Quotation not found" });
+                }
+
+                var sourceDetails = _context.QuotationOrderDetails
+                    .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToList();
+
+                var existingQuotations = _context.QuotationOrder
+                    .Where(q => q.Tenantid == tenantId)
+                    .ToList();
+                int nextPONumber = existingQuotations.Any()
+                    ? Math.Max(1000, existingQuotations.Max(q => q.PONumber) + 1)
+                    : 1000;
+
+                var duplicate = new QuotationOrder
+                {
+                    Tenantid = source.Tenantid,
+                    CustomerID = source.CustomerID,
+                    customercode = source.customercode ?? "",
+                    CustomerName = source.CustomerName ?? "",
+                    address = source.address ?? "",
+                    CustomerPoNumber = source.CustomerPoNumber ?? "",
+                    OrderDate = DateTime.Now.Date,
+                    TotalAmount = source.TotalAmount,
+                    UserId = source.UserId,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    shippingInstructions = source.shippingInstructions ?? "",
+                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
+                    ExternalOrderDate = source.ExternalOrderDate,
+                    BuyerName = source.BuyerName ?? "",
+                    CustomerRefNo = "",
+                    isConverted = 0,
+                    convertedOrderId = null,
+                    Locationid = source.Locationid,
+                    CommentsJson = null,
+                    AttachmentsJson = null,
+                    PONumber = nextPONumber
+                };
+                _context.QuotationOrder.Add(duplicate);
+                _context.SaveChanges();
+
+                foreach (var detail in sourceDetails)
+                {
+                    _context.QuotationOrderDetails.Add(new QuotationOrderDetails
+                    {
+                        OrderID = duplicate.OrderID,
+                        ItemNo = detail.ItemNo,
+                        partname = detail.partname ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = detail.DueDate,
+                        JobNumber = detail.JobNumber ?? "",
+                        JobDesc = detail.JobDesc ?? "",
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "",
+                        UnitPrice = detail.UnitPrice,
+                        JobPriority = detail.JobPriority,
+                        Discount = detail.Discount,
+                        DiscountType = detail.DiscountType,
+                        Tenantid = tenantId,
+                        productid = detail.productid,
+                        leadTime = detail.leadTime ?? "",
+                        notes = detail.notes ?? "",
+                        QuantityTiers = detail.QuantityTiers
+                    });
+                }
+                _context.SaveChanges();
+
+                var sourceAttachments = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToList();
+
+                int createdBy = GetUserId() ?? source.UserId;
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.QuotationOrderAttachment.Any()
+                        ? _context.QuotationOrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    _context.QuotationOrderAttachment.Add(new QuotationOrderAttachment
+                    {
+                        orderid = duplicate.OrderID,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    });
+                    _context.SaveChanges();
+                }
+
+                SyncQuotationAttachmentsJson(duplicate);
+                _context.SaveChanges();
+
+                return Ok(new { result = new { id = duplicate.OrderID, message = "Quotation duplicated successfully" } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
+        public class CopyAttachmentsToOrderRequest
+        {
+            public List<int> AttachmentIds { get; set; } = new List<int>();
+        }
+
+        /// <summary>
+        /// Copies selected quotation attachment blobs into the Orders folder and writes OrderAttachment + AttachmentsJson.
+        /// </summary>
+        [HttpPost("CopyAttachmentsToOrder")]
+        public async Task<IActionResult> CopyAttachmentsToOrder(
+            [FromQuery] int quotationId,
+            [FromQuery] int orderId,
+            [FromQuery] int tenantId,
+            [FromBody] CopyAttachmentsToOrderRequest? request)
+        {
+            try
+            {
+                var quotation = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                var order = _context.CustomerOrder
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (quotation == null || order == null)
+                {
+                    return NotFound(new { error = "Quotation or order not found" });
+                }
+
+                var selectedIds = request?.AttachmentIds ?? new List<int>();
+                var sourceQuery = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId);
+                if (selectedIds.Count > 0)
+                {
+                    sourceQuery = sourceQuery.Where(a => selectedIds.Contains(a.Id));
+                }
+                var sourceAttachments = sourceQuery.OrderBy(a => a.Id).ToList();
+
+                int createdBy = GetUserId() ?? 0;
+                var copiedDtos = new List<QuotationAttachmentDto>();
+
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.OrderAttachment.Any()
+                        ? _context.OrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.OrdersFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    var orderAtt = new OrderAttachment
+                    {
+                        orderid = orderId,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    };
+                    _context.OrderAttachment.Add(orderAtt);
+                    _context.SaveChanges();
+
+                    copiedDtos.Add(new QuotationAttachmentDto
+                    {
+                        Id = orderAtt.Id,
+                        Name = orderAtt.Name,
+                        Size = orderAtt.size,
+                        FileUrl = orderAtt.UploadFile,
+                        FileUniqueno = orderAtt.FileUniqueno,
+                        UploadFile = orderAtt.UploadFile,
+                        PageNo = orderAtt.Pageno,
+                        CreatedBy = orderAtt.createdby
+                    });
+                }
+
+                var attachmentOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    WriteIndented = false
+                };
+                order.AttachmentsJson = copiedDtos.Count > 0
+                    ? JsonSerializer.Serialize(copiedDtos, attachmentOptions)
+                    : null;
+                _context.SaveChanges();
+
+                return Ok(new { result = new { message = "Attachments copied", count = copiedDtos.Count, attachments = copiedDtos } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
             }
         }
 
@@ -835,9 +1133,11 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         leadTime = "",
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson) 
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null
@@ -1332,7 +1632,11 @@ namespace CimmpleAPI.Controllers
                             Tenantid = tenantid,
                             ItemNo = detailElem.TryGetProperty("ItemNo", out JsonElement itemNoElem) ? itemNoElem.GetInt32() : (detailElem.TryGetProperty("itemNo", out JsonElement itemNoElemLower) ? itemNoElemLower.GetInt32() : 0),
                             itemname = detailElem.TryGetProperty("PartName", out JsonElement partNameElem) ? partNameElem.GetString() ?? "" : (detailElem.TryGetProperty("partName", out JsonElement partNameElemLower) ? partNameElemLower.GetString() ?? "" : ""),
-                            glcode = "",
+                            glcode = detailElem.TryGetProperty("glcode", out JsonElement glcodeElem) && glcodeElem.ValueKind == JsonValueKind.String
+                                ? (glcodeElem.GetString() ?? "")
+                                : (detailElem.TryGetProperty("Glcode", out JsonElement glcodeElemUpper) && glcodeElemUpper.ValueKind == JsonValueKind.String
+                                    ? (glcodeElemUpper.GetString() ?? "")
+                                    : ""),
                             JobId = 0,
                             JobNumber = detailElem.TryGetProperty("JobNumber", out JsonElement jobNumberElem) ? jobNumberElem.GetString() ?? "" : (detailElem.TryGetProperty("jobNumber", out JsonElement jobNumberElemLower) ? jobNumberElemLower.GetString() ?? "" : ""),
                             JobDesc = detailElem.TryGetProperty("JobDesc", out JsonElement jobDescElem) ? jobDescElem.GetString() ?? "" : (detailElem.TryGetProperty("jobDesc", out JsonElement jobDescElemLower) ? jobDescElemLower.GetString() ?? "" : ""),
@@ -1341,6 +1645,11 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement unitPriceElem) ? unitPriceElem.GetDecimal() : (detailElem.TryGetProperty("unitPrice", out JsonElement unitPriceElemLower) ? unitPriceElemLower.GetDecimal() : 0),
                             JobPriority = detailElem.TryGetProperty("JobPriority", out JsonElement jobPriorityElem) ? jobPriorityElem.GetInt32() : (detailElem.TryGetProperty("jobPriority", out JsonElement jobPriorityElemLower) ? jobPriorityElemLower.GetInt32() : 0),
                             Discount = detailElem.TryGetProperty("Discount", out JsonElement discountElem) ? discountElem.GetDecimal() : (detailElem.TryGetProperty("discount", out JsonElement discountElemLower) ? discountElemLower.GetDecimal() : 0),
+                            DiscountType = detailElem.TryGetProperty("DiscountType", out JsonElement discountTypeElem) && discountTypeElem.ValueKind == JsonValueKind.String
+                                ? (string.Equals(discountTypeElem.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                : (detailElem.TryGetProperty("discountType", out JsonElement discountTypeElemLower) && discountTypeElemLower.ValueKind == JsonValueKind.String
+                                    ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                    : "Percent"),
                             Received = "",
                             productid = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (detailElem.TryGetProperty("productId", out JsonElement productIdElemLower) && productIdElemLower.ValueKind == JsonValueKind.Number ? productIdElemLower.GetInt32() : (int?)null),
                             notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) && notesElem.ValueKind == JsonValueKind.String ? notesElem.GetString() : (detailElem.TryGetProperty("notes", out JsonElement notesElemLower) && notesElemLower.ValueKind == JsonValueKind.String ? notesElemLower.GetString() : null),
@@ -1701,6 +2010,7 @@ namespace CimmpleAPI.Controllers
                         UnitPrice = quoteDetail.UnitPrice,
                         JobPriority = quoteDetail.JobPriority,
                         Discount = quoteDetail.Discount,
+                        DiscountType = string.IsNullOrWhiteSpace(quoteDetail.DiscountType) ? "Percent" : quoteDetail.DiscountType,
                         ProductId = quoteDetail.productid,
                         LeadTime = "",
                         Notes = quoteDetail.notes ?? "",
@@ -1956,6 +2266,7 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = 0, // Start with 0 - vendors enter actual pricing
                             JobPriority = sourceDetail.JobPriority,
                             Discount = 0, // Start with 0 - vendors enter actual discounts
+                            DiscountType = "Percent",
                             Tenantid = tenantid,
                             productid = sourceDetail.productid,
                             notes = sourceDetail.notes,
@@ -2100,8 +2411,10 @@ namespace CimmpleAPI.Controllers
                         unit = d.Unit ?? "EA",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         dueDate = d.DueDate,
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson)
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null
@@ -2765,6 +3078,8 @@ namespace CimmpleAPI.Controllers
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount.</summary>
+        public string DiscountType { get; set; } = "Percent";
         public int? ProductId { get; set; }
         public string LeadTime { get; set; } = "";
         public string Notes { get; set; } = "";
@@ -2775,6 +3090,8 @@ namespace CimmpleAPI.Controllers
     {
         public List<int> Quantities { get; set; } = new List<int>(); // Simple quantity values for column headers
         public List<BreakdownPriceDto> BreakdownPrices { get; set; } = new List<BreakdownPriceDto>();
+        /// <summary>One flag per quantity column. All default off.</summary>
+        public List<bool> IncludeInPrint { get; set; } = new List<bool>();
     }
 
     public class BreakdownPriceDto

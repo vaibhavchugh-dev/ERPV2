@@ -117,5 +117,38 @@ namespace CimmpleAPI.Utilities
             var uploadFile = new UploadFile(context, configuration);
             await uploadFile.DeleteFileOnServer(list);
         }
+
+        public static async Task<bool> UploadBytesAsync(
+            CimmpleDbContext context,
+            IConfiguration? configuration,
+            byte[] content,
+            FileInfor fileInfo)
+        {
+            if (content == null || content.Length == 0 || fileInfo == null)
+            {
+                return false;
+            }
+
+            var uploadFile = new UploadFile(context, configuration);
+            return await uploadFile.UploadBytesOnServer(content, fileInfo);
+        }
+
+        /// <summary>
+        /// Downloads a blob and re-uploads it under a new module folder / blob name (independent copy).
+        /// </summary>
+        public static async Task<bool> CopyBlobAsync(
+            CimmpleDbContext context,
+            IConfiguration? configuration,
+            FileInfor source,
+            FileInfor destination)
+        {
+            var bytes = DownloadBytes(context, configuration, source);
+            if (bytes == null || bytes.Length == 0)
+            {
+                return false;
+            }
+
+            return await UploadBytesAsync(context, configuration, bytes, destination);
+        }
     }
 }

@@ -5,11 +5,13 @@ import { QuotationService, VendorQuotationMaster } from "../../Common/Services/Q
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import VendorQuotationComparison from "./VendorQuotationComparison";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./VendorQuotations.scss";
 
 const VendorQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
@@ -80,31 +82,12 @@ const VendorQuotations: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedQuotationId(0);
-    loadQuotations();
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
+    if (refreshList) {
+      loadQuotations();
     }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
   };
 
   const getStatusBadge = (status: string) => {
@@ -316,6 +299,7 @@ const VendorQuotations: React.FC = () => {
         columns={columns}
         data={filteredQuotations}
         loading={loading}
+        enablePagination
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[
@@ -347,10 +331,12 @@ const VendorQuotations: React.FC = () => {
       {showComparison && (
         <VendorQuotationComparison
           parentQuotationId={comparisonParentId}
-          onClose={() => {
+          onClose={(refreshList = false) => {
             setShowComparison(false);
             setComparisonParentId(0);
-            loadQuotations(); // Refresh to show updated statuses
+            if (refreshList) {
+              loadQuotations();
+            }
           }}
           onQuotationSelected={(quotationId) => {
             // Optionally open the selected quotation

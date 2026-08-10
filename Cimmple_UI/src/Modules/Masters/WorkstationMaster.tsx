@@ -97,9 +97,11 @@ const WorkstationMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadWorkstations();
+    if (refreshList) {
+      loadWorkstations();
+    }
   };
 
   const handleSort = (column: keyof WorkstationMaster) => {

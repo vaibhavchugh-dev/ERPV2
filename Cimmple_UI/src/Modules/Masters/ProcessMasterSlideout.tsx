@@ -15,7 +15,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface ProcessMasterSlideoutProps {
   processId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const emptyForm = (): ProcessMasterReq => ({
@@ -179,7 +179,7 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
       await ProcessService.DeleteProcess(processId);
       toast.success("Process deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting process:", error);
       toast.error(`Error deleting process: ${error.message || "Unknown error"}`);
@@ -241,7 +241,7 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
           : "Process created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving process:", error);
       const message =
