@@ -2684,6 +2684,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
               await loadOrder(id);
             }
           }}
+          onSaved={async () => {
+            const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+            if (id > 0) {
+              await loadOrder(id);
+            }
+          }}
         />
       )}
 

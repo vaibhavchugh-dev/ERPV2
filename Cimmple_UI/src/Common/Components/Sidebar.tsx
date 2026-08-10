@@ -157,30 +157,17 @@ const Sidebar: React.FC = () => {
       (item) => pathname === item.path || pathname.startsWith(`${item.path}/`)
     );
 
-  const isInitialRouteSync = React.useRef(true);
-
-  // Deep-link: open secondary once on first load for multi-item sections.
-  // Later navigations (e.g. secondary link clicks) do not force it back open.
+  // Close secondary when leaving a multi-item section (e.g. navigating to /home).
+  // Do not auto-open on refresh or initial load — only open on section click.
   useEffect(() => {
     if (location.pathname === "/home") {
       setActiveSection(null);
-      isInitialRouteSync.current = false;
       return;
     }
 
     const matched = sections.find((section) =>
       pathBelongsToSection(section, location.pathname)
     );
-
-    if (isInitialRouteSync.current) {
-      isInitialRouteSync.current = false;
-      if (matched && matched.items.length > 1) {
-        setActiveSection(matched.id);
-      } else {
-        setActiveSection(null);
-      }
-      return;
-    }
 
     if (!matched || matched.items.length <= 1) {
       setActiveSection(null);

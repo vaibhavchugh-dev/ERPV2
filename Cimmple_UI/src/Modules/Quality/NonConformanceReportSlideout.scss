@@ -12,6 +12,11 @@
   justify-content: center;
 }
 
+/* Sit above Job Order slideout + tracking dialogs when opened from a JO step */
+.ncr-slideout--over-jo {
+  z-index: 1400;
+}
+
 .ncr-slideout-overlay {
   position: absolute;
   top: 0;

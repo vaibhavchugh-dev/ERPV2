@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -367,13 +368,21 @@ namespace CimmpleAPI.Controllers
                     jobOrder.OrderDate = DateTime.Now;
                 }
                 jobOrder.JobPriority = request.JobPriority;
-                jobOrder.Status = request.Status ?? "Draft";
                 jobOrder.DrawingNumber = request.DrawingNumber ?? "";
                 jobOrder.DrawingRevision = request.DrawingRevision ?? "";
                 jobOrder.JobTemplateId = request.JobTemplateId > 0 ? request.JobTemplateId : null;
                 jobOrder.JobTemplateCode = request.JobTemplateId > 0 ? request.JobTemplateCode : null;
                 jobOrder.JobTemplateRevision = request.JobTemplateId > 0 ? request.JobTemplateRevision : null;
-                jobOrder.EnableJobTracking = request.EnableJobTracking;
+
+                // Omit-safe: PWA step saves may not send EnableJobTracking; do not wipe office Track flag.
+                if (request.EnableJobTracking.HasValue)
+                {
+                    jobOrder.EnableJobTracking = request.EnableJobTracking.Value;
+                }
+                else if (request.JobOrderID == 0)
+                {
+                    jobOrder.EnableJobTracking = false;
+                }
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -406,9 +415,14 @@ namespace CimmpleAPI.Controllers
                     jobOrder.CommentsJson = null;
                 }
 
-                // Save routing steps as JSON
+                // Save routing steps as JSON; commit live wall-clock elapsed for running steps.
                 if (request.RoutingSteps != null && request.RoutingSteps.Count > 0)
                 {
+                    // Stale step saves (Start/Pause/NCR) must not wipe notes added in another request.
+                    JobOrderTrackingHelper.PreserveStepAnnotations(
+                        jobOrder.RoutingStepsJson,
+                        request.RoutingSteps);
+                    JobOrderTrackingHelper.CommitLiveElapsed(request.RoutingSteps, DateTime.UtcNow);
                     var routingOptions = new JsonSerializerOptions
                     {
                         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -420,6 +434,11 @@ namespace CimmpleAPI.Controllers
                 {
                     jobOrder.RoutingStepsJson = null;
                 }
+
+                // Keep job Status aligned with routing-step progress (shared office + PWA rule).
+                jobOrder.Status = JobOrderTrackingHelper.DeriveJobStatus(
+                    request.Status ?? jobOrder.Status ?? "Draft",
+                    request.RoutingSteps);
 
                 _context.SaveChanges();
 
@@ -655,7 +674,10 @@ namespace CimmpleAPI.Controllers
         public int? JobTemplateId { get; set; }
         public string JobTemplateCode { get; set; }
         public int? JobTemplateRevision { get; set; }
-        public bool EnableJobTracking { get; set; }
+        /// <summary>
+        /// Nullable so clients that omit the field (e.g. PWA step actions) do not reset Track to false.
+        /// </summary>
+        public bool? EnableJobTracking { get; set; }
     }
 
     public class CreateJobOrderFromDetailReq
@@ -700,7 +722,33 @@ namespace CimmpleAPI.Controllers
         public int? technicianId { get; set; }
         public string progressState { get; set; }
         public string startTime { get; set; }
+        /// <summary>Legacy committed minutes (kept in sync with elapsedSeconds).</summary>
         public int? elapsedTime { get; set; }
+        /// <summary>Committed elapsed seconds (preferred precision).</summary>
+        public int? elapsedSeconds { get; set; }
+        /// <summary>Reason recorded when the step was last paused.</summary>
+        public string pauseReason { get; set; }
+        /// <summary>Inline shop notes for this operation.</summary>
+        public List<JobOrderStepNoteDto> notes { get; set; }
+        /// <summary>Linked NCR pointers created from this step.</summary>
+        public List<JobOrderStepNcrFlagDto> ncrFlags { get; set; }
+        /// <summary>Stable scan payload for shop-floor QR/barcode (cimmple://jo/{id}/step/{stepId}).</summary>
+        public string scanCode { get; set; }
+    }
+
+    public class JobOrderStepNoteDto
+    {
+        public long id { get; set; }
+        public string text { get; set; }
+        public string createdAt { get; set; }
+        public string createdBy { get; set; }
+    }
+
+    public class JobOrderStepNcrFlagDto
+    {
+        public int ncrId { get; set; }
+        public string ncrNumber { get; set; }
+        public string status { get; set; }
     }
 }
 

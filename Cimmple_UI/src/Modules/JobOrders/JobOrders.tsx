@@ -312,6 +312,7 @@ const JobOrders: React.FC = () => {
           jobOrderId={selectedJobOrderId}
           headerPreview={headerPreview || undefined}
           onClose={handleCloseSlideout}
+          onSaved={loadJobOrders}
         />
       )}
     </div>

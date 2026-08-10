@@ -11,11 +11,20 @@ import "./NonConformanceReportSlideout.scss";
 interface NonConformanceReportSlideoutProps {
   ncrId: number;
   onClose: (refreshList?: boolean) => void;
+  /** Prefill fields when creating an NCR from a Job Order step. */
+  prefill?: Partial<NonConformanceReport>;
+  /** Called after a successful create (before close). May be async. */
+  onCreated?: (ncr: NonConformanceReport) => void | Promise<void>;
+  /** Raise z-index above Job Order slideout / dialogs. */
+  elevated?: boolean;
 }
 
 const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> = ({
   ncrId,
-  onClose
+  onClose,
+  prefill,
+  onCreated,
+  elevated,
 }) => {
   const handleDismiss = () => onClose(false);
   console.log("NonConformanceReportSlideout rendered with props:", { ncrId, onClose });
@@ -46,7 +55,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
     preventiveAction: '',
     dueDate: '',
     costImpact: 0,
-    notes: ''
+    notes: '',
+    ...prefill,
   });
 
   useEffect(() => {
@@ -55,6 +65,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
     if (ncrId > 0) {
       console.log("Calling loadNCR for ncrId:", ncrId);
       loadNCR();
+    } else if (prefill) {
+      setNcr((prev) => ({ ...prev, ...prefill }));
     } else {
       console.log("ncrId is not > 0, skipping loadNCR");
     }
@@ -212,13 +224,14 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
         result = await QualityService.CreateNCR(ncrData as Omit<NonConformanceReport, 'ncrId' | 'ncrNumber'>);
         if (result) {
           toast.success("NCR created successfully");
+          await Promise.resolve(onCreated?.(result));
         } else {
           toast.error("Failed to create NCR");
         }
       }
 
       if (result) {
-        onClose(true);
+        onClose(false);
       }
     } catch (error: any) {
       console.error("Error saving NCR:", error);
@@ -299,7 +312,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
 
   if (loading) {
     return (
-      <div className="ncr-slideout">
+      <div className={`ncr-slideout${elevated || prefill ? " ncr-slideout--over-jo" : ""}`}>
         <div className="ncr-slideout-overlay" onClick={handleDismiss} />
         <div className="ncr-slideout-content">
           <div className="loading-state">
@@ -311,7 +324,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   }
 
   return (
-    <div className="ncr-slideout">
+    <div className={`ncr-slideout${elevated || prefill ? " ncr-slideout--over-jo" : ""}`}>
       <div className="ncr-slideout-overlay" onClick={handleDismiss} />
       <div className="ncr-slideout-content">
         {/* Header */}

@@ -336,11 +336,12 @@ namespace CimmpleAPI.Services.Pdf.Templates
             // Define column widths
             table.ColumnsDefinition(columns =>
             {
-                columns.ConstantColumn(40);  // Seq
+                columns.ConstantColumn(36);   // Seq
                 columns.RelativeColumn(3);    // Process/Operation
                 columns.RelativeColumn(2);    // Assigned To
-                columns.ConstantColumn(80);   // Est. Time
-                columns.RelativeColumn(2);    // Status
+                columns.ConstantColumn(64);   // Est. Time
+                columns.RelativeColumn(1.5f); // Status
+                columns.ConstantColumn(58);   // Scan QR
             });
 
             // Header
@@ -351,13 +352,14 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 header.Cell().Element(CellStyle).Text("Assigned To").FontSize(8).Bold().FontColor(DarkText);
                 header.Cell().Element(CellStyle).Text("Est. Time").FontSize(8).Bold().FontColor(DarkText);
                 header.Cell().Element(CellStyle).Text("Status").FontSize(8).Bold().FontColor(DarkText);
+                header.Cell().Element(CellStyle).AlignCenter().Text("Scan").FontSize(8).Bold().FontColor(DarkText);
 
                 static IContainer CellStyle(IContainer container)
                 {
                     return container
                         .Background(LightBg)
                         .PaddingVertical(6)
-                        .PaddingHorizontal(8)
+                        .PaddingHorizontal(6)
                         .AlignMiddle();
                 }
             });
@@ -391,6 +393,28 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 table.Cell().Element(CellStyle).Text(estTime).FontSize(9).FontColor(DarkText);
                 
                 table.Cell().Element(CellStyle).Text(step.Status ?? "Pending").FontSize(9).FontColor(DarkText);
+
+                table.Cell().Element(barcodeCell =>
+                {
+                    barcodeCell
+                        .BorderBottom(1)
+                        .BorderColor(BorderColor)
+                        .PaddingVertical(4)
+                        .PaddingHorizontal(4)
+                        .AlignCenter()
+                        .AlignMiddle()
+                        .Element(inner =>
+                        {
+                            if (step.QrPng != null && step.QrPng.Length > 0)
+                            {
+                                inner.Width(46).Height(46).Image(step.QrPng).FitArea();
+                            }
+                            else
+                            {
+                                inner.AlignCenter().Text("-").FontSize(9).FontColor(MediumText);
+                            }
+                        });
+                });
             }
 
             static IContainer CellStyle(IContainer container)
@@ -399,7 +423,8 @@ namespace CimmpleAPI.Services.Pdf.Templates
                     .BorderBottom(1)
                     .BorderColor(BorderColor)
                     .PaddingVertical(8)
-                    .PaddingHorizontal(8);
+                    .PaddingHorizontal(6)
+                    .AlignMiddle();
             }
         }
 
