@@ -56,6 +56,10 @@ namespace CimmpleAPI.Services.Pdf.Models
         public string TechnicianName { get; set; } = "";
         public int? EstimatedTime { get; set; }
         public string Status { get; set; } = "";
+        /// <summary>Shop-floor scan payload (cimmple://jo/{id}/step/{stepId}).</summary>
+        public string ScanCode { get; set; } = "";
+        /// <summary>Pre-rendered QR PNG for the ScanCode (printed on the router).</summary>
+        public byte[]? QrPng { get; set; }
     }
 }
 

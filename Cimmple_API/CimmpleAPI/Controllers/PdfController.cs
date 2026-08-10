@@ -662,15 +662,29 @@ namespace CimmpleAPI.Controllers
                         if (doc.RootElement.ValueKind == JsonValueKind.Array)
                         {
                             routingSteps = doc.RootElement.EnumerateArray()
-                                .Select(step => new PdfRoutingStep
+                                .Select(step =>
                                 {
-                                    Sequence = step.TryGetProperty("sequence", out var seq) ? seq.GetInt32() : 0,
-                                    ProcessName = step.TryGetProperty("processName", out var pn) ? pn.GetString() ?? "" : "",
-                                    Description = step.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
-                                    WorkstationName = step.TryGetProperty("workstationName", out var ws) ? ws.GetString() ?? "" : "",
-                                    TechnicianName = step.TryGetProperty("technicianName", out var tech) ? tech.GetString() ?? "" : "",
-                                    EstimatedTime = step.TryGetProperty("estimatedTime", out var et) && et.ValueKind == JsonValueKind.Number ? et.GetInt32() : null,
-                                    Status = step.TryGetProperty("status", out var status) ? status.GetString() ?? "" : ""
+                                    var stepId = step.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+                                        ? idEl.GetInt32()
+                                        : (int?)null;
+                                    var scanCode = step.TryGetProperty("scanCode", out var sc) && sc.ValueKind == JsonValueKind.String
+                                        ? sc.GetString() ?? ""
+                                        : "";
+                                    if (string.IsNullOrWhiteSpace(scanCode) && stepId.HasValue && stepId.Value > 0)
+                                        scanCode = QrCodeHelper.BuildStepScanCode(jobOrderId, stepId.Value);
+
+                                    return new PdfRoutingStep
+                                    {
+                                        Sequence = step.TryGetProperty("sequence", out var seq) && seq.ValueKind == JsonValueKind.Number ? seq.GetInt32() : 0,
+                                        ProcessName = step.TryGetProperty("processName", out var pn) ? pn.GetString() ?? "" : "",
+                                        Description = step.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
+                                        WorkstationName = step.TryGetProperty("workstationName", out var ws) ? ws.GetString() ?? "" : "",
+                                        TechnicianName = step.TryGetProperty("technicianName", out var tech) ? tech.GetString() ?? "" : "",
+                                        EstimatedTime = step.TryGetProperty("estimatedTime", out var et) && et.ValueKind == JsonValueKind.Number ? et.GetInt32() : null,
+                                        Status = step.TryGetProperty("status", out var status) ? status.GetString() ?? "" : "",
+                                        ScanCode = scanCode,
+                                        QrPng = QrCodeHelper.GeneratePng(scanCode)
+                                    };
                                 })
                                 .OrderBy(rs => rs.Sequence)
                                 .ToList();

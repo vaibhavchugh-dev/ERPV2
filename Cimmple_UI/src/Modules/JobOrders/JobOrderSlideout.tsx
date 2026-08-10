@@ -1,10 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
 import {
   JobOrderService,
   JobOrderMasterReq,
   JobOrderRoutingStep,
+  JobOrderStepNote,
+  deriveJobStatus,
+  computeElapsedSeconds,
+  formatElapsedDuration,
+  commitLiveElapsed,
+  toElapsedFields,
+  isStepCompleted,
+  getCommittedSeconds,
+  buildStepScanCode,
+  JOB_STEP_PAUSE_REASONS,
 } from "../../Common/Services/JobOrderService";
+import QRCode from "qrcode";
+import { NonConformanceReport } from "../../Common/Services/QualityService";
+import NonConformanceReportSlideout from "../Quality/NonConformanceReportSlideout";
 import { OrderService, OrderMasterReq } from "../../Common/Services/OrderService";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
@@ -26,6 +39,8 @@ import "./JobOrderSlideout.scss";
 interface JobOrderSlideoutProps {
   jobOrderId: number;
   onClose: (refreshList?: boolean) => void;
+  /** Called after a successful save so the parent can refresh without closing the slideout. */
+  onSaved?: () => void;
   /** Optional list-row values so the header can render without waiting on GetJobOrderById. */
   headerPreview?: {
     jobOrderNumber?: number;
@@ -46,6 +61,7 @@ const formatDisplayCustomerOrderNumber = (number: number): string => {
 const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   jobOrderId,
   onClose,
+  onSaved,
   headerPreview,
 }) => {
   const [formData, setFormData] = useState<JobOrderMasterReq>({
@@ -96,6 +112,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   );
   const [customerOrderDetails, setCustomerOrderDetails] = useState<OrderMasterReq | null>(null);
   const [routingSteps, setRoutingSteps] = useState<JobOrderRoutingStep[]>([]);
+  const routingStepsRef = useRef<JobOrderRoutingStep[]>([]);
+  const formDataRef = useRef(formData);
   const [newRoutingStep, setNewRoutingStep] = useState<Partial<JobOrderRoutingStep>>({
     sequence: 1,
     processName: "",
@@ -104,6 +122,30 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [showCustomerOrderSlideout, setShowCustomerOrderSlideout] = useState(false);
   const [enableJobTracking, setEnableJobTracking] = useState(false);
   const [stepTimers, setStepTimers] = useState<Map<number, NodeJS.Timeout>>(new Map());
+  /** Forces re-render so wall-clock elapsed updates while steps are running. */
+  const [, setElapsedTick] = useState(0);
+  const [trackingSaving, setTrackingSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [trackingDialog, setTrackingDialog] = useState<null | {
+    type: "pause" | "complete" | "reopen" | "replaceTemplate" | "stepNote";
+    stepId?: number;
+    template?: JobTemplate;
+  }>(null);
+  const [completeQtyInput, setCompleteQtyInput] = useState("");
+  const [completeQtyError, setCompleteQtyError] = useState("");
+  const [stepNoteInput, setStepNoteInput] = useState("");
+  const [stepMenuStepId, setStepMenuStepId] = useState<number | null>(null);
+  const [barcodeDialog, setBarcodeDialog] = useState<null | {
+    stepId: number;
+    scanCode: string;
+    label: string;
+    qrDataUrl: string;
+  }>(null);
+  const [ncrSlideout, setNcrSlideout] = useState<null | {
+    ncrId: number;
+    stepId: number;
+    prefill?: Partial<NonConformanceReport>;
+  }>(null);
   const [showTextEditorPopup, setShowTextEditorPopup] = useState(false);
   const [editingPartDesc, setEditingPartDesc] = useState<string>("");
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
@@ -140,6 +182,15 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     loadWorkstations();
     loadEmployees();
   }, [jobOrderId]);
+
+  // Keep refs in sync so async track/note/NCR saves never use a stale step list.
+  useEffect(() => {
+    routingStepsRef.current = routingSteps;
+  }, [routingSteps]);
+
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
 
   const loadProcesses = async () => {
     try {
@@ -199,22 +250,102 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
   };
 
-  // Auto-complete job when all steps are completed
+  // Keep job Status aligned with routing-step progress (same rules as PWA / API).
   useEffect(() => {
-    if (routingSteps.length > 0 && !enableJobTracking) {
-      const allCompleted = routingSteps.every(step => step.status === "Completed");
-      if (allCompleted) {
-        setFormData((prev) => {
-          if (prev.Status !== "Completed" && prev.Status !== "Cancelled") {
-            toast.info("All steps completed. Job automatically marked as completed.");
-            return { ...prev, Status: "Completed" };
-          }
-          return prev;
-        });
+    if (routingSteps.length === 0) return;
+    setFormData((prev) => {
+      const next = deriveJobStatus(prev.Status, routingSteps);
+      if (next === prev.Status) return prev;
+      if (next === "Completed" && prev.Status !== "Completed" && prev.Status !== "Cancelled") {
+        toast.info("All steps completed. Job automatically marked as completed.");
       }
-    }
+      return { ...prev, Status: next };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routingSteps, enableJobTracking]);
+  }, [routingSteps]);
+
+  const syncSteps = (updatedSteps: JobOrderRoutingStep[]) => {
+    routingStepsRef.current = updatedSteps;
+    setRoutingSteps(updatedSteps);
+    setFormData((prev) => {
+      const next = {
+        ...prev,
+        RoutingSteps: updatedSteps,
+      };
+      formDataRef.current = next;
+      return next;
+    });
+  };
+
+  const clearStepTimer = (stepId: number) => {
+    const timer = stepTimers.get(stepId);
+    if (timer) {
+      clearInterval(timer);
+      setStepTimers((prev) => {
+        const next = new Map(prev);
+        next.delete(stepId);
+        return next;
+      });
+    }
+  };
+
+  const startDisplayTimer = (stepId: number) => {
+    clearStepTimer(stepId);
+    // 1s tick so M:SS display stays accurate while running.
+    const timer = setInterval(() => {
+      setElapsedTick((t) => t + 1);
+    }, 1000);
+    setStepTimers((prev) => new Map(prev).set(stepId, timer));
+  };
+
+  /** Persist tracking actions immediately so Start/Pause/Complete survive without a full form Save. */
+  const persistTrackingSteps = async (updatedSteps: JobOrderRoutingStep[]): Promise<boolean> => {
+    const currentForm = formDataRef.current;
+    const id = jobOrderId > 0 ? jobOrderId : currentForm.JobOrderID;
+    if (!id || id <= 0) {
+      return false;
+    }
+
+    const stepsToSave = commitLiveElapsed(updatedSteps);
+    const statusToSave = deriveJobStatus(currentForm.Status, stepsToSave);
+    setTrackingSaving(true);
+    try {
+      await JobOrderService.SaveJobOrder({
+        ...currentForm,
+        JobOrderID: id,
+        Status: statusToSave,
+        EnableJobTracking: enableJobTracking,
+        RoutingSteps: stepsToSave,
+        Attachments: attachments,
+        Comments: comments,
+      });
+      setFormData((prev) => {
+        const next = {
+          ...prev,
+          Status: statusToSave,
+          EnableJobTracking: enableJobTracking,
+          RoutingSteps: stepsToSave,
+        };
+        formDataRef.current = next;
+        return next;
+      });
+      routingStepsRef.current = stepsToSave;
+      setRoutingSteps(stepsToSave);
+      onSaved?.();
+      return true;
+    } catch (error: any) {
+      console.error("Error saving step tracking:", error);
+      const apiError =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Could not save step progress: ${apiError}`);
+      return false;
+    } finally {
+      setTrackingSaving(false);
+    }
+  };
 
   const loadJobOrder = async () => {
     setLoading(true);
@@ -226,8 +357,24 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         setFormData(jobOrder);
         setAttachments(jobOrder.Attachments || []);
         setComments(jobOrder.Comments || []);
-        setRoutingSteps(jobOrder.RoutingSteps || []);
+        const steps = jobOrder.RoutingSteps || [];
+        setRoutingSteps(steps);
         setEnableJobTracking(!!jobOrder.EnableJobTracking);
+
+        // Resume wall-clock display ticks for any steps left running.
+        stepTimers.forEach((timer) => clearInterval(timer));
+        const nextTimers = new Map<number, NodeJS.Timeout>();
+        steps.forEach((s) => {
+          if (s.progressState === "running") {
+            nextTimers.set(
+              s.id,
+              setInterval(() => {
+                setElapsedTick((t) => t + 1);
+              }, 1000)
+            );
+          }
+        });
+        setStepTimers(nextTimers);
 
         if (jobOrder.CustomerOrderID > 0) {
           try {
@@ -274,16 +421,31 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setLoading(true);
 
     try {
+      const stepsToSave = commitLiveElapsed(routingSteps);
+      const statusToSave = deriveJobStatus(formData.Status, stepsToSave);
       const result = await JobOrderService.SaveJobOrder({
         ...formData,
+        Status: statusToSave,
         EnableJobTracking: enableJobTracking,
-        RoutingSteps: routingSteps,
+        RoutingSteps: stepsToSave,
         Attachments: attachments,
         Comments: comments,
       });
       if (result && result.id > 0) {
         toast.success("Job order saved successfully");
-        onClose(true);
+        setRoutingSteps(stepsToSave);
+        setFormData((prev) => ({
+          ...prev,
+          JobOrderID: result.id,
+          Status: statusToSave,
+          EnableJobTracking: enableJobTracking,
+          RoutingSteps: stepsToSave,
+        }));
+        onSaved?.();
+        // Stay open — reload so server-derived status / tracking match UI.
+        if (jobOrderId > 0) {
+          await loadJobOrder();
+        }
       } else {
         toast.error("Failed to save job order");
       }
@@ -401,15 +563,15 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       return;
     }
 
-    if (
-      routingSteps.length > 0 &&
-      !window.confirm(
-        `This will replace the ${routingSteps.length} existing router step(s), including any tracked progress, with the steps from template ${sourceTemplate.templateCode}. Continue?`
-      )
-    ) {
+    if (routingSteps.length > 0) {
+      setTrackingDialog({ type: "replaceTemplate", template: sourceTemplate });
       return;
     }
 
+    await applyJobTemplate(sourceTemplate);
+  };
+
+  const applyJobTemplate = async (sourceTemplate: JobTemplate) => {
     setApplyingTemplate(true);
     try {
       const template = await JobTemplateService.GetJobTemplateById(sourceTemplate.id);
@@ -423,6 +585,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       // Cycle time is per piece, so a job needs one setup plus a cycle for every unit ordered.
       // Quantity is floored at 1 so a not-yet-quantified job still gets a usable estimate.
       const qtyMultiplier = Math.max(1, formData.QtyOrdered || 0);
+      const joId = formData.JobOrderID || jobOrderId;
       let unavailableReferences = 0;
 
       const steps: JobOrderRoutingStep[] = operations
@@ -439,9 +602,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
           const setupTime = operation.SetupTimeMinutes || 0;
           const cycleTime = operation.CycleTimeMinutes || 0;
+          const stepId = index + 1;
 
           return {
-            id: index + 1,
+            id: stepId,
             sequence: operation.SequenceNumber,
             processName: operation.ProcessName || "",
             processId: operation.ProcessId ?? undefined,
@@ -453,6 +617,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             progressState: "idle",
             qtyProduced: 0,
             elapsedTime: 0,
+            notes: [],
+            ncrFlags: [],
+            scanCode: joId > 0 ? buildStepScanCode(joId, stepId) : undefined,
           } as JobOrderRoutingStep;
         });
 
@@ -656,8 +823,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       return;
     }
 
+    const stepId =
+      routingSteps.length > 0 ? Math.max(...routingSteps.map((s) => s.id)) + 1 : 1;
+    const joId = formData.JobOrderID || jobOrderId;
     const step: JobOrderRoutingStep = {
-      id: routingSteps.length > 0 ? Math.max(...routingSteps.map(s => s.id)) + 1 : 1,
+      id: stepId,
       sequence: newRoutingStep.sequence || routingSteps.length + 1,
       processName: newRoutingStep.processName || "",
       processId: newRoutingStep.processId,
@@ -666,9 +836,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       estimatedTime: newRoutingStep.estimatedTime || 0,
       description: newRoutingStep.description,
       status: "Pending",
-      progressState: 'idle',
+      progressState: "idle",
       qtyProduced: 0,
       elapsedTime: 0,
+      notes: [],
+      ncrFlags: [],
+      scanCode: joId > 0 ? buildStepScanCode(joId, stepId) : undefined,
     };
 
     const updatedSteps = [...routingSteps, step].sort((a, b) => a.sequence - b.sequence);
@@ -688,129 +861,369 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleDeleteRoutingStep = (id: number) => {
-    // Stop timer if running
-    const timer = stepTimers.get(id);
-    if (timer) {
-      clearInterval(timer);
-      setStepTimers((prev) => {
-        const newTimers = new Map(prev);
-        newTimers.delete(id);
-        return newTimers;
-      });
-    }
-    
+    clearStepTimer(id);
+
     const updatedSteps = routingSteps.filter((s) => s.id !== id);
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
+    syncSteps(updatedSteps);
   };
 
-  // Job tracking handlers
-  const handleStartStep = (stepId: number) => {
-    const step = routingSteps.find(s => s.id === stepId);
-    if (!step) return;
+  // Job tracking handlers — flexible sequencing (any op may start); Complete locks until Reopen.
+  const handleStartStep = async (stepId: number) => {
+    const step = routingStepsRef.current.find((s) => Number(s.id) === Number(stepId));
+    if (!step || isStepCompleted(step)) return;
 
-    const updatedSteps = routingSteps.map(s => 
-      s.id === stepId 
-        ? { 
-            ...s, 
-            progressState: 'running' as const,
+    const updatedSteps = routingStepsRef.current.map((s) =>
+      Number(s.id) === Number(stepId)
+        ? {
+            ...s,
+            progressState: "running" as const,
             startTime: new Date().toISOString(),
             elapsedTime: s.elapsedTime || 0,
-            status: 'In Progress'
+            elapsedSeconds: getCommittedSeconds(s),
+            status: "In Progress",
+            pauseReason: undefined,
           }
         : s
     );
-    
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
 
-    // Start timer
-    const timer = setInterval(() => {
-      setRoutingSteps((prevSteps) => {
-        return prevSteps.map(s => {
-          if (s.id === stepId && s.progressState === 'running') {
-            return { ...s, elapsedTime: (s.elapsedTime || 0) + 1 };
-          }
-          return s;
-        });
-      });
-    }, 60000); // Update every minute
-
-    setStepTimers((prev) => new Map(prev).set(stepId, timer));
+    syncSteps(updatedSteps);
+    startDisplayTimer(stepId);
+    await persistTrackingSteps(updatedSteps);
   };
 
-  const handlePauseStep = (stepId: number) => {
-    const timer = stepTimers.get(stepId);
-    if (timer) {
-      clearInterval(timer);
-      setStepTimers((prev) => {
-        const newTimers = new Map(prev);
-        newTimers.delete(stepId);
-        return newTimers;
-      });
+  const requestPauseStep = (stepId: number) => {
+    setTrackingDialog({ type: "pause", stepId });
+  };
+
+  const confirmPauseStep = async (reason: string) => {
+    const stepId = trackingDialog?.type === "pause" ? trackingDialog.stepId : undefined;
+    setTrackingDialog(null);
+    if (stepId == null) return;
+
+    clearStepTimer(stepId);
+    const nowMs = Date.now();
+    const updatedSteps = routingStepsRef.current.map((s) => {
+      if (Number(s.id) !== Number(stepId)) return s;
+      return {
+        ...s,
+        progressState: "paused" as const,
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+        pauseReason: reason || undefined,
+      };
+    });
+
+    syncSteps(updatedSteps);
+    await persistTrackingSteps(updatedSteps);
+  };
+
+  const handleResumeStep = async (stepId: number) => {
+    await handleStartStep(stepId);
+  };
+
+  const requestCompleteStep = (stepId: number) => {
+    const step = routingSteps.find((s) => s.id === stepId);
+    if (!step || isStepCompleted(step)) return;
+    const initialQty =
+      step.qtyProduced && step.qtyProduced > 0
+        ? step.qtyProduced
+        : formData.QtyOrdered || 0;
+    setCompleteQtyInput(String(initialQty));
+    setCompleteQtyError("");
+    setTrackingDialog({ type: "complete", stepId });
+  };
+
+  const confirmCompleteStep = async (forceComplete = false) => {
+    const stepId = trackingDialog?.type === "complete" ? trackingDialog.stepId : undefined;
+    if (stepId == null) return;
+
+    const step = routingStepsRef.current.find((s) => Number(s.id) === Number(stepId));
+    if (!step || isStepCompleted(step)) {
+      setTrackingDialog(null);
+      return;
     }
 
-    const updatedSteps = routingSteps.map(s => 
-      s.id === stepId 
-        ? { ...s, progressState: 'paused' as const }
-        : s
-    );
-    
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
-  };
-
-  const handleResumeStep = (stepId: number) => {
-    handleStartStep(stepId);
-  };
-
-  const handleStopStep = (stepId: number) => {
-    const timer = stepTimers.get(stepId);
-    if (timer) {
-      clearInterval(timer);
-      setStepTimers((prev) => {
-        const newTimers = new Map(prev);
-        newTimers.delete(stepId);
-        return newTimers;
-      });
+    const qty = parseInt(completeQtyInput, 10);
+    if (Number.isNaN(qty) || qty < 0) {
+      setCompleteQtyError("Enter a valid quantity (0 or greater).");
+      return;
     }
 
-    const updatedSteps = routingSteps.map(s => 
-      s.id === stepId 
-        ? { 
-            ...s, 
-            progressState: 'stopped' as const,
-            status: 'Completed'
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const meetsOrderQty = orderQty <= 0 || qty >= orderQty;
+    const shouldComplete = forceComplete || meetsOrderQty;
+
+    setTrackingDialog(null);
+    setCompleteQtyError("");
+    const nowMs = Date.now();
+
+    if (!shouldComplete) {
+      // Partial qty: save produced qty, pause clock, keep operation open.
+      clearStepTimer(stepId);
+      const updatedSteps = routingStepsRef.current.map((s) => {
+        if (Number(s.id) !== Number(stepId)) return s;
+        return {
+          ...s,
+          qtyProduced: qty,
+          progressState: "paused" as const,
+          status: "In Progress",
+          ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+          startTime: undefined,
+          pauseReason: s.pauseReason || "Partial quantity",
+        };
+      });
+      syncSteps(updatedSteps);
+      await persistTrackingSteps(updatedSteps);
+      toast.info(
+        `Qty saved (${qty} of ${orderQty}). Operation stays open until order qty is met.`
+      );
+      return;
+    }
+
+    clearStepTimer(stepId);
+    const updatedSteps = routingStepsRef.current.map((s) => {
+      if (Number(s.id) !== Number(stepId)) return s;
+      return {
+        ...s,
+        qtyProduced: qty,
+        progressState: "stopped" as const,
+        status: "Completed",
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+      };
+    });
+
+    syncSteps(updatedSteps);
+    await persistTrackingSteps(updatedSteps);
+    toast.success("Operation completed");
+  };
+
+  const requestReopenStep = (stepId: number) => {
+    const step = routingSteps.find((s) => s.id === stepId);
+    if (!step || !isStepCompleted(step)) return;
+    setTrackingDialog({ type: "reopen", stepId });
+  };
+
+  const confirmReopenStep = async () => {
+    const stepId = trackingDialog?.type === "reopen" ? trackingDialog.stepId : undefined;
+    setTrackingDialog(null);
+    if (stepId == null) return;
+
+    const step = routingStepsRef.current.find((s) => Number(s.id) === Number(stepId));
+    if (!step || !isStepCompleted(step)) return;
+
+    const updatedSteps = routingStepsRef.current.map((s) =>
+      Number(s.id) === Number(stepId)
+        ? {
+            ...s,
+            progressState: "idle" as const,
+            status: "Pending",
+            startTime: undefined,
           }
         : s
     );
-    
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
+
+    syncSteps(updatedSteps);
+    await persistTrackingSteps(updatedSteps);
+    toast.info("Operation reopened — job set to In Progress if it was Completed");
   };
 
   const handleUpdateQtyProduced = (stepId: number, qty: number) => {
-    const updatedSteps = routingSteps.map(s => 
+    const updatedSteps = routingSteps.map((s) =>
       s.id === stepId ? { ...s, qtyProduced: qty } : s
     );
-    
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
+    syncSteps(updatedSteps);
+  };
+
+  const ensureStepScanCode = async (stepId: number): Promise<string> => {
+    const joId = formData.JobOrderID || jobOrderId;
+    const step = routingSteps.find((s) => s.id === stepId);
+    if (!step || !joId) return "";
+
+    if (step.scanCode) return step.scanCode;
+
+    const scanCode = buildStepScanCode(joId, stepId);
+    const updatedSteps = routingSteps.map((s) =>
+      s.id === stepId ? { ...s, scanCode } : s
+    );
+    syncSteps(updatedSteps);
+    await persistTrackingSteps(updatedSteps);
+    return scanCode;
+  };
+
+  const openStepBarcode = async (stepId: number) => {
+    setStepMenuStepId(null);
+    const step = routingSteps.find((s) => s.id === stepId);
+    if (!step) return;
+
+    try {
+      const scanCode = await ensureStepScanCode(stepId);
+      if (!scanCode) {
+        toast.error("Save the job order before generating a step barcode.");
+        return;
+      }
+      const qrDataUrl = await QRCode.toDataURL(scanCode, {
+        width: 240,
+        margin: 2,
+        errorCorrectionLevel: "M",
+      });
+      const joLabel =
+        formatDisplayJobOrderNumber(formData.JobOrderNumber) ||
+        `JO#${formData.JobOrderNumber || formData.JobOrderID}`;
+      setBarcodeDialog({
+        stepId,
+        scanCode,
+        label: `${joLabel} · Step ${step.sequence}: ${step.processName}`,
+        qrDataUrl,
+      });
+    } catch (error: any) {
+      console.error("Error generating step barcode:", error);
+      toast.error("Could not generate barcode");
+    }
+  };
+
+  const copyScanCode = async (scanCode: string) => {
+    try {
+      await navigator.clipboard.writeText(scanCode);
+      toast.success("Scan code copied");
+    } catch {
+      toast.error("Could not copy scan code");
+    }
+  };
+
+  const requestStepNote = (stepId: number) => {
+    setStepMenuStepId(null);
+    setStepNoteInput("");
+    setTrackingDialog({ type: "stepNote", stepId });
+  };
+
+  const confirmAddStepNote = async () => {
+    const stepId = trackingDialog?.type === "stepNote" ? trackingDialog.stepId : undefined;
+    if (stepId == null) return;
+    const text = stepNoteInput.trim();
+    if (!text) {
+      toast.error("Please enter a note");
+      return;
+    }
+
+    const joId = jobOrderId > 0 ? jobOrderId : formDataRef.current.JobOrderID;
+    if (!joId || joId <= 0) {
+      toast.error("Save the job order first, then add notes");
+      return;
+    }
+
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const currentSteps = routingStepsRef.current;
+    const existingNotes =
+      currentSteps.find((s) => Number(s.id) === Number(stepId))?.notes || [];
+    const nextNoteId =
+      existingNotes.reduce((max, n) => Math.max(max, Number(n.id) || 0), 0) + 1;
+    const note: JobOrderStepNote = {
+      id: nextNoteId,
+      text,
+      createdAt: new Date().toISOString(),
+      createdBy: storage?.userName || storage?.userLogin || "User",
+    };
+
+    const updatedSteps = currentSteps.map((s) =>
+      Number(s.id) === Number(stepId)
+        ? { ...s, notes: [...(s.notes || []), note] }
+        : s
+    );
+
+    setStepNoteInput("");
+    syncSteps(updatedSteps);
+    const saved = await persistTrackingSteps(updatedSteps);
+    if (saved) {
+      toast.success("Note added");
+      // Keep dialog open so the new note is visible immediately.
+      setTrackingDialog({ type: "stepNote", stepId });
+    } else {
+      // Re-open dialog with the draft text so the user can retry.
+      setStepNoteInput(text);
+      setTrackingDialog({ type: "stepNote", stepId });
+    }
+  };
+
+  const openCreateNcrForStep = (stepId: number) => {
+    setStepMenuStepId(null);
+    const step = routingSteps.find((s) => s.id === stepId);
+    if (!step) return;
+
+    const existing = step.ncrFlags?.[0];
+    if (existing?.ncrId) {
+      openExistingNcr(stepId, existing.ncrId);
+      return;
+    }
+
+    const joLabel =
+      formatDisplayJobOrderNumber(formData.JobOrderNumber) ||
+      `JO#${formData.JobOrderNumber || formData.JobOrderID}`;
+    setTrackingDialog(null);
+    setNcrSlideout({
+      ncrId: 0,
+      stepId,
+      prefill: {
+        title: `NCR — ${joLabel} / Step ${step.sequence}: ${step.processName}`,
+        description: "",
+        source: "Internal",
+        category: "Process_Failure",
+        severity: "Minor",
+        status: "Open",
+        jobOrderId: formData.JobOrderID || jobOrderId,
+        jobOrderNumber: String(formData.JobOrderNumber || ""),
+        routingStepId: step.id,
+        partNo: formData.PartNo,
+        partName: formData.PartName,
+        customerId: formData.CustomerID,
+        customerName: formData.CustomerName,
+        totalQuantity: formData.QtyOrdered || 0,
+        defectQuantity: 1,
+        defectLocation: step.processName,
+        defectDescription: "",
+      },
+    });
+  };
+
+  const openExistingNcr = (stepId: number, ncrId: number) => {
+    setStepMenuStepId(null);
+    setTrackingDialog(null);
+    setNcrSlideout({
+      ncrId,
+      stepId,
+      prefill: {
+        jobOrderId: formData.JobOrderID || jobOrderId,
+      },
+    });
+  };
+
+  const handleNcrCreated = async (ncr: NonConformanceReport) => {
+    const stepId = ncrSlideout?.stepId;
+    if (stepId == null || !ncr?.ncrId) return;
+
+    // One NCR per step — replace any prior flag with the newly created record.
+    // Use ref so we keep any notes added while the NCR slideout was open.
+    const updatedSteps = routingStepsRef.current.map((s) => {
+      if (Number(s.id) !== Number(stepId)) return s;
+      return {
+        ...s,
+        ncrFlags: [
+          {
+            ncrId: ncr.ncrId,
+            ncrNumber: ncr.ncrNumber || `NCR-${ncr.ncrId}`,
+            status: ncr.status || "Open",
+          },
+        ],
+      };
+    });
+
+    syncSteps(updatedSteps);
+    await persistTrackingSteps(updatedSteps);
+  };
+
+  const closeNcrSlideoutSafely = () => {
+    // Defer unmount so the click that saved/closed NCR does not hit the JO overlay.
+    window.setTimeout(() => setNcrSlideout(null), 150);
   };
 
   const handleUpdateTechnician = (stepId: number, technicianName: string) => {
@@ -899,15 +1312,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     if (!step) return;
 
     const newStatus = step.status === "Completed" ? "Pending" : "Completed";
-    const updatedSteps = routingSteps.map(s => 
+    const updatedSteps = routingSteps.map(s =>
       s.id === stepId ? { ...s, status: newStatus } : s
     );
-    
-    setRoutingSteps(updatedSteps);
-    setFormData((prev) => ({
-      ...prev,
-      RoutingSteps: updatedSteps,
-    }));
+
+    syncSteps(updatedSteps);
 
     toast.success(`Step ${newStatus === "Completed" ? "marked as completed" : "reopened"}`);
   };
@@ -919,6 +1328,25 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Close step overflow menu on outside click / Escape
+  useEffect(() => {
+    if (stepMenuStepId == null) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".jo-step-menu")) return;
+      setStepMenuStepId(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setStepMenuStepId(null);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [stepMenuStepId]);
 
   const convertToDateInputFormat = (dateStr: string): string => {
     if (!dateStr) return "";
@@ -954,7 +1382,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       toast.error('Job order not loaded');
       return;
     }
+    if (printing) return;
 
+    setPrinting(true);
+    const toastId = toast.info("Generating Job Order PDF…", { autoClose: false });
     try {
       const blob = await PdfService.GenerateJobOrder(jobOrderId);
       const url = window.URL.createObjectURL(blob);
@@ -968,15 +1399,33 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success('Job Order PDF generated successfully');
+      toast.update(toastId, {
+        render: "Job Order PDF ready",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error('Error generating job order PDF:', error);
-      toast.error(error.response?.data?.error || 'Failed to generate job order PDF');
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate job order PDF",
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setPrinting(false);
     }
   };
 
   return (
-    <div className="job-order-slideout-overlay" onClick={handleCancel}>
+    <div
+      className="job-order-slideout-overlay"
+      onClick={() => {
+        // Ignore overlay clicks while nested NCR/dialogs are open (and the click
+        // that closes them), so Save on NCR doesn't close the Job Order slideout.
+        if (ncrSlideout || trackingDialog || barcodeDialog) return;
+        handleCancel();
+      }}
+    >
       <div className="job-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="job-order-slideout-header">
           <div className="jo-header-title-block">
@@ -1008,23 +1457,27 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             {jobOrderId > 0 && (
               <>
                 <button
-                  onClick={handlePrintJobOrder}
+                  type="button"
+                  onClick={() => void handlePrintJobOrder()}
+                  disabled={printing}
+                  title={printing ? "Generating PDF…" : "Print job order"}
                   style={{
                     padding: '0.5rem 1rem',
-                    backgroundColor: '#6b7280',
+                    backgroundColor: printing ? '#9ca3af' : '#6b7280',
                     color: 'white',
                     border: 'none',
                     borderRadius: '0.375rem',
-                    cursor: 'pointer',
+                    cursor: printing ? 'wait' : 'pointer',
                     fontSize: '0.875rem',
                     fontWeight: '500',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '0.5rem'
+                    gap: '0.5rem',
+                    opacity: printing ? 0.85 : 1,
                   }}
                 >
-                  <FontAwesomeIcon icon={faPrint} />
-                  Print
+                  <FontAwesomeIcon icon={faPrint} spin={printing} />
+                  {printing ? "Generating…" : "Print"}
                 </button>
                 <button
                   type="button"
@@ -1455,13 +1908,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                       {enableJobTracking && (
                         <>
                           <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty Produced</th>
-                          <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Progress</th>
+                          <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Clock</th>
                         </>
                       )}
                       {!enableJobTracking && (
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Progress</th>
                       )}
                       <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Status</th>
+                      <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }} title="Step actions">⋯</th>
                       <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Delete</th>
                     </tr>
                   </thead>
@@ -1530,56 +1984,88 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                               </td>
                               <td style={{ padding: "0.75rem", fontSize: "0.875rem", whiteSpace: "nowrap" }}>
                                 <div className="jo-progress-controls">
-                                  {(step.progressState === "idle" || step.progressState === "stopped" || !step.progressState) ? (
+                                  {isStepCompleted(step) ? (
                                     <button
                                       type="button"
-                                      className="jo-progress-btn jo-progress-btn--start"
-                                      onClick={() => handleStartStep(step.id)}
-                                      title="Start"
+                                      className="jo-progress-btn jo-progress-btn--reopen"
+                                      onClick={() => requestReopenStep(step.id)}
+                                      title="Reopen completed operation"
+                                      disabled={trackingSaving}
                                     >
-                                      ▶
+                                      Reopen
                                     </button>
                                   ) : step.progressState === "running" ? (
                                     <>
                                       <button
                                         type="button"
                                         className="jo-progress-btn jo-progress-btn--pause"
-                                        onClick={() => handlePauseStep(step.id)}
-                                        title="Pause"
+                                        onClick={() => requestPauseStep(step.id)}
+                                        title="Pause / hold"
+                                        disabled={trackingSaving}
                                       >
                                         ⏸
                                       </button>
                                       <button
                                         type="button"
-                                        className="jo-progress-btn jo-progress-btn--stop"
-                                        onClick={() => handleStopStep(step.id)}
-                                        title="Stop"
+                                        className="jo-progress-btn jo-progress-btn--complete"
+                                        onClick={() => requestCompleteStep(step.id)}
+                                        title="Complete operation"
+                                        disabled={trackingSaving}
                                       >
-                                        ⏹
+                                        ✓
+                                      </button>
+                                    </>
+                                  ) : step.progressState === "paused" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="jo-progress-btn jo-progress-btn--start"
+                                        onClick={() => void handleResumeStep(step.id)}
+                                        title="Resume"
+                                        disabled={trackingSaving}
+                                      >
+                                        ▶
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="jo-progress-btn jo-progress-btn--complete"
+                                        onClick={() => requestCompleteStep(step.id)}
+                                        title="Complete operation"
+                                        disabled={trackingSaving}
+                                      >
+                                        ✓
                                       </button>
                                     </>
                                   ) : (
                                     <button
                                       type="button"
                                       className="jo-progress-btn jo-progress-btn--start"
-                                      onClick={() => handleResumeStep(step.id)}
-                                      title="Resume"
+                                      onClick={() => void handleStartStep(step.id)}
+                                      title="Start operation"
+                                      disabled={trackingSaving}
                                     >
                                       ▶
                                     </button>
                                   )}
                                   <span
                                     className={`jo-progress-elapsed ${
-                                      step.progressState === "running" ? "is-visible" : ""
+                                      computeElapsedSeconds(step) > 0 || step.progressState === "running"
+                                        ? "is-visible"
+                                        : ""
                                     }`}
-                                    title={
-                                      step.progressState === "running"
-                                        ? `Elapsed: ${step.elapsedTime || 0} min`
-                                        : undefined
-                                    }
+                                    title={`Elapsed: ${formatElapsedDuration(computeElapsedSeconds(step))}${
+                                      step.pauseReason ? ` · Hold: ${step.pauseReason}` : ""
+                                    }`}
                                   >
-                                    {step.progressState === "running" ? `${step.elapsedTime || 0}m` : ""}
+                                    {computeElapsedSeconds(step) > 0 || step.progressState === "running"
+                                      ? formatElapsedDuration(computeElapsedSeconds(step))
+                                      : ""}
                                   </span>
+                                  {step.progressState === "paused" && step.pauseReason && (
+                                    <span className="jo-progress-hold-reason" title={step.pauseReason}>
+                                      {step.pauseReason}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                             </>
@@ -1634,6 +2120,88 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                               {step.status || "Pending"}
                             </span>
                           </td>
+                          <td style={{ padding: "0.5rem", textAlign: "center", position: "relative" }}>
+                            <div className="jo-step-menu">
+                              <button
+                                type="button"
+                                className={`jo-step-menu-trigger${
+                                  (step.notes?.length || 0) > 0 ? " has-notes" : ""
+                                }${
+                                  step.ncrFlags?.[0]?.ncrId ? " has-ncr" : ""
+                                }`}
+                                title="Step actions"
+                                aria-haspopup="menu"
+                                aria-expanded={stepMenuStepId === step.id}
+                                disabled={trackingSaving}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setStepMenuStepId((id) =>
+                                    id === step.id ? null : step.id
+                                  );
+                                }}
+                              >
+                                ⋯
+                                {(step.notes?.length || 0) > 0 && (
+                                  <span className="jo-step-menu-dot jo-step-menu-dot--note" aria-hidden />
+                                )}
+                                {!!step.ncrFlags?.[0]?.ncrId && (
+                                  <span className="jo-step-menu-dot jo-step-menu-dot--ncr" aria-hidden />
+                                )}
+                              </button>
+                              {stepMenuStepId === step.id && (
+                                <div
+                                  className="jo-step-menu-dropdown"
+                                  role="menu"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="jo-step-menu-item"
+                                    onClick={() => requestStepNote(step.id)}
+                                  >
+                                    {(step.notes?.length || 0) > 0
+                                      ? `Notes (${step.notes!.length})`
+                                      : "Add Note"}
+                                  </button>
+                                  {step.ncrFlags?.[0]?.ncrId ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="jo-step-menu-item"
+                                      onClick={() =>
+                                        openExistingNcr(
+                                          step.id,
+                                          step.ncrFlags![0].ncrId
+                                        )
+                                      }
+                                    >
+                                      View{" "}
+                                      {step.ncrFlags[0].ncrNumber ||
+                                        `NCR-${step.ncrFlags[0].ncrId}`}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="jo-step-menu-item"
+                                      onClick={() => openCreateNcrForStep(step.id)}
+                                    >
+                                      Add NCR
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="jo-step-menu-item"
+                                    onClick={() => void openStepBarcode(step.id)}
+                                  >
+                                    Show barcode
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
                           <td style={{ padding: "0.75rem", textAlign: "center" }}>
                             <button
                               type="button"
@@ -1656,7 +2224,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     ) : (
                       <tr>
                         <td 
-                          colSpan={enableJobTracking ? 8 : 7} 
+                          colSpan={enableJobTracking ? 9 : 8} 
                           style={{ 
                             padding: "2rem", 
                             textAlign: "center", 
@@ -2033,6 +2601,349 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         onCancel={() => setShowTemplatePicker(false)}
       />
 
+      {/* Tracking dialogs: pause reason, complete qty, reopen, replace template */}
+      {trackingDialog && (
+        <div
+          className="jo-track-dialog-overlay"
+          onClick={() => {
+            if (!trackingSaving) setTrackingDialog(null);
+          }}
+          role="presentation"
+        >
+          <div
+            className="jo-track-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            {trackingDialog.type === "pause" && (
+              <>
+                <h4>Pause operation</h4>
+                <p className="jo-track-dialog-hint">Optional hold reason (you can skip):</p>
+                <div className="jo-track-dialog-list">
+                  {JOB_STEP_PAUSE_REASONS.map((reason) => (
+                    <button
+                      key={reason}
+                      type="button"
+                      className="jo-track-dialog-option"
+                      disabled={trackingSaving}
+                      onClick={() => void confirmPauseStep(reason)}
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                </div>
+                <div className="jo-track-dialog-actions">
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    disabled={trackingSaving}
+                    onClick={() => setTrackingDialog(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-submit"
+                    disabled={trackingSaving}
+                    onClick={() => void confirmPauseStep("")}
+                  >
+                    Pause without reason
+                  </button>
+                </div>
+              </>
+            )}
+
+            {trackingDialog.type === "complete" && (() => {
+              const step = routingSteps.find((s) => s.id === trackingDialog.stepId);
+              const orderQty = formData.QtyOrdered || 0;
+              const parsedQty = parseInt(completeQtyInput, 10);
+              const qtyNum = Number.isNaN(parsedQty) ? null : parsedQty;
+              const zeroWarn = qtyNum === 0;
+              const overWarn = qtyNum != null && orderQty > 0 && qtyNum > orderQty;
+              const underOrder =
+                qtyNum != null && orderQty > 0 && qtyNum < orderQty;
+              const meetsOrder = qtyNum != null && (orderQty <= 0 || qtyNum >= orderQty);
+              return (
+                <>
+                  <h4>Complete operation</h4>
+                  <p className="jo-track-dialog-hint">
+                    {step
+                      ? `Step ${step.sequence}: ${step.processName}`
+                      : "Enter quantity produced for this operation."}
+                  </p>
+                  <div className="jo-track-qty-grid">
+                    <div className="jo-track-qty-field">
+                      <label>Order qty</label>
+                      <div className="jo-track-qty-readonly">
+                        {orderQty} {formData.Unit || ""}
+                      </div>
+                    </div>
+                    <div className="jo-track-qty-field">
+                      <label htmlFor="jo-complete-qty">Qty produced</label>
+                      <input
+                        id="jo-complete-qty"
+                        type="number"
+                        min={0}
+                        className="form-input"
+                        value={completeQtyInput}
+                        autoFocus
+                        onChange={(e) => {
+                          setCompleteQtyInput(e.target.value);
+                          setCompleteQtyError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void confirmCompleteStep(meetsOrder);
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {completeQtyError && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--error">
+                      {completeQtyError}
+                    </div>
+                  )}
+                  {!completeQtyError && underOrder && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
+                      Qty produced is less than order qty. Saving keeps this operation open.
+                      Use Complete anyway only if the operation is finished short.
+                    </div>
+                  )}
+                  {!completeQtyError && zeroWarn && meetsOrder && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
+                      Qty produced is 0. You can still complete if this operation had no output.
+                    </div>
+                  )}
+                  {!completeQtyError && overWarn && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
+                      Qty produced exceeds order qty. Confirm only if overbuild is intended.
+                    </div>
+                  )}
+                  <div className="jo-track-dialog-actions jo-track-dialog-actions--wrap">
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      disabled={trackingSaving}
+                      onClick={() => setTrackingDialog(null)}
+                    >
+                      Cancel
+                    </button>
+                    {underOrder ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-submit jo-track-btn-secondary"
+                          disabled={trackingSaving}
+                          onClick={() => void confirmCompleteStep(false)}
+                        >
+                          {trackingSaving ? "Saving..." : "Save qty (keep open)"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-submit"
+                          disabled={trackingSaving}
+                          onClick={() => void confirmCompleteStep(true)}
+                        >
+                          Complete anyway
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-submit"
+                        disabled={trackingSaving}
+                        onClick={() => void confirmCompleteStep(true)}
+                      >
+                        {trackingSaving ? "Saving..." : "Complete"}
+                      </button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+
+            {trackingDialog.type === "reopen" && (
+              <>
+                <h4>Reopen operation</h4>
+                <p className="jo-track-dialog-hint">
+                  This will mark the operation as pending again and set the job to In Progress if
+                  it was Completed. Elapsed time is kept; the clock stays stopped until you Start.
+                </p>
+                <div className="jo-track-dialog-actions">
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    disabled={trackingSaving}
+                    onClick={() => setTrackingDialog(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-submit"
+                    disabled={trackingSaving}
+                    onClick={() => void confirmReopenStep()}
+                  >
+                    {trackingSaving ? "Saving..." : "Reopen"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {trackingDialog.type === "stepNote" && (() => {
+              const step = routingSteps.find(
+                (s) => Number(s.id) === Number(trackingDialog.stepId)
+              );
+              const notes = step?.notes || [];
+              return (
+                <>
+                  <h4>Step notes</h4>
+                  <p className="jo-track-dialog-hint">
+                    {step
+                      ? `Step ${step.sequence}: ${step.processName}`
+                      : "Add a shop note for this operation."}
+                  </p>
+                  {notes.length > 0 ? (
+                    <div className="jo-step-notes-list">
+                      {notes.map((n) => (
+                        <div key={n.id} className="jo-step-note-item">
+                          <div className="jo-step-note-text">{n.text}</div>
+                          <div className="jo-step-note-meta">
+                            {n.createdBy} ·{" "}
+                            {n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="jo-track-dialog-hint" style={{ marginTop: "-0.35rem" }}>
+                      No notes on this step yet.
+                    </p>
+                  )}
+                  <label className="jo-track-qty-field" htmlFor="jo-step-note-input" style={{ display: "block", marginBottom: "0.75rem" }}>
+                    <span style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "#4b5563", marginBottom: "0.3rem" }}>
+                      New note
+                    </span>
+                    <textarea
+                      id="jo-step-note-input"
+                      className="form-input"
+                      rows={3}
+                      value={stepNoteInput}
+                      autoFocus
+                      placeholder="e.g. Tool wear on finish pass; check fixture clamp…"
+                      onChange={(e) => setStepNoteInput(e.target.value)}
+                    />
+                  </label>
+                  <div className="jo-track-dialog-actions">
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      disabled={trackingSaving}
+                      onClick={() => setTrackingDialog(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      disabled={trackingSaving}
+                      onClick={() => void confirmAddStepNote()}
+                    >
+                      {trackingSaving ? "Saving..." : "Add note"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {trackingDialog.type === "replaceTemplate" && trackingDialog.template && (
+              <>
+                <h4>Replace router steps?</h4>
+                <p className="jo-track-dialog-hint">
+                  This will replace the {routingSteps.length} existing router step
+                  {routingSteps.length === 1 ? "" : "s"}, including any tracked progress, with
+                  steps from template{" "}
+                  <strong>{trackingDialog.template.templateCode}</strong>.
+                </p>
+                <div className="jo-track-dialog-actions">
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    disabled={applyingTemplate}
+                    onClick={() => setTrackingDialog(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-submit"
+                    disabled={applyingTemplate}
+                    onClick={() => {
+                      const tpl = trackingDialog.template;
+                      setTrackingDialog(null);
+                      if (tpl) void applyJobTemplate(tpl);
+                    }}
+                  >
+                    {applyingTemplate ? "Applying..." : "Replace steps"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Step barcode / QR for shop-floor scan (PWA will consume later) */}
+      {barcodeDialog && (
+        <div
+          className="jo-track-dialog-overlay"
+          onClick={() => setBarcodeDialog(null)}
+          role="presentation"
+        >
+          <div
+            className="jo-track-dialog jo-barcode-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="jo-barcode-title"
+          >
+            <h4 id="jo-barcode-title">Step barcode</h4>
+            <p className="jo-track-dialog-hint">{barcodeDialog.label}</p>
+            <div className="jo-barcode-qr-wrap">
+              <img
+                src={barcodeDialog.qrDataUrl}
+                alt={`QR code for ${barcodeDialog.scanCode}`}
+                width={240}
+                height={240}
+              />
+            </div>
+            <code className="jo-barcode-code">{barcodeDialog.scanCode}</code>
+            <p className="jo-track-dialog-hint" style={{ marginTop: "0.75rem" }}>
+              Scan with a phone to open this step on the shop floor app (when enabled).
+            </p>
+            <div className="jo-track-dialog-actions">
+              <button
+                type="button"
+                className="btn-cancel"
+                onClick={() => setBarcodeDialog(null)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn-submit"
+                onClick={() => void copyScanCode(barcodeDialog.scanCode)}
+              >
+                Copy code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog
         isOpen={showDeletionDialog}
@@ -2046,6 +2957,20 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         onRefreshImpact={refreshDeletionImpact}
         isLoading={loading}
       />
+
+      {ncrSlideout && (
+        <NonConformanceReportSlideout
+          ncrId={ncrSlideout.ncrId}
+          prefill={ncrSlideout.prefill}
+          elevated
+          onCreated={async (ncr) => {
+            await handleNcrCreated(ncr);
+          }}
+          onClose={() => {
+            closeNcrSlideoutSafely();
+          }}
+        />
+      )}
     </div>
   );
 };

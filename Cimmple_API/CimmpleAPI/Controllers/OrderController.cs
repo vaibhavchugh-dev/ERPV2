@@ -631,6 +631,16 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Update or add details
+                    var updatedDetailIds = request.Details.Where(d => d.ID > 0).Select(d => d.ID).ToList();
+                    var linkedJobOrders = updatedDetailIds.Count > 0
+                        ? _context.JobOrderMaster
+                            .Where(j => j.Tenantid == request.Tenantid && updatedDetailIds.Contains(j.CustomerOrderDetailID))
+                            .ToList()
+                        : new List<JobOrderMaster>();
+                    var jobOrdersByDetailId = linkedJobOrders
+                        .GroupBy(j => j.CustomerOrderDetailID)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
                     foreach (var detail in request.Details)
                     {
                         if (detail.ID > 0 && existingDetails.Any(d => d.ID == detail.ID))
@@ -654,6 +664,24 @@ namespace CimmpleAPI.Controllers
                             existingDetail.notes = detail.Notes ?? "";
                             existingDetail.ShippedQty = detail.ShippedQty;
                             existingDetail.ShippingStatus = detail.ShippingStatus ?? "Not Started";
+
+                            // Keep linked Job Orders in sync (listing/detail read JO's own QtyOrdered snapshot).
+                            if (jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
+                            {
+                                foreach (var jobOrder in jobsForDetail)
+                                {
+                                    jobOrder.QtyOrdered = detail.QtyOrdered;
+                                    jobOrder.Unit = detail.Unit ?? "";
+                                    jobOrder.UnitPrice = detail.UnitPrice;
+                                    jobOrder.DueDate = detail.DueDate.Date;
+                                    jobOrder.PartNo = detail.PartNo ?? "";
+                                    jobOrder.PartName = detail.PartName ?? "";
+                                    jobOrder.JobNumber = detail.JobNumber ?? "";
+                                    jobOrder.JobDesc = detail.JobDesc ?? "";
+                                    jobOrder.JobPriority = detail.JobPriority;
+                                    jobOrder.ModifiedDate = DateTime.Now;
+                                }
+                            }
                         }
                         else
                         {
