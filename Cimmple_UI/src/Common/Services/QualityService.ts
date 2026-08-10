@@ -84,9 +84,61 @@ export interface NCRFilters {
   severity?: NCRSeverity;
   source?: 'Internal' | 'External' | 'Customer';
   jobOrderId?: number;
+  customerId?: number;
   dateFrom?: string;
   dateTo?: string;
+  overdueOnly?: boolean;
+  openOnly?: boolean;
   tenantId: number;
+}
+
+/** Convert listing date-range presets into inclusive dateFrom / exclusive-friendly dateTo (ISO date). */
+export function resolveNcrDateRange(dateRange: string): { dateFrom?: string; dateTo?: string } {
+  if (!dateRange || dateRange === 'All' || dateRange === 'All Dates') {
+    return {};
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const toIsoDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const end = new Date(today);
+  // Inclusive through today
+  const dateTo = toIsoDate(end);
+
+  switch (dateRange) {
+    case 'Last 7 Days': {
+      const start = new Date(today);
+      start.setDate(start.getDate() - 6);
+      return { dateFrom: toIsoDate(start), dateTo };
+    }
+    case 'Last 30 Days': {
+      const start = new Date(today);
+      start.setDate(start.getDate() - 29);
+      return { dateFrom: toIsoDate(start), dateTo };
+    }
+    case 'This Month': {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { dateFrom: toIsoDate(start), dateTo };
+    }
+    case 'Last Month': {
+      const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastDayPrev = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { dateFrom: toIsoDate(start), dateTo: toIsoDate(lastDayPrev) };
+    }
+    case 'Last 3 Months': {
+      const start = new Date(today);
+      start.setMonth(start.getMonth() - 3);
+      return { dateFrom: toIsoDate(start), dateTo };
+    }
+    default:
+      return {};
+  }
 }
 
 export class QualityService {

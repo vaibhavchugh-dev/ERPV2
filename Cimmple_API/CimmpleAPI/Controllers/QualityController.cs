@@ -274,61 +274,203 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string severity = null,
             [FromQuery] string source = null,
             [FromQuery] int? jobOrderId = null,
+            [FromQuery] int? customerId = null,
             [FromQuery] string dateFrom = null,
-            [FromQuery] string dateTo = null)
+            [FromQuery] string dateTo = null,
+            [FromQuery] bool overdueOnly = false,
+            [FromQuery] bool openOnly = false)
         {
             try
             {
-                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}");
+                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}, status={status}, category={category}, severity={severity}, source={source}, jobOrderId={jobOrderId}, customerId={customerId}, dateFrom={dateFrom}, dateTo={dateTo}, overdueOnly={overdueOnly}, openOnly={openOnly}");
 
-                // Use raw SQL to completely bypass EF null reference issues
-                var rawResults = await _context.NonConformanceReports
-                    .FromSqlRaw(@"
-                        SELECT
-                            NcrId,
-                            ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
-                            ISNULL(Title, 'Untitled NCR') as Title,
-                            ISNULL(Description, '') as Description,
-                            ISNULL(Category, 'Other') as Category,
-                            ISNULL(Severity, 'Minor') as Severity,
-                            ISNULL(Status, 'Open') as Status,
-                            ISNULL(Source, 'Internal') as Source,
-                            ReportedBy,
-                            ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
-                            Photos,
-                            ReportedDate,
-                            CreatedDate
-                        FROM NonConformanceReports
-                        WHERE TenantId = {0}", tenantId)
-                    .AsNoTracking()
-                    .OrderByDescending(n => n.ReportedDate)
-                    .Select(n => new {
-                        ncrId = n.NcrId,
-                        ncrNumber = n.NcrNumber,
-                        title = n.Title,
-                        description = n.Description ?? "",
-                        category = n.Category,
-                        severity = n.Severity,
-                        status = n.Status,
-                        source = n.Source,
-                        reportedBy = n.ReportedBy,
-                        reportedByName = n.ReportedByName ?? "Unknown User",
-                        photos = n.Photos ?? "",
-                        reportedDate = n.ReportedDate.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                        createdDate = n.CreatedDate.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                    })
-                    .ToListAsync();
+                var sql = @"
+                    SELECT
+                        NcrId,
+                        ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                        ISNULL(Title, 'Untitled NCR') as Title,
+                        ISNULL(Description, '') as Description,
+                        ISNULL(Category, 'Other') as Category,
+                        ISNULL(Severity, 'Minor') as Severity,
+                        ISNULL(Status, 'Open') as Status,
+                        ISNULL(Source, 'Internal') as Source,
+                        JobOrderId,
+                        ISNULL(JobOrderNumber, '') as JobOrderNumber,
+                        ISNULL(PartNo, '') as PartNo,
+                        ISNULL(PartName, '') as PartName,
+                        CustomerId,
+                        ISNULL(CustomerName, '') as CustomerName,
+                        ReportedBy,
+                        ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                        Photos,
+                        ReportedDate,
+                        DueDate,
+                        CreatedDate
+                    FROM NonConformanceReports
+                    WHERE TenantId = @tenantId";
 
-                Console.WriteLine($"Raw SQL query returned {rawResults.Count} NCRs");
-                if (rawResults.Count > 0) {
-                    Console.WriteLine("NCR IDs in result:");
-                    foreach (var ncr in rawResults) {
-                        Console.WriteLine($"  NCR ID: {ncr.ncrId}, Number: {ncr.ncrNumber}, Title: {ncr.title}");
+                var parameters = new List<(string Name, object Value)>
+                {
+                    ("@tenantId", tenantId)
+                };
+
+                if (openOnly)
+                {
+                    sql += " AND Status IN ('Open', 'Under_Investigation')";
+                }
+                else if (!string.IsNullOrWhiteSpace(status) &&
+                         !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Status = @status";
+                    parameters.Add(("@status", status.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(category) &&
+                    !string.Equals(category, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Category = @category";
+                    parameters.Add(("@category", category.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(severity) &&
+                    !string.Equals(severity, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Severity = @severity";
+                    parameters.Add(("@severity", severity.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(source) &&
+                    !string.Equals(source, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Source = @source";
+                    parameters.Add(("@source", source.Trim()));
+                }
+
+                if (jobOrderId.HasValue && jobOrderId.Value > 0)
+                {
+                    sql += " AND JobOrderId = @jobOrderId";
+                    parameters.Add(("@jobOrderId", jobOrderId.Value));
+                }
+
+                if (customerId.HasValue && customerId.Value > 0)
+                {
+                    sql += " AND CustomerId = @customerId";
+                    parameters.Add(("@customerId", customerId.Value));
+                }
+
+                if (DateTime.TryParse(dateFrom, out var parsedFrom))
+                {
+                    sql += " AND ReportedDate >= @dateFrom";
+                    parameters.Add(("@dateFrom", parsedFrom.Date));
+                }
+
+                if (DateTime.TryParse(dateTo, out var parsedTo))
+                {
+                    // Inclusive end-of-day for date-only strings
+                    var exclusiveEnd = parsedTo.Date.AddDays(1);
+                    sql += " AND ReportedDate < @dateTo";
+                    parameters.Add(("@dateTo", exclusiveEnd));
+                }
+
+                if (overdueOnly)
+                {
+                    sql += " AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status <> 'Closed'";
+                }
+
+                sql += " ORDER BY ReportedDate DESC";
+
+                var rawResults = new List<object>();
+
+                await _context.Database.OpenConnectionAsync();
+                try
+                {
+                    using (var command = _context.Database.GetDbConnection().CreateCommand())
+                    {
+                        command.CommandText = sql;
+                        foreach (var (name, value) in parameters)
+                        {
+                            var param = command.CreateParameter();
+                            param.ParameterName = name;
+                            param.Value = value ?? DBNull.Value;
+                            command.Parameters.Add(param);
+                        }
+
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var ncrId = reader.GetInt32(reader.GetOrdinal("NcrId"));
+                                rawResults.Add(new
+                                {
+                                    ncrId,
+                                    ncrNumber = reader.IsDBNull(reader.GetOrdinal("NcrNumber"))
+                                        ? $"NCR-{ncrId}"
+                                        : reader.GetString(reader.GetOrdinal("NcrNumber")),
+                                    title = reader.IsDBNull(reader.GetOrdinal("Title"))
+                                        ? "Untitled NCR"
+                                        : reader.GetString(reader.GetOrdinal("Title")),
+                                    description = reader.IsDBNull(reader.GetOrdinal("Description"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("Description")),
+                                    category = reader.IsDBNull(reader.GetOrdinal("Category"))
+                                        ? "Other"
+                                        : reader.GetString(reader.GetOrdinal("Category")),
+                                    severity = reader.IsDBNull(reader.GetOrdinal("Severity"))
+                                        ? "Minor"
+                                        : reader.GetString(reader.GetOrdinal("Severity")),
+                                    status = reader.IsDBNull(reader.GetOrdinal("Status"))
+                                        ? "Open"
+                                        : reader.GetString(reader.GetOrdinal("Status")),
+                                    source = reader.IsDBNull(reader.GetOrdinal("Source"))
+                                        ? "Internal"
+                                        : reader.GetString(reader.GetOrdinal("Source")),
+                                    jobOrderId = reader.IsDBNull(reader.GetOrdinal("JobOrderId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("JobOrderId")),
+                                    jobOrderNumber = reader.IsDBNull(reader.GetOrdinal("JobOrderNumber"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("JobOrderNumber")),
+                                    partNo = reader.IsDBNull(reader.GetOrdinal("PartNo"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("PartNo")),
+                                    partName = reader.IsDBNull(reader.GetOrdinal("PartName"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("PartName")),
+                                    customerId = reader.IsDBNull(reader.GetOrdinal("CustomerId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("CustomerId")),
+                                    customerName = reader.IsDBNull(reader.GetOrdinal("CustomerName"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("CustomerName")),
+                                    reportedBy = reader.IsDBNull(reader.GetOrdinal("ReportedBy"))
+                                        ? 0
+                                        : reader.GetInt32(reader.GetOrdinal("ReportedBy")),
+                                    reportedByName = reader.IsDBNull(reader.GetOrdinal("ReportedByName"))
+                                        ? "Unknown User"
+                                        : reader.GetString(reader.GetOrdinal("ReportedByName")),
+                                    photos = reader.IsDBNull(reader.GetOrdinal("Photos"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("Photos")),
+                                    reportedDate = reader.IsDBNull(reader.GetOrdinal("ReportedDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("ReportedDate")).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                    dueDate = reader.IsDBNull(reader.GetOrdinal("DueDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("DueDate")).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                    createdDate = reader.IsDBNull(reader.GetOrdinal("CreatedDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("CreatedDate")).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                                });
+                            }
+                        }
                     }
+                }
+                finally
+                {
+                    await _context.Database.CloseConnectionAsync();
                 }
 
                 Console.WriteLine($"Returning {rawResults.Count} NCR objects");
-
                 return Ok(new { result = rawResults });
             }
             catch (Exception ex)
