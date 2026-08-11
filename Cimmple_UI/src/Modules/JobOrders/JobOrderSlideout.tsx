@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
   JobOrderService,
@@ -134,7 +135,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
   const [stepNoteInput, setStepNoteInput] = useState("");
-  const [stepMenuStepId, setStepMenuStepId] = useState<number | null>(null);
+  const [stepMenu, setStepMenu] = useState<null | {
+    stepId: number;
+    top?: number;
+    bottom?: number;
+    right: number;
+  }>(null);
   const [barcodeDialog, setBarcodeDialog] = useState<null | {
     stepId: number;
     scanCode: string;
@@ -1052,7 +1058,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const openStepBarcode = async (stepId: number) => {
-    setStepMenuStepId(null);
+    setStepMenu(null);
     const step = routingSteps.find((s) => s.id === stepId);
     if (!step) return;
 
@@ -1092,7 +1098,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const requestStepNote = (stepId: number) => {
-    setStepMenuStepId(null);
+    setStepMenu(null);
     setStepNoteInput("");
     setTrackingDialog({ type: "stepNote", stepId });
   };
@@ -1146,7 +1152,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const openCreateNcrForStep = (stepId: number) => {
-    setStepMenuStepId(null);
+    setStepMenu(null);
     const step = routingSteps.find((s) => s.id === stepId);
     if (!step) return;
 
@@ -1186,7 +1192,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const openExistingNcr = (stepId: number, ncrId: number) => {
-    setStepMenuStepId(null);
+    setStepMenu(null);
     setTrackingDialog(null);
     setNcrSlideout({
       ncrId,
@@ -1331,14 +1337,16 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
   // Close step overflow menu on outside click / Escape
   useEffect(() => {
-    if (stepMenuStepId == null) return;
+    if (stepMenu == null) return;
     const onDocMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest(".jo-step-menu")) return;
-      setStepMenuStepId(null);
+      if (target?.closest(".jo-step-menu") || target?.closest(".jo-step-menu-dropdown")) {
+        return;
+      }
+      setStepMenu(null);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setStepMenuStepId(null);
+      if (e.key === "Escape") setStepMenu(null);
     };
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKeyDown);
@@ -1346,7 +1354,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [stepMenuStepId]);
+  }, [stepMenu]);
 
   const convertToDateInputFormat = (dateStr: string): string => {
     if (!dateStr) return "";
@@ -2131,13 +2139,29 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                 }`}
                                 title="Step actions"
                                 aria-haspopup="menu"
-                                aria-expanded={stepMenuStepId === step.id}
+                                aria-expanded={stepMenu?.stepId === step.id}
                                 disabled={trackingSaving}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setStepMenuStepId((id) =>
-                                    id === step.id ? null : step.id
-                                  );
+                                  if (stepMenu?.stepId === step.id) {
+                                    setStepMenu(null);
+                                    return;
+                                  }
+                                  const rect = (
+                                    e.currentTarget as HTMLElement
+                                  ).getBoundingClientRect();
+                                  const menuApproxHeight = 140;
+                                  const spaceBelow =
+                                    window.innerHeight - rect.bottom;
+                                  const openUp =
+                                    spaceBelow < menuApproxHeight + 8;
+                                  setStepMenu({
+                                    stepId: step.id,
+                                    right: window.innerWidth - rect.right,
+                                    ...(openUp
+                                      ? { bottom: window.innerHeight - rect.top + 4 }
+                                      : { top: rect.bottom + 4 }),
+                                  });
                                 }}
                               >
                                 ⋯
@@ -2148,58 +2172,70 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                   <span className="jo-step-menu-dot jo-step-menu-dot--ncr" aria-hidden />
                                 )}
                               </button>
-                              {stepMenuStepId === step.id && (
-                                <div
-                                  className="jo-step-menu-dropdown"
-                                  role="menu"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="jo-step-menu-item"
-                                    onClick={() => requestStepNote(step.id)}
+                              {stepMenu?.stepId === step.id &&
+                                createPortal(
+                                  <div
+                                    className="jo-step-menu-dropdown jo-step-menu-dropdown--portal"
+                                    role="menu"
+                                    style={{
+                                      top: stepMenu.top,
+                                      bottom: stepMenu.bottom,
+                                      right: stepMenu.right,
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                   >
-                                    {(step.notes?.length || 0) > 0
-                                      ? `Notes (${step.notes!.length})`
-                                      : "Add Note"}
-                                  </button>
-                                  {step.ncrFlags?.[0]?.ncrId ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="jo-step-menu-item"
+                                      onClick={() => requestStepNote(step.id)}
+                                    >
+                                      {(step.notes?.length || 0) > 0
+                                        ? `Notes (${step.notes!.length})`
+                                        : "Add Note"}
+                                    </button>
+                                    {step.ncrFlags?.[0]?.ncrId ? (
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        className="jo-step-menu-item"
+                                        onClick={() =>
+                                          openExistingNcr(
+                                            step.id,
+                                            step.ncrFlags![0].ncrId
+                                          )
+                                        }
+                                      >
+                                        View{" "}
+                                        {step.ncrFlags[0].ncrNumber ||
+                                          `NCR-${step.ncrFlags[0].ncrId}`}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        className="jo-step-menu-item"
+                                        onClick={() =>
+                                          openCreateNcrForStep(step.id)
+                                        }
+                                      >
+                                        Add NCR
+                                      </button>
+                                    )}
                                     <button
                                       type="button"
                                       role="menuitem"
                                       className="jo-step-menu-item"
                                       onClick={() =>
-                                        openExistingNcr(
-                                          step.id,
-                                          step.ncrFlags![0].ncrId
-                                        )
+                                        void openStepBarcode(step.id)
                                       }
                                     >
-                                      View{" "}
-                                      {step.ncrFlags[0].ncrNumber ||
-                                        `NCR-${step.ncrFlags[0].ncrId}`}
+                                      Show barcode
                                     </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      className="jo-step-menu-item"
-                                      onClick={() => openCreateNcrForStep(step.id)}
-                                    >
-                                      Add NCR
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="jo-step-menu-item"
-                                    onClick={() => void openStepBarcode(step.id)}
-                                  >
-                                    Show barcode
-                                  </button>
-                                </div>
-                              )}
+                                  </div>,
+                                  document.body
+                                )}
                             </div>
                           </td>
                           <td style={{ padding: "0.75rem", textAlign: "center" }}>

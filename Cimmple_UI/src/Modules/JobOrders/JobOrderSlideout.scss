@@ -679,6 +679,13 @@
   gap: 0.15rem;
 }
 
+/* Escapes table overflow clipping (esp. bottom rows). */
+.jo-step-menu-dropdown--portal {
+  position: fixed;
+  top: auto;
+  z-index: 1300;
+}
+
 .jo-step-menu-item {
   text-align: left;
   border: none;

@@ -67,9 +67,12 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestIdRef = useRef(0);
   const partsRef = useRef<CustomerPartOption[]>([]);
-  /** Avoid tying fetchParts identity to value (that re-fetched with a sticky searchTerm). */
+  /** Last unfiltered history payload — used to restore the full list when the user clears the filter. */
+  const unfilteredPartsRef = useRef<CustomerPartOption[]>([]);
   const valueRef = useRef(value);
   valueRef.current = value;
+  const onHistoryMatchRef = useRef(onHistoryMatch);
+  onHistoryMatchRef.current = onHistoryMatch;
 
   const updatePosition = () => {
     const input = inputRef.current;
@@ -82,49 +85,65 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     });
   };
 
-  const emitHistoryMatch = useCallback(
-    (partNo: string, list: CustomerPartOption[]) => {
-      if (!onHistoryMatch) return;
-      const trimmed = (partNo || "").trim().toLowerCase();
-      if (!trimmed) {
-        onHistoryMatch(null);
-        return;
-      }
-      const match = list.find((p) => p.partNo.toLowerCase() === trimmed) || null;
-      onHistoryMatch(match);
-    },
-    [onHistoryMatch]
-  );
+  const applyParts = (list: CustomerPartOption[]) => {
+    setParts(list);
+    partsRef.current = list;
+  };
+
+  const filterLocal = (q: string, list: CustomerPartOption[]) => {
+    const t = (q || "").trim().toLowerCase();
+    if (!t) return list;
+    return list.filter(
+      (p) =>
+        p.partNo.toLowerCase().includes(t) ||
+        (p.partName || "").toLowerCase().includes(t)
+    );
+  };
+
+  const emitHistoryMatch = useCallback((partNo: string, list: CustomerPartOption[]) => {
+    const cb = onHistoryMatchRef.current;
+    if (!cb) return;
+    const trimmed = (partNo || "").trim().toLowerCase();
+    if (!trimmed) {
+      cb(null);
+      return;
+    }
+    const match = list.find((p) => p.partNo.toLowerCase() === trimmed) || null;
+    cb(match);
+  }, []);
 
   const fetchParts = useCallback(
     async (q: string) => {
       if (!partySelected || partyId <= 0) {
-        setParts([]);
-        partsRef.current = [];
+        applyParts([]);
+        unfilteredPartsRef.current = [];
         return;
       }
       const reqId = ++requestIdRef.current;
+      const trimmedQ = (q || "").trim();
       setLoading(true);
       try {
         const result =
           party === "vendor"
             ? await ProductMasterService.GetPartsByVendor(partyId, {
-                q: q || undefined,
+                q: trimmedQ || undefined,
                 limit: 50,
               })
             : await ProductMasterService.GetPartsByCustomer(partyId, {
-                q: q || undefined,
+                q: trimmedQ || undefined,
                 limit: 50,
               });
         if (reqId !== requestIdRef.current) return;
-        setParts(result);
-        partsRef.current = result;
+        if (!trimmedQ) {
+          unfilteredPartsRef.current = result;
+        }
+        applyParts(result);
         emitHistoryMatch(valueRef.current, result);
       } catch (err) {
         if (reqId !== requestIdRef.current) return;
         console.error(`Error searching ${partyNoun} parts:`, err);
-        setParts([]);
-        partsRef.current = [];
+        applyParts([]);
+        if (!trimmedQ) unfilteredPartsRef.current = [];
       } finally {
         if (reqId === requestIdRef.current) {
           setLoading(false);
@@ -134,29 +153,61 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     [party, partyId, partySelected, partyNoun, emitHistoryMatch]
   );
 
+  const restoreUnfiltered = () => {
+    const cached = unfilteredPartsRef.current;
+    if (cached.length > 0) {
+      applyParts(cached);
+    }
+  };
+
   /** Open list with unfiltered history; input still shows current value until user types. */
   const openDropdown = () => {
     updatePosition();
     setOpen(true);
     setSearchTerm("");
+    restoreUnfiltered();
+    // Prevent a late filtered response from collapsing the list after open/clear.
+    requestIdRef.current += 1;
   };
 
   useEffect(() => {
     if (!partySelected || partyId <= 0) {
-      setParts([]);
-      partsRef.current = [];
-      onHistoryMatch?.(null);
+      applyParts([]);
+      unfilteredPartsRef.current = [];
+      onHistoryMatchRef.current?.(null);
       return;
     }
     fetchParts("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partyId, partySelected, party]);
+  }, [partyId, partySelected, party, fetchParts]);
 
   useEffect(() => {
     if (!partySelected || partyId <= 0) return;
+
+    const trimmed = (searchTerm || "").trim();
+
+    // Clearing the filter must restore the full list immediately (not wait on debounce/network).
+    if (!trimmed) {
+      restoreUnfiltered();
+      // Drop any in-flight filtered response so it cannot overwrite the restored list.
+      requestIdRef.current += 1;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Refresh unfiltered cache in the background; show cached list right away.
+      debounceRef.current = setTimeout(() => {
+        fetchParts("");
+      }, 0);
+      return () => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+      };
+    }
+
+    // Instant local filter from cached history, then confirm with server search.
+    if (unfilteredPartsRef.current.length > 0) {
+      applyParts(filterLocal(trimmed, unfilteredPartsRef.current));
+    }
+
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      fetchParts(searchTerm);
+      fetchParts(trimmed);
     }, DEBOUNCE_MS);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -165,15 +216,16 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
 
   useEffect(() => {
     const trimmed = (value || "").trim();
+    const cb = onHistoryMatchRef.current;
     if (!trimmed || !partySelected) {
-      onHistoryMatch?.(null);
+      cb?.(null);
       return;
     }
-    const local = partsRef.current.find(
-      (p) => p.partNo.toLowerCase() === trimmed.toLowerCase()
-    );
+    const local =
+      partsRef.current.find((p) => p.partNo.toLowerCase() === trimmed.toLowerCase()) ||
+      unfilteredPartsRef.current.find((p) => p.partNo.toLowerCase() === trimmed.toLowerCase());
     if (local) {
-      onHistoryMatch?.(local);
+      cb?.(local);
       return;
     }
     let cancelled = false;
@@ -192,16 +244,16 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         if (cancelled) return;
         const match =
           result.find((p) => p.partNo.toLowerCase() === trimmed.toLowerCase()) || null;
-        onHistoryMatch?.(match);
+        onHistoryMatchRef.current?.(match);
       } catch {
-        if (!cancelled) onHistoryMatch?.(null);
+        if (!cancelled) onHistoryMatchRef.current?.(null);
       }
     }, DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [value, partyId, partySelected, party, onHistoryMatch]);
+  }, [value, partyId, partySelected, party]);
 
   useEffect(() => {
     if (!open) return;
