@@ -13,7 +13,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   if (isAuthenticated) {
-    return <Navigate to="/jobs" replace />;
+    return <Navigate to="/" replace />;
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -33,7 +33,7 @@ export function LoginPage() {
         password,
         parsedTenant && !Number.isNaN(parsedTenant) ? parsedTenant : undefined
       );
-      navigate("/jobs", { replace: true });
+      navigate("/", { replace: true });
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { message?: string } }; message?: string };
       const message =

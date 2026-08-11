@@ -10,18 +10,18 @@
   }
 
   body {
-    @apply min-w-[320px] bg-canvas font-sans text-slate-900 antialiased;
+    @apply min-w-[320px] bg-[#f4f6f9] font-sans text-slate-900 antialiased;
     background-image: linear-gradient(180deg, #eef2f7 0%, #f4f6f9 28%, #f4f6f9 100%);
   }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex min-h-tap items-center justify-center rounded-xl border border-transparent px-4 font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex min-h-10 items-center justify-center rounded-full border border-transparent px-5 font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
   }
 
   .btn-primary {
-    @apply bg-accent text-white hover:bg-blue-700;
+    @apply bg-slate-900 text-white hover:bg-slate-800;
   }
 
   .btn-secondary {
@@ -29,7 +29,7 @@
   }
 
   .btn-success {
-    @apply bg-emerald-600 text-white hover:bg-emerald-700;
+    @apply bg-emerald-500 text-white hover:bg-emerald-600;
   }
 
   .btn-ghost {
@@ -45,34 +45,34 @@
   }
 
   .field-input {
-    @apply min-h-tap rounded-xl border border-slate-300 bg-white px-3.5 text-base font-normal text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-200;
+    @apply min-h-11 rounded-2xl border border-slate-200 bg-white px-4 text-base font-normal text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-200;
   }
 
   .card {
-    @apply rounded-2xl border border-slate-200 bg-white shadow-card;
+    @apply rounded-3xl border-none bg-white shadow-[0_4px_24px_rgba(0,0,0,0.04)];
   }
 
   .badge {
-    @apply inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-[0.72rem] font-bold uppercase tracking-wide;
+    @apply inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-[0.7rem] font-extrabold uppercase tracking-widest;
   }
 
   .badge-active {
-    @apply bg-accent-soft text-blue-700;
+    @apply bg-blue-100/50 text-blue-600;
   }
 
   .badge-done {
-    @apply bg-emerald-50 text-emerald-700;
+    @apply bg-emerald-50 text-emerald-600;
   }
 
   .badge-idle {
-    @apply bg-slate-100 text-slate-600;
+    @apply bg-slate-100 text-slate-500;
   }
 
   .badge-warn {
-    @apply bg-orange-50 text-orange-700;
+    @apply bg-orange-50 text-orange-600;
   }
 
   .badge-critical {
-    @apply bg-red-50 text-red-700;
+    @apply bg-red-50 text-red-600;
   }
 }

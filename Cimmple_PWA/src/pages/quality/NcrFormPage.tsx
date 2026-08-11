@@ -231,307 +231,274 @@ export function NcrFormPage() {
 
   return (
     <div>
-      <Link to="/quality" className="mb-3 inline-flex min-h-10 items-center font-semibold text-accent">
-        ← Quality
-      </Link>
-
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          {ncrId > 0 ? "Edit NCR" : "New NCR"}
-        </h1>
-        {ncr.ncrNumber && (
-          <p className="mt-1 text-sm font-semibold text-slate-500">{ncr.ncrNumber}</p>
-        )}
-      </div>
-
-      <p className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-        You can save with a title only and complete the rest later.
-      </p>
+      <header className="mb-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link to="/quality" className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm transition-transform active:scale-95">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </Link>
+          <div>
+            <h1 className="text-xl font-extrabold tracking-tight text-slate-900 leading-tight">
+              {ncrId > 0 ? "Edit NCR" : "New NCR"}
+            </h1>
+            <p className="text-xs font-bold tracking-widest text-slate-400 uppercase">
+              {ncr.ncrNumber || "Non-Conformance Report"}
+            </p>
+          </div>
+        </div>
+      </header>
 
       {error && (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700" role="alert">
+        <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-700" role="alert">
           {error}
         </div>
       )}
       {okMsg && (
-        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-700" role="status">
+        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold text-emerald-700" role="status">
           {okMsg}
         </div>
       )}
 
-      <form className="space-y-4" onSubmit={(e) => void handleSave(e)}>
-        <section className="card space-y-3 p-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
+      <form className="space-y-6" onSubmit={(e) => void handleSave(e)}>
+        <section className="card p-6">
+          <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
             Basic information
           </h2>
-          <label className="field">
-            <span>Title *</span>
-            <input
-              className="field-input"
-              value={ncr.title || ""}
-              onChange={(e) => setField("title", e.target.value)}
-              placeholder="Brief description of the issue"
-              required
-            />
-          </label>
-          <label className="field">
-            <span>Source</span>
-            <select
-              className="field-input"
-              value={ncr.source || "Internal"}
-              onChange={(e) =>
-                setField("source", e.target.value as NonConformanceReport["source"])
-              }
-            >
-              <option value="Internal">Internal</option>
-              <option value="External">External</option>
-              <option value="Customer">Customer</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Category</span>
-            <select
-              className="field-input"
-              value={ncr.category || "Other"}
-              onChange={(e) => setField("category", e.target.value as NCRCategory)}
-            >
-              <option value="Material_Defect">Material Defect</option>
-              <option value="Dimensional_Issue">Dimensional Issue</option>
-              <option value="Process_Failure">Process Failure</option>
-              <option value="Equipment_Problem">Equipment Problem</option>
-              <option value="Documentation_Error">Documentation Error</option>
-              <option value="Supplier_Quality">Supplier Quality</option>
-              <option value="Other">Other</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Severity</span>
-            <select
-              className="field-input"
-              value={ncr.severity || "Minor"}
-              onChange={(e) => setField("severity", e.target.value as NCRSeverity)}
-            >
-              <option value="Minor">Minor</option>
-              <option value="Major">Major</option>
-              <option value="Critical">Critical</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Description</span>
-            <textarea
-              className="field-input min-h-[96px] py-3"
-              value={ncr.description || ""}
-              onChange={(e) => setField("description", e.target.value)}
-              rows={3}
-            />
-          </label>
-        </section>
-
-        <section className="card space-y-3 p-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
-            Job order
-          </h2>
-          <label className="field">
-            <span>Job order</span>
-            <select
-              className="field-input"
-              value={ncr.jobOrderId || ""}
-              onChange={(e) => handleJobChange(Number(e.target.value) || 0)}
-            >
-              <option value="">Select job order</option>
-              {jobOrders.map((jo) => (
-                <option key={jo.jobOrderID} value={jo.jobOrderID}>
-                  JO#{jo.jobOrderNumber} — {jo.partNo}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Part number</span>
-            <input
-              className="field-input"
-              value={ncr.partNo || ""}
-              onChange={(e) => setField("partNo", e.target.value)}
-              readOnly={!!ncr.jobOrderId}
-            />
-          </label>
-          <label className="field">
-            <span>Part name</span>
-            <input
-              className="field-input"
-              value={ncr.partName || ""}
-              onChange={(e) => setField("partName", e.target.value)}
-              readOnly={!!ncr.jobOrderId}
-            />
-          </label>
-          <label className="field">
-            <span>Customer</span>
-            <input className="field-input" value={ncr.customerName || ""} readOnly />
-          </label>
-        </section>
-
-        <section className="card space-y-3 p-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
-            Defect details
-          </h2>
-          <label className="field">
-            <span>Defect location</span>
-            <input
-              className="field-input"
-              value={ncr.defectLocation || ""}
-              onChange={(e) => setField("defectLocation", e.target.value)}
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-4">
             <label className="field">
-              <span>Defect qty</span>
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Title *</span>
               <input
-                className="field-input"
-                type="number"
-                min={0}
-                value={ncr.defectQuantity ?? 0}
-                onChange={(e) => setField("defectQuantity", Number(e.target.value))}
+                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                value={ncr.title || ""}
+                onChange={(e) => setField("title", e.target.value)}
+                placeholder="Brief description of the issue"
+                required
               />
             </label>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Category</span>
+                <select
+                  className="field-input min-h-12 text-sm font-semibold shadow-sm bg-white"
+                  value={ncr.category || "Other"}
+                  onChange={(e) => setField("category", e.target.value as NCRCategory)}
+                >
+                  <option value="Material_Defect">Material Defect</option>
+                  <option value="Dimensional_Issue">Dimensional Issue</option>
+                  <option value="Process_Failure">Process Failure</option>
+                  <option value="Equipment_Problem">Equipment Problem</option>
+                  <option value="Documentation_Error">Documentation Error</option>
+                  <option value="Supplier_Quality">Supplier Quality</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Severity</span>
+                <select
+                  className="field-input min-h-12 text-sm font-semibold shadow-sm bg-white"
+                  value={ncr.severity || "Minor"}
+                  onChange={(e) => setField("severity", e.target.value as NCRSeverity)}
+                >
+                  <option value="Minor">Minor</option>
+                  <option value="Major">Major</option>
+                  <option value="Critical">Critical</option>
+                </select>
+              </label>
+            </div>
+            
             <label className="field">
-              <span>Total qty</span>
-              <input
-                className="field-input"
-                type="number"
-                min={0}
-                value={ncr.totalQuantity ?? 0}
-                onChange={(e) => setField("totalQuantity", Number(e.target.value))}
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Source</span>
+              <select
+                className="field-input min-h-12 text-sm font-semibold shadow-sm bg-white"
+                value={ncr.source || "Internal"}
+                onChange={(e) =>
+                  setField("source", e.target.value as NonConformanceReport["source"])
+                }
+              >
+                <option value="Internal">Internal</option>
+                <option value="External">External</option>
+                <option value="Customer">Customer</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Description</span>
+              <textarea
+                className="field-input min-h-[96px] py-3 text-sm font-semibold shadow-sm"
+                value={ncr.description || ""}
+                onChange={(e) => setField("description", e.target.value)}
+                rows={3}
               />
             </label>
           </div>
-          <label className="field">
-            <span>Due date</span>
-            <input
-              className="field-input"
-              type="date"
-              value={ncr.dueDate ? ncr.dueDate.slice(0, 10) : ""}
-              onChange={(e) => setField("dueDate", e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Defect description</span>
-            <textarea
-              className="field-input min-h-[80px] py-3"
-              value={ncr.defectDescription || ""}
-              onChange={(e) => setField("defectDescription", e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label className="field">
-            <span>Photos</span>
-            <input
-              className="field-input py-2.5 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold"
-              type="file"
-              accept="image/*"
-              multiple
-              capture="environment"
-              onChange={(e) =>
-                setPendingFiles(e.target.files ? Array.from(e.target.files) : [])
-              }
-            />
-            {pendingFiles.length > 0 && (
-              <span className="text-xs font-normal text-slate-500">
-                {pendingFiles.length} file(s) will upload on save
-              </span>
-            )}
-            {(ncr.photos?.length || 0) > 0 && (
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {ncr.photos!.map((photo, index) => (
-                  <div key={`${photo}-${index}`} className="relative overflow-hidden rounded-lg border border-slate-200">
-                    <img src={photo} alt="" className="h-20 w-full object-cover" />
-                    <button
-                      type="button"
-                      className="absolute right-1 top-1 rounded bg-black/60 px-1.5 text-xs text-white"
-                      onClick={() =>
-                        setField(
-                          "photos",
-                          (ncr.photos || []).filter((_, i) => i !== index)
-                        )
-                      }
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </label>
         </section>
 
-        <section className="card space-y-3 p-4">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
+        <section className="card p-6">
+          <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+            Job details
+          </h2>
+          <div className="space-y-4">
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Job order</span>
+              <select
+                className="field-input min-h-12 text-sm font-semibold shadow-sm bg-white"
+                value={ncr.jobOrderId || ""}
+                onChange={(e) => handleJobChange(Number(e.target.value) || 0)}
+              >
+                <option value="">Select job order</option>
+                {jobOrders.map((jo) => (
+                  <option key={jo.jobOrderID} value={jo.jobOrderID}>
+                    JO#{jo.jobOrderNumber} — {jo.partNo}
+                  </option>
+                ))}
+              </select>
+            </label>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Part number</span>
+                <input
+                  className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                  value={ncr.partNo || ""}
+                  onChange={(e) => setField("partNo", e.target.value)}
+                  readOnly={!!ncr.jobOrderId}
+                />
+              </label>
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Customer</span>
+                <input className="field-input min-h-12 text-sm font-semibold shadow-sm" value={ncr.customerName || ""} readOnly />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section className="card p-6">
+          <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+            Defect details
+          </h2>
+          <div className="space-y-4">
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Defect location</span>
+              <input
+                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                value={ncr.defectLocation || ""}
+                onChange={(e) => setField("defectLocation", e.target.value)}
+              />
+            </label>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Defect qty</span>
+                <input
+                  className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                  type="number"
+                  min={0}
+                  value={ncr.defectQuantity ?? 0}
+                  onChange={(e) => setField("defectQuantity", Number(e.target.value))}
+                />
+              </label>
+              <label className="field">
+                <span className="text-xs font-bold text-slate-500 mb-1 block">Total qty</span>
+                <input
+                  className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                  type="number"
+                  min={0}
+                  value={ncr.totalQuantity ?? 0}
+                  onChange={(e) => setField("totalQuantity", Number(e.target.value))}
+                />
+              </label>
+            </div>
+            
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Photos</span>
+              <input
+                className="field-input py-2.5 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:text-white file:px-4 file:py-1.5 file:text-xs file:font-bold shadow-sm"
+                type="file"
+                accept="image/*"
+                multiple
+                capture="environment"
+                onChange={(e) =>
+                  setPendingFiles(e.target.files ? Array.from(e.target.files) : [])
+                }
+              />
+              {pendingFiles.length > 0 && (
+                <span className="mt-1 block text-xs font-semibold text-slate-500">
+                  {pendingFiles.length} file(s) will upload on save
+                </span>
+              )}
+              {(ncr.photos?.length || 0) > 0 && (
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {ncr.photos!.map((photo, index) => (
+                    <div key={`${photo}-${index}`} className="relative overflow-hidden rounded-xl border border-slate-200">
+                      <img src={photo} alt="" className="h-24 w-full object-cover" />
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-white backdrop-blur-sm"
+                        onClick={() =>
+                          setField(
+                            "photos",
+                            (ncr.photos || []).filter((_, i) => i !== index)
+                          )
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </label>
+          </div>
+        </section>
+
+        <section className="card p-6">
+          <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
             Root cause & actions
           </h2>
-          <label className="field">
-            <span>Root cause category</span>
-            <select
-              className="field-input"
-              value={ncr.rootCauseCategory || "Other"}
-              onChange={(e) =>
-                setField("rootCauseCategory", e.target.value as RootCauseCategory)
-              }
-            >
-              <option value="Man">Man</option>
-              <option value="Machine">Machine</option>
-              <option value="Material">Material</option>
-              <option value="Method">Method</option>
-              <option value="Measurement">Measurement</option>
-              <option value="Other">Other</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Root cause</span>
-            <textarea
-              className="field-input min-h-[80px] py-3"
-              value={ncr.rootCause || ""}
-              onChange={(e) => setField("rootCause", e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label className="field">
-            <span>Immediate action</span>
-            <textarea
-              className="field-input min-h-[72px] py-3"
-              value={ncr.immediateAction || ""}
-              onChange={(e) => setField("immediateAction", e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label className="field">
-            <span>Corrective action</span>
-            <textarea
-              className="field-input min-h-[72px] py-3"
-              value={ncr.correctiveAction || ""}
-              onChange={(e) => setField("correctiveAction", e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label className="field">
-            <span>Preventive action</span>
-            <textarea
-              className="field-input min-h-[72px] py-3"
-              value={ncr.preventiveAction || ""}
-              onChange={(e) => setField("preventiveAction", e.target.value)}
-              rows={2}
-            />
-          </label>
-          <label className="field">
-            <span>Notes</span>
-            <textarea
-              className="field-input min-h-[72px] py-3"
-              value={ncr.notes || ""}
-              onChange={(e) => setField("notes", e.target.value)}
-              rows={2}
-            />
-          </label>
+          <div className="space-y-4">
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Root cause category</span>
+              <select
+                className="field-input min-h-12 text-sm font-semibold shadow-sm bg-white"
+                value={ncr.rootCauseCategory || "Other"}
+                onChange={(e) =>
+                  setField("rootCauseCategory", e.target.value as RootCauseCategory)
+                }
+              >
+                <option value="Man">Man</option>
+                <option value="Machine">Machine</option>
+                <option value="Material">Material</option>
+                <option value="Method">Method</option>
+                <option value="Measurement">Measurement</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Root cause</span>
+              <textarea
+                className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+                value={ncr.rootCause || ""}
+                onChange={(e) => setField("rootCause", e.target.value)}
+                rows={2}
+              />
+            </label>
+            
+            <label className="field">
+              <span className="text-xs font-bold text-slate-500 mb-1 block">Immediate action</span>
+              <textarea
+                className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+                value={ncr.immediateAction || ""}
+                onChange={(e) => setField("immediateAction", e.target.value)}
+                rows={2}
+              />
+            </label>
+          </div>
         </section>
 
-        <button type="submit" className="btn btn-primary w-full" disabled={saving}>
+        <button type="submit" className="btn btn-primary w-full h-14 rounded-full text-[1.05rem] font-black shadow-lg" disabled={saving}>
           {saving ? "Saving…" : ncrId > 0 ? "Save NCR" : "Create NCR"}
         </button>
       </form>
