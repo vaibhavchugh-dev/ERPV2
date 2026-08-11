@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   commitLiveElapsed,
@@ -57,10 +57,13 @@ function progressLabel(state: ProgressState | undefined): string {
 
 export function JobDetailPage() {
   const { jobOrderId } = useParams<{ jobOrderId: string }>();
+  const [searchParams] = useSearchParams();
   const { userName } = useAuth();
   const [job, setJob] = useState<JobOrderDetail | null>(null);
   const jobRef = useRef<JobOrderDetail | null>(null);
   const stepsRef = useRef<JobOrderRoutingStep[]>([]);
+  const timerSectionRef = useRef<HTMLDivElement | null>(null);
+  const deepLinkAppliedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -74,6 +77,9 @@ export function JobDetailPage() {
   const [qtyDraft, setQtyDraft] = useState("");
   const [qtyError, setQtyError] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const deepLinkStepId = Number(searchParams.get("stepId") || 0);
+  const focusTimer = searchParams.get("focus") === "timer";
 
   const clearDisplayTimer = useCallback(() => {
     if (timerRef.current) {
@@ -109,6 +115,7 @@ export function JobDetailPage() {
 
     setLoading(true);
     setError("");
+    deepLinkAppliedRef.current = false;
     try {
       const detail = await JobOrderService.getJobOrderById(id);
       if (!detail) {
@@ -121,7 +128,21 @@ export function JobDetailPage() {
       setJob(detail);
       jobRef.current = detail;
       stepsRef.current = detail.RoutingSteps || [];
-      syncSelectedStep(detail.RoutingSteps);
+
+      const queryStepId = Number(
+        new URLSearchParams(window.location.search).get("stepId") || 0
+      );
+      if (queryStepId > 0) {
+        const match = detail.RoutingSteps?.find((s) => s.id === queryStepId);
+        if (match) {
+          setSelectedStepId(match.id);
+        } else {
+          syncSelectedStep(detail.RoutingSteps);
+          setActionError("Job or step not found for this barcode");
+        }
+      } else {
+        syncSelectedStep(detail.RoutingSteps);
+      }
 
       clearDisplayTimer();
       const anyRunning = detail.RoutingSteps?.some(
@@ -148,6 +169,18 @@ export function JobDetailPage() {
     void loadJob();
     return () => clearDisplayTimer();
   }, [loadJob, clearDisplayTimer]);
+
+  // After load + selection: scroll to timer when focus=timer (from Dashboard scan)
+  useEffect(() => {
+    if (loading || !job || !focusTimer || deepLinkAppliedRef.current) return;
+    if (deepLinkStepId > 0 && selectedStepId !== deepLinkStepId) return;
+
+    deepLinkAppliedRef.current = true;
+    const t = window.setTimeout(() => {
+      timerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [loading, job, focusTimer, deepLinkStepId, selectedStepId]);
 
   const sortedSteps = useMemo(() => {
     if (!job?.RoutingSteps) return [];
@@ -618,7 +651,10 @@ export function JobDetailPage() {
           </div>
 
           {/* Live Timer Dark Card */}
-          <div className="bg-slate-900 rounded-3xl p-5 text-white my-4 shadow-lg">
+          <div
+            ref={timerSectionRef}
+            className="bg-slate-900 rounded-3xl p-5 text-white my-4 shadow-lg"
+          >
             <div className="flex items-center justify-between text-[0.6rem] font-black uppercase tracking-widest text-slate-400 mb-1">
               <span>LIVE TIMER</span>
               {selectedStep.progressState === "running" ? (
