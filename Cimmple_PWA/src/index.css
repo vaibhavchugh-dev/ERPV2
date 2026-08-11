@@ -17,7 +17,7 @@
 
 @layer components {
   .btn {
-    @apply inline-flex min-h-10 items-center justify-center rounded-full border border-transparent px-5 font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex min-h-tap items-center justify-center rounded-full border border-transparent px-5 font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
   }
 
   .btn-primary {
@@ -33,7 +33,7 @@
   }
 
   .btn-ghost {
-    @apply min-h-10 border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
+    @apply min-h-tap border-slate-200 bg-white text-slate-700 hover:bg-slate-50;
   }
 
   .btn-danger {

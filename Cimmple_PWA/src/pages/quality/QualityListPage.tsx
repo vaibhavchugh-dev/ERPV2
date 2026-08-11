@@ -199,6 +199,7 @@ export function QualityListPage() {
 
   const [filters, setFilters] = useState<QualityFilters>(DEFAULT_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const activeFilterCount = Object.values(filters).filter((v) => v !== "all").length;
 
@@ -252,7 +253,7 @@ export function QualityListPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100"
             onClick={() => window.dispatchEvent(new CustomEvent("open-drawer"))}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -264,13 +265,22 @@ export function QualityListPage() {
             <p className="text-xs font-semibold text-slate-400">Cimmple Shop Floor</p>
           </div>
         </div>
-        <Link
-          to="/quality/new"
-          className="bg-black text-white font-extrabold text-xs px-4 py-2.5 rounded-full shadow-sm flex items-center gap-1.5 hover:bg-slate-800 transition-colors"
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading}
+          className="inline-flex min-h-tap items-center rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-50"
         >
-          + New NCR
-        </Link>
+          Refresh
+        </button>
       </header>
+
+      <Link
+        to="/quality/new"
+        className="mb-4 flex min-h-tap w-full items-center justify-center rounded-2xl bg-black text-sm font-extrabold text-white shadow-sm hover:bg-slate-800"
+      >
+        + New NCR
+      </Link>
 
       {/* Search + Filter button */}
       <div className="mb-4 flex items-center gap-2">
@@ -309,7 +319,18 @@ export function QualityListPage() {
         </button>
       </div>
 
-      {/* Stats 2×2 */}
+      {/* Compact stats — collapsed by default */}
+      <button
+        type="button"
+        onClick={() => setStatsOpen((v) => !v)}
+        className="mb-3 flex min-h-tap w-full items-center justify-between rounded-2xl border border-slate-100 bg-white px-4 text-left shadow-sm"
+      >
+        <span className="text-xs font-bold text-slate-600">
+          {stats.openNCRs} open · {stats.criticalNCRs} critical · {stats.totalNCRs} total
+        </span>
+        <span className="text-xs font-bold text-slate-400">{statsOpen ? "Hide" : "Stats"}</span>
+      </button>
+      {statsOpen && (
       <div className="mb-4 grid grid-cols-2 gap-3">
         <div className="bg-white rounded-2xl border border-slate-100/80 shadow-[0_2px_8px_rgba(0,0,0,0.03)] p-4">
           <span className="text-[0.55rem] font-bold uppercase tracking-[0.15em] text-slate-400 block mb-2">T O T A L</span>
@@ -348,6 +369,7 @@ export function QualityListPage() {
           </div>
         </div>
       </div>
+      )}
 
       {loading && (
         <div className="space-y-3">
@@ -376,7 +398,10 @@ export function QualityListPage() {
       )}
       {error && (
         <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-700" role="alert">
-          {error}
+          <div>{error}</div>
+          <button type="button" className="mt-2 text-xs font-extrabold underline" onClick={() => void load()}>
+            Retry
+          </button>
         </div>
       )}
       {!loading && !error && visible.length === 0 && (

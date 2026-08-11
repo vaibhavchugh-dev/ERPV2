@@ -4,12 +4,8 @@ export type NavItem = {
   match?: (pathname: string) => boolean;
 };
 
-export const PRIMARY_NAV: NavItem[] = [
-  {
-    to: "/",
-    label: "Dashboard",
-    match: (pathname) => pathname === "/",
-  },
+/** Bottom tab destinations — primary shopfloor switchers. */
+export const BOTTOM_TABS: NavItem[] = [
   {
     to: "/jobs",
     label: "Jobs",
@@ -28,3 +24,14 @@ export const PRIMARY_NAV: NavItem[] = [
   },
 ];
 
+/** Secondary drawer links (not duplicated on bottom tabs). */
+export const DRAWER_LINKS: NavItem[] = [
+  {
+    to: "/",
+    label: "Dashboard",
+    match: (pathname) => pathname === "/",
+  },
+];
+
+/** @deprecated Use BOTTOM_TABS — kept for any leftover imports */
+export const PRIMARY_NAV = BOTTOM_TABS;

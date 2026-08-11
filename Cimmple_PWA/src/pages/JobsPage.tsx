@@ -322,18 +322,18 @@ export function JobsPage() {
       </div>
 
       {/* Tabs + Filter button */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex gap-6 items-center" role="tablist" aria-label="Job filter">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex gap-2 items-center" role="tablist" aria-label="Job filter">
           {(["active", "all"] as const).map((tab) => (
             <button
               key={tab}
               type="button"
               role="tab"
               aria-selected={activeTab === tab}
-              className={`text-sm capitalize transition-colors ${
+              className={`min-h-tap rounded-full px-4 text-sm capitalize transition-colors ${
                 activeTab === tab
-                  ? "font-extrabold text-slate-900"
-                  : "font-semibold text-slate-400 hover:text-slate-600"
+                  ? "bg-slate-900 font-extrabold text-white"
+                  : "bg-[#f0f3f7] font-semibold text-slate-500 hover:text-slate-700"
               }`}
               onClick={() => setActiveTab(tab)}
             >
@@ -346,7 +346,7 @@ export function JobsPage() {
         <button
           type="button"
           onClick={() => setFilterOpen(true)}
-          className="relative flex items-center gap-1.5 h-9 rounded-xl bg-[#f0f3f7] px-3 text-slate-700 hover:bg-slate-200"
+          className="relative flex min-h-tap items-center gap-1.5 rounded-xl bg-[#f0f3f7] px-3 text-slate-700 hover:bg-slate-200"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="4" y1="6" x2="20" y2="6" />
@@ -404,7 +404,14 @@ export function JobsPage() {
 
       {error && (
         <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-700" role="alert">
-          {error}
+          <div>{error}</div>
+          <button
+            type="button"
+            className="mt-2 text-xs font-extrabold underline"
+            onClick={() => void loadJobs()}
+          >
+            Retry
+          </button>
         </div>
       )}
       {!loading && !error && visible.length === 0 && (

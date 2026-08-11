@@ -26,6 +26,18 @@ type TrackingDialog =
 
 function formatDue(dueDate: string): string {
   if (!dueDate) return "—";
+  try {
+    const d = new Date(dueDate);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString(undefined, {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  } catch {
+    // fall through
+  }
   return dueDate;
 }
 
@@ -59,6 +71,8 @@ export function JobDetailPage() {
   const [trackingDialog, setTrackingDialog] = useState<TrackingDialog>(null);
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
+  const [qtyDraft, setQtyDraft] = useState("");
+  const [qtyError, setQtyError] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clearDisplayTimer = useCallback(() => {
@@ -149,6 +163,13 @@ export function JobDetailPage() {
     return getCurrentStep(sortedSteps);
   }, [sortedSteps, selectedStepId]);
 
+  // Keep qty draft in sync with selected step (same field as Cimmple_UI Qty Produced column)
+  useEffect(() => {
+    if (selectedStep) {
+      setQtyDraft(String(selectedStep.qtyProduced ?? 0));
+      setQtyError("");
+    }
+  }, [selectedStep?.id, selectedStep?.qtyProduced]);
 
   // Keep tick dependency so running clocks re-render.
   void elapsedTick;
@@ -366,6 +387,38 @@ export function JobDetailPage() {
     );
   };
 
+  /** Local qty update (mirrors Cimmple_UI handleUpdateQtyProduced). */
+  const handleUpdateQtyProduced = (stepId: number, qty: number) => {
+    const updatedSteps = stepsRef.current.map((s) =>
+      s.id === stepId ? { ...s, qtyProduced: qty } : s
+    );
+    stepsRef.current = updatedSteps;
+    setJob((prev) =>
+      prev ? { ...prev, RoutingSteps: updatedSteps } : prev
+    );
+    if (jobRef.current) {
+      jobRef.current = { ...jobRef.current, RoutingSteps: updatedSteps };
+    }
+  };
+
+  /**
+   * Persist produced qty for the selected step.
+   * PWA has no separate Job Save form — Save Qty persists immediately via the same
+   * tracking API path used for Start/Pause/Complete.
+   */
+  const handleSaveQty = async () => {
+    if (!selectedStep || saving) return;
+    const qty = parseInt(qtyDraft, 10);
+    if (Number.isNaN(qty) || qty < 0) {
+      setQtyError("Enter a valid quantity (0 or greater).");
+      return;
+    }
+    setQtyError("");
+    const updatedSteps = stepsRef.current.map((s) =>
+      s.id === selectedStep.id ? { ...s, qtyProduced: qty } : s
+    );
+    await persistTrackingSteps(updatedSteps, "Quantity saved");
+  };
 
   if (loading) {
     return (
@@ -421,7 +474,7 @@ export function JobDetailPage() {
     completeQtyNum != null && orderQty > 0 && completeQtyNum > orderQty;
 
   return (
-    <div>
+    <div className="pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       {/* Header with Back Button */}
       <header className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -436,7 +489,9 @@ export function JobDetailPage() {
           </Link>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Job Details</h1>
-            <p className="text-xs font-semibold text-slate-400">Routing and production tracking</p>
+            <p className="text-xs font-semibold text-slate-400">
+              {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
+            </p>
           </div>
         </div>
       </header>
@@ -533,6 +588,13 @@ export function JobDetailPage() {
         </div>
       )}
 
+      <Link
+        to={`/quality/new?jobOrderId=${job.JobOrderID}`}
+        className="mb-4 flex min-h-tap w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50"
+      >
+        Report NCR
+      </Link>
+
       {/* Card 2: Selected Routing Step */}
       {selectedStep && (
         <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4">
@@ -587,11 +649,54 @@ export function JobDetailPage() {
             </div>
           </div>
 
+          {/* Qty Produced — same field/validation as Cimmple_UI JobSlideout */}
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+            <div className="mb-1.5">
+              <label htmlFor="pwa-qty-produced" className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
+                Qty Produced
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <input
+                id="pwa-qty-produced"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                className="h-9 min-h-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                value={qtyDraft}
+                disabled={saving}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setQtyDraft(raw);
+                  setQtyError("");
+                  const parsed = parseInt(raw, 10);
+                  if (!Number.isNaN(parsed) && parsed >= 0) {
+                    handleUpdateQtyProduced(selectedStep.id, parsed);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="h-9 shrink-0 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-55"
+                disabled={saving}
+                onClick={() => void handleSaveQty()}
+              >
+                {saving ? "Saving…" : "Save qty"}
+              </button>
+            </div>
+            {qtyError && (
+              <div className="mt-1.5 text-xs font-semibold text-red-600">{qtyError}</div>
+            )}
+            <p className="mt-1.5 text-[0.7rem] font-medium text-slate-400">
+              Enter quantity produced for this operation.
+            </p>
+          </div>
+
           {/* 2x2 Action Buttons Grid */}
           <div className="grid grid-cols-2 gap-3 mt-4">
             <button
               type="button"
-              className="bg-[#00a86b] text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
+              className="min-h-tap bg-[#00a86b] text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
               disabled={saving || selectedStep.progressState === "running"}
               onClick={() => void handleStartStep(selectedStep.id)}
             >
@@ -603,7 +708,7 @@ export function JobDetailPage() {
 
             <button
               type="button"
-              className="bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
+              className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
               disabled={saving || selectedStep.progressState !== "running"}
               onClick={() => requestPauseStep(selectedStep.id)}
             >
@@ -615,7 +720,7 @@ export function JobDetailPage() {
 
             <button
               type="button"
-              className="bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
+              className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
               disabled={saving || selectedStep.progressState !== "paused"}
               onClick={() => void handleStartStep(selectedStep.id)}
             >
@@ -627,7 +732,7 @@ export function JobDetailPage() {
 
             <button
               type="button"
-              className="bg-black text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50"
+              className="min-h-tap bg-black text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50"
               disabled={saving || isStepCompleted(selectedStep)}
               onClick={() => requestCompleteStep(selectedStep.id)}
             >
@@ -743,6 +848,30 @@ export function JobDetailPage() {
                       : current
                       ? `Running on Machine ${step.workstationName || "A3"} · ${elapsed}`
                       : `Queued after previous step completes`}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold uppercase ${
+                      completed ? "bg-emerald-100 text-emerald-700" : current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {completed ? "Done" : progressLabel(step.progressState)}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                      current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {elapsed}
+                    </span>
+                    {(step.qtyProduced ?? 0) > 0 && (
+                      <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                        current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600"
+                      }`}>
+                        Qty {step.qtyProduced}
+                      </span>
+                    )}
+                    {step.pauseReason && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6rem] font-bold text-amber-800">
+                        Hold
+                      </span>
+                    )}
                   </div>
                 </button>
               </div>
@@ -933,6 +1062,94 @@ export function JobDetailPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Sticky action strip — above bottom tabs */}
+      {selectedStep && (
+        <div
+          className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-0 right-0 z-30 border-t border-slate-200/80 bg-white/95 backdrop-blur-md shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+        >
+          <div className="mx-auto flex max-w-[540px] flex-col gap-2 px-4 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-extrabold text-slate-900">
+                  {selectedStep.sequence}. {selectedStep.processName}
+                </div>
+                <div className="truncate text-[0.7rem] font-semibold text-slate-400">
+                  {selectedStep.workstationName
+                    ? selectedStep.workstationName
+                    : "No workstation"}
+                  {" · "}
+                  {progressLabel(selectedStep.progressState)}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-base font-black tabular-nums text-slate-900">
+                  {formatElapsedDuration(computeElapsedSeconds(selectedStep))}
+                </div>
+                {selectedStep.progressState === "running" && (
+                  <div className="text-[0.6rem] font-bold uppercase tracking-wide text-emerald-600">
+                    Running
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {isStepCompleted(selectedStep) ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-tap flex-1 text-sm"
+                  disabled={saving}
+                  onClick={() => setTrackingDialog({ type: "reopen", stepId: selectedStep.id })}
+                >
+                  Reopen
+                </button>
+              ) : (
+                <>
+                  {selectedStep.progressState !== "running" &&
+                    selectedStep.progressState !== "paused" && (
+                      <button
+                        type="button"
+                        className="min-h-tap flex-1 rounded-2xl bg-[#00a86b] px-4 text-sm font-extrabold text-white disabled:opacity-50"
+                        disabled={saving}
+                        onClick={() => void handleStartStep(selectedStep.id)}
+                      >
+                        Start
+                      </button>
+                    )}
+                  {selectedStep.progressState === "running" && (
+                    <button
+                      type="button"
+                      className="min-h-tap flex-1 rounded-2xl bg-[#f1f5f9] px-4 text-sm font-extrabold text-slate-800 disabled:opacity-50"
+                      disabled={saving}
+                      onClick={() => requestPauseStep(selectedStep.id)}
+                    >
+                      Pause
+                    </button>
+                  )}
+                  {selectedStep.progressState === "paused" && (
+                    <button
+                      type="button"
+                      className="min-h-tap flex-1 rounded-2xl bg-[#00a86b] px-4 text-sm font-extrabold text-white disabled:opacity-50"
+                      disabled={saving}
+                      onClick={() => void handleStartStep(selectedStep.id)}
+                    >
+                      Resume
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="min-h-tap flex-1 rounded-2xl bg-black px-4 text-sm font-extrabold text-white disabled:opacity-50"
+                    disabled={saving}
+                    onClick={() => requestCompleteStep(selectedStep.id)}
+                  >
+                    Complete
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

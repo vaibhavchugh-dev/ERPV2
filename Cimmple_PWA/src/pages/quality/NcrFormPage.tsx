@@ -28,6 +28,7 @@ export function NcrFormPage() {
   const [error, setError] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [showMoreDetails, setShowMoreDetails] = useState(!isNew);
 
   const setField = <K extends keyof NonConformanceReport>(
     field: K,
@@ -230,7 +231,7 @@ export function NcrFormPage() {
   }
 
   return (
-    <div>
+    <div className={isNew ? "pb-[calc(5.5rem+env(safe-area-inset-bottom))]" : undefined}>
       <header className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link to="/quality" className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm transition-transform active:scale-95">
@@ -240,7 +241,7 @@ export function NcrFormPage() {
           </Link>
           <div>
             <h1 className="text-xl font-extrabold tracking-tight text-slate-900 leading-tight">
-              {ncrId > 0 ? "Edit NCR" : "New NCR"}
+              {ncrId > 0 ? "Edit NCR" : "Quick Report"}
             </h1>
             <p className="text-xs font-bold tracking-widest text-slate-400 uppercase">
               {ncr.ncrNumber || "Non-Conformance Report"}
@@ -260,7 +261,13 @@ export function NcrFormPage() {
         </div>
       )}
 
-      <form className="space-y-6" onSubmit={(e) => void handleSave(e)}>
+      {isNew && (
+        <p className="mb-4 text-xs font-semibold text-slate-500">
+          You can save with a title only — add severity, job, photo, and qty when ready. More details can be filled later.
+        </p>
+      )}
+
+      <form id="ncr-form" className="space-y-6" onSubmit={(e) => void handleSave(e)}>
         <section className="card p-6">
           <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
             Basic information
@@ -376,6 +383,51 @@ export function NcrFormPage() {
 
         <section className="card p-6">
           <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+            Photos
+          </h2>
+          <label className="field">
+            <span className="text-xs font-bold text-slate-500 mb-1 block">Capture or upload</span>
+            <input
+              className="field-input py-2.5 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:text-white file:px-4 file:py-1.5 file:text-xs file:font-bold shadow-sm"
+              type="file"
+              accept="image/*"
+              multiple
+              capture="environment"
+              onChange={(e) =>
+                setPendingFiles(e.target.files ? Array.from(e.target.files) : [])
+              }
+            />
+            {pendingFiles.length > 0 && (
+              <span className="mt-1 block text-xs font-semibold text-slate-500">
+                {pendingFiles.length} file(s) will upload on save
+              </span>
+            )}
+            {(ncr.photos?.length || 0) > 0 && (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {ncr.photos!.map((photo, index) => (
+                  <div key={`${photo}-${index}`} className="relative overflow-hidden rounded-xl border border-slate-200">
+                    <img src={photo} alt="" className="h-24 w-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-white backdrop-blur-sm"
+                      onClick={() =>
+                        setField(
+                          "photos",
+                          (ncr.photos || []).filter((_, i) => i !== index)
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </label>
+        </section>
+
+        <section className="card p-6">
+          <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
             Defect details
           </h2>
           <div className="space-y-4">
@@ -410,49 +462,19 @@ export function NcrFormPage() {
                 />
               </label>
             </div>
-            
-            <label className="field">
-              <span className="text-xs font-bold text-slate-500 mb-1 block">Photos</span>
-              <input
-                className="field-input py-2.5 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:text-white file:px-4 file:py-1.5 file:text-xs file:font-bold shadow-sm"
-                type="file"
-                accept="image/*"
-                multiple
-                capture="environment"
-                onChange={(e) =>
-                  setPendingFiles(e.target.files ? Array.from(e.target.files) : [])
-                }
-              />
-              {pendingFiles.length > 0 && (
-                <span className="mt-1 block text-xs font-semibold text-slate-500">
-                  {pendingFiles.length} file(s) will upload on save
-                </span>
-              )}
-              {(ncr.photos?.length || 0) > 0 && (
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  {ncr.photos!.map((photo, index) => (
-                    <div key={`${photo}-${index}`} className="relative overflow-hidden rounded-xl border border-slate-200">
-                      <img src={photo} alt="" className="h-24 w-full object-cover" />
-                      <button
-                        type="button"
-                        className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-white backdrop-blur-sm"
-                        onClick={() =>
-                          setField(
-                            "photos",
-                            (ncr.photos || []).filter((_, i) => i !== index)
-                          )
-                        }
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </label>
           </div>
         </section>
 
+        <button
+          type="button"
+          className="flex min-h-tap w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800"
+          onClick={() => setShowMoreDetails((v) => !v)}
+        >
+          <span>{showMoreDetails ? "Hide extra details" : "Add more details"}</span>
+          <span className="text-slate-400">{showMoreDetails ? "−" : "+"}</span>
+        </button>
+
+        {showMoreDetails && (
         <section className="card p-6">
           <h2 className="mb-5 text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
             Root cause & actions
@@ -497,11 +519,29 @@ export function NcrFormPage() {
             </label>
           </div>
         </section>
+        )}
 
-        <button type="submit" className="btn btn-primary w-full h-14 rounded-full text-[1.05rem] font-black shadow-lg" disabled={saving}>
-          {saving ? "Saving…" : ncrId > 0 ? "Save NCR" : "Create NCR"}
-        </button>
+        {!isNew && (
+          <button type="submit" className="btn btn-primary w-full h-14 rounded-full text-[1.05rem] font-black shadow-lg" disabled={saving}>
+            {saving ? "Saving…" : "Save NCR"}
+          </button>
+        )}
       </form>
+
+      {isNew && (
+        <div className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-0 right-0 z-30 border-t border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur-md">
+          <div className="mx-auto max-w-[540px]">
+            <button
+              type="submit"
+              form="ncr-form"
+              className="btn btn-primary min-h-tap w-full rounded-2xl text-sm font-extrabold"
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Create NCR"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

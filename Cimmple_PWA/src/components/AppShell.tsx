@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { BottomTabs } from "./BottomTabs";
 import { NavDrawer } from "./NavDrawer";
 
 export function AppShell() {
@@ -39,9 +40,11 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <main className="mx-auto w-full max-w-[540px] flex-1 px-4 py-6 pb-[calc(2rem+env(safe-area-inset-bottom))]">
+      <main className="mx-auto w-full max-w-[540px] flex-1 px-4 py-6 pb-[calc(68px+2rem+env(safe-area-inset-bottom))]">
         <Outlet />
       </main>
+
+      <BottomTabs />
 
       <NavDrawer
         open={drawerOpen}
