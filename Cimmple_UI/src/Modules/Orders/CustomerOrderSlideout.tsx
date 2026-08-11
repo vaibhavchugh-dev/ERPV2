@@ -467,7 +467,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     });
     setPartHistoryByRow((prev) => {
       const next = new Map(prev);
-      next.set(index, part);
+      const itemNo = formData.Details[index]?.ItemNo;
+      if (itemNo != null) next.set(itemNo, part);
       return next;
     });
     setIsStateChanged(true);
@@ -677,6 +678,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
     if (!confirmed) return;
 
+    const removed = formData.Details[index];
     setFormData((prev) => {
       const newDetails = prev.Details.filter((_, i) => i !== index);
 
@@ -691,6 +693,24 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         TotalAmount: total,
       };
     });
+    if (removed) {
+      setPartHistoryByRow((prev) => {
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+      setLineItemErrors((prev) => {
+        const next = new Map<number, { [field: string]: string }>();
+        formData.Details.forEach((_, i) => {
+          if (i === index) return;
+          const errs = prev.get(i);
+          if (!errs) return;
+          const newIndex = i > index ? i - 1 : i;
+          next.set(newIndex, errs);
+        });
+        return next;
+      });
+    }
     setIsStateChanged(true);
   };
 
@@ -1491,9 +1511,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         const lineTotal = calculateLineTotal(detail);
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
-                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
                         return (
-                          <React.Fragment key={index}>
+                          <React.Fragment key={detail.ItemNo}>
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>
                               <div
@@ -1521,7 +1541,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 onHistoryMatch={(part) => {
                                   setPartHistoryByRow((prev) => {
                                     const next = new Map(prev);
-                                    next.set(index, part);
+                                    next.set(detail.ItemNo, part);
                                     return next;
                                   });
                                 }}

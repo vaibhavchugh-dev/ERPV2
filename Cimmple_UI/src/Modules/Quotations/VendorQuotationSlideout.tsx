@@ -541,13 +541,15 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     });
     setPartHistoryByRow((prev) => {
       const next = new Map(prev);
-      next.set(index, part);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.set(itemNo, part);
       return next;
     });
     setIsStateChanged(true);
   };
 
   const handleDeleteDetail = (index: number) => {
+    const removed = formData.Details?.[index];
     setFormData((prev) => {
       const newDetails = (prev.Details || []).filter((_, i) => i !== index);
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
@@ -558,6 +560,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         TotalAmount: total,
       };
     });
+    if (removed) {
+      setPartHistoryByRow((prev) => {
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+    }
     setIsStateChanged(true);
   };
 
@@ -1338,10 +1347,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                         const displayText = selectedJobOrdersList.length > 0
                           ? selectedJobOrdersList.map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`).join(", ")
                           : detail.JobNumber || (looksLikeJobPartNo(detail.PartNo) ? detail.PartNo : "");
-                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
 
                         return (
-                          <React.Fragment key={index}>
+                          <React.Fragment key={detail.ItemNo}>
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
@@ -1355,7 +1364,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 onHistoryMatch={(part) => {
                                   setPartHistoryByRow((prev) => {
                                     const next = new Map(prev);
-                                    next.set(index, part);
+                                    next.set(detail.ItemNo, part);
                                     return next;
                                   });
                                 }}

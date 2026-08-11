@@ -67,6 +67,9 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestIdRef = useRef(0);
   const partsRef = useRef<CustomerPartOption[]>([]);
+  /** Avoid tying fetchParts identity to value (that re-fetched with a sticky searchTerm). */
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   const updatePosition = () => {
     const input = inputRef.current;
@@ -116,7 +119,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         if (reqId !== requestIdRef.current) return;
         setParts(result);
         partsRef.current = result;
-        emitHistoryMatch(value, result);
+        emitHistoryMatch(valueRef.current, result);
       } catch (err) {
         if (reqId !== requestIdRef.current) return;
         console.error(`Error searching ${partyNoun} parts:`, err);
@@ -128,8 +131,15 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         }
       }
     },
-    [party, partyId, partySelected, partyNoun, emitHistoryMatch, value]
+    [party, partyId, partySelected, partyNoun, emitHistoryMatch]
   );
+
+  /** Open list with unfiltered history; input still shows current value until user types. */
+  const openDropdown = () => {
+    updatePosition();
+    setOpen(true);
+    setSearchTerm("");
+  };
 
   useEffect(() => {
     if (!partySelected || partyId <= 0) {
@@ -254,9 +264,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
           }
         }}
         onFocus={() => {
-          updatePosition();
-          setOpen(true);
-          setSearchTerm(value || "");
+          openDropdown();
         }}
         placeholder={resolvedPlaceholder}
         autoComplete="off"
@@ -271,10 +279,12 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         disabled={disabled || !partySelected}
         onClick={() => {
           if (!partySelected) return;
-          updatePosition();
-          setOpen((prev) => !prev);
-          setSearchTerm(value || "");
-          inputRef.current?.focus();
+          if (open) {
+            setOpen(false);
+          } else {
+            openDropdown();
+            inputRef.current?.focus();
+          }
         }}
         style={{
           position: "absolute",
@@ -350,6 +360,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
                   onClick={() => {
                     onSelectPart(p);
                     onHistoryMatch?.(p);
+                    setSearchTerm("");
                     setOpen(false);
                   }}
                   style={{

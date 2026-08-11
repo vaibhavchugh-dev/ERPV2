@@ -444,7 +444,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     });
     setPartHistoryByRow((prev) => {
       const next = new Map(prev);
-      next.set(index, part);
+      const itemNo = formData.Details[index]?.ItemNo;
+      if (itemNo != null) next.set(itemNo, part);
       return next;
     });
     setIsStateChanged(true);
@@ -620,6 +621,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleDeleteDetail = (index: number) => {
+    const removed = formData.Details[index];
     setFormData((prev) => {
       const newDetails = prev.Details.filter((_, i) => i !== index);
       
@@ -634,6 +636,31 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         TotalAmount: total,
       };
     });
+    if (removed) {
+      setPartHistoryByRow((prev) => {
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+      setPriceBreakdownMatrixData((prev) => {
+        if (!prev.has(removed.ItemNo)) return prev;
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+      setLineItemErrors((prev) => {
+        // Errors are keyed by row index; rebuild for remaining rows
+        const next = new Map<number, { [field: string]: string }>();
+        formData.Details.forEach((detail, i) => {
+          if (i === index) return;
+          const errs = prev.get(i);
+          if (!errs) return;
+          const newIndex = i > index ? i - 1 : i;
+          next.set(newIndex, errs);
+        });
+        return next;
+      });
+    }
     setIsStateChanged(true);
   };
 
@@ -1734,9 +1761,9 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                         const lineTotal = calculateLineTotal(detail);
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
-                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(index));
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
                         return (
-                          <React.Fragment key={index}>
+                          <React.Fragment key={detail.ItemNo}>
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>
                               <div
@@ -1763,7 +1790,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                 onHistoryMatch={(part) => {
                                   setPartHistoryByRow((prev) => {
                                     const next = new Map(prev);
-                                    next.set(index, part);
+                                    next.set(detail.ItemNo, part);
                                     return next;
                                   });
                                 }}
