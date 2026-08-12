@@ -1,4 +1,31 @@
 import Instense from "./Axios-config";
+import { API_ROOT } from "./Api-config";
+
+const getApiErrorMessage = (error: any, fallback: string) =>
+  error?.response?.data?.error?.message ||
+  error?.response?.data?.error ||
+  error?.response?.data?.message ||
+  error?.message ||
+  fallback;
+
+const toStoredPhotos = (photos?: string[] | string | null): string | null => {
+  if (!photos) return null;
+  if (typeof photos === "string") {
+    if (photos.indexOf("data:") >= 0 || photos.length > 3500) return null;
+    return photos;
+  }
+  const urls = photos.filter((p) => typeof p === "string" && p && !p.startsWith("data:") && !p.startsWith("blob:"));
+  return urls.length ? JSON.stringify(urls) : null;
+};
+
+export function resolveNcrPhotoUrl(photo: string): string {
+  if (!photo) return "";
+  if (photo.startsWith("data:") || photo.startsWith("http") || photo.startsWith("blob:")) {
+    return photo;
+  }
+  const host = API_ROOT.backendHost.replace(/\/api\/?$/, "");
+  return `${host}${photo.startsWith("/") ? "" : "/"}${photo}`;
+}
 
 export interface NonConformanceReport {
   ncrId: number;
@@ -18,6 +45,12 @@ export interface NonConformanceReport {
   partName?: string;
   customerId?: number;
   customerName?: string;
+  vendorId?: number;
+  vendorName?: string;
+  vendorOrderId?: number;
+  poNumber?: string;
+  ncrCodeId?: number;
+  ncrCode?: string;
 
   // Quality Details
   defectLocation: string;
@@ -207,23 +240,18 @@ export class QualityService {
     try {
       console.log("QualityService.CreateNCR called with data:", ncr);
 
-      // Prepare data for backend - serialize photos to JSON string
       const ncrData = {
         ...ncr,
-        photos: ncr.photos ? JSON.stringify(ncr.photos) : null
+        photos: toStoredPhotos(ncr.photos)
       };
 
-      console.log("Sending POST request to /Quality/CreateNCR with data:", ncrData);
       const response = await Instense.post('/Quality/CreateNCR', ncrData);
-      console.log("QualityService.CreateNCR response:", response);
 
-      // Deserialize photos from response
       const result = response.data.result;
-      if (result && result.photos) {
+      if (result && result.photos && typeof result.photos === "string") {
         try {
           result.photos = JSON.parse(result.photos);
-        } catch (e) {
-          console.warn("Failed to parse photos from response:", e);
+        } catch {
           result.photos = [];
         }
       }
@@ -231,23 +259,22 @@ export class QualityService {
       return result;
     } catch (error) {
       console.error("Error creating NCR:", error);
-      return null;
+      throw new Error(getApiErrorMessage(error, "Failed to create NCR"));
     }
   }
 
   static async UpdateNCR(ncrId: number, updates: Partial<NonConformanceReport>): Promise<boolean> {
     try {
-      // Prepare data for backend - serialize photos to JSON string
       const updateData = {
         ...updates,
-        photos: updates.photos ? JSON.stringify(updates.photos) : updates.photos
+        photos: toStoredPhotos(updates.photos as string[] | string | undefined)
       };
 
       await Instense.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
       return true;
     } catch (error) {
       console.error("Error updating NCR:", error);
-      return false;
+      throw new Error(getApiErrorMessage(error, "Failed to update NCR"));
     }
   }
 
@@ -280,14 +307,12 @@ export class QualityService {
       const formData = new FormData();
       files.forEach(file => formData.append('files', file));
 
-      const response = await Instense.post(`/Quality/UploadNCRPhotos/${ncrId}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const response = await Instense.post(`/Quality/UploadNCRPhotos/${ncrId}`, formData);
 
       return response.data.result || [];
     } catch (error) {
       console.error("Error uploading NCR photos:", error);
-      return [];
+      throw new Error(getApiErrorMessage(error, "Failed to upload NCR photos"));
     }
   }
 

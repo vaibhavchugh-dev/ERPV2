@@ -2890,6 +2890,10 @@ namespace CimmpleAPI.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("PoNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("Photos")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
@@ -2947,6 +2951,16 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<int>("TotalQuantity")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("VendorId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("VendorName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int?>("VendorOrderId")
                         .HasColumnType("int");
 
                     b.HasKey("NcrId");

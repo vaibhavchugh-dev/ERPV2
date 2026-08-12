@@ -245,6 +245,13 @@ const Quality: React.FC = () => {
       align: "left" as const,
     },
     {
+      key: "ncrCode",
+      label: "NCR Code",
+      sortable: true,
+      align: "left" as const,
+      render: (value: string) => value || "-",
+    },
+    {
       key: "category",
       label: "Category",
       sortable: true,

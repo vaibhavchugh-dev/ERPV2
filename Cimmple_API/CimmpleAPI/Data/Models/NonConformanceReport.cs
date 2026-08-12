@@ -54,6 +54,17 @@ namespace CimmpleAPI.Data.Models
         [StringLength(200)]
         public string CustomerName { get; set; }
 
+        public int? VendorId { get; set; }
+        [StringLength(200)]
+        public string VendorName { get; set; }
+        public int? VendorOrderId { get; set; }
+        [StringLength(50)]
+        public string PoNumber { get; set; }
+
+        public int? NcrCodeId { get; set; }
+        [StringLength(50)]
+        public string NcrCode { get; set; }
+
         // Quality Details
         [StringLength(200)]
         public string DefectLocation { get; set; }

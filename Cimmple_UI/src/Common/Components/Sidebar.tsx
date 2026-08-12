@@ -73,6 +73,7 @@ const Sidebar: React.FC = () => {
 
   const qualityItems: NavItem[] = [
     { icon: faShieldAlt, title: "Non Conformance Reports", path: "/quality" },
+    { icon: faTable, title: "NCR Code Master", path: "/quality/ncr-codes" },
   ];
 
   const reportsItems: NavItem[] = [

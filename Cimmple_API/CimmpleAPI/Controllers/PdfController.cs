@@ -6,7 +6,9 @@ using System.IO;
 using System.Text.Json;
 using CimmpleAPI.Services.Pdf;
 using CimmpleAPI.Services.Pdf.Models;
+using CimmpleAPI.Services.Pdf.Templates;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Models;
 
 namespace CimmpleAPI.Controllers
 {
@@ -802,6 +804,271 @@ namespace CimmpleAPI.Controllers
                 address.Add(vendor.shippingCountry);
 
             return address;
+        }
+
+        [HttpGet("GenerateNCR")]
+        public async Task<IActionResult> GenerateNCR([FromQuery] int ncrId, [FromQuery] int tenantId, [FromQuery] int? locationId = null)
+        {
+            try
+            {
+                await EnsureNcrVendorColumnsAsync();
+
+                var ncr = await LoadNcrForPdfAsync(ncrId, tenantId);
+
+                if (ncr == null)
+                    return NotFound(new { error = "NCR not found" });
+
+                var companyInfo = await GetCompanyInfo(tenantId, locationId);
+                var pdfData = new PdfDocumentData
+                {
+                    CompanyName = companyInfo.CompanyName,
+                    CompanyAddress = companyInfo.CompanyAddress,
+                    CompanyCityStateZip = companyInfo.CompanyCityStateZip,
+                    CompanyEmail = companyInfo.CompanyEmail,
+                    CompanyPhone = companyInfo.CompanyPhone,
+                    CompanyWebAddress = companyInfo.CompanyWebAddress,
+                    LogoPath = companyInfo.LogoPath,
+                    CustomerName = ncr.CustomerName ?? ncr.VendorName ?? "",
+                    LineItems = new List<PdfLineItem>()
+                };
+
+                var ncrNumber = string.IsNullOrWhiteSpace(ncr.NcrNumber) ? $"NCR-{ncr.NcrId}" : ncr.NcrNumber;
+                var pdfBytes = _pdfService.GenerateNcrPdf(pdfData, new NcrPdfContent
+                {
+                    NcrNumber = ncrNumber,
+                    Title = ncr.Title,
+                    Status = ncr.Status,
+                    Source = ncr.Source,
+                    Category = ncr.Category,
+                    Severity = ncr.Severity,
+                    Description = ncr.Description,
+                    JobOrderNumber = ncr.JobOrderNumber,
+                    PartNo = ncr.PartNo,
+                    PartName = ncr.PartName,
+                    CustomerName = ncr.CustomerName,
+                    VendorName = ncr.VendorName,
+                    PoNumber = ncr.PoNumber,
+                    NcrCode = ncr.NcrCode,
+                    DefectLocation = ncr.DefectLocation,
+                    DefectQuantity = ncr.DefectQuantity,
+                    TotalQuantity = ncr.TotalQuantity,
+                    DefectDescription = ncr.DefectDescription,
+                    DueDate = FormatDate(ncr.DueDate),
+                    ReportedBy = ncr.ReportedByName,
+                    ReportedDate = FormatDate(ncr.ReportedDate),
+                    Investigator = ncr.InvestigatedByName,
+                    Approver = ncr.ApprovedByName,
+                    RootCauseCategory = ncr.RootCauseCategory,
+                    RootCause = ncr.RootCause,
+                    ImmediateAction = ncr.ImmediateAction,
+                    CorrectiveAction = ncr.CorrectiveAction,
+                    PreventiveAction = ncr.PreventiveAction,
+                    CostImpact = ncr.CostImpact.HasValue ? ncr.CostImpact.Value.ToString("0.00") : "",
+                    Notes = ncr.Notes
+                });
+
+                return File(pdfBytes, "application/pdf", $"NCR_{ncrNumber}_{DateTime.Now:yyyy-MM-dd}.pdf");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private static int _ncrVendorColumnsReady;
+
+        private async Task EnsureNcrVendorColumnsAsync()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _ncrVendorColumnsReady, 1, 0) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await _context.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH('dbo.NonConformanceReports', 'VendorId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        VendorId int NULL,
+        VendorName nvarchar(200) NULL,
+        VendorOrderId int NULL,
+        PoNumber nvarchar(50) NULL;
+END
+IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        NcrCodeId int NULL,
+        NcrCode nvarchar(50) NULL;
+END");
+            }
+            catch
+            {
+                System.Threading.Interlocked.Exchange(ref _ncrVendorColumnsReady, 0);
+            }
+        }
+
+        private sealed class NcrPdfRow
+        {
+            public int NcrId { get; set; }
+            public string NcrNumber { get; set; } = "";
+            public string Title { get; set; } = "";
+            public string Description { get; set; } = "";
+            public string Category { get; set; } = "";
+            public string Severity { get; set; } = "";
+            public string Status { get; set; } = "";
+            public string Source { get; set; } = "";
+            public string JobOrderNumber { get; set; } = "";
+            public string PartNo { get; set; } = "";
+            public string PartName { get; set; } = "";
+            public string CustomerName { get; set; } = "";
+            public string VendorName { get; set; } = "";
+            public string PoNumber { get; set; } = "";
+            public string NcrCode { get; set; } = "";
+            public string DefectLocation { get; set; } = "";
+            public int DefectQuantity { get; set; }
+            public int TotalQuantity { get; set; }
+            public string DefectDescription { get; set; } = "";
+            public string RootCauseCategory { get; set; } = "";
+            public string RootCause { get; set; } = "";
+            public string ImmediateAction { get; set; } = "";
+            public string CorrectiveAction { get; set; } = "";
+            public string PreventiveAction { get; set; } = "";
+            public string ReportedByName { get; set; } = "";
+            public DateTime? ReportedDate { get; set; }
+            public string InvestigatedByName { get; set; } = "";
+            public string ApprovedByName { get; set; } = "";
+            public DateTime? DueDate { get; set; }
+            public decimal? CostImpact { get; set; }
+            public string Notes { get; set; } = "";
+        }
+
+        private async Task<NcrPdfRow?> LoadNcrForPdfAsync(int ncrId, int tenantId)
+        {
+            await using var command = _context.Database.GetDbConnection().CreateCommand();
+            command.CommandText = @"
+                SELECT TOP 1
+                    NcrId,
+                    ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                    ISNULL(Title, 'Untitled NCR') as Title,
+                    ISNULL(Description, '') as Description,
+                    ISNULL(Category, 'Other') as Category,
+                    ISNULL(Severity, 'Minor') as Severity,
+                    ISNULL(Status, 'Open') as Status,
+                    ISNULL(Source, 'Internal') as Source,
+                    ISNULL(JobOrderNumber, '') as JobOrderNumber,
+                    ISNULL(PartNo, '') as PartNo,
+                    ISNULL(PartName, '') as PartName,
+                    ISNULL(CustomerName, '') as CustomerName,
+                    ISNULL(VendorName, '') as VendorName,
+                    ISNULL(PoNumber, '') as PoNumber,
+                    ISNULL(NcrCode, '') as NcrCode,
+                    ISNULL(DefectLocation, '') as DefectLocation,
+                    ISNULL(DefectQuantity, 0) as DefectQuantity,
+                    ISNULL(TotalQuantity, 0) as TotalQuantity,
+                    ISNULL(DefectDescription, '') as DefectDescription,
+                    ISNULL(RootCauseCategory, '') as RootCauseCategory,
+                    ISNULL(RootCause, '') as RootCause,
+                    ISNULL(ImmediateAction, '') as ImmediateAction,
+                    ISNULL(CorrectiveAction, '') as CorrectiveAction,
+                    ISNULL(PreventiveAction, '') as PreventiveAction,
+                    ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                    ReportedDate,
+                    ISNULL(InvestigatedByName, '') as InvestigatedByName,
+                    ISNULL(ApprovedByName, '') as ApprovedByName,
+                    DueDate,
+                    CostImpact,
+                    ISNULL(Notes, '') as Notes
+                FROM NonConformanceReports
+                WHERE NcrId = @ncrId";
+
+            if (tenantId > 0)
+            {
+                command.CommandText += " AND TenantId = @tenantId";
+            }
+
+            var idParam = command.CreateParameter();
+            idParam.ParameterName = "@ncrId";
+            idParam.Value = ncrId;
+            command.Parameters.Add(idParam);
+
+            if (tenantId > 0)
+            {
+                var tenantParam = command.CreateParameter();
+                tenantParam.ParameterName = "@tenantId";
+                tenantParam.Value = tenantId;
+                command.Parameters.Add(tenantParam);
+            }
+
+            if (command.Connection!.State != System.Data.ConnectionState.Open)
+            {
+                await command.Connection.OpenAsync();
+            }
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            static string ReadString(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? "" : r.GetString(ordinal);
+            }
+
+            static int ReadInt(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? 0 : r.GetInt32(ordinal);
+            }
+
+            static DateTime? ReadDate(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? null : r.GetDateTime(ordinal);
+            }
+
+            static decimal? ReadDecimal(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? null : r.GetDecimal(ordinal);
+            }
+
+            return new NcrPdfRow
+            {
+                NcrId = ReadInt(reader, "NcrId"),
+                NcrNumber = ReadString(reader, "NcrNumber"),
+                Title = ReadString(reader, "Title"),
+                Description = ReadString(reader, "Description"),
+                Category = ReadString(reader, "Category"),
+                Severity = ReadString(reader, "Severity"),
+                Status = ReadString(reader, "Status"),
+                Source = ReadString(reader, "Source"),
+                JobOrderNumber = ReadString(reader, "JobOrderNumber"),
+                PartNo = ReadString(reader, "PartNo"),
+                PartName = ReadString(reader, "PartName"),
+                CustomerName = ReadString(reader, "CustomerName"),
+                VendorName = ReadString(reader, "VendorName"),
+                PoNumber = ReadString(reader, "PoNumber"),
+                NcrCode = ReadString(reader, "NcrCode"),
+                DefectLocation = ReadString(reader, "DefectLocation"),
+                DefectQuantity = ReadInt(reader, "DefectQuantity"),
+                TotalQuantity = ReadInt(reader, "TotalQuantity"),
+                DefectDescription = ReadString(reader, "DefectDescription"),
+                RootCauseCategory = ReadString(reader, "RootCauseCategory"),
+                RootCause = ReadString(reader, "RootCause"),
+                ImmediateAction = ReadString(reader, "ImmediateAction"),
+                CorrectiveAction = ReadString(reader, "CorrectiveAction"),
+                PreventiveAction = ReadString(reader, "PreventiveAction"),
+                ReportedByName = ReadString(reader, "ReportedByName"),
+                ReportedDate = ReadDate(reader, "ReportedDate"),
+                InvestigatedByName = ReadString(reader, "InvestigatedByName"),
+                ApprovedByName = ReadString(reader, "ApprovedByName"),
+                DueDate = ReadDate(reader, "DueDate"),
+                CostImpact = ReadDecimal(reader, "CostImpact"),
+                Notes = ReadString(reader, "Notes")
+            };
         }
 
         private async Task<(string CompanyName, string CompanyAddress, string CompanyCityStateZip, string CompanyEmail, string CompanyPhone, string CompanyWebAddress, string LogoPath)> GetCompanyInfo(int tenantId, int? locationId)

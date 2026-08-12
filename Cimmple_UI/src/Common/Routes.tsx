@@ -15,6 +15,7 @@ const CreditCardMaster = React.lazy(() => import("../Modules/Masters/CreditCardM
 const ChartofAccountsMaster = React.lazy(() => import("../Modules/Masters/ChartofAccountsMaster"));
 const ProductMaster = React.lazy(() => import("../Modules/Masters/ProductMaster"));
 const RawMaterialMaster = React.lazy(() => import("../Modules/Masters/RawMaterialMaster"));
+const NCRCodeMaster = React.lazy(() => import("../Modules/Masters/NCRCodeMaster"));
 const CustomerQuotations = React.lazy(() => import("../Modules/Quotations/CustomerQuotations"));
 const VendorQuotations = React.lazy(() => import("../Modules/Quotations/VendorQuotations"));
 const VendorOrders = React.lazy(() => import("../Modules/Purchasing/VendorOrders"));
@@ -170,6 +171,11 @@ export const protectedRoutes: any[] = [
     path: "/job-orders",
     name: "Job Orders",
     Component: JobOrders,
+  },
+  {
+    path: "/quality/ncr-codes",
+    name: "NCR Code Master",
+    Component: NCRCodeMaster,
   },
   {
     path: "/quality",
