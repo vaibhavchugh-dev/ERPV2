@@ -4949,6 +4949,10 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("int")
                         .HasColumnName("QtyOrdered");
 
+                    b.Property<int?>("RawMaterialId")
+                        .HasColumnType("int")
+                        .HasColumnName("RawMaterialId");
+
                     b.Property<string>("Received")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)")
@@ -4987,6 +4991,8 @@ namespace CimmpleAPI.Data.Migrations
                     b.HasKey("ID");
 
                     b.HasIndex("OrderID");
+
+                    b.HasIndex("RawMaterialId");
 
                     b.ToTable("VendorOrderDetails", (string)null);
                 });

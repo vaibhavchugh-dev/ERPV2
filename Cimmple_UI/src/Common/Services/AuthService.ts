@@ -273,16 +273,29 @@ export class AuthService {
     return data;
   }
 
+  /** In-flight refresh shared by SessionKeepAlive + Axios 401 interceptor (avoids rotating the same token twice). */
+  private static refreshInFlight: Promise<LoginResponse | null> | null = null;
+
   public static async refresh(): Promise<LoginResponse | null> {
-    const refreshToken = localStorage.getItem(REFRESH_KEY);
-    if (!refreshToken) return null;
-    try {
-      const { data } = await Instense.post<LoginResponse>("/Auth/Refresh", { refreshToken });
-      AuthService.persistSession(data, "erp");
-      return data;
-    } catch {
-      return null;
+    if (AuthService.refreshInFlight) {
+      return AuthService.refreshInFlight;
     }
+
+    AuthService.refreshInFlight = (async () => {
+      const refreshToken = localStorage.getItem(REFRESH_KEY);
+      if (!refreshToken) return null;
+      try {
+        const { data } = await Instense.post<LoginResponse>("/Auth/Refresh", { refreshToken });
+        AuthService.persistSession(data, "erp");
+        return data;
+      } catch {
+        return null;
+      }
+    })().finally(() => {
+      AuthService.refreshInFlight = null;
+    });
+
+    return AuthService.refreshInFlight;
   }
 
   public static async logout(): Promise<void> {

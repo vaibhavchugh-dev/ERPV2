@@ -53,6 +53,10 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.RawMa
 BEGIN
     ALTER TABLE dbo.RawMaterialMaster ADD DefaultLocationId INT NULL;
 END
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.RawMaterialMaster') AND name = N'IsActive')
+BEGIN
+    ALTER TABLE dbo.RawMaterialMaster ADD IsActive BIT NOT NULL CONSTRAINT DF_RawMaterialMaster_IsActive DEFAULT 1;
+END
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_RawMaterialMaster_ParentRawMaterial')

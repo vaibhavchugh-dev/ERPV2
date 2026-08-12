@@ -7,6 +7,7 @@ import {
   OrderDetailForReceiving,
 } from "../../Common/Services/VendorReceivingService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import "./VendorReceivingDetail.scss";
 
 interface VendorReceivingDetailProps {
@@ -22,17 +23,53 @@ interface ReceivingFormData {
   notes: string;
 }
 
+/** Stock lines that book inventory need a location when a master id is present. */
+function willBookInventory(detail: OrderDetailForReceiving): boolean {
+  const jobTied =
+    (detail.jobId != null && detail.jobId > 0) ||
+    !!(detail.jobNumber && detail.jobNumber.trim());
+  if (jobTied) return false;
+
+  const lineType = (detail.lineType || "").trim();
+  if (
+    lineType === "Service" ||
+    lineType === "Subcontract" ||
+    lineType === "Tool" ||
+    lineType === "Other"
+  ) {
+    return false;
+  }
+  if (lineType === "RawMaterial") {
+    return (
+      !!(detail.rawMaterialId && detail.rawMaterialId > 0) ||
+      !!(detail.productId && detail.productId > 0) // legacy until re-picked as RM
+    );
+  }
+  if (lineType === "FinishedProduct") {
+    return !!(detail.productId && detail.productId > 0);
+  }
+  // Legacy product-only stock lines
+  return !!(detail.productId && detail.productId > 0 && !detail.rawMaterialId);
+}
+
 const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   orderId,
   onClose,
 }) => {
   const listNeedsRefreshRef = useRef(false);
+  const { locationId: activeLocationId } = useActiveLocation();
   const [order, setOrder] = useState<OrderForReceivingDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [receiving, setReceiving] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [receivingForms, setReceivingForms] = useState<Map<number, ReceivingFormData>>(new Map());
   const [showReceivingForm, setShowReceivingForm] = useState<Map<number, boolean>>(new Map());
+
+  const defaultReceiveLocationId = (): number | undefined => {
+    if (order?.locationId && order.locationId > 0) return order.locationId;
+    if (activeLocationId > 0) return activeLocationId;
+    return undefined;
+  };
 
   useEffect(() => {
     loadOrder();
@@ -77,7 +114,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       orderDetailId: detail.id,
       receivedQty: detail.pendingQty,
       receivedDate: new Date().toISOString().split('T')[0],
-      locationId: order?.locationId,
+      locationId: defaultReceiveLocationId(),
       notes: "",
     };
 
@@ -121,6 +158,11 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       return;
     }
 
+    if (willBookInventory(detail) && !(formData.locationId && formData.locationId > 0)) {
+      toast.error("Select a location — this stock receipt will update inventory.");
+      return;
+    }
+
     setReceiving(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -159,6 +201,19 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
     if (formsToSubmit.length === 0) {
       toast.warning("No valid receiving entries to submit");
+      return;
+    }
+
+    const missingLocation = formsToSubmit.find(([detailId, formData]) => {
+      const detail = order?.details.find((d) => d.id === detailId);
+      return (
+        detail &&
+        willBookInventory(detail) &&
+        !(formData.locationId && formData.locationId > 0)
+      );
+    });
+    if (missingLocation) {
+      toast.error("Select a location for every stock line that updates inventory.");
       return;
     }
 
@@ -390,7 +445,10 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                   />
                                 </div>
                                 <div className="form-group">
-                                  <label>Location</label>
+                                  <label>
+                                    Location
+                                    {willBookInventory(detail) ? " *" : ""}
+                                  </label>
                                   <select
                                     value={formData.locationId || ""}
                                     onChange={(e) => {
@@ -406,9 +464,13 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                     {locations.map((loc) => (
                                       <option key={loc.locationId} value={loc.locationId}>
                                         {loc.name}
+                                        {activeLocationId === loc.locationId ? " (working site)" : ""}
                                       </option>
                                     ))}
                                   </select>
+                                  {willBookInventory(detail) && (
+                                    <small>Required — this receipt updates inventory on hand</small>
+                                  )}
                                 </div>
                               </div>
                               <div className="form-row">

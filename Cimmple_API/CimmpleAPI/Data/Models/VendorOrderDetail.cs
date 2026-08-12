@@ -60,6 +60,10 @@ namespace CimmpleAPI.Data.Models
         // Map to existing productid column (case-insensitive in SQL Server, but explicit is better)
         [Column("productid")]
         public int? ProductId { get; set; }
+
+        /// <summary>Raw material master id when LineType is RawMaterial (stock / inventory).</summary>
+        [Column("RawMaterialId")]
+        public int? RawMaterialId { get; set; }
         
         [Column("LeadTime")]
         public string LeadTime { get; set; } = "";

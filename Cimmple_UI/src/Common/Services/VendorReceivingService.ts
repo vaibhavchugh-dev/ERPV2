@@ -20,9 +20,13 @@ export interface OrderDetailForReceiving {
   itemNo: number;
   partName: string;
   partNo: string;
+  lineType?: string;
   dueDate: string;
   jobNumber: string;
   jobDesc: string;
+  jobId?: number;
+  productId?: number;
+  rawMaterialId?: number;
   qtyOrdered: number;
   receivedQty: number;
   pendingQty: number;

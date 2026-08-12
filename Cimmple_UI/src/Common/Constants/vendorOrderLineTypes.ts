@@ -13,3 +13,9 @@ export type VendorOrderLineType = (typeof VENDOR_ORDER_LINE_TYPES)[number]["valu
 export function defaultLineTypeForOrder(materialType: string | undefined): VendorOrderLineType {
   return materialType === "Service" ? "Service" : "RawMaterial";
 }
+
+/** Line types that can increase warehouse on-hand when received for stock (no job). */
+export function isInventoryStockLineType(lineType?: string | null): boolean {
+  const t = (lineType || "").trim();
+  return t === "RawMaterial" || t === "FinishedProduct";
+}

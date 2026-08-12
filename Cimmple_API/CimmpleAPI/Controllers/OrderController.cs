@@ -1342,6 +1342,7 @@ namespace CimmpleAPI.Controllers
                     discount = d.Discount,
                     discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                     productId = d.ProductId,
+                    rawMaterialId = d.RawMaterialId,
                     leadTime = d.LeadTime ?? "",
                     notes = d.Notes ?? "",
                     shippedQty = d.ShippedQty,
@@ -2069,6 +2070,7 @@ namespace CimmpleAPI.Controllers
                     ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
                     : "Percent");
             existingDetail.ProductId = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (int?)null;
+            existingDetail.RawMaterialId = ReadNullableIntFromVendorDetailJson(detailElem, "RawMaterialId", "rawMaterialId");
             existingDetail.LeadTime = detailElem.TryGetProperty("LeadTime", out JsonElement leadTimeElem) ? leadTimeElem.GetString() ?? "" : "";
             existingDetail.Notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "";
             existingDetail.ShippedQty = detailElem.TryGetProperty("ShippedQty", out JsonElement shippedQtyElem) ? shippedQtyElem.GetInt32() : 0;
@@ -2078,6 +2080,7 @@ namespace CimmpleAPI.Controllers
             existingDetail.glcode = detailElem.TryGetProperty("glcode", out JsonElement glcodeElem) ? glcodeElem.GetString() ?? "" : "";
             existingDetail.Received = detailElem.TryGetProperty("Received", out JsonElement receivedElem) ? receivedElem.GetString() ?? "No" : "No";
             existingDetail.LineType = NormalizeVendorOrderLineType(ReadLineTypeFromVendorDetailJson(detailElem), orderMaterialType);
+            ApplyInventoryIdsForLineType(existingDetail);
         }
 
         private VendorOrderDetail CreateVendorOrderDetailFromJson(JsonElement detailElem, int orderId, int tenantid, int jobId, string? orderMaterialType)
@@ -2118,6 +2121,7 @@ namespace CimmpleAPI.Controllers
                         ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
                         : "Percent"),
                 ProductId = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (int?)null,
+                RawMaterialId = ReadNullableIntFromVendorDetailJson(detailElem, "RawMaterialId", "rawMaterialId"),
                 LeadTime = detailElem.TryGetProperty("LeadTime", out JsonElement leadTimeElem) ? leadTimeElem.GetString() ?? "" : "",
                 Notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "",
                 ShippedQty = detailElem.TryGetProperty("ShippedQty", out JsonElement shippedQtyElem) ? shippedQtyElem.GetInt32() : 0,
@@ -2129,7 +2133,46 @@ namespace CimmpleAPI.Controllers
                 LineType = NormalizeVendorOrderLineType(ReadLineTypeFromVendorDetailJson(detailElem), orderMaterialType)
             };
 
+            ApplyInventoryIdsForLineType(detail);
             return detail;
+        }
+
+        private static int? ReadNullableIntFromVendorDetailJson(JsonElement detailElem, string pascalName, string camelName)
+        {
+            if (detailElem.TryGetProperty(pascalName, out JsonElement pascal) && pascal.ValueKind == JsonValueKind.Number)
+                return pascal.GetInt32();
+            if (detailElem.TryGetProperty(camelName, out JsonElement camel) && camel.ValueKind == JsonValueKind.Number)
+                return camel.GetInt32();
+            return null;
+        }
+
+        /// <summary>
+        /// Keep ProductId / RawMaterialId consistent with line type.
+        /// Legacy RawMaterial lines may still only have ProductId until re-picked from RM master.
+        /// </summary>
+        private static void ApplyInventoryIdsForLineType(VendorOrderDetail detail)
+        {
+            var lineType = (detail.LineType ?? "").Trim();
+            if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
+            {
+                if (detail.RawMaterialId.HasValue && detail.RawMaterialId.Value > 0)
+                    detail.ProductId = null;
+                return;
+            }
+            if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+            {
+                detail.RawMaterialId = null;
+                return;
+            }
+            // Tool / Service / Subcontract / Other: no inventory master link
+            detail.ProductId = null;
+            detail.RawMaterialId = null;
+        }
+
+        /// <summary>True when this PO line is buy-to-job (not warehouse stock).</summary>
+        private static bool IsVendorOrderLineJobTied(VendorOrderDetail detail)
+        {
+            return detail.JobId > 0 || !string.IsNullOrWhiteSpace(detail.JobNumber);
         }
 
         [HttpGet("CheckVendorOrderDeletionImpact")]
@@ -2515,9 +2558,13 @@ namespace CimmpleAPI.Controllers
                         itemNo = d.ItemNo,
                         partName = d.PartName ?? "",
                         partNo = d.PartNo ?? "",
+                        lineType = NormalizeVendorOrderLineType(d.LineType, order.MaterialType),
                         dueDate = !string.IsNullOrEmpty(d.DueDate) ? d.DueDate : d.DueDateDateTime.ToString("yyyy-MM-dd"),
                         jobNumber = d.JobNumber ?? "",
                         jobDesc = d.JobDesc ?? "",
+                        jobId = d.JobId,
+                        productId = d.ProductId,
+                        rawMaterialId = d.RawMaterialId,
                         qtyOrdered = d.QtyOrdered,
                         receivedQty = receivedQty,
                         pendingQty = pendingQty,
@@ -2675,33 +2722,73 @@ namespace CimmpleAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // Inventory integration: when receiving for stock (JobId == 0), add to inventory.
-                // When receiving for live order (JobId > 0), material is consumed by job - do not add to inventory.
-                if (orderDetail.JobId == 0 && orderDetail.ProductId.HasValue)
+                // Inventory integration (Phase 1):
+                // - Stock buy (not job-tied): book RawMaterial or FinishedProduct into inventory.
+                // - Job-tied buy: do not add to warehouse on-hand.
+                // - Service / Subcontract / Tool / Other: never touch inventory.
+                var lineType = NormalizeVendorOrderLineType(orderDetail.LineType, order?.MaterialType);
+                var isJobTied = IsVendorOrderLineJobTied(orderDetail);
+
+                int? bookProductId = null;
+                int? bookRawMaterialId = null;
+
+                if (!isJobTied)
+                {
+                    if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase)
+                        && orderDetail.RawMaterialId.HasValue
+                        && orderDetail.RawMaterialId.Value > 0)
+                    {
+                        bookRawMaterialId = orderDetail.RawMaterialId;
+                    }
+                    else if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase)
+                             && orderDetail.ProductId.HasValue
+                             && orderDetail.ProductId.Value > 0)
+                    {
+                        bookProductId = orderDetail.ProductId;
+                    }
+                    else if (orderDetail.ProductId.HasValue
+                             && orderDetail.ProductId.Value > 0
+                             && !orderDetail.RawMaterialId.HasValue
+                             && !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
+                             && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase)
+                             && !string.Equals(lineType, "Tool", StringComparison.OrdinalIgnoreCase)
+                             && !string.Equals(lineType, "Other", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Legacy stock lines (including default RawMaterial type with only ProductId)
+                        bookProductId = orderDetail.ProductId;
+                    }
+                }
+
+                if (bookProductId.HasValue || bookRawMaterialId.HasValue)
                 {
                     var effectiveLocationId = locationId ?? order?.LocationId;
-                    if (effectiveLocationId.HasValue && effectiveLocationId.Value > 0)
+                    if (!effectiveLocationId.HasValue || effectiveLocationId.Value <= 0)
                     {
-                        var (invSuccess, invError) = await _inventoryService.ReceiveStockInTransactionAsync(
-                            tenantId,
-                            productId: orderDetail.ProductId,
-                            rawMaterialId: null,
-                            effectiveLocationId.Value,
-                            receivedQty,
-                            "VendorReceiving",
-                            receiving.ID,
-                            lotId: null,
-                            userId > 0 ? userId : (int?)null,
-                            string.IsNullOrEmpty(notes) ? null : notes);
-
-                        if (!invSuccess)
+                        await transaction.RollbackAsync();
+                        return BadRequest(new
                         {
-                            await transaction.RollbackAsync();
-                            return BadRequest(new { error = $"Receiving saved but inventory update failed: {invError}" });
-                        }
-                        await _context.SaveChangesAsync();
+                            error = "Location is required to receive stock into inventory. Select a receiving location or set the PO location."
+                        });
                     }
-                    // If no location, still allow receiving - just skip inventory update
+
+                    var (invSuccess, invError) = await _inventoryService.ReceiveStockInTransactionAsync(
+                        tenantId,
+                        productId: bookProductId,
+                        rawMaterialId: bookRawMaterialId,
+                        effectiveLocationId.Value,
+                        receivedQty,
+                        "VendorReceiving",
+                        receiving.ID,
+                        lotId: null,
+                        userId > 0 ? userId : (int?)null,
+                        string.IsNullOrEmpty(notes) ? null : notes);
+
+                    if (!invSuccess)
+                    {
+                        await transaction.RollbackAsync();
+                        return BadRequest(new { error = $"Receiving saved but inventory update failed: {invError}" });
+                    }
+                    await _context.SaveChangesAsync();
                 }
 
                 await transaction.CommitAsync();

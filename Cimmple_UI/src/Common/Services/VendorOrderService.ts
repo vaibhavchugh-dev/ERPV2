@@ -104,6 +104,8 @@ export interface VendorOrderDetailReq {
   Discount: number;
   DiscountType?: "Percent" | "Amount";
   ProductId?: number;
+  /** Set when LineType is RawMaterial — books into inventory on stock receive. */
+  RawMaterialId?: number;
   LeadTime: string;
   Notes: string;
   ShippedQty: number;
@@ -237,6 +239,7 @@ export class VendorOrderService {
         Discount: d.Discount || d.discount || 0,
         DiscountType: (d.DiscountType || d.discountType) === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || d.productId,
+        RawMaterialId: d.RawMaterialId || d.rawMaterialId,
         LeadTime: d.LeadTime || d.leadTime || "",
         Notes: d.Notes || d.notes || "",
         ShippedQty: d.ShippedQty || d.shippedQty || 0,
@@ -350,6 +353,7 @@ export class VendorOrderService {
         Discount: d.Discount || 0,
         DiscountType: d.DiscountType === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || null,
+        RawMaterialId: d.RawMaterialId || null,
         LineType: d.LineType || undefined,
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",

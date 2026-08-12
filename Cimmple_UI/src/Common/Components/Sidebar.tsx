@@ -41,11 +41,17 @@ interface NavItem {
   path: string;
 }
 
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
 interface NavSection {
   id: string;
   title: string;
   icon: IconDefinition;
   items: NavItem[];
+  groups?: NavGroup[];
 }
 
 const Sidebar: React.FC = () => {
@@ -88,40 +94,84 @@ const Sidebar: React.FC = () => {
     { icon: faWarehouse, title: "Inventory", path: "/inventory" },
   ];
 
-  const accountingItems: NavItem[] = [
-    { icon: faChartLine, title: "Payment Dashboard", path: "/accounts/dashboard" },
-    { icon: faDollarSign, title: "Accounts Payable (AP)", path: "/accounts/payable" },
-    { icon: faCreditCard, title: "Accounts Receivable (AR)", path: "/accounts/receivable" },
-    { icon: faUniversity, title: "Bank Reconciliation", path: "/accounts/banks" },
-    { icon: faFileInvoice, title: "Financial Reports", path: "/accounts/reports" },
-    { icon: faBook, title: "Journal Entries", path: "/accounts/journal-entries" },
-    { icon: faTable, title: "GL Account Activity", path: "/accounts/general-ledger" },
-    { icon: faLock, title: "Period Close & Audit", path: "/accounts/periods" },
-    { icon: faCog, title: "Accounting Setup", path: "/accounts/setup" },
-    { icon: faUniversity, title: "Bank Master", path: "/masters/bank" },
-    { icon: faCreditCard, title: "Credit Card Master", path: "/masters/creditcard" },
-    { icon: faChartLine, title: "Chart of Accounts Master", path: "/masters/chartofaccounts" },
-  ];
-
   const documentsItems: NavItem[] = [
     { icon: faFolderOpen, title: "Documents", path: "/documents" },
   ];
 
-  const administrationItems: NavItem[] = [
-    { icon: faUsers, title: "User Management", path: "/user-management" },
-    { icon: faCog, title: "System Settings", path: "/settings" },
-    { icon: faUsers, title: "Customer Master", path: "/masters/customer" },
-    { icon: faBuilding, title: "Vendor Master", path: "/masters/vendor" },
-    { icon: faDesktop, title: "Workstation Master", path: "/masters/workstation" },
-    { icon: faUserTie, title: "Employee Master", path: "/masters/employee" },
-    { icon: faMapMarkerAlt, title: "Location Master", path: "/masters/location" },
-    { icon: faCog, title: "Process Master", path: "/masters/process" },
-    { icon: faClipboardList, title: "Job Template Master", path: "/masters/jobtemplate" },
-    { icon: faTable, title: "Category Master", path: "/masters/category" },
-    { icon: faDollarSign, title: "Price Breakdown Master", path: "/masters/pricebreakdown" },
-    { icon: faBox, title: "Product Master", path: "/masters/product" },
-    { icon: faBox, title: "Raw Material Master", path: "/masters/raw-material" },
-  ];
+  const filterGroups = (groups: NavGroup[]): NavGroup[] =>
+    groups
+      .map((group) => ({ ...group, items: filterByPermission(group.items) }))
+      .filter((group) => group.items.length > 0);
+
+  const accountingGroups = filterGroups([
+    {
+      title: "Payables & receivables",
+      items: [
+        { icon: faChartLine, title: "Payment Dashboard", path: "/accounts/dashboard" },
+        { icon: faDollarSign, title: "Accounts Payable (AP)", path: "/accounts/payable" },
+        { icon: faCreditCard, title: "Accounts Receivable (AR)", path: "/accounts/receivable" },
+        { icon: faUniversity, title: "Bank Reconciliation", path: "/accounts/banks" },
+      ],
+    },
+    {
+      title: "Ledger & reporting",
+      items: [
+        { icon: faBook, title: "Journal Entries", path: "/accounts/journal-entries" },
+        { icon: faTable, title: "GL Account Activity", path: "/accounts/general-ledger" },
+        { icon: faFileInvoice, title: "Financial Reports", path: "/accounts/reports" },
+        { icon: faLock, title: "Period Close & Audit", path: "/accounts/periods" },
+      ],
+    },
+    {
+      title: "Setup",
+      items: [
+        { icon: faCog, title: "Accounting Setup", path: "/accounts/setup" },
+        { icon: faChartLine, title: "Chart of Accounts Master", path: "/masters/chartofaccounts" },
+        { icon: faUniversity, title: "Bank Master", path: "/masters/bank" },
+        { icon: faCreditCard, title: "Credit Card Master", path: "/masters/creditcard" },
+      ],
+    },
+  ]);
+
+  const accountingItems: NavItem[] = accountingGroups.flatMap((group) => group.items);
+
+  const administrationGroups = filterGroups([
+    {
+      title: "Access & settings",
+      items: [
+        { icon: faUsers, title: "User Management", path: "/user-management" },
+        { icon: faCog, title: "System Settings", path: "/settings" },
+      ],
+    },
+    {
+      title: "Business partners",
+      items: [
+        { icon: faUsers, title: "Customer Master", path: "/masters/customer" },
+        { icon: faBuilding, title: "Vendor Master", path: "/masters/vendor" },
+        { icon: faUserTie, title: "Employee Master", path: "/masters/employee" },
+      ],
+    },
+    {
+      title: "Shop floor & production",
+      items: [
+        { icon: faMapMarkerAlt, title: "Location Master", path: "/masters/location" },
+        { icon: faDesktop, title: "Workstation Master", path: "/masters/workstation" },
+        { icon: faCog, title: "Process Master", path: "/masters/process" },
+        { icon: faClipboardList, title: "Job Template Master", path: "/masters/jobtemplate" },
+      ],
+    },
+    {
+      title: "Catalog & classification",
+      items: [
+        { icon: faBox, title: "Product Master", path: "/masters/product" },
+        { icon: faBox, title: "Raw Material Master", path: "/masters/raw-material" },
+        { icon: faDollarSign, title: "Price Breakdown Master", path: "/masters/pricebreakdown" },
+        { icon: faTable, title: "Category Master", path: "/masters/category" },
+      ],
+    },
+  ]);
+
+  const administrationItems: NavItem[] = administrationGroups.flatMap((group) => group.items);
 
   const visibleMenuItems = filterByPermission(menuItems);
 
@@ -131,8 +181,20 @@ const Sidebar: React.FC = () => {
     { id: "quality", title: "Quality", icon: faShieldAlt, items: filterByPermission(qualityItems) },
     { id: "documents", title: "Documents", icon: faFolderOpen, items: filterByPermission(documentsItems) },
     { id: "reports", title: "Reports", icon: faChartLine, items: filterByPermission(reportsItems) },
-    { id: "accounting", title: "Accounting", icon: faDollarSign, items: filterByPermission(accountingItems) },
-    { id: "administration", title: "Administration", icon: faCog, items: filterByPermission(administrationItems) },
+    {
+      id: "accounting",
+      title: "Accounting",
+      icon: faDollarSign,
+      items: accountingItems,
+      groups: accountingGroups,
+    },
+    {
+      id: "administration",
+      title: "Administration",
+      icon: faCog,
+      items: administrationItems,
+      groups: administrationGroups,
+    },
   ];
 
   const openSection = sections.find((section) => section.id === activeSection) ?? null;
@@ -157,6 +219,24 @@ const Sidebar: React.FC = () => {
     section.items.some(
       (item) => pathname === item.path || pathname.startsWith(`${item.path}/`)
     );
+
+  const renderNavList = (items: NavItem[], sectionId: string) => (
+    <ul className="nav-list">
+      {items.map((item) => (
+        <li key={item.path}>
+          <NavLink
+            to={item.path}
+            className={`nav-item nav-item-${sectionId}`}
+            activeClassName="active"
+            onClick={closeSecondary}
+          >
+            <FontAwesomeIcon icon={item.icon} size="lg" />
+            <span>{item.title}</span>
+          </NavLink>
+        </li>
+      ))}
+    </ul>
+  );
 
   // Close secondary when leaving a multi-item section (e.g. navigating to /home).
   // Do not auto-open on refresh or initial load — only open on section click.
@@ -297,21 +377,14 @@ const Sidebar: React.FC = () => {
               </button>
             </div>
             <nav className="sidebar-secondary-nav">
-              <ul className="nav-list">
-                {openSection.items.map((item) => (
-                  <li key={item.path}>
-                    <NavLink
-                      to={item.path}
-                      className={`nav-item nav-item-${openSection.id}`}
-                      activeClassName="active"
-                      onClick={closeSecondary}
-                    >
-                      <FontAwesomeIcon icon={item.icon} size="lg" />
-                      <span>{item.title}</span>
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
+              {openSection.groups && openSection.groups.length > 0
+                ? openSection.groups.map((group) => (
+                    <div className="nav-group" key={group.title}>
+                      <h3 className="nav-group-title">{group.title}</h3>
+                      {renderNavList(group.items, openSection.id)}
+                    </div>
+                  ))
+                : renderNavList(openSection.items, openSection.id)}
             </nav>
           </aside>
         </>

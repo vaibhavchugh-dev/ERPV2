@@ -25,7 +25,9 @@ import {
   formatPartHistoryHint,
   looksLikeJobPartNo,
 } from "../../Common/Components/CustomerPartCombobox";
+import RawMaterialCombobox from "../../Common/Components/RawMaterialCombobox";
 import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
+import { RawMaterial } from "../../Common/Services/InventoryService";
 import "./VendorOrderSlideout.scss";
 
 interface VendorOrderSlideoutProps {
@@ -515,6 +517,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         Discount: 0,
         DiscountType: "Percent",
         ProductId: undefined,
+        RawMaterialId: undefined,
         LeadTime: today,
         Notes: "",
         ShippedQty: 0,
@@ -547,6 +550,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         Unit: part.unit || current.Unit || "EA",
         UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
         ProductId: part.productId ?? current.ProductId,
+        RawMaterialId: undefined,
         QtyOrdered:
           part.suggestedQty && part.suggestedQty > 0
             ? part.suggestedQty
@@ -564,10 +568,52 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     setIsStateChanged(true);
   };
 
+  const applyRawMaterial = (index: number, material: RawMaterial) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: material.partNo || "",
+        PartName: material.partName || current.PartName,
+        Unit: material.unit || current.Unit || "EA",
+        UnitPrice:
+          material.unitCost > 0 ? material.unitCost : current.UnitPrice,
+        RawMaterialId: material.id,
+        ProductId: undefined,
+        LineType: "RawMaterial",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
   const handleDetailChange = (index: number, field: keyof VendorOrderDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...(prev.Details || [])];
-      newDetails[index] = { ...newDetails[index], [field]: value };
+      const current = { ...newDetails[index], [field]: value };
+
+      if (field === "LineType") {
+        const nextType = String(value || "");
+        if (nextType === "RawMaterial") {
+          current.ProductId = undefined;
+        } else if (nextType === "FinishedProduct") {
+          current.RawMaterialId = undefined;
+        } else {
+          current.ProductId = undefined;
+          current.RawMaterialId = undefined;
+        }
+      }
+
+      newDetails[index] = current;
 
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
 
@@ -1202,21 +1248,60 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               </select>
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
-                              <VendorPartCombobox
-                                value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
-                                vendorId={formData.VendorID}
-                                vendorSelected={!!formData.VendorID && formData.VendorID > 0}
-                                scrollContainerSelector=".vendor-order-slideout-content"
-                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
-                                onSelectPart={(part) => applyVendorPart(index, part)}
-                                onHistoryMatch={(part) => {
-                                  setPartHistoryByRow((prev) => {
-                                    const next = new Map(prev);
-                                    next.set(detail.ItemNo, part);
-                                    return next;
-                                  });
-                                }}
-                              />
+                              {(detail.LineType || defaultLineTypeForOrder(formData.MaterialType)) ===
+                              "RawMaterial" ? (
+                                <RawMaterialCombobox
+                                  value={
+                                    looksLikeJobPartNo(detail.PartNo)
+                                      ? ""
+                                      : detail.PartNo || ""
+                                  }
+                                  rawMaterialId={detail.RawMaterialId}
+                                  scrollContainerSelector=".vendor-order-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        RawMaterialId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(material) =>
+                                    applyRawMaterial(index, material)
+                                  }
+                                />
+                              ) : (
+                                <VendorPartCombobox
+                                  value={
+                                    looksLikeJobPartNo(detail.PartNo)
+                                      ? ""
+                                      : detail.PartNo || ""
+                                  }
+                                  vendorId={formData.VendorID}
+                                  vendorSelected={
+                                    !!formData.VendorID && formData.VendorID > 0
+                                  }
+                                  scrollContainerSelector=".vendor-order-slideout-content"
+                                  onChange={(partNo) =>
+                                    handleDetailChange(index, "PartNo", partNo)
+                                  }
+                                  onSelectPart={(part) =>
+                                    applyVendorPart(index, part)
+                                  }
+                                  onHistoryMatch={(part) => {
+                                    setPartHistoryByRow((prev) => {
+                                      const next = new Map(prev);
+                                      next.set(detail.ItemNo, part);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              )}
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
                               <input

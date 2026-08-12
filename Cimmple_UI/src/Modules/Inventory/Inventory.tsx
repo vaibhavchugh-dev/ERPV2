@@ -248,8 +248,12 @@ const Inventory: React.FC = () => {
               ) : (
                 filteredBalances.map((b) => (
                   <tr key={b.id}>
-                    <td>{b.productPartNo || b.rawMaterialPartNo || "—"}</td>
-                    <td>{b.productName || b.rawMaterialName || "—"}</td>
+                    <td className="part-no">
+                      {b.productPartNo || b.rawMaterialPartNo || "—"}
+                    </td>
+                    <td className="part-name">
+                      {b.productName || b.rawMaterialName || "—"}
+                    </td>
                     <td>{b.locationName || "—"}</td>
                     <td className="text-right">{b.quantityOnHand}</td>
                     <td className="text-right">{b.quantityReserved}</td>

@@ -333,6 +333,8 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.InvoiceStatus).IsRequired(false);
                 // Map ProductId to productid column
                 entity.Property(e => e.ProductId).HasColumnName("productid");
+                entity.Property(e => e.RawMaterialId).HasColumnName("RawMaterialId");
+                entity.HasIndex(e => e.RawMaterialId);
                 entity.HasOne(d => d.VendorOrder)
                     .WithMany(o => o.VendorOrderDetails)
                     .HasForeignKey(d => d.OrderID);
