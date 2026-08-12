@@ -35,7 +35,7 @@ export function BottomTabs() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md"
+      className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Primary"
     >
@@ -49,7 +49,9 @@ export function BottomTabs() {
               key={item.to}
               to={item.to}
               className={`flex min-h-tap flex-1 flex-col items-center justify-center gap-0.5 text-[0.7rem] font-bold transition-colors ${
-                active ? "text-slate-900" : "text-slate-400 hover:text-slate-600"
+                active
+                  ? "text-slate-900 dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-slate-100"
               }`}
             >
               <TabIcon label={item.label} active={active} />

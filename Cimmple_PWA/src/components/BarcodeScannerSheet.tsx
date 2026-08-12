@@ -116,14 +116,14 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl">
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300" />
+      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-extrabold text-slate-900">Scan QR / Barcode</h2>
+          <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Scan QR / Barcode</h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"
             aria-label="Close scanner"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -137,13 +137,13 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           className="mb-3 overflow-hidden rounded-2xl bg-slate-900 min-h-[220px]"
         />
         {starting && !cameraError && (
-          <p className="mb-2 text-center text-xs font-semibold text-slate-500">Starting camera…</p>
+          <p className="mb-2 text-center text-xs font-semibold text-slate-500 dark:text-slate-300">Starting camera…</p>
         )}
         {cameraError && (
-          <p className="mb-2 text-xs font-semibold text-amber-700">{cameraError}</p>
+          <p className="mb-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{cameraError}</p>
         )}
         {error && (
-          <p className="mb-2 text-xs font-semibold text-red-600" role="alert">
+          <p className="mb-2 text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
             {error}
           </p>
         )}

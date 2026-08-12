@@ -24,13 +24,14 @@ export const BOTTOM_TABS: NavItem[] = [
   },
 ];
 
-/** Secondary drawer links (not duplicated on bottom tabs). */
+/** Drawer navigation — includes primary modules plus Dashboard. */
 export const DRAWER_LINKS: NavItem[] = [
   {
     to: "/",
     label: "Dashboard",
     match: (pathname) => pathname === "/",
   },
+  ...BOTTOM_TABS,
 ];
 
 /** @deprecated Use BOTTOM_TABS — kept for any leftover imports */

@@ -24,6 +24,19 @@ export interface JobOrderListItem {
   orderDate: string;
 }
 
+export interface JobOrderStepNote {
+  id: number;
+  text: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface JobOrderStepNcrFlag {
+  ncrId: number;
+  ncrNumber: string;
+  status: string;
+}
+
 export interface JobOrderRoutingStep {
   id: number;
   sequence: number;
@@ -45,6 +58,10 @@ export interface JobOrderRoutingStep {
   elapsedSeconds?: number;
   /** Reason recorded when the step was last paused. */
   pauseReason?: string;
+  /** Inline shop notes for this operation. */
+  notes?: JobOrderStepNote[];
+  /** Linked NCRs created from this step. */
+  ncrFlags?: JobOrderStepNcrFlag[];
 }
 
 export interface JobOrderDetail {
@@ -82,6 +99,7 @@ export interface JobOrderDetail {
   JobTemplateId?: number | null;
   JobTemplateCode?: string;
   JobTemplateRevision?: number | null;
+  EnableJobTracking?: boolean;
 }
 
 const formatDate = (dateStr: string | Date): string => {
@@ -198,6 +216,25 @@ export class JobOrderService {
               | number
               | undefined,
             pauseReason: (r.pauseReason ?? r.PauseReason) as string | undefined,
+            notes: (() => {
+              const rawNotes = (r.notes ?? r.Notes) as unknown;
+              if (!Array.isArray(rawNotes)) return [];
+              return rawNotes.map((n: Record<string, unknown>) => ({
+                id: Number(n.id ?? n.Id ?? 0),
+                text: String(n.text ?? n.Text ?? ""),
+                createdAt: String(n.createdAt ?? n.CreatedAt ?? ""),
+                createdBy: String(n.createdBy ?? n.CreatedBy ?? "User"),
+              }));
+            })(),
+            ncrFlags: (() => {
+              const rawFlags = (r.ncrFlags ?? r.NcrFlags) as unknown;
+              if (!Array.isArray(rawFlags)) return [];
+              return rawFlags.map((f: Record<string, unknown>) => ({
+                ncrId: Number(f.ncrId ?? f.NcrId ?? 0),
+                ncrNumber: String(f.ncrNumber ?? f.NcrNumber ?? ""),
+                status: String(f.status ?? f.Status ?? "Open"),
+              }));
+            })(),
           }))
         : [],
       DrawingNumber: result.drawingNumber || result.DrawingNumber || "",
@@ -206,6 +243,7 @@ export class JobOrderService {
       JobTemplateCode: result.jobTemplateCode || result.JobTemplateCode || "",
       JobTemplateRevision:
         result.jobTemplateRevision ?? result.JobTemplateRevision ?? null,
+      EnableJobTracking: !!(result.enableJobTracking ?? result.EnableJobTracking),
     };
   }
 

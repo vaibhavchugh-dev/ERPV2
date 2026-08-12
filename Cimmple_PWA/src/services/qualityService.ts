@@ -1,5 +1,38 @@
 import api from "./apiClient";
 import { AuthService } from "./authService";
+import { API_ROOT } from "./apiConfig";
+
+/** Mirrors Cimmple_UI QualityService.toStoredPhotos */
+export function toStoredPhotos(
+  photos?: string[] | string | null
+): string | null {
+  if (!photos) return null;
+  if (typeof photos === "string") {
+    if (photos.indexOf("data:") >= 0 || photos.length > 3500) return null;
+    return photos;
+  }
+  const urls = photos.filter(
+    (p) =>
+      typeof p === "string" &&
+      p &&
+      !p.startsWith("data:") &&
+      !p.startsWith("blob:")
+  );
+  return urls.length ? JSON.stringify(urls) : null;
+}
+
+export function resolveNcrPhotoUrl(photo: string): string {
+  if (!photo) return "";
+  if (
+    photo.startsWith("data:") ||
+    photo.startsWith("http") ||
+    photo.startsWith("blob:")
+  ) {
+    return photo;
+  }
+  const host = API_ROOT.replace(/\/api\/?$/, "");
+  return `${host}${photo.startsWith("/") ? "" : "/"}${photo}`;
+}
 
 export type NCRCategory =
   | "Material_Defect"
@@ -45,6 +78,12 @@ export interface NonConformanceReport {
   partName?: string;
   customerId?: number;
   customerName?: string;
+  vendorId?: number;
+  vendorName?: string;
+  vendorOrderId?: number;
+  poNumber?: string;
+  ncrCodeId?: number;
+  ncrCode?: string;
   defectLocation: string;
   defectQuantity: number;
   totalQuantity: number;
@@ -96,12 +135,25 @@ function normalizePhotos(photos: unknown): string[] {
   return [];
 }
 
-function normalizeNcr(raw: Record<string, unknown> | null): NonConformanceReport | null {
+function normalizeNcr(
+  raw: Record<string, unknown> | null
+): NonConformanceReport | null {
   if (!raw) return null;
   return {
     ...(raw as unknown as NonConformanceReport),
     photos: normalizePhotos(raw.photos),
   };
+}
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  const ax = error as {
+    response?: { data?: { error?: { message?: string } | string; message?: string } };
+    message?: string;
+  };
+  const err = ax?.response?.data?.error;
+  if (typeof err === "string" && err) return err;
+  if (err && typeof err === "object" && err.message) return err.message;
+  return ax?.response?.data?.message || ax?.message || fallback;
 }
 
 export class QualityService {
@@ -119,47 +171,39 @@ export class QualityService {
     return normalizeNcr(response.data.result);
   }
 
+  /** Same shape as Cimmple_UI QualityService.CreateNCR */
   static async createNCR(
     ncr: Omit<NonConformanceReport, "ncrId" | "ncrNumber">
   ): Promise<NonConformanceReport | null> {
-    const ncrData = {
-      ...ncr,
-      photos: ncr.photos && ncr.photos.length > 0 ? JSON.stringify(ncr.photos) : null,
-      jobOrderId: ncr.jobOrderId && ncr.jobOrderId > 0 ? ncr.jobOrderId : null,
-      customerId: ncr.customerId && ncr.customerId > 0 ? ncr.customerId : null,
-      routingStepId: ncr.routingStepId && ncr.routingStepId > 0 ? ncr.routingStepId : null,
-    };
-    const response = await api.post("/Quality/CreateNCR", ncrData);
-    return normalizeNcr(response.data.result);
+    try {
+      const ncrData = {
+        ...ncr,
+        photos: toStoredPhotos(ncr.photos),
+      };
+      const response = await api.post("/Quality/CreateNCR", ncrData);
+      return normalizeNcr(response.data.result);
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, "Failed to create NCR"));
+    }
   }
 
   static async updateNCR(
     ncrId: number,
     updates: Partial<NonConformanceReport>
   ): Promise<boolean> {
-    const updateData = {
-      ...updates,
-      photos:
-        updates.photos !== undefined
-          ? updates.photos && updates.photos.length > 0
-            ? JSON.stringify(updates.photos)
-            : null
-          : undefined,
-      jobOrderId:
-        updates.jobOrderId !== undefined
-          ? updates.jobOrderId && updates.jobOrderId > 0
-            ? updates.jobOrderId
-            : null
-          : undefined,
-      customerId:
-        updates.customerId !== undefined
-          ? updates.customerId && updates.customerId > 0
-            ? updates.customerId
-            : null
-          : undefined,
-    };
-    await api.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
-    return true;
+    try {
+      const updateData = {
+        ...updates,
+        photos:
+          updates.photos !== undefined
+            ? toStoredPhotos(updates.photos as string[] | string | undefined)
+            : undefined,
+      };
+      await api.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
+      return true;
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, "Failed to update NCR"));
+    }
   }
 
   static async deleteNCR(ncrId: number): Promise<boolean> {
@@ -221,6 +265,12 @@ export function emptyNcrDraft(): Partial<NonConformanceReport> {
     dueDate: "",
     costImpact: 0,
     notes: "",
+    vendorId: 0,
+    vendorName: "",
+    vendorOrderId: 0,
+    poNumber: "",
+    ncrCodeId: 0,
+    ncrCode: "",
   };
 }
 

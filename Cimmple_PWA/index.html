@@ -11,6 +11,23 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Shop Floor" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("cimmple-pwa-theme");
+          if (t !== "dark" && t !== "light") t = "light";
+          var root = document.documentElement;
+          if (t === "dark") {
+            root.classList.add("dark");
+            root.setAttribute("data-theme", "dark");
+          } else {
+            root.classList.remove("dark");
+            root.setAttribute("data-theme", "light");
+          }
+          root.style.colorScheme = t;
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

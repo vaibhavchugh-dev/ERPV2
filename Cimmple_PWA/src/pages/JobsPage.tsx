@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   JobOrderListItem,
+  JobOrderRoutingStep,
   JobOrderService,
   getCurrentStep,
+  isStepCompleted,
 } from "../services/jobOrderService";
 import { formatJobNumber } from "../utils/formatJobNumber";
 
@@ -20,8 +22,8 @@ function getPriorityLabel(p: number | undefined | null): string {
 
 function priorityTagStyle(p: number | undefined | null): { bg: string; text: string } | null {
   const v = p ?? 0;
-  if (v === 2) return { bg: "bg-red-100", text: "text-red-700" };
-  if (v === 1) return { bg: "bg-amber-100", text: "text-amber-700" };
+  if (v === 2) return { bg: "bg-red-100 dark:bg-red-950/60", text: "text-red-700 dark:text-red-300" };
+  if (v === 1) return { bg: "bg-amber-100 dark:bg-amber-950/50", text: "text-amber-700 dark:text-amber-300" };
   return null; // Normal — hide
 }
 
@@ -50,18 +52,11 @@ function formatDue(dueDate: string): string {
 
 function statusBadgeStyle(status: string): { bg: string; text: string; label: string } {
   const s = (status || "").toLowerCase();
-  if (s.includes("complete") || s.includes("done")) return { bg: "bg-emerald-100", text: "text-emerald-700", label: "COMPLETED" };
-  if (s.includes("hold") || s.includes("cancel")) return { bg: "bg-amber-100", text: "text-amber-800", label: "ON HOLD" };
-  if (s.includes("ship")) return { bg: "bg-teal-100", text: "text-teal-700", label: s.includes("partial") ? "PART. SHIPPED" : "SHIPPED" };
-  if (s.includes("draft")) return { bg: "bg-slate-100", text: "text-slate-600", label: "DRAFT" };
-  return { bg: "bg-blue-100", text: "text-blue-700", label: "IN PROGRESS" };
-}
-
-function statusProgressColor(status: string): string {
-  const s = (status || "").toLowerCase();
-  if (s.includes("complete") || s.includes("done")) return "bg-emerald-500";
-  if (s.includes("hold") || s.includes("cancel")) return "bg-amber-500";
-  return "bg-slate-900";
+  if (s.includes("complete") || s.includes("done")) return { bg: "bg-emerald-100 dark:bg-emerald-950/50", text: "text-emerald-700 dark:text-emerald-300", label: "COMPLETED" };
+  if (s.includes("hold") || s.includes("cancel")) return { bg: "bg-amber-100 dark:bg-amber-950/50", text: "text-amber-800 dark:text-amber-300", label: "ON HOLD" };
+  if (s.includes("ship")) return { bg: "bg-teal-100 dark:bg-teal-950/50", text: "text-teal-700 dark:text-teal-300", label: s.includes("partial") ? "PART. SHIPPED" : "SHIPPED" };
+  if (s.includes("draft")) return { bg: "bg-slate-100 dark:bg-slate-700", text: "text-slate-600 dark:text-slate-200", label: "DRAFT" };
+  return { bg: "bg-blue-100 dark:bg-blue-950/50", text: "text-blue-700 dark:text-blue-300", label: "IN PROGRESS" };
 }
 
 /* ─── Filter bottom-sheet ────────────────────────────────────── */
@@ -92,16 +87,16 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, onApply, onClose }
         onClick={onClose}
       />
       {/* Sheet */}
-      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl">
+      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl dark:bg-slate-900">
         {/* Handle */}
-        <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-slate-300" />
+        <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
 
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-extrabold text-slate-900">Filter Jobs</h2>
+          <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Filter Jobs</h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
@@ -196,7 +191,9 @@ export function JobsPage() {
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"active" | "all">("active");
   const [searchQuery, setSearchQuery] = useState("");
-  const [stepLabels, setStepLabels] = useState<Record<number, string>>({});
+  const [stepProgress, setStepProgress] = useState<
+    Record<number, { label: string; steps: JobOrderRoutingStep[] }>
+  >({});
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("all");
@@ -217,10 +214,15 @@ export function JobsPage() {
     for (const j of targets) {
       try {
         const detail = await JobOrderService.getJobOrderById(j.jobOrderID);
-        const step = getCurrentStep(detail?.RoutingSteps);
-        if (step) {
-          setStepLabels((prev) => ({ ...prev, [j.jobOrderID]: `${step.sequence}. ${step.processName}` }));
-        }
+        const steps = [...(detail?.RoutingSteps || [])].sort((a, b) => a.sequence - b.sequence);
+        const step = getCurrentStep(steps);
+        setStepProgress((prev) => ({
+          ...prev,
+          [j.jobOrderID]: {
+            label: step ? `${step.sequence}. ${step.processName}` : "",
+            steps,
+          },
+        }));
       } catch { /* ignore */ }
     }
   }, []);
@@ -228,7 +230,7 @@ export function JobsPage() {
   const loadJobs = useCallback(async () => {
     setLoading(true);
     setError("");
-    setStepLabels({});
+    setStepProgress({});
     try {
       const list = await JobOrderService.getJobOrders();
       setJobs(list);
@@ -282,6 +284,13 @@ export function JobsPage() {
       return true;
     });
 
+    filtered.sort((a, b) => {
+      const pa = a.jobPriority ?? 0;
+      const pb = b.jobPriority ?? 0;
+      if (pa !== pb) return pb - pa;
+      return (a.dueDate || "").localeCompare(b.dueDate || "");
+    });
+
     return { visible: filtered, stats: { total, inProgress, onHold, completed } };
   }, [jobs, activeTab, searchQuery, statusFilter, priorityFilter]);
 
@@ -291,7 +300,7 @@ export function JobsPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200"
             onClick={() => window.dispatchEvent(new CustomEvent("open-drawer"))}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -299,15 +308,15 @@ export function JobsPage() {
             </svg>
           </button>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Jobs</h1>
-            <p className="text-xs font-semibold text-slate-400">Cimmple Shop Floor</p>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Jobs</h1>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">Cimmple Shop Floor</p>
           </div>
         </div>
       </header>
 
       {/* Search */}
       <div className="mb-4 relative">
-        <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-400">
+        <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-500 dark:text-slate-300">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -315,7 +324,7 @@ export function JobsPage() {
         <input
           type="text"
           placeholder="Search job number, part, customer..."
-          className="w-full h-11 rounded-2xl border-none bg-[#f0f3f7] pl-11 pr-4 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500"
+          className="w-full h-11 rounded-2xl border-none bg-[#f0f3f7] pl-11 pr-4 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-400 dark:focus:ring-blue-600"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -332,8 +341,8 @@ export function JobsPage() {
               aria-selected={activeTab === tab}
               className={`min-h-tap rounded-full px-4 text-sm capitalize transition-colors ${
                 activeTab === tab
-                  ? "bg-slate-900 font-extrabold text-white"
-                  : "bg-[#f0f3f7] font-semibold text-slate-500 hover:text-slate-700"
+                  ? "bg-slate-900 font-extrabold text-white dark:bg-white dark:text-slate-900"
+                  : "bg-[#f0f3f7] font-semibold text-slate-500 hover:text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:text-white"
               }`}
               onClick={() => setActiveTab(tab)}
             >
@@ -346,7 +355,7 @@ export function JobsPage() {
         <button
           type="button"
           onClick={() => setFilterOpen(true)}
-          className="relative flex min-h-tap items-center gap-1.5 rounded-xl bg-[#f0f3f7] px-3 text-slate-700 hover:bg-slate-200"
+          className="relative flex min-h-tap items-center gap-1.5 rounded-xl bg-[#f0f3f7] px-3 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="4" y1="6" x2="20" y2="6" />
@@ -368,14 +377,14 @@ export function JobsPage() {
       {/* Stats */}
       <div className="mb-4 grid grid-cols-4 gap-2">
         {[
-          { label: "Total Jobs", value: stats.total, color: "text-slate-900" },
-          { label: "In Progress", value: stats.inProgress, color: "text-blue-600" },
-          { label: "On Hold", value: stats.onHold, color: "text-amber-600" },
-          { label: "Completed", value: stats.completed, color: "text-emerald-600" },
+          { label: "Total Jobs", value: stats.total, color: "text-slate-900 dark:text-white" },
+          { label: "In Progress", value: stats.inProgress, color: "text-blue-600 dark:text-blue-400" },
+          { label: "On Hold", value: stats.onHold, color: "text-amber-600 dark:text-amber-400" },
+          { label: "Completed", value: stats.completed, color: "text-emerald-600 dark:text-emerald-400" },
         ].map((s) => (
-          <div key={s.label} className="bg-white rounded-2xl border border-slate-200/60 shadow-[0_2px_8px_rgba(0,0,0,0.04)] p-3 text-left">
+          <div key={s.label} className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-3 text-left dark:border-slate-600 dark:bg-slate-800">
             <div className={`text-xl font-black ${s.color} leading-none`}>{s.value}</div>
-            <div className="text-[0.65rem] font-semibold text-slate-400 mt-1.5 leading-tight">{s.label}</div>
+            <div className="text-[0.65rem] font-semibold text-slate-500 mt-1.5 leading-tight dark:text-slate-300">{s.label}</div>
           </div>
         ))}
       </div>
@@ -384,7 +393,7 @@ export function JobsPage() {
       {loading && (
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 animate-pulse">
+            <div key={i} className="rounded-3xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.08)] p-5 animate-pulse dark:border-slate-600 dark:bg-slate-800">
               <div className="flex justify-between items-start mb-3">
                 <div>
                   <div className="h-5 bg-slate-200 rounded-md w-36 mb-2" />
@@ -422,19 +431,21 @@ export function JobsPage() {
       <ul className="space-y-4">
         {visible.map((job) => {
           const badge = statusBadgeStyle(job.status);
-          const barColor = statusProgressColor(job.status);
-          const formattedJobNum = formatJobNumber(job.jobOrderNumber || job.jobNumber || job.jobOrderID);
           const priorityTag = priorityTagStyle(job.jobPriority);
+          const formattedJobNum = formatJobNumber(
+            job.jobOrderNumber || job.jobNumber || job.jobOrderID
+          );
+          const progress = stepProgress[job.jobOrderID];
 
           return (
             <li key={job.jobOrderID}>
               <Link
                 to={`/jobs/${job.jobOrderID}`}
-                className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 block transition-transform active:scale-[0.98]"
+                className="rounded-3xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.08)] p-5 block transition-transform active:scale-[0.98] dark:border-slate-600 dark:bg-slate-800 dark:shadow-[0_2px_16px_rgba(0,0,0,0.45)]"
               >
                 <div className="flex items-start justify-between mb-1 gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-lg font-black tracking-tight text-slate-900">
+                    <span className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
                       {formattedJobNum}
                     </span>
                     {priorityTag && (
@@ -448,33 +459,55 @@ export function JobsPage() {
                   </span>
                 </div>
 
-                <div className="text-sm font-extrabold text-slate-800 tracking-tight">
+                <div className="text-sm font-extrabold text-slate-800 tracking-tight dark:text-slate-100">
                   {job.partNo || "—"}
                 </div>
-                {job.partName && (
-                  <div className="text-xs font-semibold text-slate-400 mt-0.5 truncate">{job.partName}</div>
-                )}
                 {job.customerName && (
-                  <div className="text-xs font-semibold text-slate-400 mt-0.5 truncate">{job.customerName}</div>
+                  <div className="text-xs font-semibold text-slate-500 mt-0.5 truncate dark:text-slate-300">{job.customerName}</div>
                 )}
 
                 <div className="flex items-center gap-2 mt-3 mb-3">
-                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl">
+                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
                     Qty {job.qtyOrdered} {job.unit || "EA"}
                   </span>
-                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl">
+                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
                     Due {formatDue(job.dueDate)}
                   </span>
                 </div>
 
-                <div className="border-t border-slate-100 my-3" />
+                <div className="border-t border-slate-200 my-3 dark:border-slate-700" />
 
                 <div>
-                  <div className="text-xs font-extrabold text-slate-900 mb-1.5">
-                    Step: {stepLabels[job.jobOrderID] || "1. Processing"}
+                  <div className="flex items-center gap-1 mb-1.5">
+                    {(progress?.steps.length
+                      ? progress.steps
+                      : [{ id: 0, sequence: 1 } as JobOrderRoutingStep]
+                    ).map((step) => {
+                      const completed = isStepCompleted(step);
+                      const started =
+                        !completed &&
+                        (step.progressState === "running" ||
+                          step.progressState === "paused");
+                      return (
+                        <span
+                          key={step.id || step.sequence}
+                          className={`h-2 flex-1 rounded-full transition-colors ${
+                            completed
+                              ? "bg-emerald-500"
+                              : started
+                              ? `bg-orange-500${
+                                  step.progressState === "running"
+                                    ? " animate-pulse"
+                                    : ""
+                                }`
+                              : "bg-slate-200/70 dark:bg-slate-700/60"
+                          }`}
+                        />
+                      );
+                    })}
                   </div>
-                  <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                    <div className={`h-full ${barColor} w-2/5 rounded-full`} />
+                  <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
+                    Step: {progress?.label || "1. Processing"}
                   </div>
                 </div>
               </Link>

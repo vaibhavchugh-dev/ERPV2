@@ -1,8 +1,10 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useForceLightTheme } from "../theme/ThemeContext";
 
 export function LoginPage() {
+  useForceLightTheme();
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");

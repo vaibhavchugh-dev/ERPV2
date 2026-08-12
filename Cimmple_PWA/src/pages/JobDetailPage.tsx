@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   commitLiveElapsed,
@@ -12,16 +12,47 @@ import {
   JobOrderDetail,
   JobOrderRoutingStep,
   JobOrderService,
+  JobOrderStepNote,
   JOB_STEP_PAUSE_REASONS,
   ProgressState,
   toElapsedFields,
 } from "../services/jobOrderService";
 import { formatJobNumber } from "../utils/formatJobNumber";
 
+const JOB_STATUS_OPTIONS = [
+  { value: "Draft", label: "Draft" },
+  { value: "In Progress", label: "In Progress" },
+  { value: "Completed", label: "Complete" },
+  { value: "Cancelled", label: "Cancel" },
+] as const;
+
+function normalizeJobStatus(status: string | undefined): string {
+  const s = (status || "").trim();
+  if (s === "Completed" || s === "Complete") return "Completed";
+  if (s === "Cancelled" || s === "Cancel") return "Cancelled";
+  if (s === "In Progress") return "In Progress";
+  if (s === "Draft") return "Draft";
+  if (s.toLowerCase().includes("complete")) return "Completed";
+  if (s.toLowerCase().includes("cancel")) return "Cancelled";
+  if (
+    s.toLowerCase().includes("progress") ||
+    s.toLowerCase().includes("ship")
+  ) {
+    return "In Progress";
+  }
+  return "Draft";
+}
+
+function isActiveJobStatus(status: string | undefined): boolean {
+  const s = normalizeJobStatus(status);
+  return s === "In Progress" || s === "Completed";
+}
+
 type TrackingDialog =
   | { type: "pause"; stepId: number }
   | { type: "complete"; stepId: number }
   | { type: "reopen"; stepId: number }
+  | { type: "stepNote"; stepId: number }
   | null;
 
 function formatDue(dueDate: string): string {
@@ -58,6 +89,7 @@ function progressLabel(state: ProgressState | undefined): string {
 export function JobDetailPage() {
   const { jobOrderId } = useParams<{ jobOrderId: string }>();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { userName } = useAuth();
   const [job, setJob] = useState<JobOrderDetail | null>(null);
   const jobRef = useRef<JobOrderDetail | null>(null);
@@ -74,9 +106,25 @@ export function JobDetailPage() {
   const [trackingDialog, setTrackingDialog] = useState<TrackingDialog>(null);
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
-  const [qtyDraft, setQtyDraft] = useState("");
-  const [qtyError, setQtyError] = useState("");
+  const [stepNoteInput, setStepNoteInput] = useState("");
+  const [enableJobTracking, setEnableJobTracking] = useState(false);
+  const enableJobTrackingRef = useRef(false);
+  const [stepSheetOpen, setStepSheetOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    enableJobTrackingRef.current = enableJobTracking;
+  }, [enableJobTracking]);
+
+  // Auto-dismiss sticky success/error banners
+  useEffect(() => {
+    if (!actionOk && !actionError) return;
+    const t = window.setTimeout(() => {
+      setActionOk("");
+      setActionError("");
+    }, actionError ? 4500 : 2800);
+    return () => window.clearTimeout(t);
+  }, [actionOk, actionError]);
 
   const deepLinkStepId = Number(searchParams.get("stepId") || 0);
   const focusTimer = searchParams.get("focus") === "timer";
@@ -128,6 +176,8 @@ export function JobDetailPage() {
       setJob(detail);
       jobRef.current = detail;
       stepsRef.current = detail.RoutingSteps || [];
+      setEnableJobTracking(!!detail.EnableJobTracking);
+      enableJobTrackingRef.current = !!detail.EnableJobTracking;
 
       const queryStepId = Number(
         new URLSearchParams(window.location.search).get("stepId") || 0
@@ -145,9 +195,9 @@ export function JobDetailPage() {
       }
 
       clearDisplayTimer();
-      const anyRunning = detail.RoutingSteps?.some(
-        (s) => s.progressState === "running"
-      );
+      const anyRunning =
+        !!detail.EnableJobTracking &&
+        detail.RoutingSteps?.some((s) => s.progressState === "running");
       if (anyRunning) startDisplayTimer();
     } catch (err: unknown) {
       const ax = err as {
@@ -170,17 +220,23 @@ export function JobDetailPage() {
     return () => clearDisplayTimer();
   }, [loadJob, clearDisplayTimer]);
 
-  // After load + selection: scroll to timer when focus=timer (from Dashboard scan)
+  // After load + selection: open step sheet + scroll timer when focus=timer (from Dashboard scan)
   useEffect(() => {
     if (loading || !job || !focusTimer || deepLinkAppliedRef.current) return;
     if (deepLinkStepId > 0 && selectedStepId !== deepLinkStepId) return;
 
     deepLinkAppliedRef.current = true;
+    setStepSheetOpen(true);
     const t = window.setTimeout(() => {
       timerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 120);
+    }, 180);
     return () => window.clearTimeout(t);
   }, [loading, job, focusTimer, deepLinkStepId, selectedStepId]);
+
+  const openStepSheet = (stepId: number) => {
+    setSelectedStepId(stepId);
+    setStepSheetOpen(true);
+  };
 
   const sortedSteps = useMemo(() => {
     if (!job?.RoutingSteps) return [];
@@ -196,20 +252,12 @@ export function JobDetailPage() {
     return getCurrentStep(sortedSteps);
   }, [sortedSteps, selectedStepId]);
 
-  // Keep qty draft in sync with selected step (same field as Cimmple_UI Qty Produced column)
-  useEffect(() => {
-    if (selectedStep) {
-      setQtyDraft(String(selectedStep.qtyProduced ?? 0));
-      setQtyError("");
-    }
-  }, [selectedStep?.id, selectedStep?.qtyProduced]);
-
   // Keep tick dependency so running clocks re-render.
   void elapsedTick;
 
-  const persistTrackingSteps = async (
-    updatedSteps: JobOrderRoutingStep[],
-    successMessage?: string
+  const persistJobOrder = async (
+    overrides: Partial<JobOrderDetail> & { RoutingSteps?: JobOrderRoutingStep[] },
+    options?: { successMessage?: string; deriveStatusFromSteps?: boolean }
   ): Promise<boolean> => {
     const current = jobRef.current;
     if (!current?.JobOrderID) return false;
@@ -218,12 +266,22 @@ export function JobDetailPage() {
     setActionError("");
     setActionOk("");
 
-    const stepsToSave = commitLiveElapsed(updatedSteps);
-    const statusToSave = deriveJobStatus(current.Status, stepsToSave);
+    const stepsInput = overrides.RoutingSteps ?? stepsRef.current;
+    const stepsToSave = options?.deriveStatusFromSteps
+      ? commitLiveElapsed(stepsInput)
+      : stepsInput;
+    const baseStatus = overrides.Status ?? current.Status;
+    const statusToSave = options?.deriveStatusFromSteps
+      ? deriveJobStatus(baseStatus, stepsToSave)
+      : baseStatus;
+
     const payload: JobOrderDetail = {
       ...current,
+      ...overrides,
       Status: statusToSave,
       RoutingSteps: stepsToSave,
+      EnableJobTracking:
+        overrides.EnableJobTracking ?? enableJobTrackingRef.current,
     };
 
     setJob(payload);
@@ -232,17 +290,42 @@ export function JobDetailPage() {
 
     try {
       await JobOrderService.saveJobOrder(payload);
-      if (successMessage) setActionOk(successMessage);
+      if (options?.successMessage) setActionOk(options.successMessage);
 
-      // Soft refresh to stay aligned, but keep live startTime for running steps
       const refreshed = await JobOrderService.getJobOrderById(current.JobOrderID);
       if (refreshed) {
-        setJob(refreshed);
-        jobRef.current = refreshed;
-        stepsRef.current = refreshed.RoutingSteps || [];
-        syncSelectedStep(refreshed.RoutingSteps);
+        const savedById = new Map(stepsToSave.map((s) => [s.id, s]));
+        const mergedSteps = (refreshed.RoutingSteps || []).map((s) => {
+          const saved = savedById.get(s.id);
+          if (!saved) return s;
+          let next = s;
+          if (saved.pauseReason && !s.pauseReason) {
+            next = { ...next, pauseReason: saved.pauseReason };
+          }
+          if ((saved.notes?.length || 0) > 0 && !(s.notes?.length)) {
+            next = { ...next, notes: saved.notes };
+          }
+          if ((saved.ncrFlags?.length || 0) > 0 && !(s.ncrFlags?.length)) {
+            next = { ...next, ncrFlags: saved.ncrFlags };
+          }
+          return next;
+        });
+        const merged = {
+          ...refreshed,
+          RoutingSteps: mergedSteps,
+          EnableJobTracking: refreshed.EnableJobTracking,
+        };
+        setJob(merged);
+        jobRef.current = merged;
+        stepsRef.current = mergedSteps;
+        setEnableJobTracking(!!merged.EnableJobTracking);
+        enableJobTrackingRef.current = !!merged.EnableJobTracking;
+        syncSelectedStep(mergedSteps);
         clearDisplayTimer();
-        if (refreshed.RoutingSteps?.some((s) => s.progressState === "running")) {
+        if (
+          merged.EnableJobTracking &&
+          refreshed.RoutingSteps?.some((s) => s.progressState === "running")
+        ) {
           startDisplayTimer();
         }
       }
@@ -253,7 +336,7 @@ export function JobDetailPage() {
         message?: string;
       };
       setActionError(
-        `Could not save step progress: ${
+        `Could not save job: ${
           ax?.response?.data?.error ||
           ax?.response?.data?.message ||
           ax?.message ||
@@ -265,6 +348,122 @@ export function JobDetailPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const persistTrackingSteps = async (
+    updatedSteps: JobOrderRoutingStep[],
+    successMessage?: string
+  ): Promise<boolean> => {
+    return persistJobOrder(
+      { RoutingSteps: updatedSteps },
+      { successMessage, deriveStatusFromSteps: true }
+    );
+  };
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (saving || !jobRef.current) return;
+    await persistJobOrder({ Status: newStatus }, { successMessage: "Job status updated" });
+  };
+
+  const handleTrackToggle = async () => {
+    if (saving) return;
+    const checked = !enableJobTracking;
+    setEnableJobTracking(checked);
+    enableJobTrackingRef.current = checked;
+    if (!checked) clearDisplayTimer();
+    await persistJobOrder(
+      { EnableJobTracking: checked },
+      {
+        successMessage: checked
+          ? "Job tracking enabled"
+          : "Job tracking disabled",
+      }
+    );
+  };
+
+  const handleToggleStepCompletion = async (stepId: number) => {
+    const step = stepsRef.current.find((s) => s.id === stepId);
+    if (!step || saving) return;
+
+    const newStatus = step.status === "Completed" ? "Pending" : "Completed";
+    const updatedSteps = stepsRef.current.map((s) =>
+      s.id === stepId ? { ...s, status: newStatus } : s
+    );
+    await persistJobOrder(
+      { RoutingSteps: updatedSteps },
+      {
+        successMessage:
+          newStatus === "Completed"
+            ? "Step marked as completed"
+            : "Step reopened",
+        deriveStatusFromSteps: true,
+      }
+    );
+  };
+
+  const requestStepNote = (stepId: number) => {
+    setStepNoteInput("");
+    setTrackingDialog({ type: "stepNote", stepId });
+  };
+
+  const confirmAddStepNote = async () => {
+    const stepId =
+      trackingDialog?.type === "stepNote" ? trackingDialog.stepId : undefined;
+    if (stepId == null) return;
+    const text = stepNoteInput.trim();
+    if (!text) {
+      setActionError("Please enter a note");
+      return;
+    }
+    const joId = jobRef.current?.JobOrderID || 0;
+    if (!joId || joId <= 0) {
+      setActionError("Save the job order first, then add notes");
+      return;
+    }
+
+    const currentSteps = stepsRef.current;
+    const existingNotes =
+      currentSteps.find((s) => Number(s.id) === Number(stepId))?.notes || [];
+    const nextNoteId =
+      existingNotes.reduce((max, n) => Math.max(max, Number(n.id) || 0), 0) + 1;
+    const note: JobOrderStepNote = {
+      id: nextNoteId,
+      text,
+      createdAt: new Date().toISOString(),
+      createdBy: userName || "User",
+    };
+
+    const updatedSteps = currentSteps.map((s) =>
+      Number(s.id) === Number(stepId)
+        ? { ...s, notes: [...(s.notes || []), note] }
+        : s
+    );
+
+    setStepNoteInput("");
+    const saved = await persistTrackingSteps(updatedSteps, "Note added");
+    if (saved) {
+      setTrackingDialog({ type: "stepNote", stepId });
+    } else {
+      setStepNoteInput(text);
+      setTrackingDialog({ type: "stepNote", stepId });
+    }
+  };
+
+  const openNcrForStep = (stepId: number) => {
+    if (!job?.JobOrderID) return;
+    const step = stepsRef.current.find((s) => s.id === stepId);
+    const existing = step?.ncrFlags?.[0];
+    if (existing?.ncrId) {
+      navigate(`/quality/${existing.ncrId}?returnTo=${encodeURIComponent(`/jobs/${job.JobOrderID}`)}`);
+      return;
+    }
+    const qs = new URLSearchParams({
+      jobOrderId: String(job.JobOrderID),
+      stepId: String(stepId),
+      returnTo: `/jobs/${job.JobOrderID}`,
+    });
+    setStepSheetOpen(false);
+    navigate(`/quality/new?${qs.toString()}`);
   };
 
   const handleStartStep = async (stepId: number) => {
@@ -280,7 +479,6 @@ export function JobDetailPage() {
             elapsedSeconds: getCommittedSeconds(s),
             elapsedTime: Math.floor(getCommittedSeconds(s) / 60),
             status: "In Progress",
-            pauseReason: undefined,
             technicianName: userName || s.technicianName,
           }
         : s
@@ -420,64 +618,51 @@ export function JobDetailPage() {
     );
   };
 
-  /** Local qty update (mirrors Cimmple_UI handleUpdateQtyProduced). */
-  const handleUpdateQtyProduced = (stepId: number, qty: number) => {
-    const updatedSteps = stepsRef.current.map((s) =>
-      s.id === stepId ? { ...s, qtyProduced: qty } : s
-    );
-    stepsRef.current = updatedSteps;
-    setJob((prev) =>
-      prev ? { ...prev, RoutingSteps: updatedSteps } : prev
-    );
-    if (jobRef.current) {
-      jobRef.current = { ...jobRef.current, RoutingSteps: updatedSteps };
-    }
-  };
-
-  /**
-   * Persist produced qty for the selected step.
-   * PWA has no separate Job Save form — Save Qty persists immediately via the same
-   * tracking API path used for Start/Pause/Complete.
-   */
-  const handleSaveQty = async () => {
-    if (!selectedStep || saving) return;
-    const qty = parseInt(qtyDraft, 10);
-    if (Number.isNaN(qty) || qty < 0) {
-      setQtyError("Enter a valid quantity (0 or greater).");
-      return;
-    }
-    setQtyError("");
-    const updatedSteps = stepsRef.current.map((s) =>
-      s.id === selectedStep.id ? { ...s, qtyProduced: qty } : s
-    );
-    await persistTrackingSteps(updatedSteps, "Quantity saved");
-  };
-
   if (loading) {
     return (
-      <div className="space-y-4 animate-pulse">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-10 w-10 bg-slate-200 rounded-full" />
-          <div className="space-y-1">
-            <div className="h-5 bg-slate-200 rounded-md w-32" />
-            <div className="h-3 bg-slate-100 rounded-md w-24" />
+      <div>
+        <header className="mb-4 flex items-center gap-3">
+          <Link
+            to="/jobs"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200"
+            aria-label="Back to Jobs"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </Link>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">
+              Job Details
+            </h1>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">
+              {formatJobNumber(jobOrderId)}
+            </p>
           </div>
-        </div>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-5 space-y-4">
-          <div className="flex justify-between items-start">
-            <div className="space-y-2">
-              <div className="h-5 bg-slate-200 rounded-full w-20" />
-              <div className="h-7 bg-slate-200 rounded-md w-40" />
+        </header>
+        <div className="space-y-3 animate-pulse">
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 dark:bg-slate-800 dark:border-slate-600">
+            <div className="flex justify-between items-start">
+              <div className="space-y-2">
+                <div className="h-5 bg-slate-200 rounded-full w-20 dark:bg-slate-700" />
+                <div className="h-7 bg-slate-200 rounded-md w-40 dark:bg-slate-700" />
+              </div>
+              <div className="h-12 w-24 bg-slate-200 rounded-xl dark:bg-slate-950" />
             </div>
-            <div className="h-16 w-32 bg-slate-800 rounded-2xl" />
+            <div className="h-10 bg-slate-100 rounded-xl dark:bg-slate-900" />
+            <div className="grid grid-cols-3 gap-2">
+              <div className="h-12 bg-slate-100 rounded-xl dark:bg-slate-900" />
+              <div className="h-12 bg-slate-100 rounded-xl dark:bg-slate-900" />
+              <div className="h-12 bg-slate-100 rounded-xl dark:bg-slate-900" />
+            </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 py-3 border-y border-slate-100">
-            <div className="h-8 bg-slate-100 rounded-xl" />
-            <div className="h-8 bg-slate-100 rounded-xl" />
-            <div className="h-8 bg-slate-100 rounded-xl" />
+          <div className="h-16 rounded-2xl bg-slate-200 dark:bg-slate-800" />
+          <div className="bg-white rounded-3xl border border-slate-200 p-5 space-y-4 dark:bg-slate-800 dark:border-slate-600">
+            <div className="h-4 bg-slate-200 rounded w-28 dark:bg-slate-700" />
+            <div className="h-16 bg-slate-100 rounded-2xl dark:bg-slate-900" />
+            <div className="h-16 bg-slate-100 rounded-2xl dark:bg-slate-900" />
           </div>
         </div>
-        <div className="bg-slate-900 rounded-3xl p-6 h-28" />
       </div>
     );
   }
@@ -488,7 +673,10 @@ export function JobDetailPage() {
         <Link to="/jobs" className="mb-3 inline-flex min-h-10 items-center font-semibold text-accent">
           ← Jobs
         </Link>
-        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700" role="alert">
+        <div
+          className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300"
+          role="alert"
+        >
           {error || "Job not found"}
         </div>
       </div>
@@ -507,321 +695,275 @@ export function JobDetailPage() {
     completeQtyNum != null && orderQty > 0 && completeQtyNum > orderQty;
 
   return (
-    <div className="pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
-      {/* Header with Back Button */}
-      <header className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+    <div>
+      {/* Header with Back Button + status */}
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <Link
             to="/jobs"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 transition-colors"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 transition-colors dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             aria-label="Back to Jobs"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
               <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </Link>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Job Details</h1>
-            <p className="text-xs font-semibold text-slate-400">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Job Details</h1>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">
               {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
             </p>
           </div>
         </div>
+
+        <div className="relative shrink-0">
+          <select
+            className={`min-h-tap appearance-none rounded-xl border bg-white py-2 pl-3 pr-8 text-sm font-bold shadow-sm outline-none dark:bg-slate-800 ${
+              isActiveJobStatus(job.Status)
+                ? "border-emerald-200 text-emerald-800 dark:border-emerald-700 dark:text-emerald-300"
+                : "border-slate-200 text-slate-700 dark:border-slate-600 dark:text-slate-200"
+            }`}
+            value={normalizeJobStatus(job.Status)}
+            disabled={saving}
+            onChange={(e) => void handleStatusChange(e.target.value)}
+            aria-label="Overall job status"
+          >
+            {JOB_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <span
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-300"
+            aria-hidden
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9l6-6 6 6" />
+              <path d="M6 15l6 6 6-6" />
+            </svg>
+          </span>
+        </div>
       </header>
 
       {/* Card 1: Job Overview & Metrics */}
-      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="bg-black text-white text-[0.6rem] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_10px_rgba(15,23,42,0.08)] px-3.5 py-3 mb-3 space-y-2 dark:bg-slate-800 dark:border-slate-600">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="bg-black text-white text-[0.55rem] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
                 {job.Status || "IN PROGRESS"}
               </span>
-              <span className="text-emerald-500 font-extrabold text-xs">Live</span>
-            </div>
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <span className="text-2xl font-black tracking-tight text-slate-900">
-                {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
-              </span>
               {(job.JobPriority ?? 0) === 2 && (
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[0.6rem] font-extrabold uppercase tracking-wide text-red-700">
+                <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[0.55rem] font-extrabold uppercase tracking-wide text-red-700 dark:bg-red-950/60 dark:text-red-300">
                   Urgent
                 </span>
               )}
               {(job.JobPriority ?? 0) === 1 && (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6rem] font-extrabold uppercase tracking-wide text-amber-700">
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[0.55rem] font-extrabold uppercase tracking-wide text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
                   High
                 </span>
               )}
             </div>
+            <div className="text-lg font-black tracking-tight text-slate-900 mt-1 leading-tight dark:text-white">
+              {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
+            </div>
             {job.CustomerName && (
-              <div className="text-xs font-semibold text-slate-400 mt-0.5">
-                Customer: {job.CustomerName}
+              <div className="text-[0.7rem] font-semibold text-slate-500 truncate dark:text-slate-300">
+                {job.CustomerName}
               </div>
             )}
           </div>
 
-          <div className="bg-black rounded-2xl p-3 text-white text-center w-32 shadow-md shrink-0">
-            <span className="text-[0.55rem] font-extrabold text-slate-400 tracking-widest uppercase block mb-0.5">
-              ELAPSED
-            </span>
-            <span className="font-mono text-lg font-black tracking-wider text-white block">
-              {formatElapsedDuration(job.RoutingSteps ? job.RoutingSteps.reduce((acc, s) => acc + computeElapsedSeconds(s), 0) : 0)}
-            </span>
-          </div>
+          {enableJobTracking && (
+            <div className="bg-black rounded-xl px-2.5 py-1.5 text-white text-center shrink-0 dark:bg-slate-950 dark:ring-1 dark:ring-slate-600">
+              <span className="text-[0.5rem] font-extrabold text-slate-400 tracking-widest uppercase block dark:text-slate-300">
+                ELAPSED
+              </span>
+              <span className="font-mono text-sm font-black tracking-wider text-white block leading-tight">
+                {formatElapsedDuration(
+                  job.RoutingSteps
+                    ? job.RoutingSteps.reduce(
+                        (acc, s) => acc + computeElapsedSeconds(s),
+                        0
+                      )
+                    : 0
+                )}
+              </span>
+            </div>
+          )}
         </div>
 
+        {job.PartName && (
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-1 dark:border-slate-600 dark:bg-slate-950">
+            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">
+              Part Description
+            </span>
+            <span className="text-[0.7rem] font-semibold text-slate-700 leading-snug dark:text-slate-100">
+              {job.PartName}
+            </span>
+          </div>
+        )}
+
         {/* Part, Target, Remaining Grid */}
-        <div className="grid grid-cols-3 gap-2 mt-4">
-          <div className="bg-slate-50/80 rounded-2xl p-3 text-center">
-            <span className="text-[0.55rem] font-extrabold text-slate-400 uppercase block mb-1">PART</span>
-            <span className="text-xs font-extrabold text-slate-900 truncate block">{job.PartNo || "—"}</span>
+        <div className="grid grid-cols-3 gap-1.5">
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
+            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">PART</span>
+            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">{job.PartNo || "—"}</span>
           </div>
-          <div className="bg-slate-50/80 rounded-2xl p-3 text-center">
-            <span className="text-[0.55rem] font-extrabold text-slate-400 uppercase block mb-1">TARGET</span>
-            <span className="text-xs font-extrabold text-slate-900 truncate block">{job.QtyOrdered} {job.Unit || "pcs"}</span>
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
+            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">TARGET</span>
+            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">{job.QtyOrdered} {job.Unit || "pcs"}</span>
           </div>
-          <div className="bg-slate-50/80 rounded-2xl p-3 text-center">
-            <span className="text-[0.55rem] font-extrabold text-slate-400 uppercase block mb-1">REMAINING</span>
-            <span className="text-xs font-extrabold text-slate-900 truncate block">
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
+            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">REMAINING</span>
+            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">
               {Math.max(0, job.QtyOrdered - (job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0))} {job.Unit || "pcs"}
             </span>
           </div>
         </div>
 
         {/* Progress Bar Section */}
-        <div className="pt-2">
-          <div className="flex items-center justify-between text-xs font-bold mb-1.5">
-            <span className="text-slate-700">Progress</span>
-            <span className="text-slate-900 font-black">
-              {orderQty > 0 ? Math.min(100, Math.round(((job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0) / orderQty) * 100)) : 0}%
-            </span>
-          </div>
-          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden mb-2">
-            <div
-              className="h-full bg-black rounded-full transition-all duration-300"
-              style={{ width: `${orderQty > 0 ? Math.min(100, ((job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0) / orderQty) * 100) : 0}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between text-[0.7rem] font-semibold text-slate-400">
-            <span>Produced {job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0}</span>
-            <span>Due {formatDue(job.DueDate)}</span>
-          </div>
+        <div>
+          {(() => {
+            const produced =
+              job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0;
+            const pct =
+              orderQty > 0 ? Math.min(100, Math.round((produced / orderQty) * 100)) : 0;
+            const anyStarted = job.RoutingSteps?.some(
+              (s) =>
+                !isStepCompleted(s) &&
+                (s.progressState === "running" || s.progressState === "paused")
+            );
+            const anyRunning = job.RoutingSteps?.some(
+              (s) => s.progressState === "running"
+            );
+            const allDone =
+              (job.RoutingSteps?.length ?? 0) > 0 &&
+              job.RoutingSteps!.every((s) => isStepCompleted(s));
+            const fillClass = allDone
+              ? "bg-emerald-500"
+              : anyStarted
+              ? "bg-orange-500"
+              : "bg-transparent";
+            return (
+              <>
+                <div className="flex items-center justify-between text-[0.65rem] font-bold mb-1">
+                  <span className="text-slate-600 dark:text-slate-300">Progress</span>
+                  <span className="text-slate-900 font-black dark:text-white">{pct}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden mb-1 dark:bg-slate-700">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${fillClass} ${
+                      anyRunning ? "animate-pulse" : ""
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[0.65rem] font-semibold text-slate-500 dark:text-slate-300">
+                  <span>
+                    Produced {produced}
+                    {orderQty > 0 ? ` / ${orderQty}` : ""}
+                  </span>
+                  <span>Due {formatDue(job.DueDate)}</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 
-      {actionError && (
-        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-700" role="alert">
-          {actionError}
-        </div>
-      )}
-      {actionOk && !actionError && (
-        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-semibold text-emerald-700" role="status">
-          {actionOk}
-        </div>
-      )}
-
-      <Link
-        to={`/quality/new?jobOrderId=${job.JobOrderID}`}
-        className="mb-4 flex min-h-tap w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50"
-      >
-        Report NCR
-      </Link>
-
-      {/* Card 2: Selected Routing Step */}
-      {selectedStep && (
-        <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4">
-          <div className="text-[0.65rem] font-black uppercase tracking-widest text-slate-400 mb-2">
-            SELECTED ROUTING STEP
-          </div>
-          <div className="flex items-start justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-lg font-black tracking-tight text-slate-900">
-                {selectedStep.sequence}. {selectedStep.processName}
-              </h2>
-              <div className="text-xs font-semibold text-slate-400 mt-0.5">
-                {selectedStep.workstationName ? `Machine ${selectedStep.workstationName}` : "Unassigned"} · Operator assigned · Queue clear
-              </div>
-            </div>
-            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-500 flex items-center justify-center shrink-0">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
-            </div>
-          </div>
-
-          {/* Live Timer Dark Card */}
-          <div
-            ref={timerSectionRef}
-            className="bg-slate-900 rounded-3xl p-5 text-white my-4 shadow-lg"
+      {/* Track ON/OFF — below overview tile, matches Cimmple_UI routing Track toggle */}
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_10px_rgba(15,23,42,0.08)] dark:bg-slate-800 dark:border-slate-600">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+              enableJobTracking
+                ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+                : "bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-300"
+            }`}
+            aria-hidden
           >
-            <div className="flex items-center justify-between text-[0.6rem] font-black uppercase tracking-widest text-slate-400 mb-1">
-              <span>LIVE TIMER</span>
-              {selectedStep.progressState === "running" ? (
-                <span className="bg-emerald-500/20 text-emerald-400 text-[0.65rem] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Running
-                </span>
-              ) : (
-                <span className="bg-slate-800 text-slate-300 text-[0.65rem] font-bold px-2.5 py-0.5 rounded-full">
-                  {progressLabel(selectedStep.progressState)}
-                </span>
-              )}
-            </div>
-            <div className="font-mono text-3xl font-black tracking-wider text-white my-2">
-              {formatElapsedDuration(computeElapsedSeconds(selectedStep))}
-            </div>
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <div className="bg-slate-800/80 rounded-xl p-3">
-                <span className="text-[0.55rem] font-bold text-slate-400 uppercase block mb-0.5">STARTED</span>
-                <span className="text-xs font-extrabold text-white block">
-                  {selectedStep.startTime ? new Date(selectedStep.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "08:12 AM"}
-                </span>
-              </div>
-              <div className="bg-slate-800/80 rounded-xl p-3">
-                <span className="text-[0.55rem] font-bold text-slate-400 uppercase block mb-0.5">CYCLE AVG</span>
-                <span className="text-xs font-extrabold text-white block">03:24</span>
-              </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-extrabold text-slate-900 leading-tight dark:text-white">Job Tracking</div>
+            <div className="text-[0.65rem] font-semibold text-slate-500 dark:text-slate-300">
+              {enableJobTracking ? "Timer and clock controls enabled" : "Simple step completion mode"}
             </div>
           </div>
+        </div>
+        <button
+          type="button"
+          className={`shrink-0 inline-flex h-8 items-center rounded-lg border px-2.5 text-[0.7rem] font-bold tracking-wide transition disabled:opacity-55 ${
+            enableJobTracking
+              ? "border-emerald-600/20 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/40 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+              : "border-red-600/20 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-700/40 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950/70"
+          }`}
+          title={enableJobTracking ? "Disable job tracking" : "Enable job tracking"}
+          aria-pressed={enableJobTracking}
+          disabled={saving}
+          onClick={() => void handleTrackToggle()}
+        >
+          {enableJobTracking ? "TRACK ON" : "TRACK OFF"}
+        </button>
+      </div>
 
-          {/* Qty Produced — same field/validation as Cimmple_UI JobSlideout */}
-          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
-            <div className="mb-1.5">
-              <label htmlFor="pwa-qty-produced" className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-                Qty Produced
-              </label>
+      {/* Sticky toast banners — full-width top strip */}
+      {(actionError || actionOk) && (
+        <div
+          className="fixed left-0 right-0 top-0 z-50"
+          style={{ paddingTop: "env(safe-area-inset-top)" }}
+        >
+          {actionError ? (
+            <div
+              className="flex min-h-9 w-full items-center justify-center bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 dark:bg-red-950 dark:text-red-200"
+              role="alert"
+            >
+              {actionError}
             </div>
-            <div className="flex gap-2">
-              <input
-                id="pwa-qty-produced"
-                type="number"
-                min={0}
-                inputMode="numeric"
-                className="h-9 min-h-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-                value={qtyDraft}
-                disabled={saving}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  setQtyDraft(raw);
-                  setQtyError("");
-                  const parsed = parseInt(raw, 10);
-                  if (!Number.isNaN(parsed) && parsed >= 0) {
-                    handleUpdateQtyProduced(selectedStep.id, parsed);
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="h-9 shrink-0 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-55"
-                disabled={saving}
-                onClick={() => void handleSaveQty()}
-              >
-                {saving ? "Saving…" : "Save qty"}
-              </button>
-            </div>
-            {qtyError && (
-              <div className="mt-1.5 text-xs font-semibold text-red-600">{qtyError}</div>
-            )}
-            <p className="mt-1.5 text-[0.7rem] font-medium text-slate-400">
-              Enter quantity produced for this operation.
-            </p>
-          </div>
-
-          {/* 2x2 Action Buttons Grid */}
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <button
-              type="button"
-              className="min-h-tap bg-[#00a86b] text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
-              disabled={saving || selectedStep.progressState === "running"}
-              onClick={() => void handleStartStep(selectedStep.id)}
+          ) : (
+            <div
+              className="flex min-h-9 w-full items-center justify-center bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200"
+              role="status"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-              Start
-            </button>
-
-            <button
-              type="button"
-              className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
-              disabled={saving || selectedStep.progressState !== "running"}
-              onClick={() => requestPauseStep(selectedStep.id)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-              </svg>
-              Pause
-            </button>
-
-            <button
-              type="button"
-              className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50"
-              disabled={saving || selectedStep.progressState !== "paused"}
-              onClick={() => void handleStartStep(selectedStep.id)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-              </svg>
-              Resume
-            </button>
-
-            <button
-              type="button"
-              className="min-h-tap bg-black text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50"
-              disabled={saving || isStepCompleted(selectedStep)}
-              onClick={() => requestCompleteStep(selectedStep.id)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <circle cx="12" cy="12" r="9"/>
-                <path d="M9 12l2 2 4-4"/>
-              </svg>
-              Complete
-            </button>
-          </div>
-
-          {/* Pause Reason Section */}
-          {selectedStep.pauseReason && (
-            <div className="bg-[#fffbeb] border border-amber-200/80 rounded-2xl p-4 mt-4">
-              <div className="text-xs font-extrabold text-amber-800 flex items-center gap-2 mb-2">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                </svg>
-                Pause reason
-              </div>
-              <div className="bg-white rounded-xl border border-amber-200/60 p-3 text-xs font-semibold text-slate-700">
-                {selectedStep.pauseReason}
-              </div>
+              {actionOk}
             </div>
           )}
         </div>
       )}
 
       {/* Card 3: Routing Timeline */}
-      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4">
+      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4 dark:bg-slate-800 dark:border-slate-600">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <span className="text-[0.65rem] font-black uppercase tracking-widest text-slate-400 block">
+            <span className="text-[0.65rem] font-black uppercase tracking-widest text-slate-500 block dark:text-slate-300">
               ROUTING TIMELINE
             </span>
-            <span className="text-xs text-slate-400 font-medium block mt-0.5">
+            <span className="text-xs text-slate-500 font-medium block mt-0.5 dark:text-slate-300">
               Track completed, current, and pending steps
             </span>
           </div>
-          <span className="bg-slate-100 text-slate-700 font-bold text-xs px-3 py-1 rounded-full">
-            {sortedSteps.filter(s => isStepCompleted(s)).length} of {sortedSteps.length}
+          <span className="bg-slate-100 text-slate-700 font-bold text-xs px-3 py-1 rounded-full dark:bg-slate-700 dark:text-slate-100">
+            {sortedSteps.filter((s) => isStepCompleted(s)).length} of {sortedSteps.length}
           </span>
         </div>
 
         {sortedSteps.length === 0 && (
-          <div className="py-8 text-center text-slate-400 font-bold text-xs">No routing steps on this job.</div>
+          <div className="py-8 text-center text-slate-500 font-bold text-xs dark:text-slate-300">No routing steps on this job.</div>
         )}
 
-        <div className="relative border-l-2 border-slate-100 ml-3.5 pl-6 space-y-4 py-2">
+        <div className="relative border-l-2 border-slate-200 ml-3.5 pl-6 space-y-4 py-2 dark:border-slate-600">
           {sortedSteps.map((step) => {
             const isSelected = selectedStep?.id === step.id;
             const completed = isStepCompleted(step);
-            const current = step.progressState === "running" || step.progressState === "paused" || (isSelected && !completed);
+            const isRunning = step.progressState === "running";
+            const isPaused = step.progressState === "paused";
+            const current =
+              isRunning || isPaused || (isSelected && !completed);
             const elapsed = formatElapsedDuration(computeElapsedSeconds(step));
 
             return (
@@ -831,34 +973,34 @@ export function JobDetailPage() {
                   {completed ? (
                     <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                        <path d="M5 13l4 4L19 7"/>
+                        <path d="M5 13l4 4L19 7" />
                       </svg>
                     </div>
                   ) : current ? (
-                    <div className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-sm">
-                      <span className="w-2.5 h-2.5 rounded-full bg-white"></span>
+                    <div className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-sm dark:bg-white dark:text-slate-900">
+                      <span className="w-2.5 h-2.5 rounded-full bg-white dark:bg-slate-900" />
                     </div>
                   ) : (
-                    <div className="w-7 h-7 rounded-full bg-white border-2 border-slate-300 text-slate-400 flex items-center justify-center">
-                      <span className="w-2.5 h-2.5 rounded-full border border-slate-300"></span>
+                    <div className="w-7 h-7 rounded-full bg-white border-2 border-slate-300 text-slate-400 flex items-center justify-center dark:bg-slate-800 dark:border-slate-500">
+                      <span className="w-2.5 h-2.5 rounded-full border border-slate-300 dark:border-slate-500" />
                     </div>
                   )}
                 </div>
 
-                {/* Step card button */}
+                {/* Step card button — original look */}
                 <button
                   type="button"
                   className={`w-full text-left transition-all ${
                     completed
-                      ? "bg-[#ecfdf5] border border-emerald-100 rounded-2xl p-4 block hover:border-emerald-200"
+                      ? "bg-[#ecfdf5] border border-emerald-100 rounded-2xl p-4 block hover:border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:hover:border-emerald-700"
                       : current
-                      ? "bg-slate-900 text-white rounded-2xl p-4 block shadow-md"
-                      : "bg-white border border-slate-200/80 rounded-2xl p-4 block hover:bg-slate-50"
+                      ? "bg-slate-900 text-white rounded-2xl p-4 block shadow-md dark:bg-slate-950 dark:ring-1 dark:ring-slate-600"
+                      : "bg-white border border-slate-200/80 rounded-2xl p-4 block hover:bg-slate-50 dark:bg-slate-900/60 dark:border-slate-600 dark:hover:bg-slate-900"
                   }`}
-                  onClick={() => setSelectedStepId(step.id)}
+                  onClick={() => openStepSheet(step.id)}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <div className={`text-sm font-extrabold ${current ? "text-white" : "text-slate-900"}`}>
+                    <div className={`text-sm font-extrabold ${current ? "text-white" : "text-slate-900 dark:text-white"}`}>
                       {step.sequence}. {step.processName}
                     </div>
                     {completed && (
@@ -867,44 +1009,79 @@ export function JobDetailPage() {
                       </span>
                     )}
                     {current && !completed && (
-                      <span className="bg-slate-700 text-slate-200 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase">
+                      <span className="bg-slate-700 text-slate-200 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-white">
                         CURRENT
                       </span>
                     )}
                     {!completed && !current && (
-                      <span className="bg-slate-100 text-slate-500 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase">
+                      <span className="bg-slate-100 text-slate-600 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-slate-200">
                         PENDING
                       </span>
                     )}
                   </div>
 
-                  <div className={`text-xs font-semibold mt-1 ${current ? "text-slate-300" : completed ? "text-emerald-700" : "text-slate-400"}`}>
+                  <div
+                    className={`text-xs font-semibold mt-1 ${
+                      current
+                        ? "text-slate-300"
+                        : completed
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : "text-slate-500 dark:text-slate-300"
+                    }`}
+                  >
                     {completed
                       ? `Finished · ${step.qtyProduced || 0} pcs accepted`
+                      : isRunning
+                      ? `Running on ${step.workstationName || "workstation"} · ${elapsed}`
+                      : isPaused
+                      ? `Paused · ${elapsed}`
                       : current
-                      ? `Running on Machine ${step.workstationName || "A3"} · ${elapsed}`
+                      ? `Selected · ${elapsed}`
                       : `Queued after previous step completes`}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold uppercase ${
-                      completed ? "bg-emerald-100 text-emerald-700" : current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-500"
-                    }`}>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold uppercase ${
+                        completed
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300"
+                          : current
+                          ? "bg-slate-700 text-slate-200"
+                          : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+                      }`}
+                    >
                       {completed ? "Done" : progressLabel(step.progressState)}
                     </span>
-                    <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
-                      current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600"
-                    }`}>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                        current
+                          ? "bg-slate-700 text-slate-200"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                      }`}
+                    >
                       {elapsed}
                     </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                        current
+                          ? "bg-slate-700 text-slate-200"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                      }`}
+                    >
+                      Est {step.estimatedTime || 0}m
+                    </span>
                     {(step.qtyProduced ?? 0) > 0 && (
-                      <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
-                        current ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600"
-                      }`}>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                          current
+                            ? "bg-slate-700 text-slate-200"
+                            : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                        }`}
+                      >
                         Qty {step.qtyProduced}
                       </span>
                     )}
                     {step.pauseReason && (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6rem] font-bold text-amber-800">
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6rem] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
                         Hold
                       </span>
                     )}
@@ -915,6 +1092,213 @@ export function JobDetailPage() {
           })}
         </div>
       </div>
+
+      {/* Step detail bottom sheet */}
+      {stepSheetOpen && selectedStep && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Step details"
+        >
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setStepSheetOpen(false)}
+          />
+          <div className="relative mx-auto w-full max-w-[540px] max-h-[85dvh] overflow-y-auto rounded-t-3xl bg-white px-5 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
+            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[0.65rem] font-black uppercase tracking-widest text-slate-500 mb-1 dark:text-slate-300">
+                  Selected routing step
+                </div>
+                <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
+                  {selectedStep.sequence}. {selectedStep.processName}
+                </h2>
+                <div className="text-xs font-semibold text-slate-500 mt-0.5 dark:text-slate-300">
+                  {selectedStep.workstationName
+                    ? `Machine ${selectedStep.workstationName}`
+                    : "Unassigned"}
+                  <span className="mx-1.5 text-slate-400 dark:text-slate-500">·</span>
+                  Est. {selectedStep.estimatedTime || 0} min
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStepSheetOpen(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                aria-label="Close"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+
+            {enableJobTracking ? (
+              <>
+                <div
+                  ref={timerSectionRef}
+                  className="mb-4 rounded-3xl border border-slate-700 bg-gradient-to-br from-slate-800 via-slate-900 to-black p-5 text-white shadow-lg ring-1 ring-white/10 dark:border-slate-500 dark:from-slate-700 dark:via-slate-800 dark:to-slate-950 dark:ring-white/15"
+                >
+                  <div className="mb-1 flex items-center justify-between text-[0.6rem] font-black uppercase tracking-widest text-slate-300">
+                    <span>LIVE TIMER</span>
+                    {selectedStep.progressState === "running" ? (
+                      <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[0.65rem] font-bold text-emerald-300">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                        Live
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-black/40 px-2.5 py-0.5 text-[0.65rem] font-bold text-slate-200 ring-1 ring-white/10">
+                        {progressLabel(selectedStep.progressState)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="my-2 font-mono text-3xl font-black tracking-wider text-white">
+                    {formatElapsedDuration(computeElapsedSeconds(selectedStep))}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-black/35 p-3 ring-1 ring-white/10">
+                      <span className="mb-0.5 block text-[0.55rem] font-bold uppercase text-slate-300">
+                        STARTED
+                      </span>
+                      <span className="block text-xs font-extrabold text-white">
+                        {selectedStep.startTime
+                          ? new Date(selectedStep.startTime).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="rounded-xl bg-black/35 p-3 ring-1 ring-white/10">
+                      <span className="mb-0.5 block text-[0.55rem] font-bold uppercase text-slate-300">
+                        CYCLE AVG
+                      </span>
+                      <span className="block text-xs font-extrabold text-white">03:24</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    className="min-h-tap bg-[#00a86b] text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                    disabled={saving || selectedStep.progressState === "running"}
+                    onClick={() => void handleStartStep(selectedStep.id)}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    Start
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
+                    disabled={saving || selectedStep.progressState !== "running"}
+                    onClick={() => requestPauseStep(selectedStep.id)}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                    </svg>
+                    Pause
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
+                    disabled={saving || selectedStep.progressState !== "paused"}
+                    onClick={() => void handleStartStep(selectedStep.id)}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Resume
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-tap bg-black text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                    disabled={saving || isStepCompleted(selectedStep)}
+                    onClick={() => requestCompleteStep(selectedStep.id)}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M9 12l2 2 4-4" />
+                    </svg>
+                    Complete
+                  </button>
+                </div>
+
+                {selectedStep.pauseReason && (
+                  <div className="bg-[#fffbeb] border border-amber-200/80 rounded-2xl p-4 mt-4 dark:bg-amber-950/40 dark:border-amber-800">
+                    <div className="text-xs font-extrabold text-amber-800 flex items-center gap-2 mb-2 dark:text-amber-300">
+                      Pause reason
+                    </div>
+                    <div className="bg-white rounded-xl border border-amber-200/60 p-3 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:border-amber-800 dark:text-slate-200">
+                      {selectedStep.pauseReason}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-800">
+                  <span className="text-[0.55rem] font-extrabold uppercase tracking-wide text-slate-500 block mb-1 dark:text-slate-300">
+                    Step status
+                  </span>
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.65rem] font-extrabold uppercase ${
+                      selectedStep.status === "Completed"
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                        : selectedStep.status === "In Progress"
+                        ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                        : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    {selectedStep.status || "Pending"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className={`min-h-tap inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-sm font-extrabold text-white disabled:opacity-50 ${
+                    selectedStep.status === "Completed"
+                      ? "bg-emerald-500 hover:bg-emerald-600"
+                      : "bg-slate-500 hover:bg-slate-600"
+                  }`}
+                  disabled={saving}
+                  onClick={() => void handleToggleStepCompletion(selectedStep.id)}
+                >
+                  {selectedStep.status === "Completed" ? "Mark incomplete" : "Complete step"}
+                </button>
+              </div>
+            )}
+
+            {/* Shop-floor actions — same as Cimmple_UI step menu */}
+            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-4 dark:border-slate-700">
+              <button
+                type="button"
+                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                disabled={saving}
+                onClick={() => requestStepNote(selectedStep.id)}
+              >
+                {(selectedStep.notes?.length || 0) > 0
+                  ? `Notes (${selectedStep.notes!.length})`
+                  : "Add Notes"}
+              </button>
+              <button
+                type="button"
+                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                disabled={saving}
+                onClick={() => openNcrForStep(selectedStep.id)}
+              >
+                {selectedStep.ncrFlags?.[0]?.ncrId
+                  ? selectedStep.ncrFlags[0].ncrNumber ||
+                    `NCR-${selectedStep.ncrFlags[0].ncrId}`
+                  : "Add NCR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {trackingDialog && (
         <div
@@ -932,8 +1316,8 @@ export function JobDetailPage() {
           >
             {trackingDialog.type === "pause" && (
               <>
-                <h4 className="mb-1 text-lg font-bold text-slate-900">Pause operation</h4>
-                <p className="mb-3 text-sm text-slate-500">
+                <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Pause operation</h4>
+                <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
                   Optional hold reason (you can skip):
                 </p>
                 <div className="mb-3 space-y-2">
@@ -976,18 +1360,18 @@ export function JobDetailPage() {
               );
               return (
               <>
-                <h4 className="mb-1 text-lg font-bold text-slate-900">Complete operation</h4>
-                <p className="mb-3 text-sm text-slate-500">
+                <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Complete operation</h4>
+                <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
                   {dialogStep
                     ? `Step ${dialogStep.sequence}: ${dialogStep.processName}`
                     : "Enter quantity produced for this operation."}
                 </p>
                 <div className="mb-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-slate-200 bg-canvas px-3 py-2.5">
-                    <div className="text-[0.7rem] font-bold uppercase tracking-wide text-slate-500">
+                  <div className="rounded-xl border border-slate-200 bg-canvas px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800">
+                    <div className="text-[0.7rem] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-300">
                       Order qty
                     </div>
-                    <div className="font-semibold">
+                    <div className="font-semibold text-slate-900 dark:text-white">
                       {orderQty} {job.Unit || ""}
                     </div>
                   </div>
@@ -1008,23 +1392,23 @@ export function JobDetailPage() {
                   </label>
                 </div>
                 {completeQtyError && (
-                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300">
                     {completeQtyError}
                   </div>
                 )}
                 {!completeQtyError && underOrder && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
                     Qty produced is less than order qty. Saving keeps this operation open.
                     Use Complete anyway only if the operation is finished short.
                   </div>
                 )}
                 {!completeQtyError && zeroWarn && meetsOrder && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
                     Qty produced is 0. You can still complete if this operation had no output.
                   </div>
                 )}
                 {!completeQtyError && overWarn && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800">
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
                     Qty produced exceeds order qty. Confirm only if overbuild is intended.
                   </div>
                 )}
@@ -1073,8 +1457,8 @@ export function JobDetailPage() {
 
             {trackingDialog.type === "reopen" && (
               <>
-                <h4 className="mb-1 text-lg font-bold text-slate-900">Reopen operation</h4>
-                <p className="mb-4 text-sm text-slate-500">
+                <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Reopen operation</h4>
+                <p className="mb-4 text-sm text-slate-500 dark:text-slate-300">
                   This will mark the operation as pending again and set the job to In Progress if
                   it was Completed. Elapsed time is kept; the clock stays stopped until you Start.
                 </p>
@@ -1098,94 +1482,73 @@ export function JobDetailPage() {
                 </div>
               </>
             )}
-          </div>
-        </div>
-      )}
 
-      {/* Sticky action strip — above bottom tabs */}
-      {selectedStep && (
-        <div
-          className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-0 right-0 z-30 border-t border-slate-200/80 bg-white/95 backdrop-blur-md shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
-        >
-          <div className="mx-auto flex max-w-[540px] flex-col gap-2 px-4 py-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-extrabold text-slate-900">
-                  {selectedStep.sequence}. {selectedStep.processName}
-                </div>
-                <div className="truncate text-[0.7rem] font-semibold text-slate-400">
-                  {selectedStep.workstationName
-                    ? selectedStep.workstationName
-                    : "No workstation"}
-                  {" · "}
-                  {progressLabel(selectedStep.progressState)}
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="font-mono text-base font-black tabular-nums text-slate-900">
-                  {formatElapsedDuration(computeElapsedSeconds(selectedStep))}
-                </div>
-                {selectedStep.progressState === "running" && (
-                  <div className="text-[0.6rem] font-bold uppercase tracking-wide text-emerald-600">
-                    Running
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              {isStepCompleted(selectedStep) ? (
-                <button
-                  type="button"
-                  className="btn btn-secondary min-h-tap flex-1 text-sm"
-                  disabled={saving}
-                  onClick={() => setTrackingDialog({ type: "reopen", stepId: selectedStep.id })}
-                >
-                  Reopen
-                </button>
-              ) : (
+            {trackingDialog.type === "stepNote" && (() => {
+              const dialogStep = stepsRef.current.find(
+                (s) => s.id === trackingDialog.stepId
+              );
+              const notes = dialogStep?.notes || [];
+              return (
                 <>
-                  {selectedStep.progressState !== "running" &&
-                    selectedStep.progressState !== "paused" && (
-                      <button
-                        type="button"
-                        className="min-h-tap flex-1 rounded-2xl bg-[#00a86b] px-4 text-sm font-extrabold text-white disabled:opacity-50"
-                        disabled={saving}
-                        onClick={() => void handleStartStep(selectedStep.id)}
-                      >
-                        Start
-                      </button>
-                    )}
-                  {selectedStep.progressState === "running" && (
+                  <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Step notes</h4>
+                  <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
+                    {dialogStep
+                      ? `Step ${dialogStep.sequence}: ${dialogStep.processName}`
+                      : "Add a shop-floor note for this step."}
+                  </p>
+                  {notes.length > 0 ? (
+                    <div className="mb-3 max-h-40 space-y-2 overflow-y-auto">
+                      {notes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+                        >
+                          <div className="font-semibold text-slate-800 dark:text-slate-100">{n.text}</div>
+                          <div className="mt-1 text-[0.7rem] font-semibold text-slate-400 dark:text-slate-300">
+                            {n.createdBy}
+                            {n.createdAt
+                              ? ` · ${new Date(n.createdAt).toLocaleString()}`
+                              : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mb-3 text-sm font-semibold text-slate-400 dark:text-slate-300">
+                      No notes on this step yet.
+                    </p>
+                  )}
+                  <label className="field mb-3">
+                    <span>New note</span>
+                    <textarea
+                      className="field-input min-h-[88px] py-3"
+                      value={stepNoteInput}
+                      onChange={(e) => setStepNoteInput(e.target.value)}
+                      placeholder="Enter note…"
+                      rows={3}
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      className="min-h-tap flex-1 rounded-2xl bg-[#f1f5f9] px-4 text-sm font-extrabold text-slate-800 disabled:opacity-50"
+                      className="btn btn-ghost"
                       disabled={saving}
-                      onClick={() => requestPauseStep(selectedStep.id)}
+                      onClick={() => setTrackingDialog(null)}
                     >
-                      Pause
+                      Close
                     </button>
-                  )}
-                  {selectedStep.progressState === "paused" && (
                     <button
                       type="button"
-                      className="min-h-tap flex-1 rounded-2xl bg-[#00a86b] px-4 text-sm font-extrabold text-white disabled:opacity-50"
+                      className="btn btn-primary"
                       disabled={saving}
-                      onClick={() => void handleStartStep(selectedStep.id)}
+                      onClick={() => void confirmAddStepNote()}
                     >
-                      Resume
+                      {saving ? "Saving…" : "Add note"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="min-h-tap flex-1 rounded-2xl bg-black px-4 text-sm font-extrabold text-white disabled:opacity-50"
-                    disabled={saving}
-                    onClick={() => requestCompleteStep(selectedStep.id)}
-                  >
-                    Complete
-                  </button>
+                  </div>
                 </>
-              )}
-            </div>
+              );
+            })()}
           </div>
         </div>
       )}
