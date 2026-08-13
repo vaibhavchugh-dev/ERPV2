@@ -7,6 +7,11 @@ export type NavItem = {
 /** Bottom tab destinations — primary shopfloor switchers. */
 export const BOTTOM_TABS: NavItem[] = [
   {
+    to: "/",
+    label: "Home",
+    match: (pathname) => pathname === "/",
+  },
+  {
     to: "/jobs",
     label: "Jobs",
     match: (pathname) => pathname === "/jobs" || pathname.startsWith("/jobs/"),
@@ -24,14 +29,14 @@ export const BOTTOM_TABS: NavItem[] = [
   },
 ];
 
-/** Drawer navigation — includes primary modules plus Dashboard. */
+/** Drawer navigation — Dashboard first, then other primary modules. */
 export const DRAWER_LINKS: NavItem[] = [
   {
     to: "/",
     label: "Dashboard",
     match: (pathname) => pathname === "/",
   },
-  ...BOTTOM_TABS,
+  ...BOTTOM_TABS.filter((t) => t.to !== "/"),
 ];
 
 /** @deprecated Use BOTTOM_TABS — kept for any leftover imports */

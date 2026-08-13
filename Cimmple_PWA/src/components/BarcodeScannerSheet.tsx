@@ -116,7 +116,7 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
+      <div className="relative mx-auto w-full max-w-[600px] rounded-t-3xl bg-white px-5 pt-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Scan QR / Barcode</h2>

@@ -581,7 +581,7 @@ export function NcrFormPage() {
         </div>
       )}
 
-      <p className="mb-4 text-xs font-semibold text-slate-500">
+      <p className="mb-4 text-sm font-semibold text-slate-500">
         You can save this NCR with a title and return later to complete it.
       </p>
 
@@ -589,9 +589,9 @@ export function NcrFormPage() {
         {/* Status */}
         <section className="card space-y-3 p-5">
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Status</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Status</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.status || "Open"}
               onChange={(e) => setField("status", e.target.value as NCRStatus)}
             >
@@ -606,13 +606,13 @@ export function NcrFormPage() {
 
         {/* Basic */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Basic information
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Title *</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Title *</span>
             <input
-              className="field-input min-h-12 text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 text-base font-semibold shadow-sm"
               value={ncr.title || ""}
               maxLength={200}
               onChange={(e) => setField("title", e.target.value)}
@@ -621,9 +621,9 @@ export function NcrFormPage() {
             />
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">NCR Code</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">NCR Code</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.ncrCodeId && ncr.ncrCodeId > 0 ? ncr.ncrCodeId : ""}
               onChange={(e) => {
                 const id = Number(e.target.value) || 0;
@@ -645,9 +645,9 @@ export function NcrFormPage() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Source</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Source</span>
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.source || "Internal"}
                 onChange={(e) =>
                   handleSourceChange(e.target.value as NonConformanceReport["source"])
@@ -659,9 +659,9 @@ export function NcrFormPage() {
               </select>
             </label>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Severity</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Severity</span>
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.severity || "Minor"}
                 onChange={(e) => setField("severity", e.target.value as NCRSeverity)}
               >
@@ -672,9 +672,9 @@ export function NcrFormPage() {
             </label>
           </div>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Category</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Category</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.category || "Other"}
               onChange={(e) => setField("category", e.target.value as NCRCategory)}
             >
@@ -688,11 +688,11 @@ export function NcrFormPage() {
             </select>
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Description (recommended)
             </span>
             <textarea
-              className="field-input min-h-[96px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[96px] py-3 text-base font-semibold shadow-sm"
               value={ncr.description || ""}
               maxLength={1000}
               onChange={(e) => setField("description", e.target.value)}
@@ -703,13 +703,13 @@ export function NcrFormPage() {
 
         {/* JO / Customer */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Job / customer
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Job Order</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Job Order</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.jobOrderId || ""}
               onChange={(e) => handleJobChange(Number(e.target.value) || 0)}
             >
@@ -722,9 +722,9 @@ export function NcrFormPage() {
             </select>
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Routing Step</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Routing Step</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm disabled:opacity-60"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm disabled:opacity-60"
               value={ncr.routingStepId || ""}
               disabled={!joLocked}
               onChange={(e) =>
@@ -741,9 +741,9 @@ export function NcrFormPage() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Part Number</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Part Number</span>
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 value={ncr.partNo || ""}
                 maxLength={100}
                 readOnly={joLocked}
@@ -751,9 +751,9 @@ export function NcrFormPage() {
               />
             </label>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Part Name</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Part Name</span>
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 value={ncr.partName || ""}
                 maxLength={200}
                 readOnly={joLocked}
@@ -762,16 +762,16 @@ export function NcrFormPage() {
             </label>
           </div>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Customer</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Customer</span>
             {joLocked ? (
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 value={ncr.customerName || ""}
                 readOnly
               />
             ) : (
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.customerId || ""}
                 onChange={(e) => {
                   const id = Number(e.target.value) || 0;
@@ -797,13 +797,13 @@ export function NcrFormPage() {
         {/* Vendor / PO — External only */}
         {ncr.source === "External" && (
           <section className="card space-y-3 p-5">
-            <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+            <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
               Vendor / PO
             </h2>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Vendor *</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Vendor *</span>
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.vendorId && ncr.vendorId > 0 ? ncr.vendorId : ""}
                 onChange={(e) => {
                   const id = Number(e.target.value) || 0;
@@ -828,9 +828,9 @@ export function NcrFormPage() {
               </select>
             </label>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Vendor PO *</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Vendor PO *</span>
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.vendorOrderId && ncr.vendorOrderId > 0 ? ncr.vendorOrderId : ""}
                 onChange={(e) => {
                   const id = Number(e.target.value) || 0;
@@ -861,13 +861,13 @@ export function NcrFormPage() {
 
         {/* Defect */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Defect details
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Defect Location</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Defect Location</span>
             <input
-              className="field-input min-h-12 text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 text-base font-semibold shadow-sm"
               value={ncr.defectLocation || ""}
               maxLength={200}
               onChange={(e) => setField("defectLocation", e.target.value)}
@@ -875,9 +875,9 @@ export function NcrFormPage() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Defect Quantity</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Defect Quantity</span>
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 type="number"
                 min={0}
                 value={ncr.defectQuantity ?? 0}
@@ -885,9 +885,9 @@ export function NcrFormPage() {
               />
             </label>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">Total Quantity</span>
+              <span className="mb-1 block text-sm font-bold text-slate-500">Total Quantity</span>
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 type="number"
                 min={0}
                 value={ncr.totalQuantity ?? 0}
@@ -896,9 +896,9 @@ export function NcrFormPage() {
             </label>
           </div>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Due Date</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Due Date</span>
             <input
-              className="field-input min-h-12 text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 text-base font-semibold shadow-sm"
               type="date"
               value={
                 ncr.dueDate
@@ -909,11 +909,11 @@ export function NcrFormPage() {
             />
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Defect Description
             </span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.defectDescription || ""}
               maxLength={500}
               onChange={(e) => setField("defectDescription", e.target.value)}
@@ -921,7 +921,7 @@ export function NcrFormPage() {
             />
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Photo Attachments
             </span>
             <input
@@ -970,13 +970,13 @@ export function NcrFormPage() {
 
         {/* Workflow */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Workflow
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Reported By</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Reported By</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={
                 ncr.reportedBy && ncr.reportedBy > 0
                   ? ncr.reportedBy
@@ -995,9 +995,9 @@ export function NcrFormPage() {
             </select>
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Investigator</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Investigator</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.investigatedBy || ""}
               onChange={(e) => handleInvestigatorChange(Number(e.target.value) || 0)}
             >
@@ -1010,9 +1010,9 @@ export function NcrFormPage() {
             </select>
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Approver</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Approver</span>
             <select
-              className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+              className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
               value={ncr.approvedBy || ""}
               onChange={(e) => handleApproverChange(Number(e.target.value) || 0)}
             >
@@ -1028,16 +1028,16 @@ export function NcrFormPage() {
 
         {/* Root cause */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Root cause
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">
+              <span className="mb-1 block text-sm font-bold text-slate-500">
                 Root Cause Category
               </span>
               <select
-                className="field-input min-h-12 bg-white text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 bg-white text-base font-semibold shadow-sm"
                 value={ncr.rootCauseCategory || "Other"}
                 onChange={(e) =>
                   setField("rootCauseCategory", e.target.value as RootCauseCategory)
@@ -1052,11 +1052,11 @@ export function NcrFormPage() {
               </select>
             </label>
             <label className="field">
-              <span className="mb-1 block text-xs font-bold text-slate-500">
+              <span className="mb-1 block text-sm font-bold text-slate-500">
                 Cost Impact ($)
               </span>
               <input
-                className="field-input min-h-12 text-sm font-semibold shadow-sm"
+                className="field-input min-h-12 text-base font-semibold shadow-sm"
                 type="number"
                 min={0}
                 step={0.01}
@@ -1066,9 +1066,9 @@ export function NcrFormPage() {
             </label>
           </div>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Root Cause</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Root Cause</span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.rootCause || ""}
               maxLength={500}
               onChange={(e) => setField("rootCause", e.target.value)}
@@ -1079,15 +1079,15 @@ export function NcrFormPage() {
 
         {/* Actions */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Actions
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Immediate Action
             </span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.immediateAction || ""}
               maxLength={500}
               onChange={(e) => setField("immediateAction", e.target.value)}
@@ -1095,11 +1095,11 @@ export function NcrFormPage() {
             />
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Corrective Action
             </span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.correctiveAction || ""}
               maxLength={500}
               onChange={(e) => setField("correctiveAction", e.target.value)}
@@ -1107,11 +1107,11 @@ export function NcrFormPage() {
             />
           </label>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">
+            <span className="mb-1 block text-sm font-bold text-slate-500">
               Preventive Action
             </span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.preventiveAction || ""}
               maxLength={500}
               onChange={(e) => setField("preventiveAction", e.target.value)}
@@ -1122,13 +1122,13 @@ export function NcrFormPage() {
 
         {/* Additional Notes */}
         <section className="card space-y-3 p-5">
-          <h2 className="text-[0.65rem] font-extrabold uppercase tracking-widest text-slate-400">
+          <h2 className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
             Additional notes
           </h2>
           <label className="field">
-            <span className="mb-1 block text-xs font-bold text-slate-500">Notes</span>
+            <span className="mb-1 block text-sm font-bold text-slate-500">Notes</span>
             <textarea
-              className="field-input min-h-[80px] py-3 text-sm font-semibold shadow-sm"
+              className="field-input min-h-[80px] py-3 text-base font-semibold shadow-sm"
               value={ncr.notes || ""}
               maxLength={500}
               onChange={(e) => setField("notes", e.target.value)}
@@ -1139,7 +1139,7 @@ export function NcrFormPage() {
       </form>
 
       <div className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-0 right-0 z-30 border-t border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95">
-        <div className="mx-auto max-w-[540px]">
+        <div className="mx-auto max-w-[600px]">
           <button
             type="submit"
             form="ncr-form"

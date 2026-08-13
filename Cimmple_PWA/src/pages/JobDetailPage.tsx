@@ -709,8 +709,8 @@ export function JobDetailPage() {
             </svg>
           </Link>
           <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Job Details</h1>
-            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Job Details</h1>
+            <p className="text-sm font-semibold text-slate-500 dark:text-slate-300">
               {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
             </p>
           </div>
@@ -765,11 +765,11 @@ export function JobDetailPage() {
                 </span>
               )}
             </div>
-            <div className="text-lg font-black tracking-tight text-slate-900 mt-1 leading-tight dark:text-white">
+            <div className="text-xl font-black tracking-tight text-slate-900 mt-1 leading-tight dark:text-white">
               {formatJobNumber(job.JobOrderNumber || job.JobNumber || job.JobOrderID)}
             </div>
             {job.CustomerName && (
-              <div className="text-[0.7rem] font-semibold text-slate-500 truncate dark:text-slate-300">
+              <div className="text-sm font-semibold text-slate-500 truncate dark:text-slate-300">
                 {job.CustomerName}
               </div>
             )}
@@ -796,10 +796,10 @@ export function JobDetailPage() {
 
         {job.PartName && (
           <div className="rounded-xl border border-slate-100 bg-slate-50 px-2.5 py-1 dark:border-slate-600 dark:bg-slate-950">
-            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">
+            <span className="text-[0.55rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">
               Part Description
             </span>
-            <span className="text-[0.7rem] font-semibold text-slate-700 leading-snug dark:text-slate-100">
+            <span className="text-sm font-semibold text-slate-700 leading-snug dark:text-slate-100">
               {job.PartName}
             </span>
           </div>
@@ -808,16 +808,16 @@ export function JobDetailPage() {
         {/* Part, Target, Remaining Grid */}
         <div className="grid grid-cols-3 gap-1.5">
           <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
-            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">PART</span>
-            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">{job.PartNo || "—"}</span>
+            <span className="text-[0.55rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">PART</span>
+            <span className="text-sm font-extrabold text-slate-900 truncate block dark:text-white">{job.PartNo || "—"}</span>
           </div>
           <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
-            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">TARGET</span>
-            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">{job.QtyOrdered} {job.Unit || "pcs"}</span>
+            <span className="text-[0.55rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">TARGET</span>
+            <span className="text-sm font-extrabold text-slate-900 truncate block dark:text-white">{job.QtyOrdered} {job.Unit || "pcs"}</span>
           </div>
           <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
-            <span className="text-[0.5rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">REMAINING</span>
-            <span className="text-[0.7rem] font-extrabold text-slate-900 truncate block dark:text-white">
+            <span className="text-[0.55rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">REMAINING</span>
+            <span className="text-sm font-extrabold text-slate-900 truncate block dark:text-white">
               {Math.max(0, job.QtyOrdered - (job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0))} {job.Unit || "pcs"}
             </span>
           </div>
@@ -848,7 +848,7 @@ export function JobDetailPage() {
               : "bg-transparent";
             return (
               <>
-                <div className="flex items-center justify-between text-[0.65rem] font-bold mb-1">
+                <div className="flex items-center justify-between text-sm font-bold mb-1">
                   <span className="text-slate-600 dark:text-slate-300">Progress</span>
                   <span className="text-slate-900 font-black dark:text-white">{pct}%</span>
                 </div>
@@ -860,7 +860,7 @@ export function JobDetailPage() {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-between text-[0.65rem] font-semibold text-slate-500 dark:text-slate-300">
+                <div className="flex items-center justify-between text-sm font-semibold text-slate-500 dark:text-slate-300">
                   <span>
                     Produced {produced}
                     {orderQty > 0 ? ` / ${orderQty}` : ""}
@@ -890,8 +890,8 @@ export function JobDetailPage() {
             </svg>
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-extrabold text-slate-900 leading-tight dark:text-white">Job Tracking</div>
-            <div className="text-[0.65rem] font-semibold text-slate-500 dark:text-slate-300">
+            <div className="text-base font-extrabold text-slate-900 leading-tight dark:text-white">Job Tracking</div>
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-300">
               {enableJobTracking ? "Timer and clock controls enabled" : "Simple step completion mode"}
             </div>
           </div>
@@ -938,32 +938,31 @@ export function JobDetailPage() {
 
       {/* Card 3: Routing Timeline */}
       <div className="bg-white rounded-3xl border border-slate-200/60 shadow-[0_2px_12px_rgba(0,0,0,0.03)] p-5 mb-4 dark:bg-slate-800 dark:border-slate-600">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-5">
           <div>
-            <span className="text-[0.65rem] font-black uppercase tracking-widest text-slate-500 block dark:text-slate-300">
-              ROUTING TIMELINE
+            <span className="text-lg font-black tracking-tight text-slate-900 block dark:text-white">
+              Routing Timeline
             </span>
-            <span className="text-xs text-slate-500 font-medium block mt-0.5 dark:text-slate-300">
+            <span className="text-base text-slate-500 font-medium block mt-0.5 dark:text-slate-300">
               Track completed, current, and pending steps
             </span>
           </div>
-          <span className="bg-slate-100 text-slate-700 font-bold text-xs px-3 py-1 rounded-full dark:bg-slate-700 dark:text-slate-100">
-            {sortedSteps.filter((s) => isStepCompleted(s)).length} of {sortedSteps.length}
+          <span className="bg-slate-100 text-slate-700 font-bold text-sm px-3 py-1 rounded-full dark:bg-slate-700 dark:text-slate-100">
+            {sortedSteps.filter((s) => isStepCompleted(s)).length}/{sortedSteps.length}
           </span>
         </div>
 
         {sortedSteps.length === 0 && (
-          <div className="py-8 text-center text-slate-500 font-bold text-xs dark:text-slate-300">No routing steps on this job.</div>
+          <div className="py-8 text-center text-slate-500 font-bold text-sm dark:text-slate-300">No routing steps on this job.</div>
         )}
 
         <div className="relative border-l-2 border-slate-200 ml-3.5 pl-6 space-y-4 py-2 dark:border-slate-600">
           {sortedSteps.map((step) => {
-            const isSelected = selectedStep?.id === step.id;
             const completed = isStepCompleted(step);
             const isRunning = step.progressState === "running";
             const isPaused = step.progressState === "paused";
-            const current =
-              isRunning || isPaused || (isSelected && !completed);
+            // Live tracking only — selecting a step must not change card appearance
+            const current = !completed && (isRunning || isPaused);
             const elapsed = formatElapsedDuration(computeElapsedSeconds(step));
 
             return (
@@ -987,7 +986,6 @@ export function JobDetailPage() {
                   )}
                 </div>
 
-                {/* Step card button — original look */}
                 <button
                   type="button"
                   className={`w-full text-left transition-all ${
@@ -1000,32 +998,40 @@ export function JobDetailPage() {
                   onClick={() => openStepSheet(step.id)}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <div className={`text-sm font-extrabold ${current ? "text-white" : "text-slate-900 dark:text-white"}`}>
+                    <div
+                      className={`text-lg font-extrabold ${
+                        completed
+                          ? "text-slate-900 dark:text-white"
+                          : current
+                          ? "text-white"
+                          : "text-slate-900 dark:text-white"
+                      }`}
+                    >
                       {step.sequence}. {step.processName}
                     </div>
                     {completed && (
-                      <span className="bg-[#10b981] text-white text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase">
+                      <span className="bg-[#10b981] text-white text-[0.7rem] font-black px-2.5 py-0.5 rounded-full uppercase">
                         COMPLETED
                       </span>
                     )}
                     {current && !completed && (
-                      <span className="bg-slate-700 text-slate-200 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-white">
+                      <span className="bg-slate-700 text-slate-200 text-[0.7rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-white">
                         CURRENT
                       </span>
                     )}
                     {!completed && !current && (
-                      <span className="bg-slate-100 text-slate-600 text-[0.6rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-slate-200">
+                      <span className="bg-slate-100 text-slate-600 text-[0.7rem] font-black px-2.5 py-0.5 rounded-full uppercase dark:bg-slate-700 dark:text-slate-200">
                         PENDING
                       </span>
                     )}
                   </div>
 
                   <div
-                    className={`text-xs font-semibold mt-1 ${
-                      current
-                        ? "text-slate-300"
-                        : completed
+                    className={`text-base font-semibold mt-1 ${
+                      completed
                         ? "text-emerald-700 dark:text-emerald-300"
+                        : current
+                        ? "text-slate-300"
                         : "text-slate-500 dark:text-slate-300"
                     }`}
                   >
@@ -1035,13 +1041,11 @@ export function JobDetailPage() {
                       ? `Running on ${step.workstationName || "workstation"} · ${elapsed}`
                       : isPaused
                       ? `Paused · ${elapsed}`
-                      : current
-                      ? `Selected · ${elapsed}`
                       : `Queued after previous step completes`}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold uppercase ${
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-extrabold uppercase ${
                         completed
                           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300"
                           : current
@@ -1052,7 +1056,7 @@ export function JobDetailPage() {
                       {completed ? "Done" : progressLabel(step.progressState)}
                     </span>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
                         current
                           ? "bg-slate-700 text-slate-200"
                           : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
@@ -1061,7 +1065,7 @@ export function JobDetailPage() {
                       {elapsed}
                     </span>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
                         current
                           ? "bg-slate-700 text-slate-200"
                           : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
@@ -1071,7 +1075,7 @@ export function JobDetailPage() {
                     </span>
                     {(step.qtyProduced ?? 0) > 0 && (
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[0.6rem] font-bold ${
+                        className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
                           current
                             ? "bg-slate-700 text-slate-200"
                             : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
@@ -1081,7 +1085,7 @@ export function JobDetailPage() {
                       </span>
                     )}
                     {step.pauseReason && (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6rem] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.7rem] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
                         Hold
                       </span>
                     )}
@@ -1105,17 +1109,17 @@ export function JobDetailPage() {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setStepSheetOpen(false)}
           />
-          <div className="relative mx-auto w-full max-w-[540px] max-h-[85dvh] overflow-y-auto rounded-t-3xl bg-white px-5 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
+          <div className="relative mx-auto w-full max-w-[600px] max-h-[85dvh] overflow-y-auto rounded-t-3xl bg-white px-5 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:bg-slate-900">
             <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[0.65rem] font-black uppercase tracking-widest text-slate-500 mb-1 dark:text-slate-300">
+                <div className="text-sm font-black uppercase tracking-widest text-slate-500 mb-1 dark:text-slate-300">
                   Selected routing step
                 </div>
-                <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
+                <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
                   {selectedStep.sequence}. {selectedStep.processName}
                 </h2>
-                <div className="text-xs font-semibold text-slate-500 mt-0.5 dark:text-slate-300">
+                <div className="text-base font-semibold text-slate-500 mt-0.5 dark:text-slate-300">
                   {selectedStep.workstationName
                     ? `Machine ${selectedStep.workstationName}`
                     : "Unassigned"}
@@ -1141,28 +1145,28 @@ export function JobDetailPage() {
                   ref={timerSectionRef}
                   className="mb-4 rounded-3xl border border-slate-700 bg-gradient-to-br from-slate-800 via-slate-900 to-black p-5 text-white shadow-lg ring-1 ring-white/10 dark:border-slate-500 dark:from-slate-700 dark:via-slate-800 dark:to-slate-950 dark:ring-white/15"
                 >
-                  <div className="mb-1 flex items-center justify-between text-[0.6rem] font-black uppercase tracking-widest text-slate-300">
+                  <div className="mb-1 flex items-center justify-between text-xs font-black uppercase tracking-widest text-slate-300">
                     <span>LIVE TIMER</span>
                     {selectedStep.progressState === "running" ? (
-                      <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[0.65rem] font-bold text-emerald-300">
+                      <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-sm font-bold text-emerald-300">
                         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                         Live
                       </span>
                     ) : (
-                      <span className="rounded-full bg-black/40 px-2.5 py-0.5 text-[0.65rem] font-bold text-slate-200 ring-1 ring-white/10">
+                      <span className="rounded-full bg-black/40 px-2.5 py-0.5 text-sm font-bold text-slate-200 ring-1 ring-white/10">
                         {progressLabel(selectedStep.progressState)}
                       </span>
                     )}
                   </div>
-                  <div className="my-2 font-mono text-3xl font-black tracking-wider text-white">
+                  <div className="my-2 font-mono text-4xl font-black tracking-wider text-white">
                     {formatElapsedDuration(computeElapsedSeconds(selectedStep))}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <div className="rounded-xl bg-black/35 p-3 ring-1 ring-white/10">
-                      <span className="mb-0.5 block text-[0.55rem] font-bold uppercase text-slate-300">
+                      <span className="mb-0.5 block text-xs font-bold uppercase text-slate-300">
                         STARTED
                       </span>
-                      <span className="block text-xs font-extrabold text-white">
+                      <span className="block text-base font-extrabold text-white">
                         {selectedStep.startTime
                           ? new Date(selectedStep.startTime).toLocaleTimeString([], {
                               hour: "2-digit",
@@ -1172,10 +1176,10 @@ export function JobDetailPage() {
                       </span>
                     </div>
                     <div className="rounded-xl bg-black/35 p-3 ring-1 ring-white/10">
-                      <span className="mb-0.5 block text-[0.55rem] font-bold uppercase text-slate-300">
+                      <span className="mb-0.5 block text-xs font-bold uppercase text-slate-300">
                         CYCLE AVG
                       </span>
-                      <span className="block text-xs font-extrabold text-white">03:24</span>
+                      <span className="block text-base font-extrabold text-white">03:24</span>
                     </div>
                   </div>
                 </div>
@@ -1183,7 +1187,7 @@ export function JobDetailPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    className="min-h-tap bg-[#00a86b] text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                    className="min-h-tap bg-[#00a86b] text-white font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50"
                     disabled={saving || selectedStep.progressState === "running"}
                     onClick={() => void handleStartStep(selectedStep.id)}
                   >
@@ -1194,7 +1198,7 @@ export function JobDetailPage() {
                   </button>
                   <button
                     type="button"
-                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
+                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
                     disabled={saving || selectedStep.progressState !== "running"}
                     onClick={() => requestPauseStep(selectedStep.id)}
                   >
@@ -1205,7 +1209,7 @@ export function JobDetailPage() {
                   </button>
                   <button
                     type="button"
-                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
+                    className="min-h-tap bg-[#f1f5f9] text-slate-800 font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 dark:bg-slate-800 dark:text-slate-100"
                     disabled={saving || selectedStep.progressState !== "paused"}
                     onClick={() => void handleStartStep(selectedStep.id)}
                   >
@@ -1216,7 +1220,7 @@ export function JobDetailPage() {
                   </button>
                   <button
                     type="button"
-                    className="min-h-tap bg-black text-white font-extrabold text-sm py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                    className="min-h-tap bg-black text-white font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
                     disabled={saving || isStepCompleted(selectedStep)}
                     onClick={() => requestCompleteStep(selectedStep.id)}
                   >
@@ -1259,7 +1263,7 @@ export function JobDetailPage() {
                 </div>
                 <button
                   type="button"
-                  className={`min-h-tap inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-sm font-extrabold text-white disabled:opacity-50 ${
+                  className={`min-h-tap inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-base font-extrabold text-white disabled:opacity-50 ${
                     selectedStep.status === "Completed"
                       ? "bg-emerald-500 hover:bg-emerald-600"
                       : "bg-slate-500 hover:bg-slate-600"
@@ -1276,7 +1280,7 @@ export function JobDetailPage() {
             <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-4 dark:border-slate-700">
               <button
                 type="button"
-                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-base font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                 disabled={saving}
                 onClick={() => requestStepNote(selectedStep.id)}
               >
@@ -1286,7 +1290,7 @@ export function JobDetailPage() {
               </button>
               <button
                 type="button"
-                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                className="min-h-tap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-base font-extrabold text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                 disabled={saving}
                 onClick={() => openNcrForStep(selectedStep.id)}
               >

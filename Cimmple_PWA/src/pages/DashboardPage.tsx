@@ -94,42 +94,6 @@ function ChevronRight({ className }: { className?: string }) {
   );
 }
 
-function ActiveJobsIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M8 9h8M8 13h5" />
-    </svg>
-  );
-}
-
-function AlertsIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M12 3L2 20h20L12 3z" />
-      <path d="M12 10v4M12 17h.01" />
-    </svg>
-  );
-}
-
 export function DashboardPage() {
   const navigate = useNavigate();
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -176,11 +140,6 @@ export function DashboardPage() {
   const activeJobs = useMemo(
     () => jobs.filter((j) => isActiveJob(j.status)),
     [jobs]
-  );
-
-  const highAlertCount = useMemo(
-    () => alerts.filter((a) => (a.priority || "").toLowerCase() === "high").length,
-    [alerts]
   );
 
   const handleScan = useCallback(
@@ -232,80 +191,11 @@ export function DashboardPage() {
           </div>
         </header>
 
-        {/* Status tiles */}
-        <div className="mb-5 grid grid-cols-2 gap-3">
-          <div className="relative overflow-hidden rounded-[1.35rem] border border-slate-200/90 bg-gradient-to-br from-white via-white to-slate-50 px-3.5 py-3.5 shadow-card dark:border-slate-700 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900">
-            <div
-              aria-hidden
-              className="absolute -right-3 -top-3 h-16 w-16 rounded-full bg-accent/10 blur-xl"
-            />
-            <div className="relative flex items-start justify-between gap-2">
-              <div>
-                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-slate-400">
-                  Active
-                </p>
-                <p className="mt-1 text-3xl font-black tabular-nums tracking-tight text-slate-900 dark:text-white">
-                  {loadingJobs ? "—" : activeJobs.length}
-                </p>
-                <p className="mt-0.5 text-[0.65rem] font-bold text-slate-400">
-                  jobs open
-                </p>
-              </div>
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent ring-1 ring-accent/20">
-                <ActiveJobsIcon className="h-5 w-5" />
-              </span>
-            </div>
-          </div>
-
-          <div
-            className={`relative overflow-hidden rounded-[1.35rem] border px-3.5 py-3.5 shadow-card ${
-              highAlertCount > 0
-                ? "border-red-200/90 bg-gradient-to-br from-red-50 via-white to-white dark:border-red-900/50 dark:from-red-950/50 dark:via-slate-800 dark:to-slate-900"
-                : "border-slate-200/90 bg-gradient-to-br from-white via-white to-slate-50 dark:border-slate-700 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900"
-            }`}
-          >
-            <div
-              aria-hidden
-              className={`absolute -right-3 -top-3 h-16 w-16 rounded-full blur-xl ${
-                highAlertCount > 0 ? "bg-red-500/20" : "bg-slate-400/10"
-              }`}
-            />
-            <div className="relative flex items-start justify-between gap-2">
-              <div>
-                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-slate-400">
-                  Alerts
-                </p>
-                <p
-                  className={`mt-1 text-3xl font-black tabular-nums tracking-tight ${
-                    highAlertCount > 0
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-slate-900 dark:text-white"
-                  }`}
-                >
-                  {loadingAlerts ? "—" : alerts.length}
-                </p>
-                <p className="mt-0.5 text-[0.65rem] font-bold text-slate-400">
-                  {highAlertCount > 0 ? "need attention" : "all clear"}
-                </p>
-              </div>
-              <span
-                className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${
-                  highAlertCount > 0
-                    ? "bg-red-500/15 text-red-600 ring-red-500/25 dark:text-red-400"
-                    : "bg-slate-500/10 text-slate-500 ring-slate-400/20"
-                }`}
-              >
-                <AlertsIcon className="h-5 w-5" />
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Scanner — visual anchor, not overpowering jobs */}
+        {/* Scanner — top of dashboard */}
         <button
           type="button"
           onClick={() => setScannerOpen(true)}
-          className="group relative mb-7 w-full overflow-hidden rounded-[1.75rem] bg-slate-950 p-[1px] text-left shadow-[0_16px_40px_rgba(15,23,42,0.22)] transition active:scale-[0.985] dark:shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
+          className="group relative mb-5 w-full overflow-hidden rounded-[1.75rem] bg-slate-950 p-[1px] text-left shadow-[0_16px_40px_rgba(15,23,42,0.22)] transition active:scale-[0.985] dark:shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
         >
           <span
             aria-hidden
@@ -333,14 +223,16 @@ export function DashboardPage() {
           </span>
         </button>
 
-        {/* Active Jobs */}
+       
+
+        {/* Active Jobs — 3-column tiles */}
         <section className="mb-7">
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
                 Active Jobs
               </h2>
-              <p className="text-[0.7rem] font-bold uppercase tracking-[0.14em] text-slate-400">
+              <p className="text-[0.7rem] font-bold uppercase tracking-[0.14em] text-slate-400 dark:text-slate-300">
                 {loadingJobs ? "Loading…" : `${activeJobs.length} on the floor`}
               </p>
             </div>
@@ -358,22 +250,22 @@ export function DashboardPage() {
               {jobsError}
             </p>
           ) : loadingJobs ? (
-            <div className="space-y-2">
-              {[0, 1, 2].map((i) => (
+            <div className="grid grid-cols-3 gap-2.5">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
                 <div
                   key={i}
-                  className="h-12 animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800"
+                  className="h-[3.75rem] animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800"
                 />
               ))}
             </div>
           ) : activeJobs.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center dark:border-slate-600 dark:bg-slate-800">
-              <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
+              <p className="text-sm font-bold text-slate-500 dark:text-slate-300">
                 No active jobs
               </p>
             </div>
           ) : (
-            <ul className="space-y-2">
+            <ul className="grid grid-cols-3 gap-2.5">
               {activeJobs.map((job) => {
                 const jobNo = formatJobNumber(
                   job.jobOrderNumber || job.jobNumber || job.jobOrderID
@@ -382,13 +274,10 @@ export function DashboardPage() {
                   <li key={job.jobOrderID}>
                     <Link
                       to={`/jobs/${job.jobOrderID}`}
-                      className="flex min-h-tap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition active:scale-[0.99] dark:border-slate-600 dark:bg-slate-800"
+                      className="flex min-h-[3.75rem] items-center justify-center rounded-2xl border border-slate-200 bg-white px-2 py-3 text-center shadow-sm transition active:scale-[0.98] dark:border-slate-600 dark:bg-slate-800"
                     >
-                      <span className="text-base font-black tracking-tight text-slate-900 dark:text-white">
+                      <span className="text-sm font-black leading-tight tracking-tight text-slate-900 dark:text-white">
                         {jobNo}
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-xs font-extrabold text-slate-500 dark:text-slate-400">
-                        <ChevronRight className="h-3.5 w-3.5" />
                       </span>
                     </Link>
                   </li>

@@ -87,7 +87,7 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, onApply, onClose }
         onClick={onClose}
       />
       {/* Sheet */}
-      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl dark:bg-slate-900">
+      <div className="relative mx-auto w-full max-w-[600px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl dark:bg-slate-900">
         {/* Handle */}
         <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
 
@@ -246,12 +246,11 @@ export function JobsPage() {
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
   const { visible, stats } = useMemo(() => {
-    let total = jobs.length, inProgress = 0, onHold = 0, completed = 0;
+    let total = jobs.length, inProgress = 0, completed = 0;
     jobs.forEach((j) => {
       const s = (j.status || "").toLowerCase();
       if (s.includes("complete")) completed++;
-      else if (s.includes("hold") || s.includes("cancel")) onHold++;
-      else inProgress++;
+      else if (!(s.includes("hold") || s.includes("cancel"))) inProgress++;
     });
 
     const filtered = jobs.filter((j) => {
@@ -291,7 +290,7 @@ export function JobsPage() {
       return (a.dueDate || "").localeCompare(b.dueDate || "");
     });
 
-    return { visible: filtered, stats: { total, inProgress, onHold, completed } };
+    return { visible: filtered, stats: { total, inProgress, completed } };
   }, [jobs, activeTab, searchQuery, statusFilter, priorityFilter]);
 
   return (
@@ -375,16 +374,15 @@ export function JobsPage() {
       </div>
 
       {/* Stats */}
-      <div className="mb-4 grid grid-cols-4 gap-2">
+      <div className="mb-4 grid grid-cols-3 gap-2">
         {[
           { label: "Total Jobs", value: stats.total, color: "text-slate-900 dark:text-white" },
-          { label: "In Progress", value: stats.inProgress, color: "text-blue-600 dark:text-blue-400" },
-          { label: "On Hold", value: stats.onHold, color: "text-amber-600 dark:text-amber-400" },
+          { label: "In Progress", value: stats.inProgress, color: "text-orange-500 dark:text-orange-400" },
           { label: "Completed", value: stats.completed, color: "text-emerald-600 dark:text-emerald-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-3 text-left dark:border-slate-600 dark:bg-slate-800">
-            <div className={`text-xl font-black ${s.color} leading-none`}>{s.value}</div>
-            <div className="text-[0.65rem] font-semibold text-slate-500 mt-1.5 leading-tight dark:text-slate-300">{s.label}</div>
+            <div className={`text-2xl font-black ${s.color} leading-none`}>{s.value}</div>
+            <div className="text-xs font-semibold text-slate-500 mt-1.5 leading-tight dark:text-slate-300">{s.label}</div>
           </div>
         ))}
       </div>
@@ -463,14 +461,14 @@ export function JobsPage() {
                   {job.partNo || "—"}
                 </div>
                 {job.customerName && (
-                  <div className="text-xs font-semibold text-slate-500 mt-0.5 truncate dark:text-slate-300">{job.customerName}</div>
+                  <div className="text-sm font-semibold text-slate-500 mt-0.5 truncate dark:text-slate-300">{job.customerName}</div>
                 )}
 
                 <div className="flex items-center gap-2 mt-3 mb-3">
-                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
+                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-sm font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
                     Qty {job.qtyOrdered} {job.unit || "EA"}
                   </span>
-                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-xs font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
+                  <span className="inline-flex items-center bg-[#f1f5f9] text-slate-700 text-sm font-extrabold px-3 py-1.5 rounded-xl dark:bg-slate-700 dark:text-slate-100">
                     Due {formatDue(job.dueDate)}
                   </span>
                 </div>
@@ -506,7 +504,7 @@ export function JobsPage() {
                       );
                     })}
                   </div>
-                  <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
+                  <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100 truncate">
                     Step: {progress?.label || "1. Processing"}
                   </div>
                 </div>

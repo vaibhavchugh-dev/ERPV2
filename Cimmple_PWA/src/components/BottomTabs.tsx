@@ -4,6 +4,13 @@ import { BOTTOM_TABS } from "../nav";
 function TabIcon({ label, active }: { label: string; active: boolean }) {
   const stroke = active ? "currentColor" : "currentColor";
   switch (label) {
+    case "Home":
+      return (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 10.5L12 3l9 7.5" />
+          <path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5" />
+        </svg>
+      );
     case "Jobs":
       return (
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -39,7 +46,7 @@ export function BottomTabs() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Primary"
     >
-      <div className="mx-auto flex h-[68px] max-w-[540px] items-stretch">
+      <div className="mx-auto flex h-[68px] max-w-[600px] items-stretch">
         {BOTTOM_TABS.map((item) => {
           const active = item.match
             ? item.match(location.pathname)

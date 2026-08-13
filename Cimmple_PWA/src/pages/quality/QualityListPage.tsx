@@ -115,7 +115,7 @@ function QualityFilterSheet({ open, filters, onApply, onClose }: FilterSheetProp
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative mx-auto w-full max-w-[540px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl overflow-y-auto max-h-[80dvh] dark:bg-slate-900">
+      <div className="relative mx-auto w-full max-w-[600px] rounded-t-3xl bg-white px-5 pt-5 pb-8 shadow-2xl overflow-y-auto max-h-[80dvh] dark:bg-slate-900">
         <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Filter NCRs</h2>
@@ -352,36 +352,36 @@ export function QualityListPage() {
       {statsOpen && (
       <div className="mb-4 grid grid-cols-2 gap-3">
         <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-4 dark:border-slate-600 dark:bg-slate-800">
-          <span className="text-[0.55rem] font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">T O T A L</span>
+          <span className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">T O T A L</span>
           <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-black text-slate-900 leading-none dark:text-white">{stats.totalNCRs}</span>
+            <span className="text-4xl font-black text-slate-900 leading-none dark:text-white">{stats.totalNCRs}</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400">
               <path d="M18 20V10M12 20V4M6 20v-6" />
             </svg>
           </div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-4 dark:border-slate-600 dark:bg-slate-800">
-          <span className="text-[0.55rem] font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">O P E N</span>
+          <span className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">O P E N</span>
           <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-black text-slate-900 leading-none dark:text-white">{stats.openNCRs}</span>
+            <span className="text-4xl font-black text-slate-900 leading-none dark:text-white">{stats.openNCRs}</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-teal-500">
               <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
             </svg>
           </div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-4 dark:border-slate-600 dark:bg-slate-800">
-          <span className="text-[0.55rem] font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">C R I T I C A L</span>
+          <span className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">C R I T I C A L</span>
           <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-black text-red-600 leading-none dark:text-red-400">{stats.criticalNCRs}</span>
+            <span className="text-4xl font-black text-red-600 leading-none dark:text-red-400">{stats.criticalNCRs}</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
               <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01" />
             </svg>
           </div>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_2px_10px_rgba(15,23,42,0.08)] p-4 dark:border-slate-600 dark:bg-slate-800">
-          <span className="text-[0.55rem] font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">O V E R D U E</span>
+          <span className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500 block mb-2 dark:text-slate-300">O V E R D U E</span>
           <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-black text-amber-500 leading-none dark:text-amber-400">{stats.overdueNCRs}</span>
+            <span className="text-4xl font-black text-amber-500 leading-none dark:text-amber-400">{stats.overdueNCRs}</span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
               <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" />
             </svg>
@@ -437,8 +437,8 @@ export function QualityListPage() {
                 className="rounded-3xl border border-slate-200 bg-white shadow-[0_2px_12px_rgba(15,23,42,0.08)] px-4 py-3.5 block transition-transform active:scale-[0.98] dark:border-slate-600 dark:bg-slate-800 dark:shadow-[0_2px_16px_rgba(0,0,0,0.45)]"
               >
                 <div className="mb-2">
-                  <div className="text-base font-black text-slate-900 tracking-tight leading-snug dark:text-white">{ncrNum}</div>
-                  <div className="text-xs font-semibold text-slate-500 mt-0.5 dark:text-slate-300">{ncr.title || "—"}</div>
+                  <div className="text-lg font-black text-slate-900 tracking-tight leading-snug dark:text-white">{ncrNum}</div>
+                  <div className="text-base font-semibold text-slate-500 mt-0.5 dark:text-slate-300">{ncr.title || "—"}</div>
                 </div>
                 <div className="flex items-center gap-2 mb-2.5">
                   <span className={getSeverityBadgeStyle(ncr.severity)}>{ncr.severity || "MINOR"}</span>
@@ -446,32 +446,32 @@ export function QualityListPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-y-1.5 gap-x-4 mb-2">
                   <div>
-                    <span className="text-[0.6rem] font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Category</span>
-                    <span className="text-xs font-extrabold text-slate-900 block truncate dark:text-slate-100">{formatCategory(ncr.category)}</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Category</span>
+                    <span className="text-base font-extrabold text-slate-900 block truncate dark:text-slate-100">{formatCategory(ncr.category)}</span>
                   </div>
                   <div>
-                    <span className="text-[0.6rem] font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Source</span>
-                    <span className="text-xs font-extrabold text-slate-900 block truncate dark:text-slate-100">{ncr.source || "—"}</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Source</span>
+                    <span className="text-base font-extrabold text-slate-900 block truncate dark:text-slate-100">{ncr.source || "—"}</span>
                   </div>
                   <div>
-                    <span className="text-[0.6rem] font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Job Order</span>
-                    <span className="text-xs font-extrabold text-slate-900 block truncate dark:text-slate-100">{ncr.jobOrderNumber || ncr.jobOrderId || "—"}</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Job Order</span>
+                    <span className="text-base font-extrabold text-slate-900 block truncate dark:text-slate-100">{ncr.jobOrderNumber || ncr.jobOrderId || "—"}</span>
                   </div>
                   <div>
-                    <span className="text-[0.6rem] font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Reported</span>
-                    <span className="text-xs font-extrabold text-slate-900 block truncate dark:text-slate-100">{formatReportedDate(ncr.reportedDate)}</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-0.5 dark:text-slate-400">Reported</span>
+                    <span className="text-base font-extrabold text-slate-900 block truncate dark:text-slate-100">{formatReportedDate(ncr.reportedDate)}</span>
                   </div>
                 </div>
                 <hr className="border-slate-200 my-2 dark:border-slate-700" />
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center text-xs font-semibold text-slate-500 dark:text-slate-300">
+                  <div className="flex items-center text-base font-semibold text-slate-500 dark:text-slate-300">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 mr-1.5 dark:text-slate-400">
                       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
                       <circle cx="12" cy="7" r="4" />
                     </svg>
                     {ncr.reportedByName || "—"}
                   </div>
-                  <div className="flex items-center gap-1 text-xs font-extrabold text-slate-900 dark:text-slate-200">
+                  <div className="flex items-center gap-1 text-base font-extrabold text-slate-900 dark:text-slate-200">
                     Details
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M9 5l7 7-7 7" />
