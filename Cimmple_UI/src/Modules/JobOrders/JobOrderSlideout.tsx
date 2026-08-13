@@ -13,6 +13,8 @@ import {
   toElapsedFields,
   isStepCompleted,
   getCommittedSeconds,
+  getMaxProducedQty,
+  parseProducedQty,
   buildStepScanCode,
   JOB_STEP_PAUSE_REASONS,
 } from "../../Common/Services/JobOrderService";
@@ -128,12 +130,23 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [trackingSaving, setTrackingSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [trackingDialog, setTrackingDialog] = useState<null | {
-    type: "pause" | "complete" | "reopen" | "replaceTemplate" | "stepNote";
+    type:
+      | "pause"
+      | "complete"
+      | "reopen"
+      | "replaceTemplate"
+      | "stepNote"
+      | "disableTrack"
+      | "completeJob"
+      | "completeJobConfirm";
     stepId?: number;
     template?: JobTemplate;
   }>(null);
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
+  const [completeJobQtys, setCompleteJobQtys] = useState<Record<number, string>>({});
+  const [completeJobError, setCompleteJobError] = useState("");
+  const [qtyDrafts, setQtyDrafts] = useState<Record<number, string>>({});
   const [stepNoteInput, setStepNoteInput] = useState("");
   const [stepMenu, setStepMenu] = useState<null | {
     stepId: number;
@@ -305,7 +318,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   /** Persist tracking actions immediately so Start/Pause/Complete survive without a full form Save. */
-  const persistTrackingSteps = async (updatedSteps: JobOrderRoutingStep[]): Promise<boolean> => {
+  const persistTrackingSteps = async (
+    updatedSteps: JobOrderRoutingStep[],
+    trackingEnabled: boolean = enableJobTracking
+  ): Promise<boolean> => {
     const currentForm = formDataRef.current;
     const id = jobOrderId > 0 ? jobOrderId : currentForm.JobOrderID;
     if (!id || id <= 0) {
@@ -313,6 +329,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
 
     const stepsToSave = commitLiveElapsed(updatedSteps);
+    const orderQty = currentForm.QtyOrdered || 0;
+    for (const step of stepsToSave) {
+      const raw = isStepCompleted(step)
+        ? step.qtyProduced ?? 0
+        : qtyDrafts[step.id] ?? step.qtyProduced ?? 0;
+      const parsed = parseProducedQty(raw, orderQty, "save");
+      if (!parsed.ok) {
+        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
+        return false;
+      }
+      step.qtyProduced = parsed.qty;
+    }
     const statusToSave = deriveJobStatus(currentForm.Status, stepsToSave);
     setTrackingSaving(true);
     try {
@@ -320,7 +348,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         ...currentForm,
         JobOrderID: id,
         Status: statusToSave,
-        EnableJobTracking: enableJobTracking,
+        EnableJobTracking: trackingEnabled,
         RoutingSteps: stepsToSave,
         Attachments: attachments,
         Comments: comments,
@@ -329,12 +357,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         const next = {
           ...prev,
           Status: statusToSave,
-          EnableJobTracking: enableJobTracking,
+          EnableJobTracking: trackingEnabled,
           RoutingSteps: stepsToSave,
         };
         formDataRef.current = next;
         return next;
       });
+      setEnableJobTracking(trackingEnabled);
       routingStepsRef.current = stepsToSave;
       setRoutingSteps(stepsToSave);
       onSaved?.();
@@ -353,6 +382,71 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
   };
 
+  /**
+   * Pause every running step (commit elapsed, clear display ticks).
+   * Used when Track is turned OFF so timers cannot keep advancing.
+   */
+  const pauseAllRunningSteps = (steps: JobOrderRoutingStep[]): JobOrderRoutingStep[] => {
+    const nowMs = Date.now();
+    let changed = false;
+    const next = steps.map((s) => {
+      if (s.progressState !== "running") return s;
+      changed = true;
+      clearStepTimer(s.id);
+      return {
+        ...s,
+        progressState: "paused" as const,
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+        pauseReason: s.pauseReason || "Tracking disabled",
+      };
+    });
+    return changed ? next : steps;
+  };
+
+  /**
+   * Apply Track ON/OFF: auto-persist immediately.
+   * Track OFF pauses any running steps (does not auto-resume when turned back ON).
+   */
+  const applyTrackChange = async (checked: boolean) => {
+    setEnableJobTracking(checked);
+    setFormData((prev) => {
+      const next = { ...prev, EnableJobTracking: checked };
+      formDataRef.current = next;
+      return next;
+    });
+
+    let steps = routingStepsRef.current;
+    if (!checked) {
+      steps = pauseAllRunningSteps(steps);
+      if (steps !== routingStepsRef.current) {
+        syncSteps(steps);
+      }
+    }
+
+    await persistTrackingSteps(steps, checked);
+  };
+
+  /** Track toggle — confirm only when turning OFF while a step is running. */
+  const handleTrackToggle = () => {
+    const checked = !enableJobTracking;
+    if (!checked) {
+      const hasRunning = routingStepsRef.current.some(
+        (s) => s.progressState === "running"
+      );
+      if (hasRunning) {
+        setTrackingDialog({ type: "disableTrack" });
+        return;
+      }
+    }
+    void applyTrackChange(checked);
+  };
+
+  const confirmDisableTrack = async () => {
+    setTrackingDialog(null);
+    await applyTrackChange(false);
+  };
+
   const loadJobOrder = async () => {
     setLoading(true);
     try {
@@ -364,23 +458,58 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         setAttachments(jobOrder.Attachments || []);
         setComments(jobOrder.Comments || []);
         const steps = jobOrder.RoutingSteps || [];
-        setRoutingSteps(steps);
-        setEnableJobTracking(!!jobOrder.EnableJobTracking);
+        const trackingOn = !!jobOrder.EnableJobTracking;
+        setEnableJobTracking(trackingOn);
 
-        // Resume wall-clock display ticks for any steps left running.
+        // Resume wall-clock display ticks only when Track is ON.
+        // If Track is OFF, force any leftover "running" steps to paused so reopen stays consistent.
         stepTimers.forEach((timer) => clearInterval(timer));
         const nextTimers = new Map<number, NodeJS.Timeout>();
-        steps.forEach((s) => {
-          if (s.progressState === "running") {
-            nextTimers.set(
-              s.id,
-              setInterval(() => {
-                setElapsedTick((t) => t + 1);
-              }, 1000)
-            );
-          }
-        });
+        let normalizedSteps = steps;
+        if (!trackingOn) {
+          const nowMs = Date.now();
+          let changed = false;
+          const paused = steps.map((s) => {
+            if (s.progressState !== "running") return s;
+            changed = true;
+            return {
+              ...s,
+              progressState: "paused" as const,
+              ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+              startTime: undefined,
+              pauseReason: s.pauseReason || "Tracking disabled",
+            };
+          });
+          if (changed) normalizedSteps = paused;
+        } else {
+          steps.forEach((s) => {
+            if (s.progressState === "running") {
+              nextTimers.set(
+                s.id,
+                setInterval(() => {
+                  setElapsedTick((t) => t + 1);
+                }, 1000)
+              );
+            }
+          });
+        }
         setStepTimers(nextTimers);
+        setRoutingSteps(normalizedSteps);
+        setCompleteJobQtys({});
+        setCompleteJobError("");
+        setQtyDrafts({});
+        if (normalizedSteps !== steps) {
+          setFormData((prev) => {
+            const next = {
+              ...prev,
+              ...jobOrder,
+              RoutingSteps: normalizedSteps,
+              EnableJobTracking: trackingOn,
+            };
+            formDataRef.current = next;
+            return next;
+          });
+        }
 
         if (jobOrder.CustomerOrderID > 0) {
           try {
@@ -424,10 +553,41 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const stepsForCheck = routingStepsRef.current;
+    for (const step of stepsForCheck) {
+      const raw = isStepCompleted(step)
+        ? step.qtyProduced ?? 0
+        : qtyDrafts[step.id] ?? step.qtyProduced ?? 0;
+      const parsed = parseProducedQty(raw, orderQty, "save");
+      if (!parsed.ok) {
+        toast.error(
+          `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
+        );
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
-      const stepsToSave = commitLiveElapsed(routingSteps);
+      // Safety: never persist a live clock while Track is OFF.
+      let stepsForSave = routingStepsRef.current.map((s) => {
+        const parsed = parseProducedQty(
+          isStepCompleted(s) ? s.qtyProduced ?? 0 : qtyDrafts[s.id] ?? s.qtyProduced ?? 0,
+          orderQty,
+          "save"
+        );
+        return parsed.ok ? { ...s, qtyProduced: parsed.qty } : s;
+      });
+      if (!enableJobTracking) {
+        stepsForSave = pauseAllRunningSteps(stepsForSave);
+        if (stepsForSave !== routingStepsRef.current) {
+          syncSteps(stepsForSave);
+        }
+      }
+      const stepsToSave = commitLiveElapsed(stepsForSave);
       const statusToSave = deriveJobStatus(formData.Status, stepsToSave);
       const result = await JobOrderService.SaveJobOrder({
         ...formData,
@@ -949,13 +1109,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       return;
     }
 
-    const qty = parseInt(completeQtyInput, 10);
-    if (Number.isNaN(qty) || qty < 0) {
-      setCompleteQtyError("Enter a valid quantity (0 or greater).");
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const parsed = parseProducedQty(completeQtyInput, orderQty, "complete");
+    if (!parsed.ok) {
+      setCompleteQtyError(parsed.error);
       return;
     }
-
-    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const qty = parsed.qty;
     const meetsOrderQty = orderQty <= 0 || qty >= orderQty;
     const shouldComplete = forceComplete || meetsOrderQty;
 
@@ -1000,6 +1160,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     });
 
     syncSteps(updatedSteps);
+    setQtyDrafts((prev) => {
+      const next = { ...prev };
+      delete next[stepId];
+      return next;
+    });
     await persistTrackingSteps(updatedSteps);
     toast.success("Operation completed");
   };
@@ -1030,15 +1195,205 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     );
 
     syncSteps(updatedSteps);
+    setQtyDrafts((prev) => {
+      const next = { ...prev };
+      delete next[stepId];
+      return next;
+    });
     await persistTrackingSteps(updatedSteps);
-    toast.info("Operation reopened — job set to In Progress if it was Completed");
   };
 
-  const handleUpdateQtyProduced = (stepId: number, qty: number) => {
-    const updatedSteps = routingSteps.map((s) =>
-      s.id === stepId ? { ...s, qtyProduced: qty } : s
+  /** Qty shown on the router grid — never the Mark Complete modal defaults. */
+  const resolveGridStepQtyRaw = (step: JobOrderRoutingStep): string => {
+    if (isStepCompleted(step)) {
+      return step.qtyProduced != null ? String(step.qtyProduced) : "";
+    }
+    if (qtyDrafts[step.id] != null && qtyDrafts[step.id] !== "") {
+      return qtyDrafts[step.id];
+    }
+    return step.qtyProduced != null ? String(step.qtyProduced) : "";
+  };
+
+  const isQtyEmptyOrZero = (raw: string) => {
+    const text = String(raw ?? "").trim();
+    if (text === "") return true;
+    const qty = parseInt(text, 10);
+    return Number.isFinite(qty) && qty === 0;
+  };
+
+  const stepsNeedingCompleteQty = (steps: JobOrderRoutingStep[]) =>
+    steps.filter((step) => {
+      if (!isStepCompleted(step) && qtyDrafts[step.id] != null && qtyDrafts[step.id].trim() === "") {
+        return true;
+      }
+      return isQtyEmptyOrZero(resolveGridStepQtyRaw(step));
+    });
+
+  const handleUpdateQtyProduced = (stepId: number, raw: string) => {
+    const step = routingStepsRef.current.find((s) => s.id === stepId);
+    if (!step || isStepCompleted(step)) return;
+    setQtyDrafts((prev) => ({ ...prev, [stepId]: raw }));
+    const parsed = parseProducedQty(raw, formDataRef.current.QtyOrdered || 0, "save");
+    if (!parsed.ok) return;
+    const updatedSteps = routingStepsRef.current.map((s) =>
+      s.id === stepId ? { ...s, qtyProduced: parsed.qty } : s
     );
     syncSteps(updatedSteps);
+  };
+
+  const hasIncompleteSteps = (steps: JobOrderRoutingStep[]) =>
+    steps.some((s) => !isStepCompleted(s));
+
+  const shouldConfirmMidProgressComplete = (steps: JobOrderRoutingStep[]) =>
+    enableJobTracking && hasIncompleteSteps(steps);
+
+  const buildCompletedJobSteps = (
+    steps: JobOrderRoutingStep[],
+    qtyById?: Map<number, number>
+  ): JobOrderRoutingStep[] => {
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const nowMs = Date.now();
+    return steps.map((s) => {
+      const mapped = qtyById?.get(s.id);
+      const parsed =
+        mapped != null
+          ? { ok: true as const, qty: mapped }
+          : parseProducedQty(resolveGridStepQtyRaw(s), orderQty, "complete");
+      const qty = parsed.ok ? parsed.qty : s.qtyProduced || 0;
+      if (isStepCompleted(s)) {
+        return { ...s, qtyProduced: qty };
+      }
+      return {
+        ...s,
+        qtyProduced: qty,
+        progressState: "stopped" as const,
+        status: "Completed",
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+      };
+    });
+  };
+
+  const requestCompleteJob = () => {
+    const steps = routingStepsRef.current;
+    if (!steps.length) {
+      toast.error("Add routing steps and enter produced quantity before completing this job.");
+      return;
+    }
+
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+
+    for (const step of steps) {
+      const raw = resolveGridStepQtyRaw(step);
+      if (isQtyEmptyOrZero(raw)) continue;
+      const parsed = parseProducedQty(raw, orderQty, "complete");
+      if (!parsed.ok) {
+        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
+        return;
+      }
+    }
+
+    const missing = stepsNeedingCompleteQty(steps);
+    if (missing.length > 0) {
+      const qtys: Record<number, string> = {};
+      missing.forEach((s) => {
+        qtys[s.id] = String(orderQty);
+      });
+      setCompleteJobQtys(qtys);
+      setCompleteJobError("");
+      setTrackingDialog({ type: "completeJob" });
+      return;
+    }
+
+    if (shouldConfirmMidProgressComplete(steps)) {
+      setTrackingDialog({ type: "completeJobConfirm" });
+      return;
+    }
+
+    void finalizeJobComplete(buildCompletedJobSteps(steps));
+  };
+
+  const finalizeJobComplete = async (steps: JobOrderRoutingStep[]) => {
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    for (const step of steps) {
+      const parsed = parseProducedQty(step.qtyProduced ?? 0, orderQty, "complete");
+      if (!parsed.ok) {
+        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
+        return;
+      }
+    }
+    const saved = await persistTrackingSteps(steps);
+    if (!saved) return;
+    steps.forEach((s) => clearStepTimer(s.id));
+    setFormData((prev) => {
+      const next = { ...prev, Status: "Completed", RoutingSteps: steps };
+      formDataRef.current = next;
+      return next;
+    });
+    setTrackingDialog(null);
+    setCompleteJobQtys({});
+    setCompleteJobError("");
+    toast.success("Job marked as completed");
+  };
+
+  const confirmCompleteJob = async () => {
+    const steps = routingStepsRef.current;
+    const orderQty = formDataRef.current.QtyOrdered || 0;
+    const parsedById = new Map<number, number>();
+
+    for (const step of steps) {
+      const raw =
+        completeJobQtys[step.id] != null
+          ? completeJobQtys[step.id]
+          : resolveGridStepQtyRaw(step);
+      if (String(raw ?? "").trim() === "") {
+        setCompleteJobError(
+          `Seq ${step.sequence} (${step.processName}): Enter produced quantity for this operation.`
+        );
+        return;
+      }
+      const parsed = parseProducedQty(raw, orderQty, "complete");
+      if (!parsed.ok) {
+        setCompleteJobError(
+          `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
+        );
+        return;
+      }
+      parsedById.set(step.id, parsed.qty);
+    }
+
+    setCompleteJobError("");
+    const nextDrafts = { ...qtyDrafts };
+    parsedById.forEach((qty, id) => {
+      nextDrafts[id] = String(qty);
+    });
+    setQtyDrafts(nextDrafts);
+
+    await finalizeJobComplete(buildCompletedJobSteps(steps, parsedById));
+  };
+
+  const confirmCompleteJobProgress = async () => {
+    const steps = routingStepsRef.current;
+    const missing = stepsNeedingCompleteQty(steps);
+    if (missing.length > 0) {
+      const orderQty = formDataRef.current.QtyOrdered || 0;
+      const qtys: Record<number, string> = {};
+      missing.forEach((s) => {
+        qtys[s.id] = String(orderQty);
+      });
+      setCompleteJobQtys(qtys);
+      setCompleteJobError("");
+      setTrackingDialog({ type: "completeJob" });
+      return;
+    }
+    await finalizeJobComplete(buildCompletedJobSteps(steps));
+  };
+
+  const closeTrackingDialog = () => {
+    if (trackingSaving) return;
+    setTrackingDialog(null);
+    setCompleteJobQtys({});
+    setCompleteJobError("");
   };
 
   const ensureStepScanCode = async (stepId: number): Promise<string> => {
@@ -1227,6 +1582,31 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     await persistTrackingSteps(updatedSteps);
   };
 
+  /** Clear deleted NCR pointers from routing steps so the ⋮ menu updates immediately. */
+  const handleNcrDeleted = async (deletedNcrId: number) => {
+    const ncrId = Number(deletedNcrId) || 0;
+    const stepId = ncrSlideout?.stepId;
+
+    const updatedSteps = routingStepsRef.current.map((s) => {
+      const matchesStep = stepId != null && Number(s.id) === Number(stepId);
+      const flags = s.ncrFlags || [];
+      const matchesNcr =
+        ncrId > 0 && flags.some((f) => Number(f.ncrId) === ncrId);
+      if (!matchesStep && !matchesNcr) return s;
+      if (ncrId <= 0) {
+        return { ...s, ncrFlags: [] };
+      }
+      return {
+        ...s,
+        ncrFlags: flags.filter((f) => Number(f.ncrId) !== ncrId),
+      };
+    });
+
+    syncSteps(updatedSteps);
+    // Persist empty flags so a later Job Save cannot resurrect the deleted NCR.
+    await persistTrackingSteps(updatedSteps);
+  };
+
   const closeNcrSlideoutSafely = () => {
     // Defer unmount so the click that saved/closed NCR does not hit the JO overlay.
     window.setTimeout(() => setNcrSlideout(null), 150);
@@ -1309,22 +1689,28 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
   // Quick completion handlers
   const handleMarkJobComplete = () => {
-    setFormData((prev) => ({ ...prev, Status: "Completed" }));
-    toast.success("Job marked as completed");
+    requestCompleteJob();
   };
 
   const handleToggleStepCompletion = (stepId: number) => {
     const step = routingSteps.find(s => s.id === stepId);
     if (!step) return;
 
-    const newStatus = step.status === "Completed" ? "Pending" : "Completed";
-    const updatedSteps = routingSteps.map(s =>
-      s.id === stepId ? { ...s, status: newStatus } : s
-    );
+    if (step.status === "Completed") {
+      const updatedSteps = routingSteps.map(s =>
+        s.id === stepId ? { ...s, status: "Pending", progressState: "idle" as const } : s
+      );
+      syncSteps(updatedSteps);
+      setQtyDrafts((prev) => {
+        const next = { ...prev };
+        delete next[stepId];
+        return next;
+      });
+      toast.success("Step reopened");
+      return;
+    }
 
-    syncSteps(updatedSteps);
-
-    toast.success(`Step ${newStatus === "Completed" ? "marked as completed" : "reopened"}`);
+    requestCompleteStep(stepId);
   };
 
   // Cleanup timers on unmount
@@ -1539,7 +1925,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   <select
                     className={`form-input ${formData.Status === "In Progress" || formData.Status === "Partially Shipped" || formData.Status === "Shipped" || formData.Status === "Completed" ? "status-active" : "status-inactive"}`}
                     value={formData.Status}
-                    onChange={(e) => handleInputChange("Status", e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === "Completed") {
+                        requestCompleteJob();
+                        return;
+                      }
+                      handleInputChange("Status", next);
+                    }}
                   >
                     <option value="Draft">Draft</option>
                     <option value="In Progress">In Progress</option>
@@ -1891,10 +2284,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     className={`jo-router-action-btn jo-router-action-btn--track ${enableJobTracking ? "is-active" : ""}`}
                     title={enableJobTracking ? "Disable job tracking" : "Enable job tracking"}
                     aria-pressed={enableJobTracking}
+                    disabled={trackingSaving}
                     onClick={() => {
-                      const checked = !enableJobTracking;
-                      setEnableJobTracking(checked);
-                      setFormData((prev) => ({ ...prev, EnableJobTracking: checked }));
+                      handleTrackToggle();
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
@@ -1978,15 +2370,29 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                               <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>
                                 <input
                                   type="number"
-                                  min="0"
-                                  value={step.qtyProduced || 0}
-                                  onChange={(e) => handleUpdateQtyProduced(step.id, parseInt(e.target.value) || 0)}
+                                  min={0}
+                                  step={1}
+                                  disabled={isStepCompleted(step)}
+                                  title={
+                                    isStepCompleted(step)
+                                      ? "Reopen this step to change qty produced"
+                                      : undefined
+                                  }
+                                  value={
+                                    isStepCompleted(step)
+                                      ? String(step.qtyProduced ?? 0)
+                                      : qtyDrafts[step.id] ??
+                                        (step.qtyProduced != null ? String(step.qtyProduced) : "")
+                                  }
+                                  onChange={(e) => handleUpdateQtyProduced(step.id, e.target.value)}
                                   style={{
                                     width: "80px",
                                     padding: "0.375rem 0.5rem",
                                     border: "1px solid #d1d5db",
                                     borderRadius: "0.375rem",
                                     fontSize: "0.875rem",
+                                    backgroundColor: isStepCompleted(step) ? "#f3f4f6" : "#fff",
+                                    cursor: isStepCompleted(step) ? "not-allowed" : "text",
                                   }}
                                 />
                               </td>
@@ -2637,21 +3043,183 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         onCancel={() => setShowTemplatePicker(false)}
       />
 
-      {/* Tracking dialogs: pause reason, complete qty, reopen, replace template */}
+      {/* Tracking dialogs: disable track, pause reason, complete qty, reopen, replace template */}
       {trackingDialog && (
         <div
           className="jo-track-dialog-overlay"
           onClick={() => {
-            if (!trackingSaving) setTrackingDialog(null);
+            if (!trackingSaving) closeTrackingDialog();
           }}
           role="presentation"
         >
           <div
-            className="jo-track-dialog"
+            className={`jo-track-dialog${trackingDialog.type === "completeJob" ? " jo-track-dialog--wide" : ""}`}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
           >
+            {trackingDialog.type === "completeJob" && (() => {
+              const orderQty = formData.QtyOrdered || 0;
+              const maxQty = getMaxProducedQty(orderQty);
+              const stepsToFix = routingSteps.filter(
+                (step) => completeJobQtys[step.id] != null
+              );
+              const invalidStep = stepsToFix.find((step) => {
+                const parsed = parseProducedQty(
+                  completeJobQtys[step.id] ?? "",
+                  orderQty,
+                  "complete"
+                );
+                return !parsed.ok;
+              });
+              const canSubmit = stepsToFix.length > 0 && !invalidStep;
+              return (
+                <>
+                  <h4 className="jo-track-dialog-title--danger">All step quantities required</h4>
+                  <p className="jo-track-dialog-hint">
+                    Enter produced quantity for every step that is empty or 0 (greater than 0 and
+                    up to {maxQty}
+                    {formData.Unit ? ` ${formData.Unit}` : ""}).
+                  </p>
+                  {shouldConfirmMidProgressComplete(routingSteps) && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
+                      Save qty & complete will stop any running timers and mark remaining
+                      operations as completed. Elapsed time so far will be saved.
+                    </div>
+                  )}
+                  <div className="jo-complete-job-table-wrap">
+                    <table className="jo-complete-job-table">
+                      <thead>
+                        <tr>
+                          <th>Seq</th>
+                          <th>Operation</th>
+                          <th>Qty produced</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stepsToFix.map((step) => (
+                          <tr key={step.id}>
+                            <td>{step.sequence}</td>
+                            <td>{step.processName}</td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                className="form-input"
+                                value={completeJobQtys[step.id] ?? ""}
+                                onChange={(e) => {
+                                  const next = e.target.value;
+                                  setCompleteJobQtys((prev) => ({
+                                    ...prev,
+                                    [step.id]: next,
+                                  }));
+                                  setQtyDrafts((prev) => ({ ...prev, [step.id]: next }));
+                                  const parsed = parseProducedQty(next, orderQty, "complete");
+                                  setCompleteJobError(
+                                    parsed.ok
+                                      ? ""
+                                      : `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
+                                  );
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {completeJobError && (
+                    <div className="jo-track-dialog-alert jo-track-dialog-alert--error">
+                      {completeJobError}
+                    </div>
+                  )}
+                  <div className="jo-track-dialog-actions">
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      disabled={trackingSaving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      disabled={trackingSaving || !canSubmit}
+                      onClick={() => void confirmCompleteJob()}
+                    >
+                      {trackingSaving ? "Saving..." : "Save qty & complete"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {trackingDialog.type === "completeJobConfirm" && (() => {
+              const remaining = routingSteps.filter((s) => !isStepCompleted(s)).length;
+              const running = routingSteps.filter((s) => s.progressState === "running").length;
+              return (
+                <>
+                  <h4>Complete remaining operations?</h4>
+                  <p className="jo-track-dialog-hint">
+                    This will stop any running timers and mark {remaining} remaining operation
+                    {remaining === 1 ? "" : "s"} as completed
+                    {running > 0
+                      ? `. ${running} timer${running === 1 ? " is" : "s are"} currently running`
+                      : ""}
+                    . Elapsed time so far will be saved. Continue?
+                  </p>
+                  <div className="jo-track-dialog-actions">
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      disabled={trackingSaving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      disabled={trackingSaving}
+                      onClick={() => void confirmCompleteJobProgress()}
+                    >
+                      {trackingSaving ? "Saving..." : "Complete job"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {trackingDialog.type === "disableTrack" && (
+              <>
+                <h4>Turn Track OFF?</h4>
+                <p className="jo-track-dialog-hint">
+                  A step is currently running. Turning Track OFF will pause the active
+                  timer. Continue?
+                </p>
+                <div className="jo-track-dialog-actions">
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    disabled={trackingSaving}
+                    onClick={() => setTrackingDialog(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-submit"
+                    disabled={trackingSaving}
+                    onClick={() => void confirmDisableTrack()}
+                  >
+                    {trackingSaving ? "Saving..." : "Turn Track OFF"}
+                  </button>
+                </div>
+              </>
+            )}
+
             {trackingDialog.type === "pause" && (
               <>
                 <h4>Pause operation</h4>
@@ -2693,13 +3261,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             {trackingDialog.type === "complete" && (() => {
               const step = routingSteps.find((s) => s.id === trackingDialog.stepId);
               const orderQty = formData.QtyOrdered || 0;
-              const parsedQty = parseInt(completeQtyInput, 10);
-              const qtyNum = Number.isNaN(parsedQty) ? null : parsedQty;
-              const zeroWarn = qtyNum === 0;
-              const overWarn = qtyNum != null && orderQty > 0 && qtyNum > orderQty;
+              const qtyCheck = parseProducedQty(completeQtyInput, orderQty, "complete");
+              const liveError =
+                completeQtyError || (!qtyCheck.ok ? qtyCheck.error : "");
+              const canSubmit = qtyCheck.ok;
               const underOrder =
-                qtyNum != null && orderQty > 0 && qtyNum < orderQty;
-              const meetsOrder = qtyNum != null && (orderQty <= 0 || qtyNum >= orderQty);
+                qtyCheck.ok && orderQty > 0 && qtyCheck.qty < orderQty;
               return (
                 <>
                   <h4>Complete operation</h4>
@@ -2721,41 +3288,34 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         id="jo-complete-qty"
                         type="number"
                         min={0}
+                        step={1}
                         className="form-input"
                         value={completeQtyInput}
                         autoFocus
                         onChange={(e) => {
-                          setCompleteQtyInput(e.target.value);
-                          setCompleteQtyError("");
+                          const next = e.target.value;
+                          setCompleteQtyInput(next);
+                          const parsed = parseProducedQty(next, orderQty, "complete");
+                          setCompleteQtyError(parsed.ok ? "" : parsed.error);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
-                            void confirmCompleteStep(meetsOrder);
+                            if (canSubmit) void confirmCompleteStep(false);
                           }
                         }}
                       />
                     </div>
                   </div>
-                  {completeQtyError && (
+                  {liveError && (
                     <div className="jo-track-dialog-alert jo-track-dialog-alert--error">
-                      {completeQtyError}
+                      {liveError}
                     </div>
                   )}
-                  {!completeQtyError && underOrder && (
+                  {!liveError && underOrder && (
                     <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
                       Qty produced is less than order qty. Saving keeps this operation open.
                       Use Complete anyway only if the operation is finished short.
-                    </div>
-                  )}
-                  {!completeQtyError && zeroWarn && meetsOrder && (
-                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
-                      Qty produced is 0. You can still complete if this operation had no output.
-                    </div>
-                  )}
-                  {!completeQtyError && overWarn && (
-                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
-                      Qty produced exceeds order qty. Confirm only if overbuild is intended.
                     </div>
                   )}
                   <div className="jo-track-dialog-actions jo-track-dialog-actions--wrap">
@@ -2772,7 +3332,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         <button
                           type="button"
                           className="btn-submit jo-track-btn-secondary"
-                          disabled={trackingSaving}
+                          disabled={trackingSaving || !canSubmit}
                           onClick={() => void confirmCompleteStep(false)}
                         >
                           {trackingSaving ? "Saving..." : "Save qty (keep open)"}
@@ -2780,7 +3340,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         <button
                           type="button"
                           className="btn-submit"
-                          disabled={trackingSaving}
+                          disabled={trackingSaving || !canSubmit}
                           onClick={() => void confirmCompleteStep(true)}
                         >
                           Complete anyway
@@ -2790,7 +3350,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                       <button
                         type="button"
                         className="btn-submit"
-                        disabled={trackingSaving}
+                        disabled={trackingSaving || !canSubmit}
                         onClick={() => void confirmCompleteStep(true)}
                       >
                         {trackingSaving ? "Saving..." : "Complete"}
@@ -3001,6 +3561,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           elevated
           onCreated={async (ncr) => {
             await handleNcrCreated(ncr);
+          }}
+          onDeleted={async (deletedId) => {
+            await handleNcrDeleted(deletedId);
           }}
           onClose={() => {
             closeNcrSlideoutSafely();

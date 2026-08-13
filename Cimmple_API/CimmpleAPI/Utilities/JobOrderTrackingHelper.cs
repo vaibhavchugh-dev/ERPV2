@@ -54,7 +54,9 @@ namespace CimmpleAPI.Utilities
                     step.notes = prev.notes;
                 }
 
-                if ((step.ncrFlags == null || step.ncrFlags.Count == 0) &&
+                // null = omitted/stale client payload → preserve.
+                // empty list = intentional clear (e.g. NCR deleted from the step).
+                if (step.ncrFlags == null &&
                     prev.ncrFlags != null && prev.ncrFlags.Count > 0)
                 {
                     step.ncrFlags = prev.ncrFlags;

@@ -493,10 +493,61 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
 }
 
+.jo-track-dialog--wide {
+  width: min(560px, 100%);
+}
+
+.jo-complete-job-table-wrap {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+}
+
+.jo-complete-job-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.jo-complete-job-table th,
+.jo-complete-job-table td {
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.jo-complete-job-table th {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #f9fafb;
+}
+
+.jo-complete-job-table td:last-child {
+  width: 8rem;
+}
+
+.jo-complete-job-over-flag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
 .jo-track-dialog h4 {
   margin: 0 0 0.35rem;
   font-size: 1.05rem;
   color: #111827;
+}
+
+.jo-track-dialog-title--danger {
+  color: #b91c1c !important;
+  font-weight: 800;
 }
 
 .jo-track-dialog-hint {

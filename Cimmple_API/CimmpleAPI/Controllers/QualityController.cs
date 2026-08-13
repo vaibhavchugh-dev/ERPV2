@@ -1334,6 +1334,75 @@ END");
                     return NotFound(new { error = "NCR not found" });
                 }
 
+                // Drop stale step NCR pointers so Job Details no longer shows the deleted NCR.
+                var jobOrdersToClean = new List<JobOrderMaster>();
+                if (ncr.JobOrderId.HasValue && ncr.JobOrderId.Value > 0)
+                {
+                    var linked = await _context.JobOrderMaster
+                        .FirstOrDefaultAsync(j =>
+                            j.JobOrderID == ncr.JobOrderId.Value &&
+                            j.Tenantid == tenantId);
+                    if (linked != null)
+                        jobOrdersToClean.Add(linked);
+                }
+
+                // Fallback: scan tenant job orders when JobOrderId was not stored on the NCR.
+                if (jobOrdersToClean.Count == 0)
+                {
+                    var candidates = await _context.JobOrderMaster
+                        .Where(j =>
+                            j.Tenantid == tenantId &&
+                            j.RoutingStepsJson != null &&
+                            j.RoutingStepsJson.Contains(ncrId.ToString()))
+                        .ToListAsync();
+                    jobOrdersToClean.AddRange(candidates);
+                }
+
+                foreach (var jobOrder in jobOrdersToClean)
+                {
+                    if (string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
+                        continue;
+
+                    try
+                    {
+                        var steps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                            jobOrder.RoutingStepsJson,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                        if (steps == null || steps.Count == 0)
+                            continue;
+
+                        var changed = false;
+                        foreach (var step in steps)
+                        {
+                            if (step.ncrFlags == null || step.ncrFlags.Count == 0)
+                                continue;
+
+                            var before = step.ncrFlags.Count;
+                            step.ncrFlags = step.ncrFlags
+                                .Where(f => f == null || f.ncrId != ncrId)
+                                .ToList();
+                            if (step.ncrFlags.Count != before)
+                                changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            var routingOptions = new JsonSerializerOptions
+                            {
+                                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                                WriteIndented = false
+                            };
+                            jobOrder.RoutingStepsJson = JsonSerializer.Serialize(steps, routingOptions);
+                            jobOrder.ModifiedDate = DateTime.UtcNow;
+                        }
+                    }
+                    catch
+                    {
+                        // Do not block NCR deletion if routing JSON is malformed.
+                    }
+                }
+
                 _context.NonConformanceReports.Remove(ncr);
                 await _context.SaveChangesAsync();
 

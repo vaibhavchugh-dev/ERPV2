@@ -240,6 +240,47 @@ export function isStepCompleted(step: Pick<JobOrderRoutingStep, "status" | "prog
   return step.status === "Completed" || step.progressState === "stopped";
 }
 
+/** Hard cap: each step's produced qty cannot exceed the job order qty. */
+export function getMaxProducedQty(orderQty: number): number {
+  return Math.max(0, orderQty || 0);
+}
+
+export function parseProducedQty(
+  raw: string | number,
+  orderQty: number,
+  mode: "save" | "complete" = "save"
+): { ok: true; qty: number } | { ok: false; error: string } {
+  const text = String(raw ?? "").trim();
+  const max = getMaxProducedQty(orderQty);
+
+  if (text === "") {
+    if (mode === "save") return { ok: true, qty: 0 };
+    return { ok: false, error: "Enter produced quantity for this operation." };
+  }
+
+  const qty = typeof raw === "number" ? raw : parseInt(text, 10);
+  if (!Number.isFinite(qty) || Number.isNaN(qty) || !Number.isInteger(qty)) {
+    return { ok: false, error: "Enter a whole number." };
+  }
+
+  if (mode === "complete" && qty < 1) {
+    return { ok: false, error: "Qty produced must be greater than 0." };
+  }
+
+  if (qty < 0) {
+    return { ok: false, error: "Qty produced cannot be negative." };
+  }
+
+  if (qty > max) {
+    return {
+      ok: false,
+      error: `Qty produced cannot exceed order qty (${max}).`,
+    };
+  }
+
+  return { ok: true, qty };
+}
+
 export class JobOrderService {
   public static GetJobOrders = async (
     request: { tenantid: number; locationId?: number }

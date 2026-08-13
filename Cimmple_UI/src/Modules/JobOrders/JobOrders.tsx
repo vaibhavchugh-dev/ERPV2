@@ -161,6 +161,55 @@ const JobOrders: React.FC = () => {
     return `CO#${displayNumber}`;
   };
 
+  const toDisplayNumber = (number: number): number =>
+    number > 0 && number < 1000 ? number + 999 : number;
+
+  /** Match JO#/CO# display formats as well as raw stored ids. */
+  const matchJobOrderSearch = (job: any, searchLower: string): boolean => {
+    const q = searchLower.trim().toLowerCase();
+    if (!q) return true;
+
+    const joRaw = Number(job.jobOrderNumber) || 0;
+    const joDisplay = toDisplayNumber(joRaw);
+    const joFormatted = formatJobOrderNumber(joRaw).toLowerCase();
+    const coRaw = Number(job.customerOrderID) || 0;
+    const coDisplay = toDisplayNumber(coRaw);
+    const coFormatted = formatCustomerOrderNumber(coRaw).toLowerCase();
+
+    const qJo = q.replace(/^jo#?/, "").replace(/\s/g, "");
+    const qCo = q.replace(/^co#?/, "").replace(/\s/g, "");
+
+    const hay = [
+      joFormatted,
+      String(joRaw),
+      String(joDisplay),
+      coFormatted,
+      String(coRaw),
+      String(coDisplay),
+      job.customerName,
+      job.partNo,
+      job.partName,
+      job.jobNumber,
+      job.jobDesc,
+      job.status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      hay.includes(q) ||
+      (!!qJo &&
+        (String(joRaw).includes(qJo) ||
+          String(joDisplay).includes(qJo) ||
+          joFormatted.includes(qJo))) ||
+      (!!qCo &&
+        (String(coRaw).includes(qCo) ||
+          String(coDisplay).includes(qCo) ||
+          coFormatted.includes(qCo)))
+    );
+  };
+
   const columns = [
     {
       key: "jobOrderNumber",
@@ -270,6 +319,7 @@ const JobOrders: React.FC = () => {
         data={filteredJobOrders}
         loading={loading}
         enablePagination
+        matchRowSearch={matchJobOrderSearch}
         onAdd={() => {
           toast.info("Create job orders from Customer Order line items");
         }}

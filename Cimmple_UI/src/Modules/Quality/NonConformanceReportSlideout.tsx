@@ -27,6 +27,8 @@ interface NonConformanceReportSlideoutProps {
   prefill?: Partial<NonConformanceReport>;
   /** Called after a successful create (before close). May be async. */
   onCreated?: (ncr: NonConformanceReport) => void | Promise<void>;
+  /** Called after a successful delete (before close). May be async. */
+  onDeleted?: (ncrId: number) => void | Promise<void>;
   /** Raise z-index above Job Order slideout / dialogs. */
   elevated?: boolean;
 }
@@ -165,6 +167,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   onClose,
   prefill,
   onCreated,
+  onDeleted,
   elevated,
 }) => {
   const { locationId: activeLocationId } = useActiveLocation();
@@ -652,6 +655,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
       await QualityService.DeleteNCR(ncrId, tenantID);
       toast.success("NCR deleted successfully");
       setShowDeletionDialog(false);
+      await Promise.resolve(onDeleted?.(ncrId));
       onClose(true);
     } catch (error: any) {
       toast.error(`Error deleting NCR: ${error.message || "Unknown error"}`);
