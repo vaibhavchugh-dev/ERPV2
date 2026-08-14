@@ -72,7 +72,8 @@ namespace CimmpleAPI.Controllers
                         jobPriority = x.Job.JobPriority,
                         status = x.Job.Status ?? "Draft",
                         orderDate = x.Job.OrderDate,
-                        locationId = x.OrderLocationId
+                        locationId = x.OrderLocationId,
+                        routingStepsJson = x.Job.RoutingStepsJson
                     })
                     .ToList()
                     .Select(x => new
@@ -96,7 +97,8 @@ namespace CimmpleAPI.Controllers
                         x.jobPriority,
                         x.status,
                         orderDate = x.orderDate.ToString("yyyy-MM-dd"),
-                        x.locationId
+                        x.locationId,
+                        routingSteps = ToRoutingProgress(x.routingStepsJson)
                     })
                     .ToList();
 
@@ -640,6 +642,45 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, new { error = ex.Message });
             }
         }
+
+        /// <summary>
+        /// Slim routing fields for job listing progress (avoids per-job GetJobOrderById).
+        /// </summary>
+        private static List<JobOrderRoutingProgressDto> ToRoutingProgress(string routingStepsJson)
+        {
+            if (string.IsNullOrWhiteSpace(routingStepsJson))
+            {
+                return new List<JobOrderRoutingProgressDto>();
+            }
+
+            try
+            {
+                var steps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                    routingStepsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (steps == null || steps.Count == 0)
+                {
+                    return new List<JobOrderRoutingProgressDto>();
+                }
+
+                return steps
+                    .OrderBy(s => s.sequence)
+                    .Select(s => new JobOrderRoutingProgressDto
+                    {
+                        id = s.id,
+                        sequence = s.sequence,
+                        processName = s.processName ?? "",
+                        status = s.status ?? "",
+                        progressState = string.IsNullOrWhiteSpace(s.progressState) ? "idle" : s.progressState,
+                        qtyProduced = s.qtyProduced ?? 0
+                    })
+                    .ToList();
+            }
+            catch
+            {
+                return new List<JobOrderRoutingProgressDto>();
+            }
+        }
     }
 
     // DTOs
@@ -703,6 +744,16 @@ namespace CimmpleAPI.Controllers
         public string text { get; set; }
         public string createdAt { get; set; }
         public string createdBy { get; set; }
+    }
+
+    public class JobOrderRoutingProgressDto
+    {
+        public int id { get; set; }
+        public int sequence { get; set; }
+        public string processName { get; set; }
+        public string status { get; set; }
+        public string progressState { get; set; }
+        public int qtyProduced { get; set; }
     }
 
     public class JobOrderRoutingStepDto

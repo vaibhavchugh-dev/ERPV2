@@ -274,11 +274,30 @@ export function parseProducedQty(
   if (qty > max) {
     return {
       ok: false,
-      error: `Qty produced cannot exceed order qty (${max}).`,
+      error: "Qty produced cannot exceed order qty.",
     };
   }
 
   return { ok: true, qty };
+}
+
+/** Overall job complete: qty must be > 0 and ≤ order qty. Below order qty is a warning only. */
+export function getOverallCompleteQtyError(
+  raw: string | number,
+  orderQty: number
+): string {
+  const parsed = parseProducedQty(raw, orderQty, "complete");
+  return parsed.ok ? "" : parsed.error;
+}
+
+export function isProducedQtyBelowOrderQty(
+  raw: string | number,
+  orderQty: number
+): boolean {
+  const parsed = parseProducedQty(raw, orderQty, "complete");
+  if (!parsed.ok) return false;
+  const max = getMaxProducedQty(orderQty);
+  return max > 0 && parsed.qty < max;
 }
 
 export class JobOrderService {

@@ -8,12 +8,16 @@ import {
   formatElapsedDuration,
   getCommittedSeconds,
   getCurrentStep,
+  getMaxProducedQty,
+  getOverallCompleteQtyError,
+  isProducedQtyBelowOrderQty,
   isStepCompleted,
   JobOrderDetail,
   JobOrderRoutingStep,
   JobOrderService,
   JobOrderStepNote,
   JOB_STEP_PAUSE_REASONS,
+  parseProducedQty,
   ProgressState,
   toElapsedFields,
 } from "../services/jobOrderService";
@@ -53,6 +57,8 @@ type TrackingDialog =
   | { type: "complete"; stepId: number }
   | { type: "reopen"; stepId: number }
   | { type: "stepNote"; stepId: number }
+  | { type: "completeJob" }
+  | { type: "disableTrack" }
   | null;
 
 function formatDue(dueDate: string): string {
@@ -88,7 +94,7 @@ function progressLabel(state: ProgressState | undefined): string {
 
 export function JobDetailPage() {
   const { jobOrderId } = useParams<{ jobOrderId: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { userName } = useAuth();
   const [job, setJob] = useState<JobOrderDetail | null>(null);
@@ -106,6 +112,8 @@ export function JobDetailPage() {
   const [trackingDialog, setTrackingDialog] = useState<TrackingDialog>(null);
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
+  const [completeJobQtys, setCompleteJobQtys] = useState<Record<number, string>>({});
+  const [completeJobErrors, setCompleteJobErrors] = useState<Record<number, string>>({});
   const [stepNoteInput, setStepNoteInput] = useState("");
   const [enableJobTracking, setEnableJobTracking] = useState(false);
   const enableJobTrackingRef = useRef(false);
@@ -128,6 +136,7 @@ export function JobDetailPage() {
 
   const deepLinkStepId = Number(searchParams.get("stepId") || 0);
   const focusTimer = searchParams.get("focus") === "timer";
+  const ncrDeleted = searchParams.get("ncrDeleted") === "1";
 
   const clearDisplayTimer = useCallback(() => {
     if (timerRef.current) {
@@ -178,6 +187,8 @@ export function JobDetailPage() {
       stepsRef.current = detail.RoutingSteps || [];
       setEnableJobTracking(!!detail.EnableJobTracking);
       enableJobTrackingRef.current = !!detail.EnableJobTracking;
+      setCompleteJobQtys({});
+      setCompleteJobErrors({});
 
       const queryStepId = Number(
         new URLSearchParams(window.location.search).get("stepId") || 0
@@ -206,9 +217,9 @@ export function JobDetailPage() {
       };
       setError(
         ax?.response?.data?.message ||
-          ax?.response?.data?.error ||
-          ax?.message ||
-          "Failed to load job"
+        ax?.response?.data?.error ||
+        ax?.message ||
+        "Failed to load job"
       );
     } finally {
       setLoading(false);
@@ -219,6 +230,19 @@ export function JobDetailPage() {
     void loadJob();
     return () => clearDisplayTimer();
   }, [loadJob, clearDisplayTimer]);
+
+  useEffect(() => {
+    if (!ncrDeleted) return;
+    void loadJob();
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("ncrDeleted");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [ncrDeleted, loadJob, setSearchParams]);
 
   // After load + selection: open step sheet + scroll timer when focus=timer (from Dashboard scan)
   useEffect(() => {
@@ -267,9 +291,26 @@ export function JobDetailPage() {
     setActionOk("");
 
     const stepsInput = overrides.RoutingSteps ?? stepsRef.current;
-    const stepsToSave = options?.deriveStatusFromSteps
+    const committedSteps = options?.deriveStatusFromSteps
       ? commitLiveElapsed(stepsInput)
       : stepsInput;
+    const orderQty = current.QtyOrdered || 0;
+    const qtyErrors: string[] = [];
+    const stepsToSave = committedSteps.map((step) => {
+      const parsed = parseProducedQty(step.qtyProduced ?? 0, orderQty, "save");
+      if (!parsed.ok) {
+        qtyErrors.push(parsed.error);
+        return step;
+      }
+      return { ...step, qtyProduced: parsed.qty };
+    });
+    if (qtyErrors.length > 0) {
+      setSaving(false);
+      setActionError(
+        `Please fix ${qtyErrors.length} issue${qtyErrors.length === 1 ? "" : "s"} before saving. ${qtyErrors.join(" ")}`
+      );
+      return false;
+    }
     const baseStatus = overrides.Status ?? current.Status;
     const statusToSave = options?.deriveStatusFromSteps
       ? deriveJobStatus(baseStatus, stepsToSave)
@@ -305,7 +346,7 @@ export function JobDetailPage() {
           if ((saved.notes?.length || 0) > 0 && !(s.notes?.length)) {
             next = { ...next, notes: saved.notes };
           }
-          if ((saved.ncrFlags?.length || 0) > 0 && !(s.ncrFlags?.length)) {
+          if ((saved.ncrFlags?.length || 0) > 0 && s.ncrFlags == null) {
             next = { ...next, ncrFlags: saved.ncrFlags };
           }
           return next;
@@ -336,11 +377,10 @@ export function JobDetailPage() {
         message?: string;
       };
       setActionError(
-        `Could not save job: ${
-          ax?.response?.data?.error ||
-          ax?.response?.data?.message ||
-          ax?.message ||
-          "Unknown error"
+        `Could not save job: ${ax?.response?.data?.error ||
+        ax?.response?.data?.message ||
+        ax?.message ||
+        "Unknown error"
         }`
       );
       await loadJob();
@@ -362,23 +402,67 @@ export function JobDetailPage() {
 
   const handleStatusChange = async (newStatus: string) => {
     if (saving || !jobRef.current) return;
+    if (newStatus === "Completed") {
+      requestCompleteJob();
+      return;
+    }
     await persistJobOrder({ Status: newStatus }, { successMessage: "Job status updated" });
   };
 
-  const handleTrackToggle = async () => {
-    if (saving) return;
-    const checked = !enableJobTracking;
+  const pauseAllRunningSteps = (steps: JobOrderRoutingStep[]): JobOrderRoutingStep[] => {
+    const nowMs = Date.now();
+    let changed = false;
+    const next = steps.map((s) => {
+      if (s.progressState !== "running") return s;
+      changed = true;
+      return {
+        ...s,
+        progressState: "paused" as const,
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+        pauseReason: s.pauseReason || "Tracking disabled",
+      };
+    });
+    return changed ? next : steps;
+  };
+
+  const applyTrackChange = async (checked: boolean) => {
     setEnableJobTracking(checked);
     enableJobTrackingRef.current = checked;
-    if (!checked) clearDisplayTimer();
+    let steps = stepsRef.current;
+    if (!checked) {
+      steps = pauseAllRunningSteps(steps);
+      if (!steps.some((s) => s.progressState === "running")) {
+        clearDisplayTimer();
+      }
+    }
     await persistJobOrder(
-      { EnableJobTracking: checked },
+      { EnableJobTracking: checked, RoutingSteps: steps },
       {
         successMessage: checked
           ? "Job tracking enabled"
           : "Job tracking disabled",
+        deriveStatusFromSteps: true,
       }
     );
+  };
+
+  const handleTrackToggle = () => {
+    if (saving) return;
+    const checked = !enableJobTracking;
+    if (!checked) {
+      const running = stepsRef.current.filter((s) => s.progressState === "running");
+      if (running.length > 0) {
+        setTrackingDialog({ type: "disableTrack" });
+        return;
+      }
+    }
+    void applyTrackChange(checked);
+  };
+
+  const confirmDisableTrack = async () => {
+    setTrackingDialog(null);
+    await applyTrackChange(false);
   };
 
   const handleToggleStepCompletion = async (stepId: number) => {
@@ -386,19 +470,19 @@ export function JobDetailPage() {
     if (!step || saving) return;
 
     const newStatus = step.status === "Completed" ? "Pending" : "Completed";
-    const updatedSteps = stepsRef.current.map((s) =>
-      s.id === stepId ? { ...s, status: newStatus } : s
-    );
-    await persistJobOrder(
-      { RoutingSteps: updatedSteps },
-      {
-        successMessage:
-          newStatus === "Completed"
-            ? "Step marked as completed"
-            : "Step reopened",
-        deriveStatusFromSteps: true,
-      }
-    );
+    if (newStatus === "Pending") {
+      const updatedSteps = stepsRef.current.map((s) =>
+        s.id === stepId
+          ? { ...s, status: "Pending", progressState: "idle" as const }
+          : s
+      );
+      await persistJobOrder(
+        { RoutingSteps: updatedSteps },
+        { successMessage: "Step reopened", deriveStatusFromSteps: true }
+      );
+      return;
+    }
+    requestCompleteStep(stepId);
   };
 
   const requestStepNote = (stepId: number) => {
@@ -473,14 +557,14 @@ export function JobDetailPage() {
     const updatedSteps = stepsRef.current.map((s) =>
       s.id === stepId
         ? {
-            ...s,
-            progressState: "running" as const,
-            startTime: new Date().toISOString(),
-            elapsedSeconds: getCommittedSeconds(s),
-            elapsedTime: Math.floor(getCommittedSeconds(s) / 60),
-            status: "In Progress",
-            technicianName: userName || s.technicianName,
-          }
+          ...s,
+          progressState: "running" as const,
+          startTime: new Date().toISOString(),
+          elapsedSeconds: getCommittedSeconds(s),
+          elapsedTime: Math.floor(getCommittedSeconds(s) / 60),
+          status: "In Progress",
+          technicianName: userName || s.technicianName,
+        }
         : s
     );
 
@@ -539,13 +623,13 @@ export function JobDetailPage() {
       return;
     }
 
-    const qty = parseInt(completeQtyInput, 10);
-    if (Number.isNaN(qty) || qty < 0) {
-      setCompleteQtyError("Enter a valid quantity (0 or greater).");
+    const orderQty = jobRef.current?.QtyOrdered || 0;
+    const parsed = parseProducedQty(completeQtyInput, orderQty, "complete");
+    if (!parsed.ok) {
+      setCompleteQtyError(parsed.error);
       return;
     }
-
-    const orderQty = jobRef.current?.QtyOrdered || 0;
+    const qty = parsed.qty;
     const meetsOrderQty = orderQty <= 0 || qty >= orderQty;
     const shouldComplete = forceComplete || meetsOrderQty;
 
@@ -605,17 +689,116 @@ export function JobDetailPage() {
     const updatedSteps = stepsRef.current.map((s) =>
       s.id === stepId
         ? {
-            ...s,
-            progressState: "idle" as const,
-            status: "Pending",
-            startTime: undefined,
-          }
+          ...s,
+          progressState: "idle" as const,
+          status: "Pending",
+          startTime: undefined,
+        }
         : s
     );
     await persistTrackingSteps(
       updatedSteps,
       "Operation reopened — job set to In Progress if it was Completed"
     );
+  };
+
+  const resolveGridStepQtyRaw = (step: JobOrderRoutingStep): string => {
+    return step.qtyProduced != null ? String(step.qtyProduced) : "";
+  };
+
+  const defaultOverallCompleteQty = (step: JobOrderRoutingStep, orderQtyVal: number) => {
+    const grid = resolveGridStepQtyRaw(step).trim();
+    const qty = parseInt(grid, 10);
+    if (grid !== "" && Number.isFinite(qty) && qty > 0) return String(qty);
+    return String(orderQtyVal);
+  };
+
+  const requestCompleteJob = () => {
+    const steps = stepsRef.current;
+    if (!steps.length) {
+      setActionError("Add routing steps and enter produced quantity before completing this job.");
+      return;
+    }
+    const orderQtyVal = jobRef.current?.QtyOrdered || 0;
+    const qtys: Record<number, string> = {};
+    steps.forEach((s) => {
+      qtys[s.id] = defaultOverallCompleteQty(s, orderQtyVal);
+    });
+    setCompleteJobQtys(qtys);
+    setCompleteJobErrors({});
+    setTrackingDialog({ type: "completeJob" });
+  };
+
+  const buildCompletedJobSteps = (
+    steps: JobOrderRoutingStep[],
+    qtyById: Map<number, number>
+  ): JobOrderRoutingStep[] => {
+    const nowMs = Date.now();
+    return steps.map((s) => {
+      const qty = qtyById.get(s.id) ?? s.qtyProduced ?? 0;
+      if (isStepCompleted(s)) {
+        return { ...s, qtyProduced: qty };
+      }
+      return {
+        ...s,
+        qtyProduced: qty,
+        progressState: "stopped" as const,
+        status: "Completed",
+        ...toElapsedFields(computeElapsedSeconds(s, nowMs)),
+        startTime: undefined,
+      };
+    });
+  };
+
+  const confirmCompleteJob = async () => {
+    const steps = stepsRef.current;
+    const orderQtyVal = jobRef.current?.QtyOrdered || 0;
+    const errors: Record<number, string> = {};
+    const parsedById = new Map<number, number>();
+    steps.forEach((step) => {
+      const raw = completeJobQtys[step.id] ?? defaultOverallCompleteQty(step, orderQtyVal);
+      const error = getOverallCompleteQtyError(raw, orderQtyVal);
+      if (error) {
+        errors[step.id] = error;
+        return;
+      }
+      const parsed = parseProducedQty(raw, orderQtyVal, "complete");
+      if (parsed.ok) parsedById.set(step.id, parsed.qty);
+    });
+    setCompleteJobErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      const first = steps.find((s) => errors[s.id]);
+      if (first) {
+        window.requestAnimationFrame(() => {
+          document.getElementById(`pwa-complete-qty-${first.id}`)?.scrollIntoView({
+            block: "nearest",
+            behavior: "smooth",
+          });
+          (document.getElementById(`pwa-complete-qty-${first.id}`) as HTMLInputElement | null)?.focus();
+        });
+      }
+      return;
+    }
+
+    const updatedSteps = buildCompletedJobSteps(steps, parsedById);
+    const stillRunning = updatedSteps.some((s) => s.progressState === "running");
+    if (!stillRunning) clearDisplayTimer();
+    const saved = await persistJobOrder(
+      { RoutingSteps: updatedSteps, Status: "Completed" },
+      { successMessage: "Job marked as completed", deriveStatusFromSteps: true }
+    );
+    if (saved) {
+      setTrackingDialog(null);
+      setCompleteJobQtys({});
+      setCompleteJobErrors({});
+    }
+  };
+
+  const closeTrackingDialog = () => {
+    if (saving) return;
+    setTrackingDialog(null);
+    setCompleteJobQtys({});
+    setCompleteJobErrors({});
   };
 
   if (loading) {
@@ -628,7 +811,7 @@ export function JobDetailPage() {
             aria-label="Back to Jobs"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Link>
           <div className="min-w-0">
@@ -684,15 +867,20 @@ export function JobDetailPage() {
   }
 
   const orderQty = job.QtyOrdered || 0;
+  const qtyCapacity = orderQty * sortedSteps.length;
+  const producedAcrossSteps = sortedSteps.reduce((acc, step) => {
+    const qty = Math.max(0, step.qtyProduced || 0);
+    return acc + (orderQty > 0 ? Math.min(qty, orderQty) : qty);
+  }, 0);
+  const remainingAcrossSteps = Math.max(0, qtyCapacity - producedAcrossSteps);
+  const qtyProgressPct =
+    qtyCapacity > 0
+      ? Math.min(100, Math.round((producedAcrossSteps / qtyCapacity) * 100))
+      : 0;
   const completeParsed = parseInt(completeQtyInput, 10);
   const completeQtyNum = Number.isNaN(completeParsed) ? null : completeParsed;
   const underOrder =
     completeQtyNum != null && orderQty > 0 && completeQtyNum < orderQty;
-  const meetsOrder =
-    completeQtyNum != null && (orderQty <= 0 || completeQtyNum >= orderQty);
-  const zeroWarn = completeQtyNum === 0;
-  const overWarn =
-    completeQtyNum != null && orderQty > 0 && completeQtyNum > orderQty;
 
   return (
     <div>
@@ -705,7 +893,7 @@ export function JobDetailPage() {
             aria-label="Back to Jobs"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M15 19l-7-7 7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Link>
           <div className="min-w-0">
@@ -718,11 +906,10 @@ export function JobDetailPage() {
 
         <div className="relative shrink-0">
           <select
-            className={`min-h-tap appearance-none rounded-xl border bg-white py-2 pl-3 pr-8 text-sm font-bold shadow-sm outline-none dark:bg-slate-800 ${
-              isActiveJobStatus(job.Status)
-                ? "border-emerald-200 text-emerald-800 dark:border-emerald-700 dark:text-emerald-300"
-                : "border-slate-200 text-slate-700 dark:border-slate-600 dark:text-slate-200"
-            }`}
+            className={`min-h-tap appearance-none rounded-xl border bg-white py-2 pl-3 pr-8 text-sm font-bold shadow-sm outline-none dark:bg-slate-800 ${isActiveJobStatus(job.Status)
+              ? "border-emerald-200 text-emerald-800 dark:border-emerald-700 dark:text-emerald-300"
+              : "border-slate-200 text-slate-700 dark:border-slate-600 dark:text-slate-200"
+              }`}
             value={normalizeJobStatus(job.Status)}
             disabled={saving}
             onChange={(e) => void handleStatusChange(e.target.value)}
@@ -784,9 +971,9 @@ export function JobDetailPage() {
                 {formatElapsedDuration(
                   job.RoutingSteps
                     ? job.RoutingSteps.reduce(
-                        (acc, s) => acc + computeElapsedSeconds(s),
-                        0
-                      )
+                      (acc, s) => acc + computeElapsedSeconds(s),
+                      0
+                    )
                     : 0
                 )}
               </span>
@@ -818,7 +1005,7 @@ export function JobDetailPage() {
           <div className="rounded-xl border border-slate-100 bg-slate-50 px-2 py-1.5 text-center dark:border-slate-600 dark:bg-slate-950">
             <span className="text-[0.55rem] font-extrabold text-slate-500 uppercase block dark:text-slate-300">REMAINING</span>
             <span className="text-sm font-extrabold text-slate-900 truncate block dark:text-white">
-              {Math.max(0, job.QtyOrdered - (job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0))} {job.Unit || "pcs"}
+              {remainingAcrossSteps} {job.Unit || "pcs"}
             </span>
           </div>
         </div>
@@ -826,44 +1013,28 @@ export function JobDetailPage() {
         {/* Progress Bar Section */}
         <div>
           {(() => {
-            const produced =
-              job.RoutingSteps?.[job.RoutingSteps.length - 1]?.qtyProduced || 0;
-            const pct =
-              orderQty > 0 ? Math.min(100, Math.round((produced / orderQty) * 100)) : 0;
-            const anyStarted = job.RoutingSteps?.some(
-              (s) =>
-                !isStepCompleted(s) &&
-                (s.progressState === "running" || s.progressState === "paused")
-            );
-            const anyRunning = job.RoutingSteps?.some(
-              (s) => s.progressState === "running"
-            );
-            const allDone =
-              (job.RoutingSteps?.length ?? 0) > 0 &&
-              job.RoutingSteps!.every((s) => isStepCompleted(s));
-            const fillClass = allDone
-              ? "bg-emerald-500"
-              : anyStarted
-              ? "bg-orange-500"
-              : "bg-transparent";
+            const fillClass =
+              qtyCapacity > 0 && producedAcrossSteps >= qtyCapacity
+                ? "bg-emerald-500"
+                : producedAcrossSteps > 0
+                  ? "bg-orange-500"
+                  : "bg-transparent";
             return (
               <>
                 <div className="flex items-center justify-between text-sm font-bold mb-1">
                   <span className="text-slate-600 dark:text-slate-300">Progress</span>
-                  <span className="text-slate-900 font-black dark:text-white">{pct}%</span>
+                  <span className="text-slate-900 font-black dark:text-white">{qtyProgressPct}%</span>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden mb-1 dark:bg-slate-700">
                   <div
-                    className={`h-full rounded-full transition-all duration-300 ${fillClass} ${
-                      anyRunning ? "animate-pulse" : ""
-                    }`}
-                    style={{ width: `${pct}%` }}
+                    className={`h-full rounded-full transition-all duration-300 ${fillClass}`}
+                    style={{ width: `${qtyProgressPct}%` }}
                   />
                 </div>
                 <div className="flex items-center justify-between text-sm font-semibold text-slate-500 dark:text-slate-300">
                   <span>
-                    Produced {produced}
-                    {orderQty > 0 ? ` / ${orderQty}` : ""}
+                    Produced {producedAcrossSteps}
+                    {qtyCapacity > 0 ? ` / ${qtyCapacity}` : ""}
                   </span>
                   <span>Due {formatDue(job.DueDate)}</span>
                 </div>
@@ -877,11 +1048,10 @@ export function JobDetailPage() {
       <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_10px_rgba(15,23,42,0.08)] dark:bg-slate-800 dark:border-slate-600">
         <div className="flex min-w-0 items-center gap-2.5">
           <span
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-              enableJobTracking
-                ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
-                : "bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-300"
-            }`}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${enableJobTracking
+              ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+              : "bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-300"
+              }`}
             aria-hidden
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -898,11 +1068,10 @@ export function JobDetailPage() {
         </div>
         <button
           type="button"
-          className={`shrink-0 inline-flex h-8 items-center rounded-lg border px-2.5 text-[0.7rem] font-bold tracking-wide transition disabled:opacity-55 ${
-            enableJobTracking
-              ? "border-emerald-600/20 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/40 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
-              : "border-red-600/20 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-700/40 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950/70"
-          }`}
+          className={`shrink-0 inline-flex h-8 items-center rounded-lg border px-2.5 text-[0.7rem] font-bold tracking-wide transition disabled:opacity-55 ${enableJobTracking
+            ? "border-emerald-600/20 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/40 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+            : "border-red-600/20 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-700/40 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950/70"
+            }`}
           title={enableJobTracking ? "Disable job tracking" : "Enable job tracking"}
           aria-pressed={enableJobTracking}
           disabled={saving}
@@ -988,24 +1157,22 @@ export function JobDetailPage() {
 
                 <button
                   type="button"
-                  className={`w-full text-left transition-all ${
-                    completed
-                      ? "bg-[#ecfdf5] border border-emerald-100 rounded-2xl p-4 block hover:border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:hover:border-emerald-700"
-                      : current
+                  className={`w-full text-left transition-all ${completed
+                    ? "bg-[#ecfdf5] border border-emerald-100 rounded-2xl p-4 block hover:border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 dark:hover:border-emerald-700"
+                    : current
                       ? "bg-slate-900 text-white rounded-2xl p-4 block shadow-md dark:bg-slate-950 dark:ring-1 dark:ring-slate-600"
                       : "bg-white border border-slate-200/80 rounded-2xl p-4 block hover:bg-slate-50 dark:bg-slate-900/60 dark:border-slate-600 dark:hover:bg-slate-900"
-                  }`}
+                    }`}
                   onClick={() => openStepSheet(step.id)}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div
-                      className={`text-lg font-extrabold ${
-                        completed
-                          ? "text-slate-900 dark:text-white"
-                          : current
+                      className={`text-lg font-extrabold ${completed
+                        ? "text-slate-900 dark:text-white"
+                        : current
                           ? "text-white"
                           : "text-slate-900 dark:text-white"
-                      }`}
+                        }`}
                     >
                       {step.sequence}. {step.processName}
                     </div>
@@ -1027,64 +1194,59 @@ export function JobDetailPage() {
                   </div>
 
                   <div
-                    className={`text-base font-semibold mt-1 ${
-                      completed
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : current
+                    className={`text-base font-semibold mt-1 ${completed
+                      ? "text-emerald-700 dark:text-emerald-300"
+                      : current
                         ? "text-slate-300"
                         : "text-slate-500 dark:text-slate-300"
-                    }`}
+                      }`}
                   >
                     {completed
                       ? `Finished · ${step.qtyProduced || 0} pcs accepted`
                       : isRunning
-                      ? `Running on ${step.workstationName || "workstation"} · ${elapsed}`
-                      : isPaused
-                      ? `Paused · ${elapsed}`
-                      : `Queued after previous step completes`}
+                        ? `Running on ${step.workstationName || "workstation"} · ${elapsed}`
+                        : isPaused
+                          ? `Paused · ${elapsed}`
+                          : `Queued after previous step completes`}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-extrabold uppercase ${
-                        completed
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300"
-                          : current
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-extrabold uppercase ${completed
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300"
+                        : current
                           ? "bg-slate-700 text-slate-200"
                           : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
-                      }`}
+                        }`}
                     >
                       {completed ? "Done" : progressLabel(step.progressState)}
                     </span>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
-                        current
-                          ? "bg-slate-700 text-slate-200"
-                          : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
-                      }`}
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${current
+                        ? "bg-slate-700 text-slate-200"
+                        : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                        }`}
                     >
                       {elapsed}
                     </span>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
-                        current
-                          ? "bg-slate-700 text-slate-200"
-                          : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
-                      }`}
+                      className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${current
+                        ? "bg-slate-700 text-slate-200"
+                        : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                        }`}
                     >
                       Est {step.estimatedTime || 0}m
                     </span>
                     {(step.qtyProduced ?? 0) > 0 && (
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${
-                          current
-                            ? "bg-slate-700 text-slate-200"
-                            : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
-                        }`}
+                        className={`rounded-full px-2 py-0.5 text-[0.7rem] font-bold ${current
+                          ? "bg-slate-700 text-slate-200"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                          }`}
                       >
                         Qty {step.qtyProduced}
                       </span>
                     )}
-                    {step.pauseReason && (
+                    {step.pauseReason && !completed && (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.7rem] font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
                         Hold
                       </span>
@@ -1169,9 +1331,9 @@ export function JobDetailPage() {
                       <span className="block text-base font-extrabold text-white">
                         {selectedStep.startTime
                           ? new Date(selectedStep.startTime).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
                           : "—"}
                       </span>
                     </div>
@@ -1232,7 +1394,7 @@ export function JobDetailPage() {
                   </button>
                 </div>
 
-                {selectedStep.pauseReason && (
+                {selectedStep.pauseReason && !isStepCompleted(selectedStep) && (
                   <div className="bg-[#fffbeb] border border-amber-200/80 rounded-2xl p-4 mt-4 dark:bg-amber-950/40 dark:border-amber-800">
                     <div className="text-xs font-extrabold text-amber-800 flex items-center gap-2 mb-2 dark:text-amber-300">
                       Pause reason
@@ -1250,24 +1412,22 @@ export function JobDetailPage() {
                     Step status
                   </span>
                   <span
-                    className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.65rem] font-extrabold uppercase ${
-                      selectedStep.status === "Completed"
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                        : selectedStep.status === "In Progress"
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.65rem] font-extrabold uppercase ${selectedStep.status === "Completed"
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                      : selectedStep.status === "In Progress"
                         ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
                         : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
-                    }`}
+                      }`}
                   >
                     {selectedStep.status || "Pending"}
                   </span>
                 </div>
                 <button
                   type="button"
-                  className={`min-h-tap inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-base font-extrabold text-white disabled:opacity-50 ${
-                    selectedStep.status === "Completed"
-                      ? "bg-emerald-500 hover:bg-emerald-600"
-                      : "bg-slate-500 hover:bg-slate-600"
-                  }`}
+                  className={`min-h-tap inline-flex items-center justify-center gap-2 rounded-2xl px-5 text-base font-extrabold text-white disabled:opacity-50 ${selectedStep.status === "Completed"
+                    ? "bg-emerald-500 hover:bg-emerald-600"
+                    : "bg-slate-500 hover:bg-slate-600"
+                    }`}
                   disabled={saving}
                   onClick={() => void handleToggleStepCompletion(selectedStep.id)}
                 >
@@ -1296,7 +1456,7 @@ export function JobDetailPage() {
               >
                 {selectedStep.ncrFlags?.[0]?.ncrId
                   ? selectedStep.ncrFlags[0].ncrNumber ||
-                    `NCR-${selectedStep.ncrFlags[0].ncrId}`
+                  `NCR-${selectedStep.ncrFlags[0].ncrId}`
                   : "Add NCR"}
               </button>
             </div>
@@ -1306,18 +1466,223 @@ export function JobDetailPage() {
 
       {trackingDialog && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/50 p-4 sm:items-center dark:bg-black/70"
           role="presentation"
           onClick={() => {
-            if (!saving) setTrackingDialog(null);
+            if (!saving) closeTrackingDialog();
           }}
         >
           <div
-            className="card w-full max-w-md p-4"
+            className={`card w-full p-4 dark:bg-slate-900 dark:border-slate-600 ${trackingDialog.type === "completeJob" ? "max-w-lg max-h-[85vh] overflow-y-auto" : "max-w-md"
+              }`}
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
           >
+            {trackingDialog.type === "completeJob" && (() => {
+              const maxQty = getMaxProducedQty(orderQty);
+              const stepsInDialog = sortedSteps;
+              const runningSteps = stepsInDialog.filter((s) => s.progressState === "running");
+              const belowOrderSteps = stepsInDialog.filter((step) =>
+                isProducedQtyBelowOrderQty(completeJobQtys[step.id] ?? "", orderQty)
+              );
+              const qtyIssueCount = stepsInDialog.filter((step) =>
+                !!getOverallCompleteQtyError(completeJobQtys[step.id] ?? "", orderQty)
+              ).length;
+              const canSubmit = stepsInDialog.length > 0 && qtyIssueCount === 0;
+              return (
+                <>
+                  <h4 className="mb-1 text-lg font-extrabold text-red-700 dark:text-red-300">
+                    Set Up Required
+                  </h4>
+                  <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
+                    Review produced quantity for every routing step (greater than 0 and up to{" "}
+                    {maxQty}
+                    {job.Unit ? ` ${job.Unit}` : ""}).
+                  </p>
+                  {(runningSteps.length > 0 || belowOrderSteps.length > 0) && (
+                    <div className="mb-3 space-y-2">
+                      {runningSteps.length > 0 && (
+                        <div className="flex gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-blue-900 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-100">
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                              <polyline points="12 6 12 12 16 14" />
+                            </svg>
+                          </span>
+                          <div className="min-w-0 text-sm">
+                            <div className="font-extrabold">Running timers will be stopped</div>
+                            <p className="mt-1 font-semibold leading-snug opacity-90">
+                              Completing this job will stop the live clock on Seq{" "}
+                              {runningSteps.map((s) => s.sequence).join(", Seq ")}.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {belowOrderSteps.length > 0 && (
+                        <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <line x1="12" y1="9" x2="12" y2="13" />
+                              <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                          </span>
+                          <div className="min-w-0 text-sm">
+                            <div className="font-extrabold">Some steps have less qty than order qty</div>
+
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="mb-3 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-600">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-[0.7rem] font-extrabold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                        <tr>
+                          <th className="px-3 py-2">Seq</th>
+                          <th className="px-3 py-2">Operation</th>
+                          <th className="px-3 py-2">Qty produced</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stepsInDialog.map((step) => {
+                          const raw = completeJobQtys[step.id] ?? "";
+                          const qtyError =
+                            completeJobErrors[step.id] ||
+                            getOverallCompleteQtyError(raw, orderQty);
+                          return (
+                            <tr
+                              key={step.id}
+                              className={
+                                qtyError
+                                  ? "bg-red-50 dark:bg-red-950/40"
+                                  : "border-t border-slate-100 dark:border-slate-700"
+                              }
+                            >
+                              <td className="px-3 py-2 font-bold text-slate-800 dark:text-slate-100">
+                                {step.sequence}
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-100">
+                                {step.processName}
+                                {isStepCompleted(step) ? (
+                                  <sup className="ml-1 rounded bg-emerald-100 px-1 text-[0.6rem] font-extrabold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                    Completed
+                                  </sup>
+                                ) : null}
+                              </td>
+                              <td className="px-3 py-2 align-top">
+                                <input
+                                  id={`pwa-complete-qty-${step.id}`}
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className={`field-input min-h-10 w-24 ${qtyError
+                                    ? "border-red-500 dark:border-red-400"
+                                    : ""
+                                    }`}
+                                  value={raw}
+                                  disabled={saving}
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    setCompleteJobQtys((prev) => ({
+                                      ...prev,
+                                      [step.id]: next,
+                                    }));
+                                    const error = getOverallCompleteQtyError(next, orderQty);
+                                    setCompleteJobErrors((prev) => {
+                                      const copy = { ...prev };
+                                      if (error) copy[step.id] = error;
+                                      else delete copy[step.id];
+                                      return copy;
+                                    });
+                                  }}
+                                />
+                                {qtyError ? (
+                                  <div className="mt-1 text-[0.7rem] font-semibold leading-snug text-red-700 dark:text-red-300">
+                                    {qtyError}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {qtyIssueCount > 0 && (
+                    <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300">
+                      Please fix {qtyIssueCount} issue{qtyIssueCount === 1 ? "" : "s"} before
+                      completing.
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={saving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      disabled={saving || !canSubmit}
+                      onClick={() => void confirmCompleteJob()}
+                    >
+                      {saving ? "Saving…" : "Save qty & complete"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
+            {trackingDialog.type === "disableTrack" && (() => {
+              const runningSteps = stepsRef.current.filter(
+                (s) => s.progressState === "running"
+              );
+              return (
+                <>
+                  <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">
+                    Turn Track OFF?
+                  </h4>
+                  <div className="mb-4 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                    </span>
+                    <div className="text-sm">
+                      <div className="font-extrabold">A step is currently running</div>
+                      <p className="mt-1 font-semibold leading-snug opacity-90">
+                        Turning Track OFF will pause the live clock. Continue?
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={saving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={saving}
+                      onClick={() => void confirmDisableTrack()}
+                    >
+                      {saving ? "Saving…" : "Turn Track OFF"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
             {trackingDialog.type === "pause" && (
               <>
                 <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Pause operation</h4>
@@ -1342,7 +1707,7 @@ export function JobDetailPage() {
                     type="button"
                     className="btn btn-ghost"
                     disabled={saving}
-                    onClick={() => setTrackingDialog(null)}
+                    onClick={closeTrackingDialog}
                   >
                     Cancel
                   </button>
@@ -1363,99 +1728,92 @@ export function JobDetailPage() {
                 (s) => s.id === trackingDialog.stepId
               );
               return (
-              <>
-                <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Complete operation</h4>
-                <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
-                  {dialogStep
-                    ? `Step ${dialogStep.sequence}: ${dialogStep.processName}`
-                    : "Enter quantity produced for this operation."}
-                </p>
-                <div className="mb-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-slate-200 bg-canvas px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800">
-                    <div className="text-[0.7rem] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-300">
-                      Order qty
+                <>
+                  <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Complete operation</h4>
+                  <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
+                    {dialogStep
+                      ? `Step ${dialogStep.sequence}: ${dialogStep.processName}`
+                      : "Enter quantity produced for this operation."}
+                  </p>
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-slate-200 bg-canvas px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800">
+                      <div className="text-[0.7rem] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                        Order qty
+                      </div>
+                      <div className="font-semibold text-slate-900 dark:text-white">
+                        {orderQty} {job.Unit || ""}
+                      </div>
                     </div>
-                    <div className="font-semibold text-slate-900 dark:text-white">
-                      {orderQty} {job.Unit || ""}
-                    </div>
-                  </div>
-                  <label className="field">
-                    <span>Qty produced</span>
-                    <input
-                      className="field-input"
-                      type="number"
-                      min={0}
-                      autoFocus
-                      value={completeQtyInput}
-                      onChange={(e) => {
-                        setCompleteQtyInput(e.target.value);
-                        setCompleteQtyError("");
-                      }}
-                      disabled={saving}
-                    />
-                  </label>
-                </div>
-                {completeQtyError && (
-                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300">
-                    {completeQtyError}
-                  </div>
-                )}
-                {!completeQtyError && underOrder && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
-                    Qty produced is less than order qty. Saving keeps this operation open.
-                    Use Complete anyway only if the operation is finished short.
-                  </div>
-                )}
-                {!completeQtyError && zeroWarn && meetsOrder && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
-                    Qty produced is 0. You can still complete if this operation had no output.
-                  </div>
-                )}
-                {!completeQtyError && overWarn && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
-                    Qty produced exceeds order qty. Confirm only if overbuild is intended.
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={saving}
-                    onClick={() => setTrackingDialog(null)}
-                  >
-                    Cancel
-                  </button>
-                  {underOrder ? (
-                    <>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
+                    <label className="field">
+                      <span>Qty produced</span>
+                      <input
+                        className={`field-input ${completeQtyError ? "border-red-500 dark:border-red-400" : ""
+                          }`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        autoFocus
+                        value={completeQtyInput}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setCompleteQtyInput(next);
+                          const parsed = parseProducedQty(next, orderQty, "complete");
+                          setCompleteQtyError(parsed.ok ? "" : parsed.error);
+                        }}
                         disabled={saving}
-                        onClick={() => void confirmCompleteStep(false)}
-                      >
-                        {saving ? "Saving…" : "Save qty (keep open)"}
-                      </button>
+                      />
+                    </label>
+                  </div>
+                  {completeQtyError && (
+                    <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300">
+                      {completeQtyError}
+                    </div>
+                  )}
+                  {!completeQtyError && underOrder && (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                      Qty produced is less than order qty.
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={saving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    {underOrder && !completeQtyError ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={saving || !!completeQtyError}
+                          onClick={() => void confirmCompleteStep(false)}
+                        >
+                          {saving ? "Saving…" : "Save qty (keep open)"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-success"
+                          disabled={saving || !!completeQtyError}
+                          onClick={() => void confirmCompleteStep(true)}
+                        >
+                          Complete anyway
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
                         className="btn btn-success"
-                        disabled={saving}
+                        disabled={saving || !!completeQtyError}
                         onClick={() => void confirmCompleteStep(true)}
                       >
-                        Complete anyway
+                        {saving ? "Saving…" : "Complete"}
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-success"
-                      disabled={saving}
-                      onClick={() => void confirmCompleteStep(true)}
-                    >
-                      {saving ? "Saving…" : "Complete"}
-                    </button>
-                  )}
-                </div>
-              </>
+                    )}
+                  </div>
+                </>
               );
             })()}
 
@@ -1471,7 +1829,7 @@ export function JobDetailPage() {
                     type="button"
                     className="btn btn-ghost"
                     disabled={saving}
-                    onClick={() => setTrackingDialog(null)}
+                    onClick={closeTrackingDialog}
                   >
                     Cancel
                   </button>
@@ -1537,7 +1895,7 @@ export function JobDetailPage() {
                       type="button"
                       className="btn btn-ghost"
                       disabled={saving}
-                      onClick={() => setTrackingDialog(null)}
+                      onClick={closeTrackingDialog}
                     >
                       Close
                     </button>

@@ -58,6 +58,8 @@ export function NcrFormPage() {
   const [ncrCodes, setNcrCodes] = useState<NcrCodeOption[]>([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [photoWarn, setPhotoWarn] = useState("");
@@ -491,6 +493,27 @@ export function NcrFormPage() {
       setError(ax?.message || "Error saving NCR");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (ncrId <= 0) return;
+    setError("");
+    setDeleting(true);
+    try {
+      await QualityService.deleteNCR(ncrId);
+      if (returnTo) {
+        const sep = returnTo.includes("?") ? "&" : "?";
+        navigate(`${returnTo}${sep}ncrDeleted=1`, { replace: true });
+      } else {
+        navigate("/quality", { replace: true });
+      }
+    } catch (err: unknown) {
+      const ax = err as { message?: string };
+      setError(ax?.message || "Failed to delete NCR");
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -1139,17 +1162,69 @@ export function NcrFormPage() {
       </form>
 
       <div className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-0 right-0 z-30 border-t border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95">
-        <div className="mx-auto max-w-[600px]">
+        <div className="mx-auto flex max-w-[600px] gap-2">
+          {ncrId > 0 && (
+            <button
+              type="button"
+              className="btn min-h-tap rounded-2xl border border-red-200 bg-red-50 text-sm font-extrabold text-red-700 dark:border-red-800 dark:bg-red-950/60 dark:text-red-300"
+              disabled={saving || deleting}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete
+            </button>
+          )}
           <button
             type="submit"
             form="ncr-form"
-            className="btn btn-primary min-h-tap w-full rounded-2xl text-sm font-extrabold"
-            disabled={saving}
+            className="btn btn-primary min-h-tap flex-1 rounded-2xl text-sm font-extrabold"
+            disabled={saving || deleting}
           >
             {saving ? "Saving…" : ncrId > 0 ? "Save NCR" : "Create NCR"}
           </button>
         </div>
       </div>
+
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-4 sm:items-center dark:bg-black/70"
+          role="presentation"
+          onClick={() => {
+            if (!deleting) setConfirmDelete(false);
+          }}
+        >
+          <div
+            className="card w-full max-w-md p-4 dark:border-slate-600 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="mb-1 text-lg font-extrabold text-slate-900 dark:text-white">
+              Delete this NCR?
+            </h4>
+            <p className="mb-4 text-sm font-semibold text-slate-500 dark:text-slate-300">
+              This removes the NCR and clears it from the job router step. This cannot be undone.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn min-h-tap rounded-2xl border border-red-200 bg-red-600 text-sm font-extrabold text-white hover:bg-red-700 dark:border-red-800 dark:bg-red-700 dark:hover:bg-red-600"
+                disabled={deleting}
+                onClick={() => void handleDelete()}
+              >
+                {deleting ? "Deleting…" : "Delete NCR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

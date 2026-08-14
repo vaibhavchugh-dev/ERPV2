@@ -15,6 +15,8 @@ import {
   getCommittedSeconds,
   getMaxProducedQty,
   parseProducedQty,
+  getOverallCompleteQtyError,
+  isProducedQtyBelowOrderQty,
   buildStepScanCode,
   JOB_STEP_PAUSE_REASONS,
 } from "../../Common/Services/JobOrderService";
@@ -137,15 +139,16 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       | "replaceTemplate"
       | "stepNote"
       | "disableTrack"
-      | "completeJob"
-      | "completeJobConfirm";
+      | "completeJob";
     stepId?: number;
     template?: JobTemplate;
   }>(null);
   const [completeQtyInput, setCompleteQtyInput] = useState("");
   const [completeQtyError, setCompleteQtyError] = useState("");
   const [completeJobQtys, setCompleteJobQtys] = useState<Record<number, string>>({});
+  const [completeJobErrors, setCompleteJobErrors] = useState<Record<number, string>>({});
   const [completeJobError, setCompleteJobError] = useState("");
+  const completeJobTableRef = useRef<HTMLDivElement | null>(null);
   const [qtyDrafts, setQtyDrafts] = useState<Record<number, string>>({});
   const [stepNoteInput, setStepNoteInput] = useState("");
   const [stepMenu, setStepMenu] = useState<null | {
@@ -336,7 +339,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         : qtyDrafts[step.id] ?? step.qtyProduced ?? 0;
       const parsed = parseProducedQty(raw, orderQty, "save");
       if (!parsed.ok) {
-        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
+        toast.error(parsed.error);
         return false;
       }
       step.qtyProduced = parsed.qty;
@@ -496,6 +499,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         setStepTimers(nextTimers);
         setRoutingSteps(normalizedSteps);
         setCompleteJobQtys({});
+        setCompleteJobErrors({});
         setCompleteJobError("");
         setQtyDrafts({});
         if (normalizedSteps !== steps) {
@@ -563,7 +567,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       const parsed = parseProducedQty(raw, orderQty, "save");
       if (!parsed.ok) {
         toast.error(
-          `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
+          parsed.error
         );
         return;
       }
@@ -1214,21 +1218,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     return step.qtyProduced != null ? String(step.qtyProduced) : "";
   };
 
-  const isQtyEmptyOrZero = (raw: string) => {
-    const text = String(raw ?? "").trim();
-    if (text === "") return true;
-    const qty = parseInt(text, 10);
-    return Number.isFinite(qty) && qty === 0;
-  };
-
-  const stepsNeedingCompleteQty = (steps: JobOrderRoutingStep[]) =>
-    steps.filter((step) => {
-      if (!isStepCompleted(step) && qtyDrafts[step.id] != null && qtyDrafts[step.id].trim() === "") {
-        return true;
-      }
-      return isQtyEmptyOrZero(resolveGridStepQtyRaw(step));
-    });
-
   const handleUpdateQtyProduced = (stepId: number, raw: string) => {
     const step = routingStepsRef.current.find((s) => s.id === stepId);
     if (!step || isStepCompleted(step)) return;
@@ -1241,11 +1230,44 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     syncSteps(updatedSteps);
   };
 
-  const hasIncompleteSteps = (steps: JobOrderRoutingStep[]) =>
-    steps.some((s) => !isStepCompleted(s));
+  const defaultOverallCompleteQty = (step: JobOrderRoutingStep, orderQty: number) => {
+    const grid = resolveGridStepQtyRaw(step).trim();
+    const qty = parseInt(grid, 10);
+    if (grid !== "" && Number.isFinite(qty) && qty > 0) return String(qty);
+    return String(orderQty);
+  };
 
-  const shouldConfirmMidProgressComplete = (steps: JobOrderRoutingStep[]) =>
-    enableJobTracking && hasIncompleteSteps(steps);
+  const validateOverallCompleteQtys = (
+    steps: JobOrderRoutingStep[],
+    qtys: Record<number, string>,
+    orderQty: number
+  ) => {
+    const errors: Record<number, string> = {};
+    const parsedById = new Map<number, number>();
+    steps.forEach((step) => {
+      const raw = qtys[step.id] ?? defaultOverallCompleteQty(step, orderQty);
+      const error = getOverallCompleteQtyError(raw, orderQty);
+      if (error) {
+        errors[step.id] = error;
+        return;
+      }
+      const parsed = parseProducedQty(raw, orderQty, "complete");
+      if (parsed.ok) parsedById.set(step.id, parsed.qty);
+    });
+    return { errors, parsedById };
+  };
+
+  const focusFirstCompleteJobIssue = (stepId: number) => {
+    window.requestAnimationFrame(() => {
+      const row = document.getElementById(`jo-complete-row-${stepId}`);
+      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const input = document.getElementById(
+        `jo-complete-qty-${stepId}`
+      ) as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    });
+  };
 
   const buildCompletedJobSteps = (
     steps: JobOrderRoutingStep[],
@@ -1282,43 +1304,22 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
 
     const orderQty = formDataRef.current.QtyOrdered || 0;
-
-    for (const step of steps) {
-      const raw = resolveGridStepQtyRaw(step);
-      if (isQtyEmptyOrZero(raw)) continue;
-      const parsed = parseProducedQty(raw, orderQty, "complete");
-      if (!parsed.ok) {
-        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
-        return;
-      }
-    }
-
-    const missing = stepsNeedingCompleteQty(steps);
-    if (missing.length > 0) {
-      const qtys: Record<number, string> = {};
-      missing.forEach((s) => {
-        qtys[s.id] = String(orderQty);
-      });
-      setCompleteJobQtys(qtys);
-      setCompleteJobError("");
-      setTrackingDialog({ type: "completeJob" });
-      return;
-    }
-
-    if (shouldConfirmMidProgressComplete(steps)) {
-      setTrackingDialog({ type: "completeJobConfirm" });
-      return;
-    }
-
-    void finalizeJobComplete(buildCompletedJobSteps(steps));
+    const qtys: Record<number, string> = {};
+    steps.forEach((s) => {
+      qtys[s.id] = defaultOverallCompleteQty(s, orderQty);
+    });
+    setCompleteJobQtys(qtys);
+    setCompleteJobErrors({});
+    setCompleteJobError("");
+    setTrackingDialog({ type: "completeJob" });
   };
 
   const finalizeJobComplete = async (steps: JobOrderRoutingStep[]) => {
     const orderQty = formDataRef.current.QtyOrdered || 0;
     for (const step of steps) {
-      const parsed = parseProducedQty(step.qtyProduced ?? 0, orderQty, "complete");
-      if (!parsed.ok) {
-        toast.error(`Seq ${step.sequence} (${step.processName}): ${parsed.error}`);
+      const error = getOverallCompleteQtyError(step.qtyProduced ?? 0, orderQty);
+      if (error) {
+        toast.error(error);
         return;
       }
     }
@@ -1332,6 +1333,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     });
     setTrackingDialog(null);
     setCompleteJobQtys({});
+    setCompleteJobErrors({});
     setCompleteJobError("");
     toast.success("Job marked as completed");
   };
@@ -1339,27 +1341,21 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const confirmCompleteJob = async () => {
     const steps = routingStepsRef.current;
     const orderQty = formDataRef.current.QtyOrdered || 0;
-    const parsedById = new Map<number, number>();
+    const { errors, parsedById } = validateOverallCompleteQtys(
+      steps,
+      completeJobQtys,
+      orderQty
+    );
+    setCompleteJobErrors(errors);
 
-    for (const step of steps) {
-      const raw =
-        completeJobQtys[step.id] != null
-          ? completeJobQtys[step.id]
-          : resolveGridStepQtyRaw(step);
-      if (String(raw ?? "").trim() === "") {
-        setCompleteJobError(
-          `Seq ${step.sequence} (${step.processName}): Enter produced quantity for this operation.`
-        );
-        return;
-      }
-      const parsed = parseProducedQty(raw, orderQty, "complete");
-      if (!parsed.ok) {
-        setCompleteJobError(
-          `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
-        );
-        return;
-      }
-      parsedById.set(step.id, parsed.qty);
+    if (Object.keys(errors).length > 0) {
+      const issueCount = Object.keys(errors).length;
+      setCompleteJobError(
+        `Please fix ${issueCount} issue${issueCount === 1 ? "" : "s"} before completing.`
+      );
+      const firstQtyError = steps.find((s) => errors[s.id]);
+      if (firstQtyError) focusFirstCompleteJobIssue(firstQtyError.id);
+      return;
     }
 
     setCompleteJobError("");
@@ -1372,27 +1368,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     await finalizeJobComplete(buildCompletedJobSteps(steps, parsedById));
   };
 
-  const confirmCompleteJobProgress = async () => {
-    const steps = routingStepsRef.current;
-    const missing = stepsNeedingCompleteQty(steps);
-    if (missing.length > 0) {
-      const orderQty = formDataRef.current.QtyOrdered || 0;
-      const qtys: Record<number, string> = {};
-      missing.forEach((s) => {
-        qtys[s.id] = String(orderQty);
-      });
-      setCompleteJobQtys(qtys);
-      setCompleteJobError("");
-      setTrackingDialog({ type: "completeJob" });
-      return;
-    }
-    await finalizeJobComplete(buildCompletedJobSteps(steps));
-  };
-
   const closeTrackingDialog = () => {
     if (trackingSaving) return;
     setTrackingDialog(null);
     setCompleteJobQtys({});
+    setCompleteJobErrors({});
     setCompleteJobError("");
   };
 
@@ -3061,33 +3041,68 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             {trackingDialog.type === "completeJob" && (() => {
               const orderQty = formData.QtyOrdered || 0;
               const maxQty = getMaxProducedQty(orderQty);
-              const stepsToFix = routingSteps.filter(
-                (step) => completeJobQtys[step.id] != null
+              const stepsInDialog = routingSteps;
+              const runningSteps = stepsInDialog.filter(
+                (s) => s.progressState === "running"
               );
-              const invalidStep = stepsToFix.find((step) => {
-                const parsed = parseProducedQty(
-                  completeJobQtys[step.id] ?? "",
-                  orderQty,
-                  "complete"
-                );
-                return !parsed.ok;
-              });
-              const canSubmit = stepsToFix.length > 0 && !invalidStep;
+              const belowOrderSteps = stepsInDialog.filter((step) =>
+                isProducedQtyBelowOrderQty(completeJobQtys[step.id] ?? "", orderQty)
+              );
+              const qtyIssueCount = stepsInDialog.filter((step) => {
+                const raw = completeJobQtys[step.id] ?? "";
+                return !!getOverallCompleteQtyError(raw, orderQty);
+              }).length;
+              const canSubmit = stepsInDialog.length > 0 && qtyIssueCount === 0;
               return (
                 <>
-                  <h4 className="jo-track-dialog-title--danger">All step quantities required</h4>
+                  <h4 className="jo-track-dialog-title--danger">Set Up Required</h4>
                   <p className="jo-track-dialog-hint">
-                    Enter produced quantity for every step that is empty or 0 (greater than 0 and
-                    up to {maxQty}
+                    Review produced quantity for every routing step (greater than 0 and up to{" "}
+                    {maxQty}
                     {formData.Unit ? ` ${formData.Unit}` : ""}).
                   </p>
-                  {shouldConfirmMidProgressComplete(routingSteps) && (
-                    <div className="jo-track-dialog-alert jo-track-dialog-alert--warn">
-                      Save qty & complete will stop any running timers and mark remaining
-                      operations as completed. Elapsed time so far will be saved.
+                  {(runningSteps.length > 0 || belowOrderSteps.length > 0) && (
+                    <div className="jo-complete-notices">
+                      {runningSteps.length > 0 && (
+                        <div className="jo-complete-notice jo-complete-notice--timer">
+                          <span className="jo-complete-notice-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                              <polyline points="12 6 12 12 16 14" />
+                            </svg>
+                          </span>
+                          <div className="jo-complete-notice-body">
+                            <strong>Running timer{runningSteps.length === 1 ? "" : "s"} will be stopped</strong>
+                            <p>
+                              Completing this job will stop the live clock on Seq{" "}
+                              {runningSteps.map((s) => s.sequence).join(", Seq ")}.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {belowOrderSteps.length > 0 && (
+                        <div className="jo-complete-notice jo-complete-notice--qty">
+                          <span className="jo-complete-notice-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <line x1="12" y1="9" x2="12" y2="13" />
+                              <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                          </span>
+                          <div className="jo-complete-notice-body">
+                            <strong>Some steps have less qty than order qty</strong>
+                            <p>
+                              You can still complete the job. Produced quantity is below the
+                              order qty of {maxQty}
+                              {formData.Unit ? ` ${formData.Unit}` : ""} on Seq{" "}
+                              {belowOrderSteps.map((s) => s.sequence).join(", ")}.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                  <div className="jo-complete-job-table-wrap">
+                  <div className="jo-complete-job-table-wrap" ref={completeJobTableRef}>
                     <table className="jo-complete-job-table">
                       <thead>
                         <tr>
@@ -3097,41 +3112,65 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         </tr>
                       </thead>
                       <tbody>
-                        {stepsToFix.map((step) => (
-                          <tr key={step.id}>
-                            <td>{step.sequence}</td>
-                            <td>{step.processName}</td>
-                            <td>
-                              <input
-                                type="number"
-                                min={0}
-                                step={1}
-                                className="form-input"
-                                value={completeJobQtys[step.id] ?? ""}
-                                onChange={(e) => {
-                                  const next = e.target.value;
-                                  setCompleteJobQtys((prev) => ({
-                                    ...prev,
-                                    [step.id]: next,
-                                  }));
-                                  setQtyDrafts((prev) => ({ ...prev, [step.id]: next }));
-                                  const parsed = parseProducedQty(next, orderQty, "complete");
-                                  setCompleteJobError(
-                                    parsed.ok
-                                      ? ""
-                                      : `Seq ${step.sequence} (${step.processName}): ${parsed.error}`
-                                  );
-                                }}
-                              />
-                            </td>
-                          </tr>
-                        ))}
+                        {stepsInDialog.map((step) => {
+                          const raw = completeJobQtys[step.id] ?? "";
+                          const qtyError =
+                            completeJobErrors[step.id] ||
+                            getOverallCompleteQtyError(raw, orderQty);
+                          return (
+                            <tr
+                              key={step.id}
+                              id={`jo-complete-row-${step.id}`}
+                              className={qtyError ? "jo-complete-job-row--error" : undefined}
+                            >
+                              <td>{step.sequence}</td>
+                              <td>
+                                {step.processName}
+                                {isStepCompleted(step) ? (
+                                  <sup className="jo-complete-job-completed-tag">Completed</sup>
+                                ) : null}
+                              </td>
+                              <td>
+                                <input
+                                  id={`jo-complete-qty-${step.id}`}
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  className={`form-input${qtyError ? " jo-complete-job-input--error" : ""}`}
+                                  value={raw}
+                                  aria-invalid={!!qtyError}
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    setCompleteJobQtys((prev) => ({
+                                      ...prev,
+                                      [step.id]: next,
+                                    }));
+                                    const error = getOverallCompleteQtyError(next, orderQty);
+                                    setCompleteJobErrors((prev) => {
+                                      const copy = { ...prev };
+                                      if (error) copy[step.id] = error;
+                                      else delete copy[step.id];
+                                      return copy;
+                                    });
+                                    setCompleteJobError("");
+                                  }}
+                                />
+                                {qtyError ? (
+                                  <div className="jo-complete-job-field-error">
+                                    {qtyError}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                  {completeJobError && (
+                  {qtyIssueCount > 0 && (
                     <div className="jo-track-dialog-alert jo-track-dialog-alert--error">
-                      {completeJobError}
+                      Please fix {qtyIssueCount} issue{qtyIssueCount === 1 ? "" : "s"} before
+                      completing.
                     </div>
                   )}
                   <div className="jo-track-dialog-actions">
@@ -3150,42 +3189,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                       onClick={() => void confirmCompleteJob()}
                     >
                       {trackingSaving ? "Saving..." : "Save qty & complete"}
-                    </button>
-                  </div>
-                </>
-              );
-            })()}
-
-            {trackingDialog.type === "completeJobConfirm" && (() => {
-              const remaining = routingSteps.filter((s) => !isStepCompleted(s)).length;
-              const running = routingSteps.filter((s) => s.progressState === "running").length;
-              return (
-                <>
-                  <h4>Complete remaining operations?</h4>
-                  <p className="jo-track-dialog-hint">
-                    This will stop any running timers and mark {remaining} remaining operation
-                    {remaining === 1 ? "" : "s"} as completed
-                    {running > 0
-                      ? `. ${running} timer${running === 1 ? " is" : "s are"} currently running`
-                      : ""}
-                    . Elapsed time so far will be saved. Continue?
-                  </p>
-                  <div className="jo-track-dialog-actions">
-                    <button
-                      type="button"
-                      className="btn-cancel"
-                      disabled={trackingSaving}
-                      onClick={closeTrackingDialog}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-submit"
-                      disabled={trackingSaving}
-                      onClick={() => void confirmCompleteJobProgress()}
-                    >
-                      {trackingSaving ? "Saving..." : "Complete job"}
                     </button>
                   </div>
                 </>

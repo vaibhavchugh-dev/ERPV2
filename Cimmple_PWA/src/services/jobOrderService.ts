@@ -3,6 +3,15 @@ import { AuthService } from "./authService";
 
 export type ProgressState = "idle" | "running" | "paused" | "stopped";
 
+export interface JobOrderListStep {
+  id: number;
+  sequence: number;
+  processName: string;
+  status?: string;
+  progressState?: ProgressState;
+  qtyProduced?: number;
+}
+
 export interface JobOrderListItem {
   jobOrderID: number;
   jobOrderNumber: number;
@@ -22,6 +31,7 @@ export interface JobOrderListItem {
   jobPriority: number;
   status: string;
   orderDate: string;
+  routingSteps?: JobOrderListStep[];
 }
 
 export interface JobOrderStepNote {
@@ -130,7 +140,46 @@ export class JobOrderService {
     }
 
     const response = await api.get("/JobOrder/GetJobOrders", { params });
-    return (response.data.result as JobOrderListItem[]) || [];
+    const rows = (response.data.result as Record<string, unknown>[]) || [];
+    return rows.map((row) => {
+      const rawSteps = (row.routingSteps ?? row.RoutingSteps) as
+        | Record<string, unknown>[]
+        | undefined;
+      return {
+        jobOrderID: Number(row.jobOrderID ?? row.JobOrderID ?? 0),
+        jobOrderNumber: Number(row.jobOrderNumber ?? row.JobOrderNumber ?? 0),
+        customerOrderID: Number(row.customerOrderID ?? row.CustomerOrderID ?? 0),
+        customerOrderDetailID: Number(
+          row.customerOrderDetailID ?? row.CustomerOrderDetailID ?? 0
+        ),
+        customerID: Number(row.customerID ?? row.CustomerID ?? 0),
+        customerName: String(row.customerName ?? row.CustomerName ?? ""),
+        customerCode: String(row.customerCode ?? row.CustomerCode ?? ""),
+        partNo: String(row.partNo ?? row.PartNo ?? ""),
+        partName: String(row.partName ?? row.PartName ?? ""),
+        qtyOrdered: Number(row.qtyOrdered ?? row.QtyOrdered ?? 0),
+        unit: String(row.unit ?? row.Unit ?? ""),
+        unitPrice: Number(row.unitPrice ?? row.UnitPrice ?? 0),
+        dueDate: String(row.dueDate ?? row.DueDate ?? ""),
+        jobNumber: String(row.jobNumber ?? row.JobNumber ?? ""),
+        jobDesc: String(row.jobDesc ?? row.JobDesc ?? ""),
+        jobPriority: Number(row.jobPriority ?? row.JobPriority ?? 0),
+        status: String(row.status ?? row.Status ?? "Draft"),
+        orderDate: String(row.orderDate ?? row.OrderDate ?? ""),
+        routingSteps: Array.isArray(rawSteps)
+          ? rawSteps.map((s) => ({
+              id: Number(s.id ?? s.Id ?? 0),
+              sequence: Number(s.sequence ?? s.Sequence ?? 0),
+              processName: String(s.processName ?? s.ProcessName ?? ""),
+              status: String(s.status ?? s.Status ?? ""),
+              progressState: (s.progressState ??
+                s.ProgressState ??
+                "idle") as ProgressState,
+              qtyProduced: Number(s.qtyProduced ?? s.QtyProduced ?? 0),
+            }))
+          : [],
+      } as JobOrderListItem;
+    });
   }
 
   public static async getJobOrderById(
@@ -349,9 +398,12 @@ export function isStepCompleted(
 }
 
 /** Derive the "current" step for list cards: first running/paused, else first non-completed. */
-export function getCurrentStep(
-  steps: JobOrderRoutingStep[] | undefined
-): JobOrderRoutingStep | null {
+export function getCurrentStep<
+  T extends Pick<
+    JobOrderRoutingStep,
+    "id" | "sequence" | "processName" | "status" | "progressState"
+  >
+>(steps: T[] | undefined): T | null {
   if (!steps?.length) return null;
   const sorted = [...steps].sort((a, b) => a.sequence - b.sequence);
   const active = sorted.find(
@@ -389,4 +441,62 @@ export function deriveJobStatus(
   );
   if (anyStarted && status === "Draft") return "In Progress";
   return status;
+}
+
+export function getMaxProducedQty(orderQty: number): number {
+  return Math.max(0, orderQty || 0);
+}
+
+export function parseProducedQty(
+  raw: string | number,
+  orderQty: number,
+  mode: "save" | "complete" = "save"
+): { ok: true; qty: number } | { ok: false; error: string } {
+  const text = String(raw ?? "").trim();
+  const max = getMaxProducedQty(orderQty);
+
+  if (text === "") {
+    if (mode === "save") return { ok: true, qty: 0 };
+    return { ok: false, error: "Enter produced quantity for this operation." };
+  }
+
+  const qty = typeof raw === "number" ? raw : parseInt(text, 10);
+  if (!Number.isFinite(qty) || Number.isNaN(qty) || !Number.isInteger(qty)) {
+    return { ok: false, error: "Enter a whole number." };
+  }
+
+  if (mode === "complete" && qty < 1) {
+    return { ok: false, error: "Qty produced must be greater than 0." };
+  }
+
+  if (qty < 0) {
+    return { ok: false, error: "Qty produced cannot be negative." };
+  }
+
+  if (qty > max) {
+    return {
+      ok: false,
+      error: "Qty produced cannot exceed order qty.",
+    };
+  }
+
+  return { ok: true, qty };
+}
+
+export function getOverallCompleteQtyError(
+  raw: string | number,
+  orderQty: number
+): string {
+  const parsed = parseProducedQty(raw, orderQty, "complete");
+  return parsed.ok ? "" : parsed.error;
+}
+
+export function isProducedQtyBelowOrderQty(
+  raw: string | number,
+  orderQty: number
+): boolean {
+  const parsed = parseProducedQty(raw, orderQty, "complete");
+  if (!parsed.ok) return false;
+  const max = getMaxProducedQty(orderQty);
+  return max > 0 && parsed.qty < max;
 }

@@ -2,9 +2,7 @@ import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   JobOrderListItem,
-  JobOrderRoutingStep,
   JobOrderService,
-  getCurrentStep,
   isStepCompleted,
 } from "../services/jobOrderService";
 import { formatJobNumber } from "../utils/formatJobNumber";
@@ -191,11 +189,6 @@ export function JobsPage() {
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"active" | "all">("active");
   const [searchQuery, setSearchQuery] = useState("");
-  const [stepProgress, setStepProgress] = useState<
-    Record<number, { label: string; steps: JobOrderRoutingStep[] }>
-  >({});
-
-  // Filters
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -203,45 +196,19 @@ export function JobsPage() {
   const activeFilterCount =
     (statusFilter !== "all" ? 1 : 0) + (priorityFilter !== "all" ? 1 : 0);
 
-  const enrichSteps = useCallback(async (list: JobOrderListItem[]) => {
-    const targets = list
-      .filter((j) => {
-        const s = (j.status || "").toLowerCase();
-        return !s.includes("complete") && !s.includes("cancel");
-      })
-      .slice(0, 20);
-
-    for (const j of targets) {
-      try {
-        const detail = await JobOrderService.getJobOrderById(j.jobOrderID);
-        const steps = [...(detail?.RoutingSteps || [])].sort((a, b) => a.sequence - b.sequence);
-        const step = getCurrentStep(steps);
-        setStepProgress((prev) => ({
-          ...prev,
-          [j.jobOrderID]: {
-            label: step ? `${step.sequence}. ${step.processName}` : "",
-            steps,
-          },
-        }));
-      } catch { /* ignore */ }
-    }
-  }, []);
-
   const loadJobs = useCallback(async () => {
     setLoading(true);
     setError("");
-    setStepProgress({});
     try {
       const list = await JobOrderService.getJobOrders();
       setJobs(list);
-      setLoading(false);
-      void enrichSteps(list);
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { message?: string; error?: string } }; message?: string };
       setError(ax?.response?.data?.message || ax?.response?.data?.error || ax?.message || "Failed to load jobs");
+    } finally {
       setLoading(false);
     }
-  }, [enrichSteps]);
+  }, []);
 
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
@@ -433,7 +400,10 @@ export function JobsPage() {
           const formattedJobNum = formatJobNumber(
             job.jobOrderNumber || job.jobNumber || job.jobOrderID
           );
-          const progress = stepProgress[job.jobOrderID];
+          const steps = [...(job.routingSteps || [])].sort(
+            (a, b) => a.sequence - b.sequence
+          );
+          const totalSteps = steps.length;
 
           return (
             <li key={job.jobOrderID}>
@@ -477,35 +447,24 @@ export function JobsPage() {
 
                 <div>
                   <div className="flex items-center gap-1 mb-1.5">
-                    {(progress?.steps.length
-                      ? progress.steps
-                      : [{ id: 0, sequence: 1 } as JobOrderRoutingStep]
-                    ).map((step) => {
-                      const completed = isStepCompleted(step);
-                      const started =
-                        !completed &&
-                        (step.progressState === "running" ||
-                          step.progressState === "paused");
-                      return (
-                        <span
-                          key={step.id || step.sequence}
-                          className={`h-2 flex-1 rounded-full transition-colors ${
-                            completed
-                              ? "bg-emerald-500"
-                              : started
-                              ? `bg-orange-500${
-                                  step.progressState === "running"
-                                    ? " animate-pulse"
-                                    : ""
-                                }`
-                              : "bg-slate-200/70 dark:bg-slate-700/60"
-                          }`}
-                        />
-                      );
-                    })}
+                    {(steps.length === 0 ? (
+                      <span className="h-2 flex-1 rounded-full bg-slate-200/70 dark:bg-slate-700/60" />
+                    ) : (
+                      steps.map((step) => {
+                        const completed = isStepCompleted(step);
+                        return (
+                          <span
+                            key={step.id || step.sequence}
+                            className={`h-2 flex-1 rounded-full transition-colors ${
+                              completed ? "bg-emerald-500" : "bg-orange-500"
+                            }`}
+                          />
+                        );
+                      })
+                    ))}
                   </div>
-                  <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100 truncate">
-                    Step: {progress?.label || "1. Processing"}
+                  <div className="flex items-center justify-end text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                    <span>{totalSteps} step{totalSteps === 1 ? "" : "s"}</span>
                   </div>
                 </div>
               </Link>
