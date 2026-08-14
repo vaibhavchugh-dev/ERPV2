@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { IconBuilding, IconLock, IconVendorBadge } from "../components/Icons";
 import { useForceLightTheme } from "../theme/ThemeContext";
 import "./LoginPage.css";
 
@@ -8,13 +9,12 @@ export function LoginPage() {
   useForceLightTheme();
   const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
+  const [vendorCode, setVendorCode] = useState("");
   const [password, setPassword] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [showTenant, setShowTenant] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   if (isAuthenticated) {
@@ -25,8 +25,8 @@ export function LoginPage() {
     e.preventDefault();
     setError("");
 
-    if (!username.trim() || !password) {
-      setError("Username and password are required");
+    if (!vendorCode.trim() || !password) {
+      setError("Vendor code and password are required");
       return;
     }
 
@@ -34,7 +34,7 @@ export function LoginPage() {
     try {
       const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
       await login(
-        username.trim(),
+        vendorCode.trim(),
         password,
         parsedTenant && !Number.isNaN(parsedTenant) ? parsedTenant : undefined
       );
@@ -73,28 +73,27 @@ export function LoginPage() {
           </div>
 
           <h1 className="pwa-login__title">
-            Cloud operating <br />system for{" "}
+            Vendor portal for{" "}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-cyan-300 to-indigo-300">
-              machine shops
+              quotations
             </span>
           </h1>
 
           <p className="pwa-login__lead">
-            Sign in to CimmpleFlow — manufacturing ERP for quoting, production, quality, inventory, and accounting in one place.
+            Review RFQs, submit pricing, and collaborate with machine shops running on CimmpleFlow.
           </p>
 
           <div className="pwa-login__chips">
-            <span className="pwa-login__chip">Quoting</span>
-            <span className="pwa-login__chip">Production</span>
-            <span className="pwa-login__chip">Quality</span>
-            <span className="pwa-login__chip">Inventory</span>
+            <span className="pwa-login__chip">RFQs</span>
+            <span className="pwa-login__chip">Quotes</span>
+            <span className="pwa-login__chip">Responses</span>
           </div>
         </div>
 
         <div className="pwa-login__card">
-          <h2 className="pwa-login__card-title">Welcome back</h2>
+          <h2 className="pwa-login__card-title">Vendor sign in</h2>
           <p className="pwa-login__card-sub">
-            Sign in to your account and pick up where you left off.
+            Use your vendor code and portal password
           </p>
 
           <form className="pwa-login__form" onSubmit={handleSubmit}>
@@ -105,20 +104,18 @@ export function LoginPage() {
             )}
 
             <div className="pwa-login__field">
-              <label className="pwa-login__label">User</label>
+              <label className="pwa-login__label">Vendor code</label>
               <div className="pwa-login__control">
                 <div className="pwa-login__icon">
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
+                  <IconVendorBadge size={20} />
                 </div>
                 <input
                   className="pwa-login__input"
                   type="text"
                   autoComplete="username"
-                  placeholder="Enter your user name"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter your vendor code"
+                  value={vendorCode}
+                  onChange={(e) => setVendorCode(e.target.value)}
                   required
                 />
               </div>
@@ -128,9 +125,7 @@ export function LoginPage() {
               <label className="pwa-login__label">Password</label>
               <div className="pwa-login__control">
                 <div className="pwa-login__icon">
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
+                  <IconLock size={20} />
                 </div>
                 <input
                   className="pwa-login__input pwa-login__input--password"
@@ -166,9 +161,7 @@ export function LoginPage() {
                 <label className="pwa-login__label">Tenant ID</label>
                 <div className="pwa-login__control">
                   <div className="pwa-login__icon">
-                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0v-5a2 2 0 012-2h2a2 2 0 012 2v5m-6 0h6" />
-                    </svg>
+                    <IconBuilding size={20} />
                   </div>
                   <input
                     className="pwa-login__input"
@@ -181,21 +174,6 @@ export function LoginPage() {
                 </div>
               </div>
             )}
-
-            <div className="my-3 flex items-center justify-between text-[0.72rem]">
-              {/* <label className="flex cursor-pointer items-center gap-2 font-medium text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-slate-700 bg-[#0e1424] text-blue-600 focus:ring-0 focus:ring-offset-0"
-                />
-                <span>Remember me</span>
-              </label>
-              <span className="cursor-pointer font-semibold text-blue-400 hover:text-blue-300">
-                Forgot password?
-              </span> */}
-            </div>
 
             <button
               type="submit"

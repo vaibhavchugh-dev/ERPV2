@@ -77,7 +77,7 @@ Instense.interceptors.request.use((config) => {
   }
 
   const locationId = localStorage.getItem("locationId");
-  if (locationId && locationId !== "0") {
+  if (!isVendor && locationId && locationId !== "0") {
     config.headers["X-Location-Id"] = locationId;
   }
 

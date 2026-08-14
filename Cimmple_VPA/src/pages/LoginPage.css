@@ -1,0 +1,389 @@
+/* Scoped to Cimmple_PWA login only. Fluid sizing — no device-specific breakpoints. */
+
+.pwa-login {
+  --login-space: clamp(0.7rem, 2.2vh + 0.35rem, 1.75rem);
+  --login-gap: clamp(0.55rem, 1.8vh, 1.35rem);
+  --login-pad-x: clamp(1rem, 4.5vw, 2rem);
+  --login-pad-y: clamp(0.7rem, 3.2vh, 1.85rem);
+  --login-max: min(26.5rem, 100%);
+  --login-logo: clamp(2.25rem, 8vw, 3.15rem);
+  --login-logo-icon: clamp(1.15rem, 4.2vw, 1.55rem);
+  --login-brand: clamp(1.15rem, 4vw, 1.55rem);
+  --login-title: clamp(1.55rem, 1.15rem + 4.6vw, 2.65rem);
+  --login-lead: clamp(0.72rem, 0.62rem + 1.15vw, 0.95rem);
+  --login-chip: clamp(0.65rem, 0.58rem + 0.7vw, 0.82rem);
+  --login-chip-py: clamp(0.28rem, 0.8vh, 0.45rem);
+  --login-chip-px: clamp(0.7rem, 2vw, 1rem);
+  --login-card-pad: clamp(1rem, 3.2vw, 1.65rem);
+  --login-card-title: clamp(0.95rem, 0.82rem + 1.1vw, 1.25rem);
+  --login-card-sub: clamp(0.68rem, 0.6rem + 0.7vw, 0.85rem);
+  --login-label: clamp(0.68rem, 0.6rem + 0.65vw, 0.82rem);
+  --login-input: clamp(0.8rem, 0.7rem + 0.85vw, 1rem);
+  --login-input-py: clamp(0.58rem, 1.35vh + 0.28rem, 0.9rem);
+  --login-icon: clamp(0.95rem, 2.8vw, 1.2rem);
+  --login-btn-py: clamp(0.62rem, 1.45vh + 0.3rem, 0.95rem);
+  --login-footer: clamp(0.66rem, 0.58rem + 0.65vw, 0.82rem);
+  --login-radius: clamp(0.9rem, 2.4vw, 1.25rem);
+}
+
+@media (min-width: 390px) {
+  .pwa-login {
+    --login-max: min(30rem, 100%);
+  }
+}
+
+@media (min-width: 430px) {
+  .pwa-login {
+    --login-max: min(32.5rem, 94vw);
+  }
+}
+
+@media (min-width: 540px) {
+  .pwa-login {
+    --login-max: min(36rem, 90vw);
+  }
+}
+
+@media (min-width: 768px) {
+  .pwa-login {
+    --login-max: min(38rem, 72vw);
+  }
+}
+
+.pwa-login {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100dvh;
+  min-height: 100svh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: #070b16;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  padding-top: max(var(--login-pad-y), env(safe-area-inset-top, 0px));
+  padding-right: max(var(--login-pad-x), env(safe-area-inset-right, 0px));
+  padding-bottom: max(var(--login-pad-y), env(safe-area-inset-bottom, 0px));
+  padding-left: max(var(--login-pad-x), env(safe-area-inset-left, 0px));
+  user-select: none;
+  -webkit-user-select: none;
+  box-sizing: border-box;
+}
+
+.pwa-login__inner {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--login-gap);
+  width: 100%;
+  max-width: var(--login-max);
+  min-height: 100%;
+  margin-inline: auto;
+  flex: 1 1 auto;
+}
+
+.pwa-login__brand {
+  flex: 0 1 auto;
+}
+
+.pwa-login__logo-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(0.6rem, 2vw, 0.85rem);
+}
+
+.pwa-login__logo-mark {
+  display: flex;
+  height: var(--login-logo);
+  width: var(--login-logo);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid rgb(59 130 246 / 0.3);
+  background: #172338;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.2);
+}
+
+.pwa-login__logo-mark svg {
+  height: var(--login-logo-icon);
+  width: var(--login-logo-icon);
+}
+
+.pwa-login__brand-name {
+  font-size: var(--login-brand);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: #fff;
+  line-height: 1.1;
+}
+
+.pwa-login__title {
+  margin-top: var(--login-space);
+  font-size: var(--login-title);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+
+.pwa-login__lead {
+  margin-top: clamp(0.45rem, 1.4vh, 0.75rem);
+  font-size: var(--login-lead);
+  font-weight: 500;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.pwa-login__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(0.4rem, 1.2vw, 0.6rem);
+  margin-top: clamp(0.65rem, 1.8vh, 1rem);
+}
+
+.pwa-login__chip {
+  border-radius: 9999px;
+  border: 1px solid rgb(51 65 85 / 0.5);
+  background: #182338;
+  padding: var(--login-chip-py) var(--login-chip-px);
+  font-size: var(--login-chip);
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.pwa-login__card {
+  width: 100%;
+  margin-block: auto;
+  border-radius: var(--login-radius);
+  border: 1px solid rgb(30 41 59 / 0.8);
+  background: rgb(24 33 54 / 0.95);
+  padding: var(--login-card-pad);
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(12px);
+}
+
+.pwa-login__card-title {
+  font-size: var(--login-card-title);
+  font-weight: 700;
+  color: #fff;
+}
+
+.pwa-login__card-sub {
+  margin-top: 0.15rem;
+  font-size: var(--login-card-sub);
+  color: #94a3b8;
+}
+
+.pwa-login__form {
+  margin-top: clamp(0.75rem, 2vh, 1.15rem);
+}
+
+.pwa-login__error {
+  margin-bottom: clamp(0.55rem, 1.5vh, 0.85rem);
+  border-radius: 0.75rem;
+  border: 1px solid rgb(239 68 68 / 0.3);
+  background: rgb(239 68 68 / 0.1);
+  padding: 0.5rem 0.85rem;
+  font-size: var(--login-card-sub);
+  font-weight: 500;
+  color: #fecaca;
+}
+
+.pwa-login__field {
+  margin-bottom: clamp(0.55rem, 1.6vh, 0.9rem);
+}
+
+.pwa-login__label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: var(--login-label);
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.pwa-login__control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pwa-login__icon {
+  pointer-events: none;
+  position: absolute;
+  left: 0.85rem;
+  color: #22d3ee;
+  display: flex;
+}
+
+.pwa-login__icon svg {
+  height: var(--login-icon);
+  width: var(--login-icon);
+}
+
+.pwa-login__input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(51 65 85 / 0.6);
+  background: #0e1424;
+  padding: var(--login-input-py) 0.85rem var(--login-input-py) calc(var(--login-icon) + 1.4rem);
+  font-size: var(--login-input);
+  color: #fff;
+  outline: none;
+  min-height: 2.5rem;
+}
+
+.pwa-login__input::placeholder {
+  color: #64748b;
+}
+
+.pwa-login__input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgb(59 130 246 / 0.5);
+}
+
+.pwa-login__input--password {
+  padding-right: calc(var(--login-icon) + 1.45rem);
+}
+
+.pwa-login__eye {
+  position: absolute;
+  right: 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  border-radius: 0.4rem;
+}
+
+.pwa-login__eye svg {
+  height: var(--login-icon);
+  width: var(--login-icon);
+}
+
+.pwa-login__eye:hover,
+.pwa-login__eye:focus-visible {
+  color: #e2e8f0;
+  outline: none;
+}
+
+.pwa-login__submit {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  background: #2563eb;
+  padding: var(--login-btn-py) 1rem;
+  font-size: var(--login-input);
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 10px 15px -3px rgb(37 99 235 / 0.3);
+  min-height: 2.65rem;
+  border: 0;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.pwa-login__submit:hover {
+  background: #1d4ed8;
+}
+
+.pwa-login__submit:active {
+  transform: scale(0.99);
+}
+
+.pwa-login__submit:disabled {
+  opacity: 0.6;
+}
+
+.pwa-login__submit svg {
+  height: var(--login-icon);
+  width: var(--login-icon);
+}
+
+.pwa-login__footer {
+  padding-top: 0.25rem;
+  text-align: center;
+  font-size: var(--login-footer);
+  color: #94a3b8;
+}
+
+.pwa-login__footer a {
+  font-weight: 600;
+  color: #60a5fa;
+}
+
+.pwa-login__footer a:hover {
+  text-decoration: underline;
+}
+
+/* Short screens / small phones: tighten so content fits without overflow */
+@media (max-height: 700px) {
+  .pwa-login {
+    --login-space: clamp(0.45rem, 1.4vh, 0.9rem);
+    --login-gap: clamp(0.4rem, 1.2vh, 0.75rem);
+    --login-title: clamp(1.35rem, 1rem + 3.4vw, 2rem);
+  }
+}
+
+@media (max-height: 620px) {
+  .pwa-login__title br {
+    display: none;
+  }
+}
+
+/* Landscape phones: use width, keep form usable without clipping */
+@media (orientation: landscape) and (max-height: 560px) {
+  .pwa-login {
+    --login-max: min(52rem, 94vw);
+    --login-title: clamp(1.25rem, 2.8vw + 0.6rem, 1.85rem);
+    --login-space: 0.45rem;
+    --login-gap: 0.65rem;
+  }
+
+  .pwa-login__inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    grid-template-rows: 1fr auto;
+    align-items: center;
+    column-gap: clamp(1rem, 3vw, 2rem);
+    max-width: var(--login-max);
+  }
+
+  .pwa-login__brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .pwa-login__card {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin-block: 0;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .pwa-login__footer {
+    grid-column: 1;
+    grid-row: 2;
+    text-align: left;
+  }
+
+  .pwa-login__chips {
+    display: none;
+  }
+}

@@ -1290,6 +1290,26 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Vendor is required" });
                 }
 
+                var isVendorPortal = IsVendorPortal();
+                var tokenVendorId = GetVendorId();
+                if (isVendorPortal)
+                {
+                    if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0)
+                    {
+                        return StatusCode(403, new { message = "Vendor portal account is not linked to a vendor" });
+                    }
+
+                    if (tokenVendorId.Value != vendorID)
+                    {
+                        return StatusCode(403, new { message = "You can only update quotations for your vendor account" });
+                    }
+
+                    if (orderID <= 0)
+                    {
+                        return BadRequest(new { error = "Vendor portal can only update an existing quotation" });
+                    }
+                }
+
                 if (!request.TryGetProperty("Details", out JsonElement detailsElem) || detailsElem.ValueKind != JsonValueKind.Array || detailsElem.GetArrayLength() == 0)
                 {
                     return BadRequest(new { error = "At least one detail item is required" });
@@ -1353,6 +1373,11 @@ namespace CimmpleAPI.Controllers
                     if (quotation == null)
                     {
                         return NotFound(new { error = "Vendor quotation not found" });
+                    }
+
+                    if (isVendorPortal && quotation.VendorID != tokenVendorId)
+                    {
+                        return StatusCode(403, new { message = "You can only update quotations for your vendor account" });
                     }
                     
                     // Re-attach the entity for update
@@ -1450,12 +1475,19 @@ namespace CimmpleAPI.Controllers
                 quotation.contactName = request.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "";
                 quotation.VendorOrderType = request.TryGetProperty("QuotationType", out JsonElement quotationTypeElem2) ? quotationTypeElem2.GetString() ?? "Material" : "Material";
                 quotation.AdditionalNotes = request.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : null;
-                var requestedVendorQuoteLoc = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number
-                    ? locationIdElem.GetInt32()
-                    : (int?)null;
-                if (!TryResolveLocationId(requestedVendorQuoteLoc, out var resolvedVendorQuoteLoc, out var forbidVendorQuoteLoc))
-                    return forbidVendorQuoteLoc!;
-                quotation.locationid = resolvedVendorQuoteLoc > 0 ? resolvedVendorQuoteLoc : requestedVendorQuoteLoc;
+                if (isVendorPortal)
+                {
+                    // Vendor portal is not location-scoped; keep the RFQ's existing site.
+                }
+                else
+                {
+                    var requestedVendorQuoteLoc = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number
+                        ? locationIdElem.GetInt32()
+                        : (int?)null;
+                    if (!TryResolveLocationId(requestedVendorQuoteLoc, out var resolvedVendorQuoteLoc, out var forbidVendorQuoteLoc))
+                        return forbidVendorQuoteLoc!;
+                    quotation.locationid = resolvedVendorQuoteLoc > 0 ? resolvedVendorQuoteLoc : requestedVendorQuoteLoc;
+                }
                 // Only update convertedOrderId if it's provided and valid
                 // CRITICAL: Backend SaveVendorOrder already sets this correctly with PONumber
                 // If convertedOrderId is already set and the incoming value is an OrderID (likely > 1000 or matches a pattern),
