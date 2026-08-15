@@ -40,6 +40,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/api\//],
       },
     }),
   ],
@@ -47,7 +48,14 @@ export default defineConfig({
     port: 5175,
     host: true,
     proxy: {
-      "/api": { target: "http://0.0.0.0:5172", changeOrigin: true },
+      "/api": { target: "http://127.0.0.1:5172", changeOrigin: true },
+    },
+  },
+  preview: {
+    port: 5175,
+    host: true,
+    proxy: {
+      "/api": { target: "http://127.0.0.1:5172", changeOrigin: true },
     },
   },
 });
