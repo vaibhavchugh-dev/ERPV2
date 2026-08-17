@@ -37,6 +37,12 @@ import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import {
+  InventoryService,
+  JobMaterialUsage,
+  InventoryReservation,
+} from "../../Common/Services/InventoryService";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { faPrint } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "./JobOrderSlideout.scss";
@@ -110,6 +116,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
   const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
+  const [materialUsage, setMaterialUsage] = useState<JobMaterialUsage[]>([]);
+  const [jobReservations, setJobReservations] = useState<InventoryReservation[]>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   const [customerOrderNumber, setCustomerOrderNumber] = useState<string>(
@@ -196,6 +204,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setInitialLoading(jobOrderId > 0);
     if (jobOrderId > 0) {
       loadJobOrder();
+      loadMaterialUsage();
     }
 
     // Load processes from Process Master
@@ -213,6 +222,50 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   useEffect(() => {
     formDataRef.current = formData;
   }, [formData]);
+
+  const loadMaterialUsage = async () => {
+    if (jobOrderId <= 0) {
+      setMaterialUsage([]);
+      setJobReservations([]);
+      return;
+    }
+    try {
+      const [rows, reserved] = await Promise.all([
+        InventoryService.GetJobMaterialUsage(jobOrderId),
+        InventoryService.GetReservations({ jobOrderId }),
+      ]);
+      setMaterialUsage(rows || []);
+      setJobReservations(reserved || []);
+    } catch {
+      setMaterialUsage([]);
+      setJobReservations([]);
+    }
+  };
+
+  const formatUsageWhen = (iso: string) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return formatDateOnlyFromApi(iso) || "—";
+    return d.toLocaleString(undefined, {
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const isFinishedGoodsMove = (row: JobMaterialUsage) => {
+    const notes = (row.notes || "").toLowerCase();
+    if (notes.includes("finished on") || notes.includes("reversed finished"))
+      return true;
+    const type = (row.transactionType || "").toLowerCase();
+    return (
+      !!row.productId &&
+      !row.rawMaterialId &&
+      type === "receipt"
+    );
+  };
 
   const loadProcesses = async () => {
     try {
@@ -356,6 +409,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         Attachments: attachments,
         Comments: comments,
       });
+      await loadMaterialUsage();
       setFormData((prev) => {
         const next = {
           ...prev,
@@ -615,6 +669,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         // Stay open — reload so server-derived status / tracking match UI.
         if (jobOrderId > 0) {
           await loadJobOrder();
+          await loadMaterialUsage();
         }
       } else {
         toast.error("Failed to save job order");
@@ -2756,6 +2811,152 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 </div>
               </div>
             </div>
+
+            {jobOrderId > 0 && (
+            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
+              <h3 style={{ margin: "0 0 0.35rem 0", fontSize: "1rem", fontWeight: 600 }}>Reserved</h3>
+              <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem" }}>
+                Qty held on the shelf for this job. Issue it from Inventory (linked to this job) to consume the hold.
+              </p>
+              {jobReservations.length === 0 ? (
+                <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>Nothing reserved for this job.</p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", borderRadius: "0.375rem" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#f3f4f6", textAlign: "left" }}>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Part</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Location</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280", textAlign: "right" }}>Qty</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobReservations.map((row) => (
+                        <tr key={row.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", fontWeight: 600 }}>
+                            {row.partNo || "—"}
+                            {row.partName ? (
+                              <div style={{ fontWeight: 400, color: "#6b7280", fontSize: "0.75rem" }}>{row.partName}</div>
+                            ) : null}
+                          </td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.locationName || "—"}</td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", textAlign: "right", fontWeight: 600 }}>{row.quantity}</td>
+                          <td style={{ padding: "0.5rem 0.75rem" }}>
+                            <button
+                              type="button"
+                              className="btn-small"
+                              onClick={async () => {
+                                const result = await InventoryService.ReleaseReservation(row.id);
+                                if (result.success) {
+                                  toast.success("Reservation released");
+                                  loadMaterialUsage();
+                                } else {
+                                  toast.error(result.error || "Could not release");
+                                }
+                              }}
+                            >
+                              Release
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            )}
+
+            {jobOrderId > 0 && (
+            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
+              <h3 style={{ margin: "0 0 0.35rem 0", fontSize: "1rem", fontWeight: 600 }}>Material used</h3>
+              <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem" }}>
+                Issued from stock to this job, or received on a job PO (job buys do not stay on the shelf).
+              </p>
+              {materialUsage.filter((row) => !isFinishedGoodsMove(row)).length === 0 ? (
+                <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>No material recorded for this job yet.</p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", borderRadius: "0.375rem" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#f3f4f6", textAlign: "left" }}>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>When</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Type</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Part</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Location</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280", textAlign: "right" }}>Qty</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Lot / heat</th>
+                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {materialUsage.filter((row) => !isFinishedGoodsMove(row)).map((row) => (
+                        <tr key={row.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{formatUsageWhen(row.transactionDate)}</td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.transactionTypeName || row.transactionType || "—"}</td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", fontWeight: 600 }}>
+                            {row.partNo || "—"}
+                            {row.partName ? (
+                              <div style={{ fontWeight: 400, color: "#6b7280", fontSize: "0.75rem" }}>{row.partName}</div>
+                            ) : null}
+                          </td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.locationName || "—"}</td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", textAlign: "right", color: row.quantity < 0 ? "#b91c1c" : "#047857", fontWeight: 600 }}>
+                            {row.quantity > 0 ? `+${row.quantity}` : row.quantity}
+                          </td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem" }}>{row.lotNumber || "—"}</td>
+                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem", color: "#6b7280" }}>{row.notes || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            )}
+
+            {jobOrderId > 0 && materialUsage.some(isFinishedGoodsMove) && (
+            <div style={{ marginTop: "1.25rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
+              <h3 style={{ margin: "0 0 0.35rem 0", fontSize: "1rem", fontWeight: 600 }}>Finished goods</h3>
+              <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem" }}>
+                Put on the shelf when this job was completed. Shipping takes it off.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", borderRadius: "0.375rem" }}>
+                  <thead>
+                    <tr style={{ backgroundColor: "#f3f4f6", textAlign: "left" }}>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>When</th>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Type</th>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Part</th>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Location</th>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280", textAlign: "right" }}>Qty</th>
+                      <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {materialUsage.filter(isFinishedGoodsMove).map((row) => (
+                      <tr key={row.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{formatUsageWhen(row.transactionDate)}</td>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.transactionTypeName || row.transactionType || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", fontWeight: 600 }}>
+                          {row.partNo || "—"}
+                          {row.partName ? (
+                            <div style={{ fontWeight: 400, color: "#6b7280", fontSize: "0.75rem" }}>{row.partName}</div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.locationName || "—"}</td>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", textAlign: "right", color: row.quantity < 0 ? "#b91c1c" : "#047857", fontWeight: 600 }}>
+                          {row.quantity > 0 ? `+${row.quantity}` : row.quantity}
+                        </td>
+                        <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem", color: "#6b7280" }}>{row.notes || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
 
             {/* Attachments Section */}
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>

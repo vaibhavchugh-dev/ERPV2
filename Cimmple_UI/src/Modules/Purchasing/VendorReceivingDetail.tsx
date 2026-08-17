@@ -21,6 +21,7 @@ interface ReceivingFormData {
   receivedDate: string;
   locationId?: number;
   notes: string;
+  lotNumber: string;
 }
 
 /** Stock lines that book inventory need a location when a master id is present. */
@@ -116,6 +117,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       receivedDate: new Date().toISOString().split('T')[0],
       locationId: defaultReceiveLocationId(),
       notes: "",
+      lotNumber: "",
     };
 
     setReceivingForms(prev => {
@@ -174,6 +176,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         receivedDate: formData.receivedDate,
         locationId: formData.locationId,
         notes: formData.notes,
+        lotNumber: formData.lotNumber,
         tenantid: tenantID,
       });
 
@@ -231,6 +234,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
             receivedDate: formData.receivedDate,
             locationId: formData.locationId,
             notes: formData.notes,
+            lotNumber: formData.lotNumber,
             tenantid: tenantID,
           })
         )
@@ -471,6 +475,23 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                   {willBookInventory(detail) && (
                                     <small>Required — this receipt updates inventory on hand</small>
                                   )}
+                                </div>
+                                <div className="form-group">
+                                  <label>Lot / heat (optional)</label>
+                                  <input
+                                    type="text"
+                                    value={formData.lotNumber}
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      setReceivingForms((prev) => {
+                                        const newMap = new Map(prev);
+                                        newMap.set(detail.id, { ...formData, lotNumber: value });
+                                        return newMap;
+                                      });
+                                    }}
+                                    placeholder="e.g. H-8841"
+                                  />
+                                  <small>Mill heat or vendor lot for material certs</small>
                                 </div>
                               </div>
                               <div className="form-row">

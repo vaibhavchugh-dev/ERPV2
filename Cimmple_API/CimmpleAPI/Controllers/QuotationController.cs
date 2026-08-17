@@ -1135,6 +1135,8 @@ namespace CimmpleAPI.Controllers
                         discount = d.Discount,
                         discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
+                        rawMaterialId = d.RawMaterialId,
+                        lineType = NormalizeVendorQuotationLineType(d.LineType, quotation.VendorOrderType),
                         leadTime = "",
                         notes = d.notes ?? "",
                         glcode = d.glcode ?? "",
@@ -1684,9 +1686,18 @@ namespace CimmpleAPI.Controllers
                                     : "Percent"),
                             Received = "",
                             productid = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (detailElem.TryGetProperty("productId", out JsonElement productIdElemLower) && productIdElemLower.ValueKind == JsonValueKind.Number ? productIdElemLower.GetInt32() : (int?)null),
+                            RawMaterialId = ReadNullableIntJson(detailElem, "RawMaterialId", "rawMaterialId"),
+                            LineType = NormalizeVendorQuotationLineType(ReadStringJson(detailElem, "LineType", "lineType"), quotation.VendorOrderType),
                             notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) && notesElem.ValueKind == JsonValueKind.String ? notesElem.GetString() : (detailElem.TryGetProperty("notes", out JsonElement notesElemLower) && notesElemLower.ValueKind == JsonValueKind.String ? notesElemLower.GetString() : null),
                             PartNo = partNoValue
                         };
+
+                        if (string.IsNullOrWhiteSpace(detail.itemname)
+                            && string.IsNullOrWhiteSpace(detail.PartNo)
+                            && detail.UnitPrice == 0)
+                        {
+                            continue;
+                        }
 
                         // Save line item attachments as JSON
                         if (detailElem.TryGetProperty("Attachments", out JsonElement detailAttachmentsElem) && detailAttachmentsElem.ValueKind == JsonValueKind.Array && detailAttachmentsElem.GetArrayLength() > 0)
@@ -1735,6 +1746,9 @@ namespace CimmpleAPI.Controllers
                         string savedPartNoMsg = string.IsNullOrEmpty(saved.PartNo) ? "NULL or EMPTY" : saved.PartNo;
                         Console.WriteLine($"Saved detail ItemNo: {saved.ItemNo}, PartNo: {savedPartNoMsg}");
                     }
+
+                    quotation.VendorOrderType = DeriveVendorQuotationType(savedDetails, quotation.VendorOrderType);
+                    _context.SaveChanges();
                 }
 
                 // Handle multi-vendor quotation status updates
@@ -1951,6 +1965,63 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static string? ReadStringJson(JsonElement elem, string pascal, string camel)
+        {
+            if (elem.TryGetProperty(pascal, out var a) && a.ValueKind == JsonValueKind.String)
+                return a.GetString();
+            if (elem.TryGetProperty(camel, out var b) && b.ValueKind == JsonValueKind.String)
+                return b.GetString();
+            return null;
+        }
+
+        private static int? ReadNullableIntJson(JsonElement elem, string pascal, string camel)
+        {
+            if (elem.TryGetProperty(pascal, out var a) && a.ValueKind == JsonValueKind.Number)
+                return a.GetInt32();
+            if (elem.TryGetProperty(camel, out var b) && b.ValueKind == JsonValueKind.Number)
+                return b.GetInt32();
+            return null;
+        }
+
+        private static string NormalizeVendorQuotationLineType(string? value, string? quotationType)
+        {
+            var allowed = new[] { "RawMaterial", "FinishedProduct", "Tool", "Service", "Subcontract", "Other" };
+            var v = (value ?? "").Trim();
+            if (string.IsNullOrEmpty(v))
+                return string.Equals(quotationType, "Service", StringComparison.OrdinalIgnoreCase) ? "Service" : "RawMaterial";
+            foreach (var a in allowed)
+            {
+                if (string.Equals(v, a, StringComparison.OrdinalIgnoreCase))
+                    return a;
+            }
+            return "Other";
+        }
+
+        private static string DeriveVendorQuotationType(
+            IReadOnlyCollection<VendorQuotationsDetails> details,
+            string? storedType)
+        {
+            var types = details
+                .Select(d => NormalizeVendorQuotationLineType(d.LineType, storedType))
+                .ToList();
+            if (types.Count == 0)
+                return string.Equals(storedType, "Service", StringComparison.OrdinalIgnoreCase) ? "Service" : "Material";
+
+            static bool ServiceLike(string t) =>
+                t.Equals("Service", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Subcontract", StringComparison.OrdinalIgnoreCase);
+            static bool GoodsLike(string t) =>
+                t.Equals("RawMaterial", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("FinishedProduct", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Tool", StringComparison.OrdinalIgnoreCase);
+
+            var anyService = types.Any(ServiceLike);
+            var anyGoods = types.Any(GoodsLike);
+            if (anyService && anyGoods) return "Mixed";
+            if (anyService && !anyGoods) return "Service";
+            return "Material";
+        }
+
         [HttpPost("ConvertVendorQuotationToOrder")]
         public IActionResult ConvertVendorQuotationToOrder([FromQuery] int quotationId, [FromBody] dynamic requestData)
         {
@@ -2001,7 +2072,7 @@ namespace CimmpleAPI.Controllers
                     BuyerName = "",
                     VendorRefNo = "",
                     OrderType = "Vendor",
-                    MaterialType = "Material",
+                    MaterialType = DeriveVendorQuotationType(quotationDetails, quotation.VendorOrderType),
                     QuotationId = quotation.OrderID, // Store the quotation ID
                     QuotationNo = $"VQ#{quotation.PONumber}", // Store the quotation number
                     LocationId = quotation.locationid,
@@ -2044,6 +2115,8 @@ namespace CimmpleAPI.Controllers
                         Discount = quoteDetail.Discount,
                         DiscountType = string.IsNullOrWhiteSpace(quoteDetail.DiscountType) ? "Percent" : quoteDetail.DiscountType,
                         ProductId = quoteDetail.productid,
+                        RawMaterialId = quoteDetail.RawMaterialId,
+                        LineType = NormalizeVendorQuotationLineType(quoteDetail.LineType, quotation.VendorOrderType),
                         LeadTime = "",
                         Notes = quoteDetail.notes ?? "",
                         ShippedQty = 0,
@@ -2301,6 +2374,8 @@ namespace CimmpleAPI.Controllers
                             DiscountType = "Percent",
                             Tenantid = tenantid,
                             productid = sourceDetail.productid,
+                            RawMaterialId = sourceDetail.RawMaterialId,
+                            LineType = sourceDetail.LineType,
                             notes = sourceDetail.notes,
                             glcode = sourceDetail.glcode ?? "",
                             JobId = sourceDetail.JobId,
@@ -2447,6 +2522,8 @@ namespace CimmpleAPI.Controllers
                         dueDate = d.DueDate,
                         notes = d.notes ?? "",
                         glcode = d.glcode ?? "",
+                        lineType = d.LineType ?? "",
+                        rawMaterialId = d.RawMaterialId,
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson)
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null

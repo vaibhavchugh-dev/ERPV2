@@ -145,6 +145,13 @@ const VendorOrders: React.FC = () => {
           <span>Service</span>
         </span>
       );
+    } else if (typeLower === "mixed") {
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+          <span>📦</span>
+          <span>Mixed</span>
+        </span>
+      );
     }
     
     return <span>{type}</span>;

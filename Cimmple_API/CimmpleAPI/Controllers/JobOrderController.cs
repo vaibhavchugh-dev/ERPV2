@@ -4,12 +4,14 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -18,10 +20,12 @@ namespace CimmpleAPI.Controllers
     public class JobOrderController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly InventoryService _inventoryService;
 
-        public JobOrderController(CimmpleDbContext context)
+        public JobOrderController(CimmpleDbContext context, InventoryService inventoryService)
         {
             _context = context;
+            _inventoryService = inventoryService;
         }
 
         [HttpGet("GetJobOrders")]
@@ -275,8 +279,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SaveJobOrder")]
-        public IActionResult SaveJobOrder([FromBody] JobOrderReq request)
+        public async Task<IActionResult> SaveJobOrder([FromBody] JobOrderReq request)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 if (request == null)
@@ -285,6 +290,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 JobOrderMaster jobOrder;
+                var previousStatus = "Draft";
 
                 if (request.JobOrderID > 0)
                 {
@@ -297,6 +303,7 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Job order not found" });
                     }
 
+                    previousStatus = jobOrder.Status ?? "Draft";
                     jobOrder.ModifiedDate = DateTime.Now;
                 }
                 else
@@ -444,10 +451,29 @@ namespace CimmpleAPI.Controllers
 
                 _context.SaveChanges();
 
+                var inventoryError = await ApplyFinishedGoodsInventoryAsync(
+                    jobOrder, previousStatus, request);
+                if (!string.IsNullOrEmpty(inventoryError))
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(new { error = inventoryError });
+                }
+
+                if (string.Equals(jobOrder.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(jobOrder.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(jobOrder.Status, "Shipped", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _inventoryService.ReleaseOpenReservationsForJobInTransactionAsync(
+                        jobOrder.Tenantid, jobOrder.JobOrderID);
+                    await _context.SaveChangesAsync();
+                }
+
+                await transaction.CommitAsync();
                 return Ok(new { result = new { id = jobOrder.JobOrderID, message = "Job order saved successfully" } });
             }
             catch (Exception ex)
             {
+                await transaction.RollbackAsync();
                 var errorMessage = ex.Message;
                 if (ex.InnerException != null)
                 {
@@ -620,7 +646,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpDelete("DeleteJobOrder")]
-        public IActionResult DeleteJobOrder([FromQuery] int jobOrderId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteJobOrder([FromQuery] int jobOrderId, [FromQuery] int tenantId)
         {
             try
             {
@@ -632,6 +658,7 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Job order not found" });
                 }
 
+                await _inventoryService.ReleaseOpenReservationsForJobInTransactionAsync(tenantId, jobOrderId);
                 _context.JobOrderMaster.Remove(jobOrder);
                 _context.SaveChanges();
 
@@ -680,6 +707,189 @@ namespace CimmpleAPI.Controllers
             {
                 return new List<JobOrderRoutingProgressDto>();
             }
+        }
+
+        private static bool IsCompletedStatus(string? status)
+        {
+            return string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string JobInventoryLabel(JobOrderMaster job)
+        {
+            var n = job.JobOrderNumber;
+            if (n > 0 && n < 1000)
+                n += 999;
+            return n > 0 ? $"JO#{n}" : (string.IsNullOrWhiteSpace(job.JobNumber) ? "job" : job.JobNumber.Trim());
+        }
+
+        private decimal ResolveFinishedQty(JobOrderMaster job, JobOrderReq request)
+        {
+            if (request.RoutingSteps != null && request.RoutingSteps.Count > 0)
+            {
+                var last = request.RoutingSteps.OrderBy(s => s.sequence).Last();
+                if (last.qtyProduced.HasValue && last.qtyProduced.Value > 0)
+                    return last.qtyProduced.Value;
+            }
+            return job.QtyOrdered > 0 ? job.QtyOrdered : 0;
+        }
+
+        private async Task<int?> ResolveJobInventoryLocationAsync(JobOrderMaster job)
+        {
+            if (job.CustomerOrderID > 0)
+            {
+                var orderLocationId = await _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.OrderID == job.CustomerOrderID && o.Tenantid == job.Tenantid)
+                    .Select(o => o.locationId)
+                    .FirstOrDefaultAsync();
+                if (orderLocationId > 0)
+                    return orderLocationId;
+            }
+
+            if (job.UserId > 0)
+            {
+                var userLocationId = await _context.UserDetails
+                    .AsNoTracking()
+                    .Where(u => u.User_UniqueID == job.UserId && u.TenantID == job.Tenantid)
+                    .Select(u => u.DefaultLocationId)
+                    .FirstOrDefaultAsync();
+                if (userLocationId.HasValue && userLocationId.Value > 0)
+                    return userLocationId.Value;
+            }
+
+            var anyLocationId = await _context.Locations
+                .AsNoTracking()
+                .Where(l => l.TenantId == job.Tenantid)
+                .OrderBy(l => l.LocationId)
+                .Select(l => l.LocationId)
+                .FirstOrDefaultAsync();
+            return anyLocationId > 0 ? anyLocationId : null;
+        }
+
+        private IQueryable<InventoryTransaction> FinishedGoodsReceiptsQuery(int tenantId, int jobOrderId)
+        {
+            return _context.InventoryTransaction.Where(t =>
+                t.Tenantid == tenantId
+                && t.ReferenceType == "JobOrder"
+                && t.ReferenceId == jobOrderId
+                && t.TransactionTypeId == 1
+                && t.ProductId != null
+                && t.RawMaterialId == null);
+        }
+
+        private async Task<string?> ApplyFinishedGoodsInventoryAsync(
+            JobOrderMaster job,
+            string previousStatus,
+            JobOrderReq request)
+        {
+            var nowCompleted = IsCompletedStatus(job.Status);
+            var wasCompleted = IsCompletedStatus(previousStatus);
+            if (nowCompleted == wasCompleted)
+                return null;
+
+            var tenantId = job.Tenantid;
+            var userId = request.UserId > 0 ? request.UserId : (int?)null;
+            var label = JobInventoryLabel(job);
+
+            if (nowCompleted)
+            {
+                var qty = ResolveFinishedQty(job, request);
+                if (qty <= 0)
+                    return null;
+
+                var already = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
+                    .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+                if (already >= qty)
+                    return null;
+
+                var locationId = await ResolveJobInventoryLocationAsync(job);
+                if (!locationId.HasValue)
+                    return "Location is required to put finished goods into inventory. Set the customer order location.";
+
+                var productId = await ProductSourcing.EnsureFinishedProductAsync(
+                    _context,
+                    tenantId,
+                    job.PartNo,
+                    job.PartName,
+                    job.Unit,
+                    job.UnitPrice,
+                    ProductSourcing.Make);
+                if (!productId.HasValue)
+                    return null;
+
+                if (job.CustomerOrderDetailID > 0)
+                {
+                    var detail = await _context.CustomerOrderDetails
+                        .FirstOrDefaultAsync(d => d.ID == job.CustomerOrderDetailID && d.Tenantid == tenantId);
+                    if (detail != null && !detail.productid.HasValue)
+                        detail.productid = productId;
+                }
+
+                var toReceive = qty - already;
+                var (ok, err) = await _inventoryService.ReceiveStockInTransactionAsync(
+                    tenantId,
+                    productId,
+                    rawMaterialId: null,
+                    locationId.Value,
+                    toReceive,
+                    "JobOrder",
+                    job.JobOrderID,
+                    lotId: null,
+                    userId,
+                    $"Finished on {label}");
+                if (!ok)
+                    return $"Job saved but finished-goods inventory failed: {err}";
+
+                await _context.SaveChangesAsync();
+                return null;
+            }
+
+            var receivedQty = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
+                .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+            if (receivedQty <= 0)
+                return null;
+
+            decimal shippedQty = 0;
+            if (job.CustomerOrderDetailID > 0)
+            {
+                shippedQty = await _context.CustomerOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.ID == job.CustomerOrderDetailID && d.Tenantid == tenantId)
+                    .Select(d => (decimal)d.ShippedQty)
+                    .FirstOrDefaultAsync();
+            }
+
+            var toReverse = receivedQty - shippedQty;
+            if (toReverse <= 0)
+                return null;
+
+            var receipt = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
+                .OrderByDescending(t => t.TransactionDate)
+                .FirstOrDefaultAsync();
+            var reverseLocationId = receipt?.LocationId ?? await ResolveJobInventoryLocationAsync(job);
+            if (!reverseLocationId.HasValue)
+                return null;
+
+            var reverseProductId = receipt?.ProductId;
+            if (!reverseProductId.HasValue)
+                return null;
+
+            var (issueOk, issueErr) = await _inventoryService.IssueStockInTransactionAsync(
+                tenantId,
+                reverseProductId,
+                rawMaterialId: null,
+                reverseLocationId.Value,
+                toReverse,
+                "JobOrder",
+                job.JobOrderID,
+                userId,
+                $"Reversed finished goods; {label} reopened",
+                allowShortage: true);
+            if (!issueOk)
+                return $"Job saved but reversing finished goods failed: {issueErr}";
+
+            await _context.SaveChangesAsync();
+            return null;
         }
     }
 

@@ -14,6 +14,7 @@ export interface ProductMaster {
   firstOrderDate: string;
   lastOrderDate: string;
   productId?: number;
+  sourcingType?: string;
 }
 
 export interface CustomerPartOption {
@@ -70,6 +71,9 @@ export interface ProductMasterDetail {
   minUnitPrice?: number;
   maxUnitPrice?: number;
   productId?: number;
+  sourcingType?: string;
+  reorderPoint?: number | null;
+  reorderQuantity?: number | null;
   source: string;
   customers?: CustomerInfo[];
 }
@@ -116,11 +120,32 @@ export class ProductMasterService {
     const url = `/ProductMaster/GetProductMasterList`;
     const response = await Instense.get(url, { params: { tenantid: tenantID } });
     const result = response.data?.result;
-    return Array.isArray(result) ? result : [];
+    if (!Array.isArray(result)) return [];
+    return result.map((p: any) => ({
+      partNo: p.partNo || p.partno || "",
+      partName: p.partName || p.partname || "",
+      unit: p.unit || p.Unit || "",
+      totalQtyOrdered: p.totalQtyOrdered ?? 0,
+      totalQtyQuoted: p.totalQtyQuoted ?? 0,
+      avgUnitPrice: p.avgUnitPrice ?? p.unitPrice ?? 0,
+      minUnitPrice: p.minUnitPrice ?? p.unitPrice ?? 0,
+      maxUnitPrice: p.maxUnitPrice ?? p.unitPrice ?? 0,
+      orderCount: p.orderCount ?? 0,
+      quotationCount: p.quotationCount ?? 0,
+      firstOrderDate: p.firstOrderDate || "",
+      lastOrderDate: p.lastOrderDate || "",
+      productId: p.productId ?? p.id,
+      sourcingType: p.sourcingType || p.SourcingType || "Make",
+    }));
   };
 
-  /** Sync ProductMaster table from distinct parts in customer orders and quotations. */
-  public static SyncFromOrders = async (): Promise<{ added: number; message: string } | null> => {
+  /** Sync ProductMaster from customer orders (Make) and vendor finished-product POs (Buy). */
+  public static SyncFromOrders = async (): Promise<{
+    added: number;
+    updated?: number;
+    linkedPoLines?: number;
+    message: string;
+  } | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
@@ -128,8 +153,20 @@ export class ProductMasterService {
     }
     const url = `/ProductMaster/SyncFromOrders`;
     const response = await Instense.post(url, null, { params: { tenantid: tenantID } });
-    const data = response.data as { added?: number; message?: string };
-    return data ? { added: data.added ?? 0, message: data.message ?? "" } : null;
+    const data = response.data as {
+      added?: number;
+      updated?: number;
+      linkedPoLines?: number;
+      message?: string;
+    };
+    return data
+      ? {
+          added: data.added ?? 0,
+          updated: data.updated ?? 0,
+          linkedPoLines: data.linkedPoLines ?? 0,
+          message: data.message ?? "",
+        }
+      : null;
   };
 
   public static GetProductById = async (
@@ -161,6 +198,9 @@ export class ProductMasterService {
         minUnitPrice: result.minUnitPrice,
         maxUnitPrice: result.maxUnitPrice,
         productId: result.productId,
+        sourcingType: result.sourcingType || result.SourcingType,
+        reorderPoint: result.reorderPoint ?? result.ReorderPoint ?? null,
+        reorderQuantity: result.reorderQuantity ?? result.ReorderQuantity ?? null,
         source: result.source || "CustomerOrders",
         customers: result.customers ? result.customers.map((c: any) => ({
           customerId: c.customerId,
@@ -189,6 +229,30 @@ export class ProductMasterService {
         })) : undefined
       } as ProductMasterDetail;
     });
+  };
+
+  public static SaveReorderPolicy = async (request: {
+    id: number;
+    reorderPoint?: number | null;
+    reorderQuantity?: number | null;
+  }): Promise<{ id: number; reorderPoint?: number | null; reorderQuantity?: number | null }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+    const url = `/ProductMaster/SaveReorderPolicy`;
+    const response = await Instense.post(url, {
+      id: request.id,
+      tenantid: tenantID,
+      reorderPoint: request.reorderPoint ?? null,
+      reorderQuantity: request.reorderQuantity ?? null,
+    });
+    const result = response.data?.result;
+    if (!result) {
+      throw new Error(response.data?.error || "Could not save reorder policy.");
+    }
+    return result;
   };
 
   public static GetPartsByCustomer = async (

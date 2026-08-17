@@ -54,6 +54,16 @@ namespace CimmpleAPI.Data.Models
 
         public int? productid { get; set; }
 
+        /// <summary>Raw material master id when LineType is RawMaterial.</summary>
+        public int? RawMaterialId { get; set; }
+
+        /// <summary>
+        /// Line-level category: RawMaterial, FinishedProduct, Tool, Service, Subcontract, Other.
+        /// Copied onto the vendor PO when the quotation is converted.
+        /// </summary>
+        [MaxLength(50)]
+        public string? LineType { get; set; }
+
         public string notes { get; set; }
 
         public string PartNo { get; set; }

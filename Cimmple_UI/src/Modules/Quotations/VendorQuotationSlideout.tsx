@@ -10,6 +10,22 @@ import {
 import { VendorService } from "../../Common/Services/VendorService";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
+import {
+  VENDOR_ORDER_LINE_TYPES,
+  DEFAULT_VENDOR_ORDER_LINE_TYPE,
+  defaultLineTypeForOrder,
+  deriveOrderMaterialType,
+  lineTypeAccentClass,
+  isBlankQuoteOrOrderLine,
+  lineTypeFromQuotationType,
+} from "../../Common/Constants/vendorOrderLineTypes";
+import RawMaterialCombobox from "../../Common/Components/RawMaterialCombobox";
+import ProductMasterCombobox from "../../Common/Components/ProductMasterCombobox";
+import {
+  CustomerPartOption,
+  ProductMaster,
+} from "../../Common/Services/ProductMasterService";
+import { RawMaterial } from "../../Common/Services/InventoryService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
@@ -20,7 +36,6 @@ import {
   formatPartHistoryHint,
   looksLikeJobPartNo,
 } from "../../Common/Components/CustomerPartCombobox";
-import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import "./VendorQuotationSlideout.scss";
 
 interface VendorQuotationSlideoutProps {
@@ -57,6 +72,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
   const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
@@ -387,6 +403,32 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       UserId: storage?.userId || 0,
       UserToken: storage?.userToken || 0,
       Tenantid: storage?.tenantID || 0,
+      Details:
+        prev.Details && prev.Details.length > 0
+          ? prev.Details
+          : [
+              {
+                ID: 0,
+                ItemNo: 1,
+                PartName: "",
+                PartNo: "",
+                LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+                DueDate: today,
+                JobNumber: "",
+                JobDesc: "",
+                QtyOrdered: 1,
+                Unit: "EA",
+                UnitPrice: 0,
+                JobPriority: 0,
+                Discount: 0,
+                DiscountType: "Percent",
+                ProductId: undefined,
+                RawMaterialId: undefined,
+                LeadTime: today,
+                Notes: "",
+                glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+              },
+            ],
     }));
   };
 
@@ -477,6 +519,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         ItemNo: newItemNo,
         PartName: "",
         PartNo: "",
+        LineType:
+          details[details.length - 1]?.LineType ||
+          DEFAULT_VENDOR_ORDER_LINE_TYPE,
         DueDate: today,
         JobNumber: "",
         JobDesc: "",
@@ -487,6 +532,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         Discount: 0,
         DiscountType: "Percent",
         ProductId: undefined,
+        RawMaterialId: undefined,
         LeadTime: today,
         Notes: "",
         glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
@@ -506,7 +552,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const handleDetailChange = (index: number, field: keyof QuotationDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...(prev.Details || [])];
-      newDetails[index] = { ...newDetails[index], [field]: value };
+      const current = { ...newDetails[index], [field]: value };
+
+      if (field === "LineType") {
+        const nextType = String(value || "");
+        if (nextType === "RawMaterial") {
+          current.ProductId = undefined;
+        } else if (nextType === "FinishedProduct") {
+          current.RawMaterialId = undefined;
+        } else {
+          current.ProductId = undefined;
+          current.RawMaterialId = undefined;
+        }
+      }
+
+      newDetails[index] = current;
       
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
 
@@ -531,6 +591,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         Unit: part.unit || current.Unit || "EA",
         UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
         ProductId: part.productId ?? current.ProductId,
+        RawMaterialId: undefined,
         QtyOrdered:
           part.suggestedQty && part.suggestedQty > 0
             ? part.suggestedQty
@@ -543,6 +604,62 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       const next = new Map(prev);
       const itemNo = formData.Details?.[index]?.ItemNo;
       if (itemNo != null) next.set(itemNo, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyFinishedProduct = (index: number, product: ProductMaster) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: product.partNo || "",
+        PartName: product.partName || current.PartName,
+        Unit: product.unit || current.Unit || "EA",
+        UnitPrice:
+          product.avgUnitPrice > 0 ? product.avgUnitPrice : current.UnitPrice,
+        ProductId: product.productId,
+        RawMaterialId: undefined,
+        LineType: "FinishedProduct",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyRawMaterial = (index: number, material: RawMaterial) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: material.partNo || "",
+        PartName: material.partName || current.PartName,
+        Unit: material.unit || current.Unit || "EA",
+        UnitPrice:
+          material.unitCost > 0 ? material.unitCost : current.UnitPrice,
+        RawMaterialId: material.id,
+        ProductId: undefined,
+        LineType: "RawMaterial",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
       return next;
     });
     setIsStateChanged(true);
@@ -692,7 +809,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         BuyerName: formData.BuyerName,
         VendorRefNo: formData.VendorRefNo,
         OrderType: "Vendor",
-        MaterialType: formData.QuotationType, // Use quotation type as material type
+        MaterialType: deriveOrderMaterialType(
+          (formData.Details || [])
+            .filter((d) => !isBlankQuoteOrOrderLine(d))
+            .map((d) => d.LineType || lineTypeFromQuotationType(formData.QuotationType))
+        ),
         QuotationId: quotationId, // Link to original quotation (use prop, not formData.OrderID)
         QuotationNo: quotationNumber, // Quotation number for reference
         Details: formData.Details.map(detail => {
@@ -711,6 +832,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             JobId: jobId, // Required field - extract from JobNumber or use 0
             PartName: detail.PartName,
             PartNo: detail.PartNo,
+            LineType: detail.LineType || lineTypeFromQuotationType(formData.QuotationType),
+            RawMaterialId: detail.RawMaterialId,
             DueDate: convertDateToISO(detail.DueDate),
             JobNumber: detail.JobNumber,
             JobDesc: detail.JobDesc,
@@ -966,55 +1089,84 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Basic validation
+  const resolveSaveStatus = (mode: "draft" | "submit"): string => {
+    if (mode === "draft") {
+      return "Draft";
+    }
+    const current = (formData.Status || "").trim();
+    if (
+      current === "Sent" ||
+      current === "Accepted" ||
+      current === "Converted" ||
+      current === "Rejected"
+    ) {
+      return current;
+    }
+    return "Sent";
+  };
+
+  const handleSave = async (mode: "draft" | "submit") => {
     if (!formData.VendorID || formData.VendorID <= 0) {
       toast.error("Vendor is required");
       return;
     }
-    
+
     if (!formData.OrderDate) {
       toast.error("Quotation date is required");
       return;
     }
-    
+
+    const filledDetails = (formData.Details || []).filter(
+      (d) => !isBlankQuoteOrOrderLine(d)
+    );
+    if (filledDetails.length === 0) {
+      toast.error("At least one line item is required");
+      return;
+    }
+
+    const status = resolveSaveStatus(mode);
     setLoading(true);
+    setSavingAction(mode);
     try {
       const dataToSave: VendorQuotationMasterReq = {
         ...formData,
+        Status: status,
+        QuotationType: deriveOrderMaterialType(
+          filledDetails.map(
+            (d) => d.LineType || defaultLineTypeForOrder(formData.QuotationType)
+          )
+        ),
+        Details: filledDetails,
         Attachments: attachments || [],
         Comments: comments || [],
       };
-      
-      console.log("Saving vendor quotation:", dataToSave);
-      console.log("Details count:", dataToSave.Details?.length || 0);
-      if (dataToSave.Details && dataToSave.Details.length > 0) {
-        console.log("First detail:", JSON.stringify(dataToSave.Details[0], null, 2));
-        console.log("First detail PartNo:", dataToSave.Details[0].PartNo);
-      }
-      
+
       const result = await QuotationService.SaveVendorQuotation(dataToSave);
-      console.log("Save result:", result);
-      
-      toast.success(result.message || (quotationId > 0 ? "Quotation updated successfully" : "Quotation created successfully"));
+
+      if (mode === "draft") {
+        toast.success(quotationId > 0 ? "Quotation saved as draft" : "Quotation created as draft");
+      } else if (status === "Sent" && formData.Status !== "Sent") {
+        toast.success("Quotation marked as Sent");
+      } else {
+        toast.success(result.message || (quotationId > 0 ? "Quotation updated successfully" : "Quotation created successfully"));
+      }
       setIsStateChanged(false);
-      
-      // Update the OrderID in formData if it was a new quotation
+
       if (formData.OrderID === 0 && result.id > 0) {
-        setFormData(prev => ({
+        setFormData((prev) => ({
           ...prev,
-          OrderID: result.id
+          OrderID: result.id,
+          Status: status,
         }));
       }
-      
+
       onClose(true);
     } catch (error: any) {
       toast.error(`Error saving quotation: ${error.message || "Unknown error"}`);
       console.error("Error saving quotation:", error);
     } finally {
       setLoading(false);
+      setSavingAction(null);
     }
   };
 
@@ -1138,7 +1290,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           </div>
         </div>
 
-        <form className="vendor-quotation-slideout-form" onSubmit={handleSave}>
+        <form className="vendor-quotation-slideout-form" onSubmit={(e) => e.preventDefault()}>
           <div className="vendor-quotation-slideout-content">
             {/* Basic Information */}
             <div className="form-row">
@@ -1261,37 +1413,6 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               </div>
             </div>
 
-            {/* Quotation Type Selection */}
-            <div className="form-row form-row--type-toggle">
-              <div className="form-group">
-                <label className="field-label">Quotation Type <span className="required">*</span></label>
-                <div className="type-toggle" role="radiogroup" aria-label="Quotation Type">
-                  <label className={`type-toggle-option${formData.QuotationType === "Material" ? " is-selected" : ""}`}>
-                    <input
-                      type="radio"
-                      name="quotationType"
-                      value="Material"
-                      checked={formData.QuotationType === "Material"}
-                      onChange={(e) => handleInputChange("QuotationType", e.target.value)}
-                    />
-                    <span className="type-toggle-icon" aria-hidden>📦</span>
-                    Material
-                  </label>
-                  <label className={`type-toggle-option${formData.QuotationType === "Service" ? " is-selected" : ""}`}>
-                    <input
-                      type="radio"
-                      name="quotationType"
-                      value="Service"
-                      checked={formData.QuotationType === "Service"}
-                      onChange={(e) => handleInputChange("QuotationType", e.target.value)}
-                    />
-                    <span className="type-toggle-icon" aria-hidden>🔧</span>
-                    Service
-                  </label>
-                </div>
-              </div>
-            </div>
-
             {/* Line Items */}
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -1323,6 +1444,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <thead>
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Item #</th>
+                        <th className="vo-line-type-col" style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "148px" }}>
+                          Line type <span className="required">*</span>
+                        </th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Description</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Job No</th>
@@ -1348,12 +1472,76 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                           ? selectedJobOrdersList.map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`).join(", ")
                           : detail.JobNumber || (looksLikeJobPartNo(detail.PartNo) ? detail.PartNo : "");
                         const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
+                        const lineType =
+                          detail.LineType ||
+                          defaultLineTypeForOrder(formData.QuotationType);
 
                         return (
                           <React.Fragment key={detail.ItemNo}>
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
+                            <td style={{ padding: "0.75rem" }}>
+                              <select
+                                className={`form-input vo-line-type-select ${lineTypeAccentClass(lineType)}`}
+                                title="Line type is copied to the vendor PO on convert. Check this before saving."
+                                value={lineType}
+                                onChange={(e) =>
+                                  handleDetailChange(index, "LineType", e.target.value)
+                                }
+                              >
+                                {VENDOR_ORDER_LINE_TYPES.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
+                              {lineType === "RawMaterial" ? (
+                                <RawMaterialCombobox
+                                  value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                  rawMaterialId={detail.RawMaterialId}
+                                  suggestedPartName={detail.PartName}
+                                  suggestedUnit={detail.Unit}
+                                  suggestedUnitCost={detail.UnitPrice}
+                                  vendorId={formData.VendorID}
+                                  scrollContainerSelector=".vendor-quotation-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        RawMaterialId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(material) => applyRawMaterial(index, material)}
+                                />
+                              ) : lineType === "FinishedProduct" ? (
+                                <ProductMasterCombobox
+                                  value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                  productId={detail.ProductId}
+                                  scrollContainerSelector=".vendor-quotation-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        ProductId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(product) => applyFinishedProduct(index, product)}
+                                />
+                              ) : (
                               <VendorPartCombobox
                                 value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
                                 vendorId={formData.VendorID}
@@ -1369,14 +1557,15 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   });
                                 }}
                               />
+                              )}
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
                               <input
                                 type="text"
                                 className="form-input"
-                                style={{ 
-                                  width: "100%", 
-                                  minWidth: "150px", 
+                                style={{
+                                  width: "100%",
+                                  minWidth: "150px",
                                   cursor: "pointer",
                                   textOverflow: "ellipsis",
                                   overflow: "hidden",
@@ -2080,8 +2269,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : "Save"}
+            <button
+              type="button"
+              className="btn-draft"
+              disabled={loading}
+              onClick={() => handleSave("draft")}
+            >
+              {savingAction === "draft" ? "Saving..." : "Save as Draft"}
+            </button>
+            <button
+              type="button"
+              className="btn-submit"
+              disabled={loading}
+              onClick={() => handleSave("submit")}
+            >
+              {savingAction === "submit" ? "Saving..." : "Sent"}
             </button>
           </div>
         </form>

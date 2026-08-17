@@ -129,6 +129,7 @@ namespace CimmpleAPI.Data
         public DbSet<InventoryTransactionType> InventoryTransactionType { get; set; }
         public DbSet<InventoryLot> InventoryLot { get; set; }
         public DbSet<InventoryLotBalance> InventoryLotBalance { get; set; }
+        public DbSet<InventoryReservation> InventoryReservation { get; set; }
 
         // Transaction Entities
         public DbSet<Transactions> Transactions { get; set; }

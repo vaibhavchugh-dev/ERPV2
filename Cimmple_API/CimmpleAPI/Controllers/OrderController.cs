@@ -1201,6 +1201,7 @@ namespace CimmpleAPI.Controllers
                 var ordersWithRecalculatedStatus = vendorOrders.Select(o =>
                 {
                     var orderDetails = allDetails.Where(d => d.OrderID == o.orderID).ToList();
+                    var materialType = DeriveVendorOrderMaterialType(orderDetails, o.materialType);
 
                     // Only recalculate status for orders that could be received (Sent, Partially Received, Fully Received)
                     if (o.status == "Sent" || o.status == "Partially Received" || o.status == "Fully Received")
@@ -1241,7 +1242,7 @@ namespace CimmpleAPI.Controllers
                             o.quotationId,
                             o.quotationNo,
                             o.locationId,
-                            o.materialType,
+                            materialType,
                             o.vendorPoNumber,
                             o.externalVendorPO,
                             o.externalOrderDate,
@@ -1265,7 +1266,7 @@ namespace CimmpleAPI.Controllers
                             o.quotationId,
                             o.quotationNo,
                             o.locationId,
-                            o.materialType,
+                            materialType,
                             o.vendorPoNumber,
                             o.externalVendorPO,
                             o.externalOrderDate,
@@ -1399,7 +1400,7 @@ namespace CimmpleAPI.Controllers
                     buyerName = order.BuyerName ?? "",
                     vendorRefNo = order.VendorRefNo ?? "",
                     orderType = order.OrderType ?? "Vendor",
-                    materialType = order.MaterialType ?? "Material",
+                    materialType = DeriveVendorOrderMaterialType(detailsList, order.MaterialType),
                     quotationId = order.QuotationId,
                     quotationNo = order.QuotationNo ?? "",
                     locationId = order.LocationId,
@@ -1826,8 +1827,20 @@ namespace CimmpleAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // Verify what was saved
+                await LinkFinishedProductsOnVendorOrderAsync(order.OrderID, tenantid);
+                await LinkRawMaterialsOnVendorOrderAsync(order.OrderID, tenantid, order.VendorID);
+
+                var linkedDetails = await _context.VendorOrderDetails
+                    .Where(d => d.OrderID == order.OrderID && d.Tenantid == tenantid)
+                    .ToListAsync();
                 var savedOrder = await _context.VendorOrders.FindAsync(order.OrderID);
+                if (savedOrder != null)
+                {
+                    savedOrder.MaterialType = DeriveVendorOrderMaterialType(linkedDetails, savedOrder.MaterialType);
+                    await _context.SaveChangesAsync();
+                }
+
+                // Verify what was saved
                 Console.WriteLine($"SaveVendorOrder: After save - OrderID = {savedOrder?.OrderID}, QuotationId = {savedOrder?.QuotationId}, QuotationNo = '{savedOrder?.QuotationNo}'");
                 
                 // Also verify by querying directly from database
@@ -2026,6 +2039,37 @@ namespace CimmpleAPI.Controllers
             return "Other";
         }
 
+        /// <summary>
+        /// Header Material/Service/Mixed from line types. Blank lines use stored header as fallback
+        /// so old Service POs without LineType still list as Service.
+        /// </summary>
+        private static string DeriveVendorOrderMaterialType(
+            IReadOnlyCollection<VendorOrderDetail> details,
+            string? storedMaterialType)
+        {
+            var types = details
+                .Select(d => NormalizeVendorOrderLineType(d.LineType, storedMaterialType))
+                .ToList();
+            if (types.Count == 0)
+                return string.Equals(storedMaterialType, "Service", StringComparison.OrdinalIgnoreCase)
+                    ? "Service"
+                    : "Material";
+
+            static bool ServiceLike(string t) =>
+                t.Equals("Service", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Subcontract", StringComparison.OrdinalIgnoreCase);
+            static bool GoodsLike(string t) =>
+                t.Equals("RawMaterial", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("FinishedProduct", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Tool", StringComparison.OrdinalIgnoreCase);
+
+            var anyService = types.Any(ServiceLike);
+            var anyGoods = types.Any(GoodsLike);
+            if (anyService && anyGoods) return "Mixed";
+            if (anyService && !anyGoods) return "Service";
+            return "Material";
+        }
+
         private static string? ReadLineTypeFromVendorDetailJson(JsonElement detailElem)
         {
             if (detailElem.TryGetProperty("LineType", out JsonElement lt) && lt.ValueKind == JsonValueKind.String)
@@ -2169,10 +2213,120 @@ namespace CimmpleAPI.Controllers
             detail.RawMaterialId = null;
         }
 
+        /// <summary>
+        /// Finished-product PO lines get a Product Master row (Buy, or Both if already Make)
+        /// and ProductId so receiving can book inventory.
+        /// </summary>
+        private async Task LinkFinishedProductsOnVendorOrderAsync(int orderId, int tenantId)
+        {
+            var details = await _context.VendorOrderDetails
+                .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                .ToListAsync();
+
+            foreach (var detail in details)
+            {
+                var lineType = NormalizeVendorOrderLineType(detail.LineType, null);
+                if (!string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var productId = await ProductSourcing.EnsureFinishedProductAsync(
+                    _context,
+                    tenantId,
+                    detail.PartNo,
+                    detail.PartName,
+                    detail.Unit,
+                    detail.UnitPrice,
+                    ProductSourcing.Buy);
+
+                if (productId.HasValue && productId.Value > 0)
+                    detail.ProductId = productId;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Raw-material PO lines get a Raw Material Master row and RawMaterialId
+        /// so receiving can book inventory without a prior master-screen visit.
+        /// </summary>
+        private async Task LinkRawMaterialsOnVendorOrderAsync(int orderId, int tenantId, int vendorId)
+        {
+            var details = await _context.VendorOrderDetails
+                .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                .ToListAsync();
+
+            foreach (var detail in details)
+            {
+                var lineType = NormalizeVendorOrderLineType(detail.LineType, null);
+                if (!string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var rawMaterialId = await RawMaterialCatalog.EnsureAsync(
+                    _context,
+                    tenantId,
+                    detail.PartNo,
+                    detail.PartName,
+                    detail.Unit,
+                    detail.UnitPrice,
+                    vendorId > 0 ? vendorId : (int?)null);
+
+                if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                {
+                    detail.RawMaterialId = rawMaterialId;
+                    detail.ProductId = null;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
         /// <summary>True when this PO line is buy-to-job (not warehouse stock).</summary>
         private static bool IsVendorOrderLineJobTied(VendorOrderDetail detail)
         {
             return detail.JobId > 0 || !string.IsNullOrWhiteSpace(detail.JobNumber);
+        }
+
+        private async Task<int?> ResolveJobOrderIdForInventoryAsync(int tenantId, VendorOrderDetail detail)
+        {
+            if (detail.JobId > 0)
+            {
+                var byPk = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == detail.JobId);
+                if (byPk != null)
+                    return byPk.JobOrderID;
+
+                var byNumber = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderNumber == detail.JobId);
+                if (byNumber != null)
+                    return byNumber.JobOrderID;
+            }
+
+            var jobNo = (detail.JobNumber ?? "").Trim();
+            if (string.IsNullOrEmpty(jobNo))
+                return detail.JobId > 0 ? detail.JobId : null;
+
+            var byName = await _context.JobOrderMaster
+                .AsNoTracking()
+                .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobNumber == jobNo);
+            if (byName != null)
+                return byName.JobOrderID;
+
+            var digits = new string(jobNo.Where(char.IsDigit).ToArray());
+            if (int.TryParse(digits, out var parsed) && parsed > 0)
+            {
+                var displayNumber = parsed >= 1000 ? parsed : parsed;
+                var byParsed = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId
+                        && (j.JobOrderNumber == parsed || j.JobOrderNumber == displayNumber
+                            || (parsed >= 1000 && j.JobOrderNumber == parsed - 999)));
+                if (byParsed != null)
+                    return byParsed.JobOrderID;
+            }
+
+            return detail.JobId > 0 ? detail.JobId : null;
         }
 
         [HttpGet("CheckVendorOrderDeletionImpact")]
@@ -2612,6 +2766,9 @@ namespace CimmpleAPI.Controllers
                     ? locElem.GetInt32()
                     : null;
                 string notes = receivingData.TryGetProperty("notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "";
+                string? lotNumber = receivingData.TryGetProperty("lotNumber", out JsonElement lotElem) && lotElem.ValueKind == JsonValueKind.String
+                    ? lotElem.GetString()
+                    : null;
 
                 if (orderDetailId <= 0 || receivedQty <= 0)
                 {
@@ -2722,9 +2879,9 @@ namespace CimmpleAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // Inventory integration (Phase 1):
-                // - Stock buy (not job-tied): book RawMaterial or FinishedProduct into inventory.
-                // - Job-tied buy: do not add to warehouse on-hand.
+                // Inventory:
+                // - Stock buy (not job-tied): book RawMaterial or FinishedProduct onto the shelf.
+                // - Job-tied buy (Phase 3): receive then immediately issue to the job (never stays on-hand).
                 // - Service / Subcontract / Tool / Other: never touch inventory.
                 var lineType = NormalizeVendorOrderLineType(orderDetail.LineType, order?.MaterialType);
                 var isJobTied = IsVendorOrderLineJobTied(orderDetail);
@@ -2732,31 +2889,62 @@ namespace CimmpleAPI.Controllers
                 int? bookProductId = null;
                 int? bookRawMaterialId = null;
 
-                if (!isJobTied)
+                if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase)
-                        && orderDetail.RawMaterialId.HasValue
-                        && orderDetail.RawMaterialId.Value > 0)
+                    if (orderDetail.RawMaterialId.HasValue && orderDetail.RawMaterialId.Value > 0)
                     {
                         bookRawMaterialId = orderDetail.RawMaterialId;
                     }
-                    else if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase)
-                             && orderDetail.ProductId.HasValue
-                             && orderDetail.ProductId.Value > 0)
+                    else
+                    {
+                        var ensuredRmId = await RawMaterialCatalog.EnsureAsync(
+                            _context,
+                            tenantId,
+                            orderDetail.PartNo,
+                            orderDetail.PartName,
+                            orderDetail.Unit,
+                            orderDetail.UnitPrice,
+                            order?.VendorID > 0 ? order.VendorID : (int?)null);
+                        if (ensuredRmId.HasValue && ensuredRmId.Value > 0)
+                        {
+                            orderDetail.RawMaterialId = ensuredRmId;
+                            orderDetail.ProductId = null;
+                            bookRawMaterialId = ensuredRmId;
+                        }
+                    }
+                }
+                else if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (orderDetail.ProductId.HasValue && orderDetail.ProductId.Value > 0)
                     {
                         bookProductId = orderDetail.ProductId;
                     }
-                    else if (orderDetail.ProductId.HasValue
-                             && orderDetail.ProductId.Value > 0
-                             && !orderDetail.RawMaterialId.HasValue
-                             && !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
-                             && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase)
-                             && !string.Equals(lineType, "Tool", StringComparison.OrdinalIgnoreCase)
-                             && !string.Equals(lineType, "Other", StringComparison.OrdinalIgnoreCase))
+                    else
                     {
-                        // Legacy stock lines (including default RawMaterial type with only ProductId)
-                        bookProductId = orderDetail.ProductId;
+                        var ensuredId = await ProductSourcing.EnsureFinishedProductAsync(
+                            _context,
+                            tenantId,
+                            orderDetail.PartNo,
+                            orderDetail.PartName,
+                            orderDetail.Unit,
+                            orderDetail.UnitPrice,
+                            ProductSourcing.Buy);
+                        if (ensuredId.HasValue && ensuredId.Value > 0)
+                        {
+                            orderDetail.ProductId = ensuredId;
+                            bookProductId = ensuredId;
+                        }
                     }
+                }
+                else if (orderDetail.ProductId.HasValue
+                         && orderDetail.ProductId.Value > 0
+                         && !orderDetail.RawMaterialId.HasValue
+                         && !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Tool", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Other", StringComparison.OrdinalIgnoreCase))
+                {
+                    bookProductId = orderDetail.ProductId;
                 }
 
                 if (bookProductId.HasValue || bookRawMaterialId.HasValue)
@@ -2767,7 +2955,9 @@ namespace CimmpleAPI.Controllers
                         await transaction.RollbackAsync();
                         return BadRequest(new
                         {
-                            error = "Location is required to receive stock into inventory. Select a receiving location or set the PO location."
+                            error = isJobTied
+                                ? "Location is required to record job material from this receive. Select a receiving location or set the PO location."
+                                : "Location is required to receive stock into inventory. Select a receiving location or set the PO location."
                         });
                     }
 
@@ -2781,13 +2971,42 @@ namespace CimmpleAPI.Controllers
                         receiving.ID,
                         lotId: null,
                         userId > 0 ? userId : (int?)null,
-                        string.IsNullOrEmpty(notes) ? null : notes);
+                        string.IsNullOrEmpty(notes) ? null : notes,
+                        lotNumber);
 
                     if (!invSuccess)
                     {
                         await transaction.RollbackAsync();
                         return BadRequest(new { error = $"Receiving saved but inventory update failed: {invError}" });
                     }
+
+                    if (isJobTied)
+                    {
+                        var jobOrderId = await ResolveJobOrderIdForInventoryAsync(tenantId, orderDetail);
+                        var jobLabel = !string.IsNullOrWhiteSpace(orderDetail.JobNumber)
+                            ? orderDetail.JobNumber.Trim()
+                            : (jobOrderId.HasValue ? $"JO#{jobOrderId.Value}" : "job");
+                        var (issueOk, issueErr) = await _inventoryService.IssueStockInTransactionAsync(
+                            tenantId,
+                            productId: bookProductId,
+                            rawMaterialId: bookRawMaterialId,
+                            effectiveLocationId.Value,
+                            receivedQty,
+                            "JobOrder",
+                            jobOrderId,
+                            userId > 0 ? userId : (int?)null,
+                            $"Used on {jobLabel} from vendor receive",
+                            allowShortage: false,
+                            lotId: null,
+                            lotNumber: lotNumber);
+
+                        if (!issueOk)
+                        {
+                            await transaction.RollbackAsync();
+                            return BadRequest(new { error = $"Receiving saved but job consumption failed: {issueErr}" });
+                        }
+                    }
+
                     await _context.SaveChangesAsync();
                 }
 

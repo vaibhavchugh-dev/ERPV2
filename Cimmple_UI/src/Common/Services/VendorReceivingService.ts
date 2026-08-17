@@ -62,6 +62,7 @@ export interface ReceiveLineItemRequest {
   receivedDate: string;
   locationId?: number;
   notes?: string;
+  lotNumber?: string;
   tenantid: number;
 }
 
@@ -106,6 +107,7 @@ export class VendorReceivingService {
       receivedDate: request.receivedDate || new Date().toISOString(),
       locationId: request.locationId || null,
       notes: request.notes || "",
+      lotNumber: request.lotNumber || null,
       tenantid: tenantID,
     };
 

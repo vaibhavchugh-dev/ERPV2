@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
 import { QuotationService } from "../../Common/Services/QuotationService";
-import { VendorOrderService, VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
+import { deriveOrderMaterialType, lineTypeFromQuotationType } from "../../Common/Constants/vendorOrderLineTypes";
+import { VendorOrderService } from "../../Common/Services/VendorOrderService";
+import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import "./VendorQuotationComparison.scss";
 
@@ -41,6 +43,8 @@ interface DetailData {
   dueDate: string;
   notes: string;
   glcode?: string;
+  lineType?: string;
+  rawMaterialId?: number;
   attachments?: Array<{id: number; name: string; size: number; fileUrl?: string}>;
 }
 
@@ -108,6 +112,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             dueDate: d.dueDate || d.DueDate || "",
             notes: d.notes || d.Notes || "",
             glcode: d.glcode || d.Glcode || "",
+            lineType: d.lineType || d.LineType || "",
+            rawMaterialId: d.rawMaterialId || d.RawMaterialId,
             attachments: attachments && attachments.length > 0 ? attachments : undefined
           };
         });
@@ -447,7 +453,11 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
         BuyerName: quotationData.BuyerName || "",
         VendorRefNo: quotationData.VendorRefNo || "",
         OrderType: "Vendor",
-        MaterialType: quotationData.QuotationType || "Material", // Use quotation type as material type
+        MaterialType: deriveOrderMaterialType(
+          (quotationData.Details || []).map(
+            (d) => d.LineType || lineTypeFromQuotationType(quotationData.QuotationType)
+          )
+        ),
         QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
         QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
         Details: quotationData.Details.map(detail => {
@@ -466,6 +476,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             JobId: jobId, // Required field - extract from JobNumber or use 0
             PartName: detail.PartName,
             PartNo: detail.PartNo,
+            LineType: detail.LineType || lineTypeFromQuotationType(quotationData.QuotationType),
+            RawMaterialId: detail.RawMaterialId,
             DueDate: convertDateToISO(detail.DueDate),
             JobNumber: detail.JobNumber || "",
             JobDesc: detail.JobDesc || "",
@@ -632,7 +644,13 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           BuyerName: quotationData.BuyerName || "",
           VendorRefNo: quotationData.VendorRefNo || "",
           OrderType: "Vendor",
-          MaterialType: quotationData.QuotationType || "Material", // Use quotation type as material type
+          MaterialType: deriveOrderMaterialType(
+            items.map(
+              (item) =>
+                item.detail.lineType ||
+                lineTypeFromQuotationType(quotationData.QuotationType)
+            )
+          ),
           QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
           QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
           Details: items.map((item, idx) => {
@@ -653,6 +671,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
               JobId: jobId, // Required field - extract from JobNumber or use 0
               PartName: item.detail.partName,
               PartNo: item.detail.partNo,
+              LineType: item.detail.lineType || lineTypeFromQuotationType(quotationData.QuotationType),
+              RawMaterialId: item.detail.rawMaterialId,
               DueDate: formatDateForDetail(item.detail.dueDate),
               JobNumber: item.lineItem.partNo || "", // Use partNo as job number if available
               JobDesc: "",

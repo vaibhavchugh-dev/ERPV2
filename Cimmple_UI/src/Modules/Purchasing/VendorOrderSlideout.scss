@@ -1,6 +1,7 @@
 /* Vendor Order Slideout - Wide Pane Style */
 /* Import base form styles */
 @import "../Masters/CustomerMasterSlideout.scss";
+@import "../../Common/Styles/vendorLineType.scss";
 
 .vendor-order-slideout-overlay {
   position: fixed;
@@ -160,6 +161,28 @@
 .btn-cancel:hover {
   background: #f9fafb;
   border-color: #9ca3af;
+}
+
+.btn-draft {
+  padding: 0.625rem 1rem;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-draft:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.btn-draft:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-submit {
@@ -597,6 +620,6 @@
 
   .invoice-table tr {
     page-break-inside: avoid;
-    page-break-after: auto;
   }
 }
+

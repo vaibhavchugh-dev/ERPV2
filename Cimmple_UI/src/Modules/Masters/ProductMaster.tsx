@@ -11,6 +11,7 @@ import "./CustomerMaster.scss";
 const COLUMNS: ColumnDefinition[] = [
   { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
   { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
+  { key: "sourcingType", label: "Sourcing", sortKey: "sourcingType" },
   { key: "unit", label: "Unit", sortKey: "unit" },
   { key: "totalQtyOrdered", label: "Qty Ordered", sortKey: "totalQtyOrdered" },
   { key: "totalQtyQuoted", label: "Qty Quoted", sortKey: "totalQtyQuoted" },
@@ -89,13 +90,24 @@ const ProductMasterComponent: React.FC = () => {
       ]);
       const orderList = Array.isArray(fromOrders) ? fromOrders : [];
       const masterList = Array.isArray(fromMaster) ? fromMaster : [];
+      const masterByPartNo = new Map(
+        masterList.map((p) => [(p.partNo || "").toLowerCase(), p])
+      );
+      const mergedOrders = orderList.map((p) => {
+        const master = masterByPartNo.get((p.partNo || "").toLowerCase());
+        return {
+          ...p,
+          productId: p.productId || master?.productId,
+          sourcingType: master?.sourcingType || p.sourcingType || "Make",
+        };
+      });
       const orderPartNos = new Set(
-        orderList.map((p) => (p.partNo || "").toLowerCase())
+        mergedOrders.map((p) => (p.partNo || "").toLowerCase())
       );
       const masterOnly = masterList.filter(
         (p) => !orderPartNos.has((p.partNo || "").toLowerCase())
       );
-      setProducts([...orderList, ...masterOnly]);
+      setProducts([...mergedOrders, ...masterOnly]);
     } catch (error: any) {
       console.error("[ProductMaster] Error loading products:", error);
       toast.error(`Error loading products: ${error.message || "Unknown error"}`);
@@ -123,9 +135,9 @@ const ProductMasterComponent: React.FC = () => {
       const result = await ProductMasterService.SyncFromOrders();
       if (result) {
         toast.success(
-          result.added > 0
+          result.added > 0 || (result.updated ?? 0) > 0 || (result.linkedPoLines ?? 0) > 0
             ? result.message
-            : "Product Master is already in sync with orders."
+            : "Product Master is already in sync."
         );
       }
       loadProducts();
@@ -190,6 +202,16 @@ const ProductMasterComponent: React.FC = () => {
         return product.partNo || "";
       case "partName":
         return product.partName || "";
+      case "sourcingType": {
+        const t = product.sourcingType || "Make";
+        const cls =
+          t === "Buy"
+            ? "badge-secondary"
+            : t === "Both"
+            ? "badge-info"
+            : "badge-success";
+        return <span className={`badge ${cls}`}>{t}</span>;
+      }
       case "unit":
         return product.unit || "";
       case "totalQtyOrdered":
@@ -224,7 +246,9 @@ const ProductMasterComponent: React.FC = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Product Master</h1>
-          <p className="page-subtitle">All parts from customer orders</p>
+          <p className="page-subtitle">
+            Shop-made (Make) and purchased finished goods (Buy). Both = make-or-buy.
+          </p>
         </div>
         <div className="page-actions">
           <ColumnChooser
@@ -240,7 +264,7 @@ const ProductMasterComponent: React.FC = () => {
             className="btn btn-primary"
             onClick={handleSyncFromOrders}
             disabled={syncing}
-            title="Add distinct parts from orders and quotations into the Product Master table (for Inventory and other modules)"
+            title="Add parts from customer orders (Make) and vendor finished-product POs (Buy)"
           >
             {syncing ? "Syncing…" : "Sync from orders"}
           </button>

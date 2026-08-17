@@ -11,6 +11,7 @@ export interface ShippableItem {
   shippingStatus: string;
   hasJobOrder: boolean;
   jobOrderStatus: string;
+  quantityOnHand?: number | null;
 }
 
 export interface ShipmentLineItem {

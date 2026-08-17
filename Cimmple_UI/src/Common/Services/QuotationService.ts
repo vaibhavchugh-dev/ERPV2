@@ -183,6 +183,8 @@ export interface QuotationDetailReq {
   Discount: number;
   DiscountType?: DiscountType;
   ProductId?: number;
+  RawMaterialId?: number;
+  LineType?: string;
   LeadTime: string;
   Notes: string;
   /** Expense GL account id (as string) or account code */
@@ -899,6 +901,8 @@ export class QuotationService {
           Discount: d.discount || d.Discount || 0,
           DiscountType: ((d.discountType || d.DiscountType) === "Amount" ? "Amount" : "Percent") as DiscountType,
           ProductId: d.productId || d.ProductId,
+          RawMaterialId: d.rawMaterialId || d.RawMaterialId,
+          LineType: d.lineType || d.LineType,
           LeadTime: d.leadTime || d.LeadTime || "",
           Notes: d.notes || d.Notes || "",
           glcode: d.glcode || d.Glcode || "",

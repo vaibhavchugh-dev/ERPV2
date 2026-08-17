@@ -18,7 +18,11 @@ import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs
 import { PdfService } from "../../Common/Services/PdfService";
 import {
   VENDOR_ORDER_LINE_TYPES,
+  DEFAULT_VENDOR_ORDER_LINE_TYPE,
   defaultLineTypeForOrder,
+  deriveOrderMaterialType,
+  lineTypeAccentClass,
+  isBlankQuoteOrOrderLine,
 } from "../../Common/Constants/vendorOrderLineTypes";
 import {
   VendorPartCombobox,
@@ -26,7 +30,11 @@ import {
   looksLikeJobPartNo,
 } from "../../Common/Components/CustomerPartCombobox";
 import RawMaterialCombobox from "../../Common/Components/RawMaterialCombobox";
-import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
+import ProductMasterCombobox from "../../Common/Components/ProductMasterCombobox";
+import {
+  CustomerPartOption,
+  ProductMaster,
+} from "../../Common/Services/ProductMasterService";
 import { RawMaterial } from "../../Common/Services/InventoryService";
 import "./VendorOrderSlideout.scss";
 
@@ -67,6 +75,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
   const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -344,7 +353,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           OrderDate: convertToDateInputFormat(result.OrderDate), // Convert to YYYY-MM-DD format
           Details: normalizedDetails,
           OrderType: "Vendor", // Always "Vendor" for vendor orders
-          MaterialType: result.MaterialType || result.OrderType || "Material",
+          MaterialType:
+            result.MaterialType === "Service" || result.MaterialType === "Mixed"
+              ? result.MaterialType
+              : result.MaterialType || "Material",
         };
         setFormData(formDataWithDetails);
         setPartHistoryByRow(new Map());
@@ -424,6 +436,36 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       Tenantid: storage?.tenantID || 0,
       OrderType: "Vendor",
       MaterialType: "Material",
+      Details:
+        prev.Details && prev.Details.length > 0
+          ? prev.Details
+          : [
+              {
+                ID: 0,
+                ItemNo: 1,
+                PartName: "",
+                PartNo: "",
+                LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+                DueDate: today,
+                JobNumber: "",
+                JobDesc: "",
+                QtyOrdered: 1,
+                Unit: "EA",
+                UnitPrice: 0,
+                JobPriority: 0,
+                Discount: 0,
+                DiscountType: "Percent",
+                ProductId: undefined,
+                RawMaterialId: undefined,
+                LeadTime: today,
+                Notes: "",
+                ShippedQty: 0,
+                ShippingStatus: "",
+                InvoicedQty: 0,
+                InvoiceStatus: "",
+                glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+              },
+            ],
     }));
   };
 
@@ -506,7 +548,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         ItemNo: newItemNo,
         PartName: "",
         PartNo: "",
-        LineType: defaultLineTypeForOrder(prev.MaterialType),
+        LineType:
+          details[details.length - 1]?.LineType ||
+          DEFAULT_VENDOR_ORDER_LINE_TYPE,
         DueDate: today,
         JobNumber: "",
         JobDesc: "",
@@ -563,6 +607,34 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       const next = new Map(prev);
       const itemNo = formData.Details?.[index]?.ItemNo;
       if (itemNo != null) next.set(itemNo, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyFinishedProduct = (index: number, product: ProductMaster) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: product.partNo || "",
+        PartName: product.partName || current.PartName,
+        Unit: product.unit || current.Unit || "EA",
+        UnitPrice:
+          product.avgUnitPrice > 0 ? product.avgUnitPrice : current.UnitPrice,
+        ProductId: product.productId,
+        RawMaterialId: undefined,
+        LineType: "FinishedProduct",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
       return next;
     });
     setIsStateChanged(true);
@@ -887,9 +959,24 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const resolveSaveStatus = (mode: "draft" | "submit"): string => {
+    if (mode === "draft") {
+      return "Draft";
+    }
+    const current = (formData.Status || "").trim();
+    if (
+      current === "Sent" ||
+      current === "Partially Received" ||
+      current === "Fully Received" ||
+      current === "Receiving" ||
+      current === "Completed"
+    ) {
+      return current;
+    }
+    return "Sent";
+  };
 
+  const handleSave = async (mode: "draft" | "submit") => {
     if (!formData.VendorID || formData.VendorID <= 0) {
       toast.error("Vendor is required");
       return;
@@ -900,23 +987,47 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       return;
     }
 
+    const filledDetails = (formData.Details || []).filter(
+      (d) => !isBlankQuoteOrOrderLine(d)
+    );
+    if (filledDetails.length === 0) {
+      toast.error("At least one line item is required");
+      return;
+    }
+
+    const status = resolveSaveStatus(mode);
     setLoading(true);
+    setSavingAction(mode);
     try {
       const dataToSave: VendorOrderMasterReq = {
         ...formData,
+        Status: status,
+        MaterialType: deriveOrderMaterialType(
+          filledDetails.map(
+            (d) => d.LineType || defaultLineTypeForOrder(formData.MaterialType)
+          )
+        ),
+        Details: filledDetails,
         Attachments: attachments || [],
         Comments: comments || [],
       };
 
       const result = await VendorOrderService.SaveVendorOrder(dataToSave);
 
-      toast.success(result.message || (orderId > 0 ? "Order updated successfully" : "Order created successfully"));
+      if (mode === "draft") {
+        toast.success(orderId > 0 ? "Order saved as draft" : "Order created as draft");
+      } else if (status === "Sent" && formData.Status !== "Sent") {
+        toast.success("Order marked as Sent — available in Receiving");
+      } else {
+        toast.success(result.message || (orderId > 0 ? "Order updated successfully" : "Order created successfully"));
+      }
       setIsStateChanged(false);
 
       if (formData.OrderID === 0 && result.id > 0) {
-        setFormData(prev => ({
+        setFormData((prev) => ({
           ...prev,
-          OrderID: result.id
+          OrderID: result.id,
+          Status: status,
         }));
       }
 
@@ -926,6 +1037,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       console.error("Error saving order:", error);
     } finally {
       setLoading(false);
+      setSavingAction(null);
     }
   };
 
@@ -1015,7 +1127,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           </div>
         </div>
 
-        <form className="vendor-order-slideout-form" onSubmit={handleSave}>
+        <form className="vendor-order-slideout-form" onSubmit={(e) => e.preventDefault()}>
           <div className="vendor-order-slideout-content">
             {/* Basic Information */}
             <div className="form-row">
@@ -1138,37 +1250,6 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               </div>
             </div>
 
-            {/* Material Type Selection */}
-            <div className="form-row form-row--type-toggle">
-              <div className="form-group">
-                <label className="field-label">Material Type <span className="required">*</span></label>
-                <div className="type-toggle" role="radiogroup" aria-label="Material Type">
-                  <label className={`type-toggle-option${formData.MaterialType === "Material" ? " is-selected" : ""}`}>
-                    <input
-                      type="radio"
-                      name="materialType"
-                      value="Material"
-                      checked={formData.MaterialType === "Material"}
-                      onChange={(e) => handleInputChange("MaterialType", e.target.value)}
-                    />
-                    <span className="type-toggle-icon" aria-hidden>📦</span>
-                    Material
-                  </label>
-                  <label className={`type-toggle-option${formData.MaterialType === "Service" ? " is-selected" : ""}`}>
-                    <input
-                      type="radio"
-                      name="materialType"
-                      value="Service"
-                      checked={formData.MaterialType === "Service"}
-                      onChange={(e) => handleInputChange("MaterialType", e.target.value)}
-                    />
-                    <span className="type-toggle-icon" aria-hidden>🔧</span>
-                    Service
-                  </label>
-                </div>
-              </div>
-            </div>
-
             {/* Line Items - Same structure as VendorQuotationSlideout */}
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -1200,7 +1281,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <thead>
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Item #</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "128px" }}>Line type</th>
+                        <th className="vo-line-type-col" style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "148px" }}>
+                          Line type <span className="required">*</span>
+                        </th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Description</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Job No</th>
@@ -1226,6 +1309,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                           ? selectedJobOrdersList.map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`).join(", ")
                           : detail.JobNumber || (looksLikeJobPartNo(detail.PartNo) ? detail.PartNo : "");
                         const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
+                        const lineType =
+                          detail.LineType ||
+                          defaultLineTypeForOrder(formData.MaterialType);
 
                         return (
                           <React.Fragment key={detail.ItemNo}>
@@ -1233,9 +1319,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
-                                className="form-input"
-                                style={{ minWidth: "120px", fontSize: "0.8125rem", padding: "0.35rem 0.5rem" }}
-                                value={detail.LineType || defaultLineTypeForOrder(formData.MaterialType)}
+                                className={`form-input vo-line-type-select ${lineTypeAccentClass(lineType)}`}
+                                title="Line type controls receiving and inventory. Check this before saving."
+                                value={lineType}
                                 onChange={(e) =>
                                   handleDetailChange(index, "LineType", e.target.value)
                                 }
@@ -1248,8 +1334,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               </select>
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
-                              {(detail.LineType || defaultLineTypeForOrder(formData.MaterialType)) ===
-                              "RawMaterial" ? (
+                              {(lineType === "RawMaterial") ? (
                                 <RawMaterialCombobox
                                   value={
                                     looksLikeJobPartNo(detail.PartNo)
@@ -1257,6 +1342,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                       : detail.PartNo || ""
                                   }
                                   rawMaterialId={detail.RawMaterialId}
+                                  suggestedPartName={detail.PartName}
+                                  suggestedUnit={detail.Unit}
+                                  suggestedUnitCost={detail.UnitPrice}
+                                  vendorId={formData.VendorID}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) => {
                                     setFormData((prev) => {
@@ -1273,6 +1362,32 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   }}
                                   onSelect={(material) =>
                                     applyRawMaterial(index, material)
+                                  }
+                                />
+                              ) : lineType === "FinishedProduct" ? (
+                                <ProductMasterCombobox
+                                  value={
+                                    looksLikeJobPartNo(detail.PartNo)
+                                      ? ""
+                                      : detail.PartNo || ""
+                                  }
+                                  productId={detail.ProductId}
+                                  scrollContainerSelector=".vendor-order-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        ProductId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(product) =>
+                                    applyFinishedProduct(index, product)
                                   }
                                 />
                               ) : (
@@ -2145,9 +2260,22 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : "Save"}
-        </button>
+            <button
+              type="button"
+              className="btn-draft"
+              disabled={loading}
+              onClick={() => handleSave("draft")}
+            >
+              {savingAction === "draft" ? "Saving..." : "Save as Draft"}
+            </button>
+            <button
+              type="button"
+              className="btn-submit"
+              disabled={loading}
+              onClick={() => handleSave("submit")}
+            >
+              {savingAction === "submit" ? "Saving..." : "Sent"}
+            </button>
           </div>
         </form>
 

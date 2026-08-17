@@ -4,9 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -15,10 +17,12 @@ namespace CimmpleAPI.Controllers
     public class ShippingController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly InventoryService _inventoryService;
 
-        public ShippingController(CimmpleDbContext context)
+        public ShippingController(CimmpleDbContext context, InventoryService inventoryService)
         {
             _context = context;
+            _inventoryService = inventoryService;
         }
 
         [HttpGet("GetShippableItems/{orderId}")]
@@ -47,15 +51,33 @@ namespace CimmpleAPI.Controllers
                 var jobOrdersByDetail = _context.JobOrderMaster
                     .AsNoTracking()
                     .Where(jo => jo.Tenantid == tenantId && orderDetailIds.Contains(jo.CustomerOrderDetailID))
-                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status })
+                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status, jo.JobOrderID })
                     .ToList()
                     .GroupBy(jo => jo.CustomerOrderDetailID)
-                    .ToDictionary(g => g.Key, g => g.First().Status ?? "Draft");
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                var productIds = detailsList
+                    .Where(d => d.productid.HasValue && d.productid.Value > 0)
+                    .Select(d => d.productid!.Value)
+                    .Distinct()
+                    .ToList();
+                var onHandByProduct = productIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : _context.InventoryBalance
+                        .AsNoTracking()
+                        .Where(b => b.Tenantid == tenantId && b.ProductId != null && productIds.Contains(b.ProductId.Value))
+                        .GroupBy(b => b.ProductId!.Value)
+                        .Select(g => new { ProductId = g.Key, Qty = g.Sum(x => x.QuantityOnHand) })
+                        .ToList()
+                        .ToDictionary(x => x.ProductId, x => x.Qty);
 
                 var shippableItems = detailsList.Select(d =>
                 {
                     var calculatedShippedQty = shippingDetails.ContainsKey(d.ID) ? shippingDetails[d.ID] : d.ShippedQty;
                     var hasJobOrder = jobOrdersByDetail.ContainsKey(d.ID);
+                    decimal? onHand = null;
+                    if (d.productid.HasValue && onHandByProduct.TryGetValue(d.productid.Value, out var qtyOnHand))
+                        onHand = qtyOnHand;
                     return new
                     {
                         id = d.ID,
@@ -67,7 +89,8 @@ namespace CimmpleAPI.Controllers
                         availableQty = d.QtyOrdered - calculatedShippedQty,
                         shippingStatus = d.ShippingStatus,
                         hasJobOrder,
-                        jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order"
+                        jobOrderStatus = hasJobOrder ? (jobOrdersByDetail[d.ID].Status ?? "Draft") : "No Job Order",
+                        quantityOnHand = onHand
                     };
                 }).ToList();
 
@@ -80,13 +103,14 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("CreateShipment")]
-        public IActionResult CreateShipment([FromBody] CreateShipmentRequest request)
+        public async Task<IActionResult> CreateShipment([FromBody] CreateShipmentRequest request)
         {
-            using (var transaction = _context.Database.BeginTransaction())
+            await using (var transaction = await _context.Database.BeginTransactionAsync())
             {
                 try
                 {
                     var tenantId = GetTenantId();
+                    var userId = GetUserId();
 
                     // Validate all line items are ready to ship
                     foreach (var item in request.LineItems)
@@ -128,7 +152,11 @@ namespace CimmpleAPI.Controllers
                     };
 
                     _context.Shipping.Add(shipment);
-                    _context.SaveChanges();
+                    await _context.SaveChangesAsync();
+
+                    var order = await _context.CustomerOrder
+                        .FirstOrDefaultAsync(o => o.OrderID == request.OrderId && o.Tenantid == tenantId);
+                    var orderLocationId = order != null && order.locationId > 0 ? order.locationId : (int?)null;
 
                     // Create shipment details
                     foreach (var item in request.LineItems)
@@ -155,19 +183,33 @@ namespace CimmpleAPI.Controllers
                             detail.ShippingStatus = "Partially Shipped";
                         else
                             detail.ShippingStatus = "Ready to Ship";
+
+                        var inventoryError = await IssueFinishedGoodsForShipmentAsync(
+                            tenantId,
+                            detail,
+                            item.QtyToShip,
+                            shipment.Id,
+                            shipmentNumber,
+                            orderLocationId,
+                            userId);
+                        if (!string.IsNullOrEmpty(inventoryError))
+                        {
+                            await transaction.RollbackAsync();
+                            return BadRequest(new { error = inventoryError });
+                        }
                     }
 
                     // Update order status
                     UpdateOrderShippingStatus(request.OrderId, tenantId);
 
-                    _context.SaveChanges();
-                    transaction.Commit();
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
 
                     return Ok(new { result = new { shipmentId = shipment.Id, shipmentNumber = shipmentNumber, message = "Shipment created successfully" } });
                 }
                 catch (Exception ex)
                 {
-                    transaction.Rollback();
+                    await transaction.RollbackAsync();
                     return StatusCode(500, new { error = ex.Message });
                 }
             }
@@ -468,9 +510,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpDelete("DeleteShipment")]
-        public IActionResult DeleteShipment([FromQuery] int shipmentId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteShipment([FromQuery] int shipmentId, [FromQuery] int tenantId)
         {
-            using (var transaction = _context.Database.BeginTransaction())
+            await using (var transaction = await _context.Database.BeginTransactionAsync())
             {
                 try
                 {
@@ -482,12 +524,10 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Shipment not found" });
                     }
 
-                    // Get all shipping details for this shipment
                     var shippingDetails = _context.ShippingDetails
                         .Where(sd => sd.ShipmentId == shipmentId)
                         .ToList();
 
-                    // Update CustomerOrderDetails - subtract shipped quantities
                     foreach (var detail in shippingDetails)
                     {
                         if (detail.OrderDetailID.HasValue)
@@ -499,7 +539,6 @@ namespace CimmpleAPI.Controllers
                             {
                                 orderDetail.ShippedQty = Math.Max(0, orderDetail.ShippedQty - detail.ShippedQty);
                                 
-                                // Update shipping status based on remaining shipped quantity
                                 if (orderDetail.ShippedQty == 0)
                                     orderDetail.ShippingStatus = "Not Started";
                                 else if (orderDetail.ShippedQty < orderDetail.QtyOrdered)
@@ -510,26 +549,133 @@ namespace CimmpleAPI.Controllers
                         }
                     }
 
-                    // Delete shipping details
-                    _context.ShippingDetails.RemoveRange(shippingDetails);
+                    var issues = await _context.InventoryTransaction
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "CustomerShipment"
+                            && t.ReferenceId == shipmentId
+                            && t.TransactionTypeId == 2)
+                        .ToListAsync();
+                    foreach (var issue in issues)
+                    {
+                        var qty = Math.Abs(issue.Quantity);
+                        if (qty <= 0)
+                            continue;
+                        var (ok, err) = await _inventoryService.ReceiveStockInTransactionAsync(
+                            tenantId,
+                            issue.ProductId,
+                            issue.RawMaterialId,
+                            issue.LocationId,
+                            qty,
+                            "CustomerShipment",
+                            shipmentId,
+                            lotId: null,
+                            createdBy: GetUserId(),
+                            notes: $"Shipment {shipment.ShipmentNo} deleted");
+                        if (!ok)
+                        {
+                            await transaction.RollbackAsync();
+                            return BadRequest(new { error = $"Could not restore inventory for deleted shipment: {err}" });
+                        }
+                    }
 
-                    // Delete shipment
+                    _context.ShippingDetails.RemoveRange(shippingDetails);
                     _context.Shipping.Remove(shipment);
 
-                    // Update order status
                     UpdateOrderShippingStatus(shipment.OrderId, tenantId);
 
-                    _context.SaveChanges();
-                    transaction.Commit();
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
 
                     return Ok(new { result = new { message = "Shipment deleted successfully" } });
                 }
                 catch (Exception ex)
                 {
-                    transaction.Rollback();
+                    await transaction.RollbackAsync();
                     return StatusCode(500, new { error = ex.Message });
                 }
             }
+        }
+
+        private async Task<string?> IssueFinishedGoodsForShipmentAsync(
+            int tenantId,
+            CustomerOrderDetails detail,
+            decimal qtyToShip,
+            int shipmentId,
+            string shipmentNumber,
+            int? orderLocationId,
+            int? userId)
+        {
+            if (qtyToShip <= 0)
+                return null;
+
+            int? productId = detail.productid.HasValue && detail.productid.Value > 0
+                ? detail.productid
+                : await ProductSourcing.EnsureFinishedProductAsync(
+                    _context,
+                    tenantId,
+                    detail.PartNo,
+                    detail.partname,
+                    detail.Unit,
+                    detail.UnitPrice,
+                    ProductSourcing.Make);
+            if (!productId.HasValue)
+                return null;
+
+            if (!detail.productid.HasValue)
+                detail.productid = productId;
+
+            var job = await _context.JobOrderMaster
+                .AsNoTracking()
+                .FirstOrDefaultAsync(jo => jo.CustomerOrderDetailID == detail.ID && jo.Tenantid == tenantId);
+
+            int? locationId = null;
+            if (job != null)
+            {
+                locationId = await _context.InventoryTransaction
+                    .AsNoTracking()
+                    .Where(t => t.Tenantid == tenantId
+                        && t.ReferenceType == "JobOrder"
+                        && t.ReferenceId == job.JobOrderID
+                        && t.TransactionTypeId == 1
+                        && t.ProductId != null)
+                    .OrderByDescending(t => t.TransactionDate)
+                    .Select(t => (int?)t.LocationId)
+                    .FirstOrDefaultAsync();
+            }
+
+            if (!locationId.HasValue || locationId.Value <= 0)
+                locationId = orderLocationId;
+
+            if (!locationId.HasValue || locationId.Value <= 0)
+            {
+                locationId = await _context.Locations
+                    .AsNoTracking()
+                    .Where(l => l.TenantId == tenantId)
+                    .OrderBy(l => l.LocationId)
+                    .Select(l => (int?)l.LocationId)
+                    .FirstOrDefaultAsync();
+            }
+
+            if (!locationId.HasValue || locationId.Value <= 0)
+                return "Location is required to ship from inventory. Set the customer order location.";
+
+            var onHand = await _inventoryService.GetOnHandAsync(tenantId, productId.Value, locationId);
+            var notes = onHand < qtyToShip
+                ? $"Shipped {shipmentNumber} short (on hand {onHand})"
+                : $"Shipped {shipmentNumber}";
+
+            var (ok, err) = await _inventoryService.IssueStockInTransactionAsync(
+                tenantId,
+                productId,
+                rawMaterialId: null,
+                locationId.Value,
+                qtyToShip,
+                "CustomerShipment",
+                shipmentId,
+                userId,
+                notes,
+                allowShortage: true);
+            return ok ? null : $"Shipment saved but inventory issue failed: {err}";
         }
 
         private string GenerateShipmentNumber(int tenantId)

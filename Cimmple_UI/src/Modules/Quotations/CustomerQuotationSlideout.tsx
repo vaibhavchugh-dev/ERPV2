@@ -21,6 +21,7 @@ import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Componen
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
+import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
 import {
   todayDateOnlyDisplay,
   toHtmlDateInputValue,
@@ -677,11 +678,13 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       newErrors.OrderDate = "Quotation date is required";
     }
 
-    // Validate line items
-    if (formData.Details.length === 0) {
+    // Validate line items (ignore the empty starter row)
+    const filledDetails = formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d));
+    if (filledDetails.length === 0) {
       newErrors.Details = "At least one line item is required";
     } else {
       formData.Details.forEach((detail, index) => {
+        if (isBlankQuoteOrOrderLine(detail)) return;
         const itemErrors: { [field: string]: string } = {};
 
         // PartNo OR PartName must be filled (at least one)
@@ -780,7 +783,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
       const formDataWithMatrix: QuotationMasterReq = {
         ...formData,
-        Details: formData.Details.map((detail) => ({
+        Details: formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d)).map((detail) => ({
           ...detail,
           PriceBreakdownMatrix: priceBreakdownMatrixData.get(detail.ItemNo) || undefined,
         })),
