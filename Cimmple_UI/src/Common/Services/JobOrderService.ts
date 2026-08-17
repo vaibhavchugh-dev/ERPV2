@@ -20,6 +20,7 @@ export interface JobOrderMaster {
   jobPriority: number;
   status: string;
   orderDate: string;
+  isShortMaterial?: boolean;
 }
 
 export interface JobOrderMasterReq {
@@ -53,6 +54,29 @@ export interface JobOrderMasterReq {
   JobTemplateCode?: string;
   JobTemplateRevision?: number | null;
   EnableJobTracking?: boolean;
+  /** Planned material. Sent on office save; omit on PWA step saves so lines are not wiped. */
+  MaterialRequirements?: JobMaterialRequirement[];
+}
+
+export interface JobMaterialRequirement {
+  Id: number;
+  SequenceNumber: number;
+  ProductId?: number | null;
+  RawMaterialId?: number | null;
+  PartNo?: string;
+  PartName?: string;
+  QuantityNeeded: number;
+  Notes: string;
+  LocationId?: number | null;
+  LocationName?: string;
+  QuantityOnHand?: number;
+  QuantityAvailable?: number;
+  QuantityReserved?: number;
+  QuantityIssued?: number;
+  QuantityShort?: number;
+  IsShort?: boolean;
+  /** UI-only: which picker this row uses. */
+  ItemType?: "rm" | "product";
 }
 
 export interface JobOrderAttachment {
@@ -129,6 +153,89 @@ export const JOB_STEP_PAUSE_REASONS = [
   "Break",
   "Other",
 ] as const;
+
+export const WAITING_FOR_MATERIAL_REASON = JOB_STEP_PAUSE_REASONS[0];
+
+export function jobIgnoresMaterialShortage(status?: string): boolean {
+  const s = (status || "").trim().toLowerCase();
+  return (
+    s === "completed" ||
+    s === "cancelled" ||
+    s === "canceled" ||
+    s === "shipped"
+  );
+}
+
+/** Needed beyond what this job already reserved, issued, and what is still free on the shelf. */
+export function materialShortageQty(
+  line: Pick<
+    JobMaterialRequirement,
+    "Id" | "QuantityNeeded" | "QuantityReserved" | "QuantityIssued" | "QuantityAvailable"
+  >
+): number {
+  if ((line.Id || 0) <= 0) return 0;
+  const needed = Number(line.QuantityNeeded) || 0;
+  const reserved = Number(line.QuantityReserved) || 0;
+  const issued = Number(line.QuantityIssued) || 0;
+  const available = Number(line.QuantityAvailable) || 0;
+  return Math.max(0, needed - reserved - issued - available);
+}
+
+export function isMaterialLineShort(line: JobMaterialRequirement): boolean {
+  return materialShortageQty(line) > 0;
+}
+
+export function isJobShortMaterial(
+  status: string | undefined,
+  lines?: JobMaterialRequirement[]
+): boolean {
+  if (jobIgnoresMaterialShortage(status)) return false;
+  return (lines || []).some(isMaterialLineShort);
+}
+
+const roundQty = (n: number): number => Math.round(n * 100) / 100;
+
+function lineQty(line: JobMaterialRequirement) {
+  return {
+    needed: Number(line.QuantityNeeded) || 0,
+    reserved: Number(line.QuantityReserved) || 0,
+    issued: Number(line.QuantityIssued) || 0,
+    available: Number(line.QuantityAvailable) || 0,
+  };
+}
+
+/** Still planned for this job, ignoring whether the shelf has it. */
+export function remainingUncovered(line: JobMaterialRequirement): number {
+  if ((line.Id || 0) <= 0) return 0;
+  const { needed, reserved, issued } = lineQty(line);
+  return roundQty(Math.max(0, needed - reserved - issued));
+}
+
+/** Still needed on the shelf for this job, limited to what is free (not held for others). */
+export function remainingToReserve(line: JobMaterialRequirement): number {
+  if ((line.Id || 0) <= 0) return 0;
+  const { available } = lineQty(line);
+  return roundQty(Math.min(available, remainingUncovered(line)));
+}
+
+/** Still needed to consume, including qty already reserved for this job. */
+export function remainingToIssue(line: JobMaterialRequirement): number {
+  if ((line.Id || 0) <= 0) return 0;
+  const { needed, reserved, issued, available } = lineQty(line);
+  const canIssue = available + reserved;
+  return roundQty(Math.max(0, Math.min(canIssue, needed - issued)));
+}
+
+/** Open the kit UI when nothing is planned, something is still to issue, or a line is short. */
+export function jobMaterialNeedsKit(lines?: JobMaterialRequirement[]): boolean {
+  const list = lines || [];
+  if (list.length === 0) return true;
+  return list.some((line) => {
+    if ((line.Id || 0) <= 0) return true;
+    const { needed, issued } = lineQty(line);
+    return roundQty(issued) < roundQty(needed) || isMaterialLineShort(line);
+  });
+}
 
 /** Committed seconds: prefer elapsedSeconds; legacy elapsedTime was minutes. */
 export function getCommittedSeconds(
@@ -456,6 +563,27 @@ export class JobOrderService {
         JobTemplateCode: result.jobTemplateCode || result.JobTemplateCode || "",
         JobTemplateRevision: result.jobTemplateRevision ?? result.JobTemplateRevision ?? null,
         EnableJobTracking: !!(result.enableJobTracking ?? result.EnableJobTracking),
+        MaterialRequirements: Array.isArray(result.materialRequirements)
+          ? result.materialRequirements.map((m: any) => ({
+              Id: m.id || m.Id || 0,
+              SequenceNumber: m.sequenceNumber || m.SequenceNumber || 10,
+              ProductId: m.productId ?? m.ProductId ?? null,
+              RawMaterialId: m.rawMaterialId ?? m.RawMaterialId ?? null,
+              PartNo: m.partNo || m.PartNo || "",
+              PartName: m.partName || m.PartName || "",
+              QuantityNeeded: Number(m.quantityNeeded ?? m.QuantityNeeded ?? 0),
+              Notes: m.notes || m.Notes || "",
+              LocationId: m.locationId ?? m.LocationId ?? null,
+              LocationName: m.locationName || m.LocationName || "",
+              QuantityOnHand: Number(m.quantityOnHand ?? m.QuantityOnHand ?? 0),
+              QuantityAvailable: Number(m.quantityAvailable ?? m.QuantityAvailable ?? 0),
+              QuantityReserved: Number(m.quantityReserved ?? m.QuantityReserved ?? 0),
+              QuantityIssued: Number(m.quantityIssued ?? m.QuantityIssued ?? 0),
+              QuantityShort: Number(m.quantityShort ?? m.QuantityShort ?? 0),
+              IsShort: !!(m.isShort ?? m.IsShort),
+              ItemType: (m.productId ?? m.ProductId) ? "product" : "rm",
+            }))
+          : [],
       };
     });
   };

@@ -29,7 +29,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetJobOrders")]
-        public IActionResult GetJobOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
+        public async Task<IActionResult> GetJobOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
@@ -54,7 +54,7 @@ namespace CimmpleAPI.Controllers
                     query = query.Where(x => x.OrderLocationId == filterLocationId.Value);
                 }
 
-                var jobOrders = query
+                var rows = await query
                     .OrderByDescending(x => x.Job.OrderDate)
                     .Select(x => new
                     {
@@ -79,7 +79,13 @@ namespace CimmpleAPI.Controllers
                         locationId = x.OrderLocationId,
                         routingStepsJson = x.Job.RoutingStepsJson
                     })
-                    .ToList()
+                    .ToListAsync();
+
+                var shortFlags = await ComputeShortMaterialFlagsAsync(
+                    tenantid,
+                    rows.Select(x => (x.jobOrderID, x.jobOrderNumber, x.status, x.locationId)).ToList());
+
+                var jobOrders = rows
                     .Select(x => new
                     {
                         x.jobOrderID,
@@ -102,7 +108,8 @@ namespace CimmpleAPI.Controllers
                         x.status,
                         orderDate = x.orderDate.ToString("yyyy-MM-dd"),
                         x.locationId,
-                        routingSteps = ToRoutingProgress(x.routingStepsJson)
+                        routingSteps = ToRoutingProgress(x.routingStepsJson),
+                        isShortMaterial = shortFlags.GetValueOrDefault(x.jobOrderID)
                     })
                     .ToList();
 
@@ -142,7 +149,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetJobOrderById")]
-        public IActionResult GetJobOrderById([FromQuery] int jobOrderId, [FromQuery] int tenantId)
+        public async Task<IActionResult> GetJobOrderById([FromQuery] int jobOrderId, [FromQuery] int tenantId)
         {
             try
             {
@@ -203,6 +210,8 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                var material = await BuildMaterialRequirementDtosAsync(jobOrder);
+
                 var result = new
                 {
                     jobOrderID = jobOrder.JobOrderID,
@@ -235,7 +244,9 @@ namespace CimmpleAPI.Controllers
                     jobTemplateId = jobOrder.JobTemplateId,
                     jobTemplateCode = jobOrder.JobTemplateCode ?? "",
                     jobTemplateRevision = jobOrder.JobTemplateRevision,
-                    enableJobTracking = jobOrder.EnableJobTracking
+                    enableJobTracking = jobOrder.EnableJobTracking,
+                    materialRequirements = material.Lines,
+                    isShortMaterial = material.IsShortMaterial
                 };
 
                 return Ok(new { result = result });
@@ -450,6 +461,12 @@ namespace CimmpleAPI.Controllers
                     request.RoutingSteps);
 
                 _context.SaveChanges();
+
+                if (request.MaterialRequirements != null)
+                {
+                    await ReplaceJobMaterialRequirementsAsync(jobOrder, request.MaterialRequirements);
+                    await _context.SaveChangesAsync();
+                }
 
                 var inventoryError = await ApplyFinishedGoodsInventoryAsync(
                     jobOrder, previousStatus, request);
@@ -766,6 +783,283 @@ namespace CimmpleAPI.Controllers
             return anyLocationId > 0 ? anyLocationId : null;
         }
 
+        private async Task ReplaceJobMaterialRequirementsAsync(
+            JobOrderMaster job,
+            List<JobMaterialRequirementReq> lines)
+        {
+            var existing = await _context.JobMaterialRequirement
+                .Where(m => m.JobOrderId == job.JobOrderID && m.Tenantid == job.Tenantid)
+                .ToListAsync();
+            _context.JobMaterialRequirement.RemoveRange(existing);
+
+            var seq = 10;
+            foreach (var line in lines)
+            {
+                var productId = line.ProductId.HasValue && line.ProductId.Value > 0 ? line.ProductId : null;
+                var rawMaterialId = line.RawMaterialId.HasValue && line.RawMaterialId.Value > 0 ? line.RawMaterialId : null;
+                if (productId.HasValue && rawMaterialId.HasValue)
+                    rawMaterialId = null;
+                if (!productId.HasValue && !rawMaterialId.HasValue)
+                    continue;
+                if (line.QuantityNeeded <= 0)
+                    continue;
+
+                _context.JobMaterialRequirement.Add(new JobMaterialRequirement
+                {
+                    JobOrderId = job.JobOrderID,
+                    Tenantid = job.Tenantid,
+                    SequenceNumber = line.SequenceNumber > 0 ? line.SequenceNumber : seq,
+                    ProductId = productId,
+                    RawMaterialId = rawMaterialId,
+                    QuantityNeeded = line.QuantityNeeded,
+                    Notes = string.IsNullOrWhiteSpace(line.Notes) ? null : line.Notes.Trim()
+                });
+                seq += 10;
+            }
+        }
+
+        private async Task<(object Lines, bool IsShortMaterial)> BuildMaterialRequirementDtosAsync(JobOrderMaster job)
+        {
+            var rows = await _context.JobMaterialRequirement
+                .AsNoTracking()
+                .Include(m => m.Product)
+                .Include(m => m.RawMaterial)
+                .Where(m => m.JobOrderId == job.JobOrderID && m.Tenantid == job.Tenantid)
+                .OrderBy(m => m.SequenceNumber)
+                .ThenBy(m => m.Id)
+                .ToListAsync();
+
+            if (rows.Count == 0)
+                return (new List<object>(), false);
+
+            var locationId = await ResolveJobInventoryLocationAsync(job);
+            string? locationName = null;
+            if (locationId.HasValue)
+            {
+                locationName = await _context.Locations
+                    .AsNoTracking()
+                    .Where(l => l.LocationId == locationId.Value)
+                    .Select(l => l.Name)
+                    .FirstOrDefaultAsync();
+            }
+
+            var refIds = JobMaterialRefIds(job.JobOrderID, job.JobOrderNumber);
+
+            var productIds = rows.Where(r => r.ProductId.HasValue).Select(r => r.ProductId!.Value).Distinct().ToList();
+            var rawIds = rows.Where(r => r.RawMaterialId.HasValue).Select(r => r.RawMaterialId!.Value).Distinct().ToList();
+
+            var balances = await _context.InventoryBalance
+                .AsNoTracking()
+                .Where(b => b.Tenantid == job.Tenantid
+                    && (!locationId.HasValue || b.LocationId == locationId.Value)
+                    && (
+                        (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
+                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                    ))
+                .ToListAsync();
+
+            var reservations = await _context.InventoryReservation
+                .AsNoTracking()
+                .Where(r => r.Tenantid == job.Tenantid
+                    && r.ReferenceType == "JobOrder"
+                    && refIds.Contains(r.ReferenceId)
+                    && r.Quantity > 0)
+                .ToListAsync();
+
+            var issues = await _context.InventoryTransaction
+                .AsNoTracking()
+                .Where(t => t.Tenantid == job.Tenantid
+                    && t.ReferenceType == "JobOrder"
+                    && t.ReferenceId.HasValue
+                    && refIds.Contains(t.ReferenceId.Value)
+                    && t.TransactionTypeId == 2)
+                .ToListAsync();
+
+            decimal MatchBalance(int? productId, int? rawMaterialId, Func<InventoryBalance, decimal> pick) =>
+                balances
+                    .Where(b => productId.HasValue
+                        ? b.ProductId == productId
+                        : b.RawMaterialId == rawMaterialId)
+                    .Sum(pick);
+
+            decimal MatchReserved(int? productId, int? rawMaterialId) =>
+                reservations
+                    .Where(r => productId.HasValue
+                        ? r.ProductId == productId
+                        : r.RawMaterialId == rawMaterialId)
+                    .Sum(r => r.Quantity);
+
+            decimal MatchIssued(int? productId, int? rawMaterialId) =>
+                issues
+                    .Where(t => productId.HasValue
+                        ? t.ProductId == productId
+                        : t.RawMaterialId == rawMaterialId)
+                    .Sum(t => Math.Abs(t.Quantity));
+
+            var lines = rows.Select(m =>
+            {
+                var onHand = MatchBalance(m.ProductId, m.RawMaterialId, b => b.QuantityOnHand);
+                var available = MatchBalance(m.ProductId, m.RawMaterialId, b => b.QuantityOnHand - b.QuantityReserved);
+                var reserved = MatchReserved(m.ProductId, m.RawMaterialId);
+                var issued = MatchIssued(m.ProductId, m.RawMaterialId);
+                var shortQty = MaterialShortageQty(m.QuantityNeeded, reserved, issued, available);
+                return new
+                {
+                    id = m.Id,
+                    sequenceNumber = m.SequenceNumber,
+                    productId = m.ProductId,
+                    rawMaterialId = m.RawMaterialId,
+                    partNo = m.Product != null ? m.Product.partno : m.RawMaterial != null ? m.RawMaterial.PartNo : null,
+                    partName = m.Product != null ? m.Product.partname : m.RawMaterial != null ? m.RawMaterial.PartName : null,
+                    quantityNeeded = m.QuantityNeeded,
+                    notes = m.Notes ?? "",
+                    locationId,
+                    locationName,
+                    quantityOnHand = onHand,
+                    quantityAvailable = available,
+                    quantityReserved = reserved,
+                    quantityIssued = issued,
+                    quantityShort = shortQty,
+                    isShort = shortQty > 0
+                };
+            }).ToList();
+
+            var isShortMaterial = !JobStatusIgnoresMaterialShortage(job.Status)
+                && lines.Any(l => l.isShort);
+            return (lines, isShortMaterial);
+        }
+
+        private static bool JobStatusIgnoresMaterialShortage(string? status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+                return false;
+            return status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Canceled", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Shipped", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static HashSet<int> JobMaterialRefIds(int jobOrderId, int jobOrderNumber)
+        {
+            var ids = new HashSet<int> { jobOrderId };
+            if (jobOrderNumber > 0)
+            {
+                ids.Add(jobOrderNumber);
+                if (jobOrderNumber < 1000)
+                    ids.Add(jobOrderNumber + 999);
+            }
+            return ids;
+        }
+
+        private static decimal MaterialShortageQty(
+            decimal needed,
+            decimal reserved,
+            decimal issued,
+            decimal available)
+        {
+            return Math.Max(0, needed - reserved - issued - available);
+        }
+
+        private async Task<Dictionary<int, bool>> ComputeShortMaterialFlagsAsync(
+            int tenantId,
+            IReadOnlyList<(int JobOrderId, int JobOrderNumber, string Status, int LocationId)> jobs)
+        {
+            var flags = jobs.ToDictionary(j => j.JobOrderId, _ => false);
+            var active = jobs.Where(j => !JobStatusIgnoresMaterialShortage(j.Status)).ToList();
+            if (active.Count == 0)
+                return flags;
+
+            var jobIds = active.Select(j => j.JobOrderId).ToList();
+            var reqs = await _context.JobMaterialRequirement
+                .AsNoTracking()
+                .Where(m => m.Tenantid == tenantId && jobIds.Contains(m.JobOrderId))
+                .ToListAsync();
+            if (reqs.Count == 0)
+                return flags;
+
+            var productIds = reqs.Where(r => r.ProductId.HasValue).Select(r => r.ProductId!.Value).Distinct().ToList();
+            var rawIds = reqs.Where(r => r.RawMaterialId.HasValue).Select(r => r.RawMaterialId!.Value).Distinct().ToList();
+
+            var allRefIds = new HashSet<int>();
+            var refByJob = new Dictionary<int, HashSet<int>>();
+            foreach (var job in active)
+            {
+                var ids = JobMaterialRefIds(job.JobOrderId, job.JobOrderNumber);
+                refByJob[job.JobOrderId] = ids;
+                foreach (var id in ids)
+                    allRefIds.Add(id);
+            }
+
+            var balances = await _context.InventoryBalance
+                .AsNoTracking()
+                .Where(b => b.Tenantid == tenantId
+                    && (
+                        (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
+                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                    ))
+                .ToListAsync();
+
+            var reservations = await _context.InventoryReservation
+                .AsNoTracking()
+                .Where(r => r.Tenantid == tenantId
+                    && r.ReferenceType == "JobOrder"
+                    && allRefIds.Contains(r.ReferenceId)
+                    && r.Quantity > 0)
+                .ToListAsync();
+
+            var issues = await _context.InventoryTransaction
+                .AsNoTracking()
+                .Where(t => t.Tenantid == tenantId
+                    && t.ReferenceType == "JobOrder"
+                    && t.ReferenceId.HasValue
+                    && allRefIds.Contains(t.ReferenceId.Value)
+                    && t.TransactionTypeId == 2)
+                .ToListAsync();
+
+            var reqsByJob = reqs
+                .GroupBy(r => r.JobOrderId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            foreach (var job in active)
+            {
+                if (!reqsByJob.TryGetValue(job.JobOrderId, out var lines))
+                    continue;
+                var refs = refByJob[job.JobOrderId];
+                var loc = job.LocationId;
+                foreach (var line in lines)
+                {
+                    if (line.QuantityNeeded <= 0)
+                        continue;
+                    var available = balances
+                        .Where(b => (loc <= 0 || b.LocationId == loc)
+                            && (line.ProductId.HasValue
+                                ? b.ProductId == line.ProductId
+                                : b.RawMaterialId == line.RawMaterialId))
+                        .Sum(b => b.QuantityOnHand - b.QuantityReserved);
+                    var reserved = reservations
+                        .Where(r => refs.Contains(r.ReferenceId)
+                            && (line.ProductId.HasValue
+                                ? r.ProductId == line.ProductId
+                                : r.RawMaterialId == line.RawMaterialId))
+                        .Sum(r => r.Quantity);
+                    var issued = issues
+                        .Where(t => t.ReferenceId.HasValue
+                            && refs.Contains(t.ReferenceId.Value)
+                            && (line.ProductId.HasValue
+                                ? t.ProductId == line.ProductId
+                                : t.RawMaterialId == line.RawMaterialId))
+                        .Sum(t => Math.Abs(t.Quantity));
+                    if (MaterialShortageQty(line.QuantityNeeded, reserved, issued, available) > 0)
+                    {
+                        flags[job.JobOrderId] = true;
+                        break;
+                    }
+                }
+            }
+
+            return flags;
+        }
+
         private IQueryable<InventoryTransaction> FinishedGoodsReceiptsQuery(int tenantId, int jobOrderId)
         {
             return _context.InventoryTransaction.Where(t =>
@@ -929,6 +1223,20 @@ namespace CimmpleAPI.Controllers
         /// Nullable so clients that omit the field (e.g. PWA step actions) do not reset Track to false.
         /// </summary>
         public bool? EnableJobTracking { get; set; }
+        /// <summary>
+        /// Null = leave existing planned material unchanged (PWA step saves). Empty list clears it.
+        /// </summary>
+        public List<JobMaterialRequirementReq>? MaterialRequirements { get; set; }
+    }
+
+    public class JobMaterialRequirementReq
+    {
+        public int Id { get; set; }
+        public int SequenceNumber { get; set; }
+        public int? ProductId { get; set; }
+        public int? RawMaterialId { get; set; }
+        public decimal QuantityNeeded { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class CreateJobOrderFromDetailReq

@@ -37,6 +37,21 @@ export interface JobTemplatePage {
   totalPages: number;
 }
 
+export interface JobTemplateMaterial {
+  Id: number;
+  SequenceNumber: number;
+  ProductId?: number | null;
+  RawMaterialId?: number | null;
+  Quantity: number;
+  Notes: string;
+  ProductPartNo?: string;
+  ProductName?: string;
+  RawMaterialPartNo?: string;
+  RawMaterialName?: string;
+  /** UI-only: which picker this row uses. Not stored as its own column. */
+  ItemType?: "rm" | "product";
+}
+
 export interface JobTemplateOperation {
   Id: number;
   SequenceNumber: number;
@@ -99,6 +114,8 @@ export interface JobTemplateReq {
   InspectionNotes: string;
 
   Operations: JobTemplateOperation[];
+  /** Planned RM / product lines copied onto a job as-is (not multiplied by job qty). */
+  Materials: JobTemplateMaterial[];
   CategoryValueIds: number[];
 
   /** Read-only: set by the system, never sent back from the form. */
@@ -247,6 +264,20 @@ export class JobTemplateService {
           IsMandatory: o.isMandatory ?? true,
           QualityCheckRequired: o.qualityCheckRequired ?? false,
         })) as JobTemplateOperation[],
+
+        Materials: (result.materials || []).map((m: any) => ({
+          Id: m.id || 0,
+          SequenceNumber: m.sequenceNumber || 10,
+          ProductId: m.productId ?? null,
+          RawMaterialId: m.rawMaterialId ?? null,
+          Quantity: Number(m.quantity ?? 0),
+          Notes: m.notes || "",
+          ProductPartNo: m.productPartNo || "",
+          ProductName: m.productName || "",
+          RawMaterialPartNo: m.rawMaterialPartNo || "",
+          RawMaterialName: m.rawMaterialName || "",
+          ItemType: m.productId ? "product" : "rm",
+        })) as JobTemplateMaterial[],
 
         CategoryValueIds: (result.categories || []).map(
           (c: any) => c.categoryValueId as number

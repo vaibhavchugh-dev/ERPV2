@@ -28,6 +28,7 @@ const JobOrders: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [materialFilter, setMaterialFilter] = useState("all");
 
   useEffect(() => {
     loadJobOrders();
@@ -282,7 +283,14 @@ const JobOrders: React.FC = () => {
       key: "status",
       label: "Status",
       sortable: true,
-      render: (value: any) => getStatusBadge(value),
+      render: (value: any, row: any) => (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
+          {getStatusBadge(value)}
+          {row.isShortMaterial ? (
+            <span className="badge jo-short-badge">Short material</span>
+          ) : null}
+        </span>
+      ),
     },
   ];
 
@@ -297,6 +305,9 @@ const JobOrders: React.FC = () => {
           return false;
         }
       }
+      if (materialFilter === "short" && !jobOrder.isShortMaterial) {
+        return false;
+      }
       return true;
     });
 
@@ -309,7 +320,7 @@ const JobOrders: React.FC = () => {
       const bDue = b.dueDate || "";
       return aDue.localeCompare(bDue);
     });
-  }, [jobOrders, statusFilter, priorityFilter]);
+  }, [jobOrders, statusFilter, priorityFilter, materialFilter]);
 
   return (
     <div className="job-orders">
@@ -351,6 +362,15 @@ const JobOrders: React.FC = () => {
             ],
             value: priorityFilter,
             onChange: setPriorityFilter,
+          },
+          {
+            label: "Material",
+            options: [
+              { value: "all", label: "All" },
+              { value: "short", label: "Short material" },
+            ],
+            value: materialFilter,
+            onChange: setMaterialFilter,
           },
         ]}
         searchPlaceholder="Search job orders..."
