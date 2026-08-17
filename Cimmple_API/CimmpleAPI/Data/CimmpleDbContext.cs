@@ -51,6 +51,7 @@ namespace CimmpleAPI.Data
         // Job Template Entities
         public DbSet<JobTemplateMaster> JobTemplateMaster { get; set; }
         public DbSet<JobTemplateOperation> JobTemplateOperation { get; set; }
+        public DbSet<JobTemplateMaterial> JobTemplateMaterial { get; set; }
         public DbSet<JobTemplateCategory> JobTemplateCategory { get; set; }
         public DbSet<JobTemplateAttachment> JobTemplateAttachment { get; set; }
 
@@ -77,6 +78,7 @@ namespace CimmpleAPI.Data
 
         // Job Order Entities
         public DbSet<JobOrderMaster> JobOrderMaster { get; set; }
+        public DbSet<JobMaterialRequirement> JobMaterialRequirement { get; set; }
 
         public DbSet<VendorOrder> VendorOrders { get; set; }
         public DbSet<VendorOrderDetail> VendorOrderDetails { get; set; }
@@ -238,6 +240,26 @@ namespace CimmpleAPI.Data
                     .WithMany(t => t.Operations)
                     .HasForeignKey(e => e.JobTemplateId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<JobTemplateMaterial>(entity =>
+            {
+                entity.ToTable("JobTemplateMaterial");
+                entity.Property(e => e.Quantity).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Notes).HasMaxLength(200);
+                entity.HasIndex(e => new { e.JobTemplateId, e.SequenceNumber });
+                entity.HasOne(e => e.JobTemplate)
+                    .WithMany(t => t.Materials)
+                    .HasForeignKey(e => e.JobTemplateId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Product)
+                    .WithMany()
+                    .HasForeignKey(e => e.ProductId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.RawMaterial)
+                    .WithMany()
+                    .HasForeignKey(e => e.RawMaterialId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<JobTemplateCategory>(entity =>
@@ -503,6 +525,26 @@ namespace CimmpleAPI.Data
                     .WithMany()
                     .HasForeignKey(l => l.VersionId)
                     .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<JobMaterialRequirement>(entity =>
+            {
+                entity.ToTable("JobMaterialRequirement");
+                entity.Property(e => e.QuantityNeeded).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Notes).HasMaxLength(200);
+                entity.HasIndex(e => e.JobOrderId);
+                entity.HasOne(e => e.JobOrder)
+                    .WithMany()
+                    .HasForeignKey(e => e.JobOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Product)
+                    .WithMany()
+                    .HasForeignKey(e => e.ProductId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.RawMaterial)
+                    .WithMany()
+                    .HasForeignKey(e => e.RawMaterialId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             // =============================================

@@ -32,6 +32,7 @@ export interface JobOrderListItem {
   status: string;
   orderDate: string;
   routingSteps?: JobOrderListStep[];
+  isShortMaterial?: boolean;
 }
 
 export interface JobOrderStepNote {
@@ -110,6 +111,7 @@ export interface JobOrderDetail {
   JobTemplateCode?: string;
   JobTemplateRevision?: number | null;
   EnableJobTracking?: boolean;
+  IsShortMaterial?: boolean;
 }
 
 const formatDate = (dateStr: string | Date): string => {
@@ -166,6 +168,7 @@ export class JobOrderService {
         jobPriority: Number(row.jobPriority ?? row.JobPriority ?? 0),
         status: String(row.status ?? row.Status ?? "Draft"),
         orderDate: String(row.orderDate ?? row.OrderDate ?? ""),
+        isShortMaterial: !!(row.isShortMaterial ?? row.IsShortMaterial),
         routingSteps: Array.isArray(rawSteps)
           ? rawSteps.map((s) => ({
               id: Number(s.id ?? s.Id ?? 0),
@@ -293,6 +296,7 @@ export class JobOrderService {
       JobTemplateRevision:
         result.jobTemplateRevision ?? result.JobTemplateRevision ?? null,
       EnableJobTracking: !!(result.enableJobTracking ?? result.EnableJobTracking),
+      IsShortMaterial: !!(result.isShortMaterial ?? result.IsShortMaterial),
     };
   }
 
@@ -323,6 +327,8 @@ export const JOB_STEP_PAUSE_REASONS = [
   "Break",
   "Other",
 ] as const;
+
+export const WAITING_FOR_MATERIAL_REASON = JOB_STEP_PAUSE_REASONS[0];
 
 /** Committed seconds: prefer elapsedSeconds; legacy elapsedTime was minutes. */
 export function getCommittedSeconds(

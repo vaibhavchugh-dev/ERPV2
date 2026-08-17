@@ -314,6 +314,26 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
+                var materials = _context.JobTemplateMaterial
+                    .AsNoTracking()
+                    .Where(m => m.JobTemplateId == header.Id)
+                    .OrderBy(m => m.SequenceNumber)
+                    .ThenBy(m => m.Id)
+                    .Select(m => new
+                    {
+                        id = m.Id,
+                        sequenceNumber = m.SequenceNumber,
+                        productId = m.ProductId,
+                        productPartNo = m.Product != null ? m.Product.partno : null,
+                        productName = m.Product != null ? m.Product.partname : null,
+                        rawMaterialId = m.RawMaterialId,
+                        rawMaterialPartNo = m.RawMaterial != null ? m.RawMaterial.PartNo : null,
+                        rawMaterialName = m.RawMaterial != null ? m.RawMaterial.PartName : null,
+                        quantity = m.Quantity,
+                        notes = m.Notes ?? ""
+                    })
+                    .ToList();
+
                 var attachments = template.Attachments
                     .OrderBy(a => a.Id)
                     .Select(a => new
@@ -380,6 +400,7 @@ namespace CimmpleAPI.Controllers
                     modifiedDate = header.ModifiedDate,
                     lastUpdated = header.ModifiedDate ?? header.CreatedDate,
                     operations,
+                    materials,
                     attachments,
                     categories
                 };
@@ -465,6 +486,8 @@ namespace CimmpleAPI.Controllers
 
                     _context.JobTemplateOperation.RemoveRange(existingOperations);
                     _context.JobTemplateCategory.RemoveRange(existingCategories);
+                    _context.JobTemplateMaterial.RemoveRange(
+                        _context.JobTemplateMaterial.Where(m => m.JobTemplateId == template.Id));
                     _context.SaveChanges();
 
                     foreach (var op in request.Operations ?? new List<JobTemplateOperationReq>())
@@ -482,6 +505,31 @@ namespace CimmpleAPI.Controllers
                             IsMandatory = op.IsMandatory,
                             QualityCheckRequired = op.QualityCheckRequired
                         });
+                    }
+
+                    var matSeq = 10;
+                    foreach (var mat in request.Materials ?? new List<JobTemplateMaterialReq>())
+                    {
+                        var productId = mat.ProductId.HasValue && mat.ProductId.Value > 0 ? mat.ProductId : null;
+                        var rawMaterialId = mat.RawMaterialId.HasValue && mat.RawMaterialId.Value > 0 ? mat.RawMaterialId : null;
+                        if (productId.HasValue && rawMaterialId.HasValue)
+                            rawMaterialId = null;
+                        if (!productId.HasValue && !rawMaterialId.HasValue)
+                            continue;
+                        if (mat.Quantity <= 0)
+                            continue;
+
+                        _context.JobTemplateMaterial.Add(new JobTemplateMaterial
+                        {
+                            JobTemplateId = template.Id,
+                            Tenantid = request.Tenantid,
+                            SequenceNumber = mat.SequenceNumber > 0 ? mat.SequenceNumber : matSeq,
+                            ProductId = productId,
+                            RawMaterialId = rawMaterialId,
+                            Quantity = mat.Quantity,
+                            Notes = string.IsNullOrWhiteSpace(mat.Notes) ? null : mat.Notes.Trim()
+                        });
+                        matSeq += 10;
                     }
 
                     foreach (var categoryValueId in categoryValueIds)
@@ -612,6 +660,25 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    var sourceMaterials = _context.JobTemplateMaterial
+                        .Where(m => m.JobTemplateId == source.Id)
+                        .OrderBy(m => m.SequenceNumber)
+                        .ToList();
+
+                    foreach (var mat in sourceMaterials)
+                    {
+                        _context.JobTemplateMaterial.Add(new JobTemplateMaterial
+                        {
+                            JobTemplateId = clone.Id,
+                            Tenantid = clone.Tenantid,
+                            SequenceNumber = mat.SequenceNumber,
+                            ProductId = mat.ProductId,
+                            RawMaterialId = mat.RawMaterialId,
+                            Quantity = mat.Quantity,
+                            Notes = mat.Notes
+                        });
+                    }
+
                     var sourceCategoryIds = _context.JobTemplateCategory
                         .Where(c => c.JobTemplateId == source.Id)
                         .Select(c => c.CategoryValueId)
@@ -732,6 +799,8 @@ namespace CimmpleAPI.Controllers
 
                 _context.JobTemplateOperation.RemoveRange(
                     _context.JobTemplateOperation.Where(o => o.JobTemplateId == jobTemplateId));
+                _context.JobTemplateMaterial.RemoveRange(
+                    _context.JobTemplateMaterial.Where(m => m.JobTemplateId == jobTemplateId));
                 _context.JobTemplateCategory.RemoveRange(
                     _context.JobTemplateCategory.Where(c => c.JobTemplateId == jobTemplateId));
                 _context.JobTemplateAttachment.RemoveRange(attachments);
@@ -1118,7 +1187,18 @@ namespace CimmpleAPI.Controllers
         public string InspectionNotes { get; set; } = "";
 
         public List<JobTemplateOperationReq> Operations { get; set; } = new();
+        public List<JobTemplateMaterialReq> Materials { get; set; } = new();
         public List<int> CategoryValueIds { get; set; } = new();
+    }
+
+    public class JobTemplateMaterialReq
+    {
+        public int Id { get; set; }
+        public int SequenceNumber { get; set; }
+        public int? ProductId { get; set; }
+        public int? RawMaterialId { get; set; }
+        public decimal Quantity { get; set; }
+        public string Notes { get; set; } = "";
     }
 
     public class JobTemplateOperationReq

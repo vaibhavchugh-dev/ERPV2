@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -12,7 +12,6 @@ import { CustomerService } from "../../Common/Services/CustomerService";
 import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import { ShippingService, ShippableItem, Shipment } from "../../Common/Services/ShippingService";
 import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/InvoiceService";
-import JobOrderSlideout from "../JobOrders/JobOrderSlideout";
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
@@ -25,6 +24,8 @@ import {
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
 import "./CustomerOrderSlideout.scss";
+
+const JobOrderSlideout = lazy(() => import("../JobOrders/JobOrderSlideout"));
 
 interface CustomerOrderSlideoutProps {
   orderId: number;
@@ -2698,23 +2699,25 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
       {/* Job Order Slideout */}
       {showJobOrderSlideout && (
-        <JobOrderSlideout
-          jobOrderId={selectedJobOrderId}
-          onClose={async () => {
-            setShowJobOrderSlideout(false);
-            setSelectedJobOrderId(0);
-            const id = formData.OrderID > 0 ? formData.OrderID : orderId;
-            if (id > 0) {
-              await loadOrder(id);
-            }
-          }}
-          onSaved={async () => {
-            const id = formData.OrderID > 0 ? formData.OrderID : orderId;
-            if (id > 0) {
-              await loadOrder(id);
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <JobOrderSlideout
+            jobOrderId={selectedJobOrderId}
+            onClose={async () => {
+              setShowJobOrderSlideout(false);
+              setSelectedJobOrderId(0);
+              const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+              if (id > 0) {
+                await loadOrder(id);
+              }
+            }}
+            onSaved={async () => {
+              const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+              if (id > 0) {
+                await loadOrder(id);
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Shipping Modal */}

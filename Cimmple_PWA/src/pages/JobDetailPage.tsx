@@ -17,6 +17,7 @@ import {
   JobOrderService,
   JobOrderStepNote,
   JOB_STEP_PAUSE_REASONS,
+  WAITING_FOR_MATERIAL_REASON,
   parseProducedQty,
   ProgressState,
   toElapsedFields,
@@ -933,6 +934,18 @@ export function JobDetailPage() {
         </div>
       </header>
 
+      {job.IsShortMaterial && (
+        <div
+          className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+          role="status"
+        >
+          <strong className="font-extrabold uppercase tracking-wide">Short material</strong>
+          <span className="mt-0.5 block text-xs font-semibold">
+            Pause with “Waiting for material” if the shop is blocked.
+          </span>
+        </div>
+      )}
+
       {/* Card 1: Job Overview & Metrics */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_10px_rgba(15,23,42,0.08)] px-3.5 py-3 mb-3 space-y-2 dark:bg-slate-800 dark:border-slate-600">
         <div className="flex items-start justify-between gap-2">
@@ -1687,18 +1700,27 @@ export function JobDetailPage() {
               <>
                 <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Pause operation</h4>
                 <p className="mb-3 text-sm text-slate-500 dark:text-slate-300">
-                  Optional hold reason (you can skip):
+                  {job.IsShortMaterial
+                    ? "This job is short on material. “Waiting for material” is the usual hold reason:"
+                    : "Optional hold reason (you can skip):"}
                 </p>
                 <div className="mb-3 space-y-2">
                   {JOB_STEP_PAUSE_REASONS.map((reason) => (
                     <button
                       key={reason}
                       type="button"
-                      className="btn btn-secondary w-full justify-start"
+                      className={`btn w-full justify-start ${
+                        job.IsShortMaterial && reason === WAITING_FOR_MATERIAL_REASON
+                          ? "btn-primary"
+                          : "btn-secondary"
+                      }`}
                       disabled={saving}
                       onClick={() => void confirmPauseStep(reason)}
                     >
                       {reason}
+                      {job.IsShortMaterial && reason === WAITING_FOR_MATERIAL_REASON
+                        ? " (suggested)"
+                        : ""}
                     </button>
                   ))}
                 </div>

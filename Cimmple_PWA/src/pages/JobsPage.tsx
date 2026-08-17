@@ -62,18 +62,24 @@ interface FilterSheetProps {
   open: boolean;
   statusFilter: string;
   priorityFilter: string;
-  onApply: (s: string, p: string) => void;
+  shortMaterialOnly: boolean;
+  onApply: (s: string, p: string, shortOnly: boolean) => void;
   onClose: () => void;
 }
 
-function JobFilterSheet({ open, statusFilter, priorityFilter, onApply, onClose }: FilterSheetProps) {
+function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly, onApply, onClose }: FilterSheetProps) {
   const [localStatus, setLocalStatus] = useState(statusFilter);
   const [localPriority, setLocalPriority] = useState(priorityFilter);
+  const [localShort, setLocalShort] = useState(shortMaterialOnly);
 
   // Sync when re-opening
   useEffect(() => {
-    if (open) { setLocalStatus(statusFilter); setLocalPriority(priorityFilter); }
-  }, [open, statusFilter, priorityFilter]);
+    if (open) {
+      setLocalStatus(statusFilter);
+      setLocalPriority(priorityFilter);
+      setLocalShort(shortMaterialOnly);
+    }
+  }, [open, statusFilter, priorityFilter, shortMaterialOnly]);
 
   if (!open) return null;
 
@@ -160,18 +166,33 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, onApply, onClose }
           </div>
         </div>
 
+        <div className="mb-7">
+          <p className="mb-2.5 text-xs font-bold uppercase tracking-widest text-slate-500">Material</p>
+          <button
+            type="button"
+            onClick={() => setLocalShort(!localShort)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+              localShort
+                ? "bg-red-600 text-white"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            Short material
+          </button>
+        </div>
+
         {/* Footer */}
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={() => { setLocalStatus("all"); setLocalPriority("all"); onApply("all", "all"); }}
+            onClick={() => { setLocalStatus("all"); setLocalPriority("all"); setLocalShort(false); onApply("all", "all", false); }}
             className="flex-1 rounded-2xl border border-slate-200 bg-white py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
           >
             Clear
           </button>
           <button
             type="button"
-            onClick={() => onApply(localStatus, localPriority)}
+            onClick={() => onApply(localStatus, localPriority, localShort)}
             className="flex-1 rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800"
           >
             Apply
@@ -191,10 +212,13 @@ export function JobsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [shortMaterialOnly, setShortMaterialOnly] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
 
   const activeFilterCount =
-    (statusFilter !== "all" ? 1 : 0) + (priorityFilter !== "all" ? 1 : 0);
+    (statusFilter !== "all" ? 1 : 0) +
+    (priorityFilter !== "all" ? 1 : 0) +
+    (shortMaterialOnly ? 1 : 0);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -238,6 +262,8 @@ export function JobsPage() {
         if ((j.jobPriority ?? 0) !== Number(priorityFilter)) return false;
       }
 
+      if (shortMaterialOnly && !j.isShortMaterial) return false;
+
       // Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
@@ -258,7 +284,7 @@ export function JobsPage() {
     });
 
     return { visible: filtered, stats: { total, inProgress, completed } };
-  }, [jobs, activeTab, searchQuery, statusFilter, priorityFilter]);
+  }, [jobs, activeTab, searchQuery, statusFilter, priorityFilter, shortMaterialOnly]);
 
   return (
     <div>
@@ -421,6 +447,11 @@ export function JobsPage() {
                         {getPriorityLabel(job.jobPriority)}
                       </span>
                     )}
+                    {job.isShortMaterial && (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-[0.6rem] font-extrabold uppercase tracking-wide text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                        Short material
+                      </span>
+                    )}
                   </div>
                   <span className={`shrink-0 px-3 py-1 rounded-full text-[0.65rem] font-extrabold tracking-wider ${badge.bg} ${badge.text}`}>
                     {badge.label}
@@ -478,7 +509,13 @@ export function JobsPage() {
         open={filterOpen}
         statusFilter={statusFilter}
         priorityFilter={priorityFilter}
-        onApply={(s, p) => { setStatusFilter(s); setPriorityFilter(p); setFilterOpen(false); }}
+        shortMaterialOnly={shortMaterialOnly}
+        onApply={(s, p, shortOnly) => {
+          setStatusFilter(s);
+          setPriorityFilter(p);
+          setShortMaterialOnly(shortOnly);
+          setFilterOpen(false);
+        }}
         onClose={() => setFilterOpen(false)}
       />
     </div>

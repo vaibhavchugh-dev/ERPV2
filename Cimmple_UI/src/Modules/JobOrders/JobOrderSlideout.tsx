@@ -6,6 +6,7 @@ import {
   JobOrderMasterReq,
   JobOrderRoutingStep,
   JobOrderStepNote,
+  JobMaterialRequirement,
   deriveJobStatus,
   computeElapsedSeconds,
   formatElapsedDuration,
@@ -19,6 +20,14 @@ import {
   isProducedQtyBelowOrderQty,
   buildStepScanCode,
   JOB_STEP_PAUSE_REASONS,
+  WAITING_FOR_MATERIAL_REASON,
+  isJobShortMaterial,
+  isMaterialLineShort,
+  materialShortageQty,
+  remainingToReserve,
+  remainingToIssue,
+  remainingUncovered,
+  jobMaterialNeedsKit,
 } from "../../Common/Services/JobOrderService";
 import QRCode from "qrcode";
 import { NonConformanceReport } from "../../Common/Services/QualityService";
@@ -41,6 +50,7 @@ import {
   InventoryService,
   JobMaterialUsage,
   InventoryReservation,
+  RawMaterial,
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { faPrint } from "@fortawesome/free-solid-svg-icons";
@@ -67,6 +77,22 @@ const formatDisplayJobOrderNumber = (number: number): string => {
 const formatDisplayCustomerOrderNumber = (number: number): string => {
   if (!number || number <= 0) return "";
   return number < 1000 ? `CO#${number + 999}` : `CO#${number}`;
+};
+
+const catalogItemLabel = (
+  partNo?: string | null,
+  partName?: string | null,
+  extra?: string
+): string => {
+  const no = (partNo || "").trim();
+  const name = (partName || "").trim();
+  const label = no && name ? `${no} — ${name}` : no || name || "Item";
+  return extra ? `${label} (${extra})` : label;
+};
+
+const formatInventoryQty = (n: number | undefined, show: boolean): string => {
+  if (!show || typeof n !== "number" || Number.isNaN(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
 
 const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
@@ -106,6 +132,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     JobTemplateCode: "",
     JobTemplateRevision: null,
     EnableJobTracking: false,
+    MaterialRequirements: [],
   });
 
   const [loading, setLoading] = useState(false);
@@ -118,6 +145,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [materialUsage, setMaterialUsage] = useState<JobMaterialUsage[]>([]);
   const [jobReservations, setJobReservations] = useState<InventoryReservation[]>([]);
+  const [products, setProducts] = useState<{ id: number; partNo: string; partName: string }[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const [materialActionBusy, setMaterialActionBusy] = useState<string | null>(null);
+  const [materialKitForced, setMaterialKitForced] = useState<boolean | null>(null);
+  const [materialLedgerPanel, setMaterialLedgerPanel] = useState<"none" | "reserved" | "used">(
+    "none"
+  );
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   const [customerOrderNumber, setCustomerOrderNumber] = useState<string>(
@@ -202,6 +236,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }));
 
     setInitialLoading(jobOrderId > 0);
+    setMaterialKitForced(null);
+    setMaterialLedgerPanel("none");
     if (jobOrderId > 0) {
       loadJobOrder();
       loadMaterialUsage();
@@ -209,9 +245,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
     // Load processes from Process Master
     loadProcesses();
-    // Load workstations and employees
     loadWorkstations();
     loadEmployees();
+    loadInventoryCatalogs();
   }, [jobOrderId]);
 
   // Keep refs in sync so async track/note/NCR saves never use a stale step list.
@@ -322,6 +358,261 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading employees:", error);
+    }
+  };
+
+  const loadInventoryCatalogs = async () => {
+    try {
+      const [productList, rawList] = await Promise.all([
+        InventoryService.GetProducts(),
+        InventoryService.GetRawMaterials(),
+      ]);
+      setProducts(
+        (productList || [])
+          .filter((p) => p.id > 0)
+          .map((p) => ({
+            id: p.id,
+            partNo: p.partNo || "",
+            partName: p.partName || "",
+          }))
+          .sort((a, b) => (a.partNo || a.partName).localeCompare(b.partNo || b.partName))
+      );
+      setRawMaterials(
+        (rawList || [])
+          .filter((rm) => rm.isActive !== false)
+          .slice()
+          .sort((a, b) => {
+            const aRem = a.isRemnant ? 1 : 0;
+            const bRem = b.isRemnant ? 1 : 0;
+            if (aRem !== bRem) return aRem - bRem;
+            return (a.partNo || a.partName || "").localeCompare(b.partNo || b.partName || "");
+          })
+      );
+    } catch (error: any) {
+      console.error("Error loading inventory catalogs:", error);
+    }
+  };
+
+  const materialRowType = (line: JobMaterialRequirement): "rm" | "product" => {
+    if (line.ItemType === "product" || (line.ProductId != null && line.ProductId > 0))
+      return "product";
+    return "rm";
+  };
+
+  const updateMaterialRequirements = (lines: JobMaterialRequirement[]) => {
+    setFormData((prev) => ({ ...prev, MaterialRequirements: lines }));
+  };
+
+  const handleAddMaterialRequirement = () => {
+    const lines = formData.MaterialRequirements || [];
+    const nextSequence =
+      lines.length > 0
+        ? Math.max(...lines.map((m) => m.SequenceNumber || 0)) + 10
+        : 10;
+    updateMaterialRequirements([
+      ...lines,
+      {
+        Id: 0,
+        SequenceNumber: nextSequence,
+        ProductId: null,
+        RawMaterialId: null,
+        QuantityNeeded: 1,
+        Notes: "",
+        ItemType: "rm",
+      },
+    ]);
+  };
+
+  const handleRemoveMaterialRequirement = (index: number) => {
+    updateMaterialRequirements((formData.MaterialRequirements || []).filter((_, i) => i !== index));
+  };
+
+  const handleMaterialRequirementTypeChange = (index: number, type: "rm" | "product") => {
+    updateMaterialRequirements(
+      (formData.MaterialRequirements || []).map((line, i) =>
+        i === index
+          ? {
+              ...line,
+              ItemType: type,
+              ProductId: null,
+              RawMaterialId: null,
+              PartNo: "",
+              PartName: "",
+              QuantityOnHand: undefined,
+              QuantityAvailable: undefined,
+              QuantityReserved: undefined,
+              QuantityIssued: undefined,
+            }
+          : line
+      )
+    );
+  };
+
+  const handleMaterialRequirementItemChange = (index: number, itemId: number | null) => {
+    const lines = formData.MaterialRequirements || [];
+    const line = lines[index];
+    if (!line) return;
+    const type = materialRowType(line);
+    if (type === "product") {
+      const product = products.find((p) => p.id === itemId);
+      updateMaterialRequirements(
+        lines.map((row, i) =>
+          i === index
+            ? {
+                ...row,
+                ProductId: itemId,
+                RawMaterialId: null,
+                PartNo: product?.partNo || "",
+                PartName: product?.partName || "",
+                QuantityOnHand: undefined,
+                QuantityAvailable: undefined,
+                QuantityReserved: undefined,
+                QuantityIssued: undefined,
+              }
+            : row
+        )
+      );
+      return;
+    }
+    const rm = rawMaterials.find((r) => r.id === itemId);
+    updateMaterialRequirements(
+      lines.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              RawMaterialId: itemId,
+              ProductId: null,
+              PartNo: rm?.partNo || "",
+              PartName: rm?.partName || "",
+              QuantityOnHand: undefined,
+              QuantityAvailable: undefined,
+              QuantityReserved: undefined,
+              QuantityIssued: undefined,
+            }
+          : row
+      )
+    );
+  };
+
+  const handleMaterialRequirementFieldChange = (
+    index: number,
+    field: "QuantityNeeded" | "Notes",
+    value: string | number
+  ) => {
+    updateMaterialRequirements(
+      (formData.MaterialRequirements || []).map((line, i) =>
+        i === index ? { ...line, [field]: value } : line
+      )
+    );
+  };
+
+  const refreshMaterialSnapshot = async () => {
+    if (jobOrderId > 0) {
+      await loadJobOrder();
+      await loadMaterialUsage();
+    }
+    onSaved?.();
+  };
+
+  const resolveMaterialLineIds = (line: JobMaterialRequirement) => {
+    const productId =
+      line.ProductId && line.ProductId > 0 ? line.ProductId : undefined;
+    const rawMaterialId =
+      !productId && line.RawMaterialId && line.RawMaterialId > 0
+        ? line.RawMaterialId
+        : undefined;
+    return { productId, rawMaterialId };
+  };
+
+  const handleReserveMaterialLine = async (line: JobMaterialRequirement) => {
+    const joId = formData.JobOrderID || jobOrderId;
+    const qty = remainingToReserve(line);
+    const { productId, rawMaterialId } = resolveMaterialLineIds(line);
+    const locationId = line.LocationId || 0;
+    if (joId <= 0) {
+      toast.error("Save the job before reserving material.");
+      return;
+    }
+    if (!productId && !rawMaterialId) {
+      toast.error("Pick an item on this line first.");
+      return;
+    }
+    if (locationId <= 0) {
+      toast.error("Save the job so the inventory location is known.");
+      return;
+    }
+    if (qty <= 0) {
+      toast.info("Nothing left to reserve on this line.");
+      return;
+    }
+
+    const busyKey = `reserve-${line.Id}`;
+    setMaterialActionBusy(busyKey);
+    try {
+      const result = await InventoryService.ReserveStock({
+        productId,
+        rawMaterialId,
+        locationId,
+        quantity: qty,
+        referenceType: "JobOrder",
+        referenceId: joId,
+        notes: line.Notes || undefined,
+      });
+      if (result.success) {
+        toast.success(`Reserved ${qty} for this job`);
+        setMaterialLedgerPanel("reserved");
+        await refreshMaterialSnapshot();
+      } else {
+        toast.error(result.error || "Could not reserve");
+      }
+    } finally {
+      setMaterialActionBusy(null);
+    }
+  };
+
+  const handleIssueMaterialLine = async (line: JobMaterialRequirement) => {
+    const joId = formData.JobOrderID || jobOrderId;
+    const qty = remainingToIssue(line);
+    const { productId, rawMaterialId } = resolveMaterialLineIds(line);
+    const locationId = line.LocationId || 0;
+    if (joId <= 0) {
+      toast.error("Save the job before issuing material.");
+      return;
+    }
+    if (!productId && !rawMaterialId) {
+      toast.error("Pick an item on this line first.");
+      return;
+    }
+    if (locationId <= 0) {
+      toast.error("Save the job so the inventory location is known.");
+      return;
+    }
+    if (qty <= 0) {
+      toast.info("Nothing left to issue on this line.");
+      return;
+    }
+
+    const busyKey = `issue-${line.Id}`;
+    setMaterialActionBusy(busyKey);
+    try {
+      const result = await InventoryService.IssueStock({
+        productId,
+        rawMaterialId,
+        locationId,
+        quantity: qty,
+        referenceType: "JobOrder",
+        referenceId: joId,
+        notes: line.Notes || undefined,
+      });
+      if (result.success) {
+        toast.success(`Issued ${qty} to this job`);
+        setMaterialLedgerPanel("used");
+        await refreshMaterialSnapshot();
+      } else {
+        toast.error(result.error || "Could not issue");
+      }
+    } finally {
+      setMaterialActionBusy(null);
     }
   };
 
@@ -654,6 +945,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         RoutingSteps: stepsToSave,
         Attachments: attachments,
         Comments: comments,
+        MaterialRequirements: formData.MaterialRequirements || [],
       });
       if (result && result.id > 0) {
         toast.success("Job order saved successfully");
@@ -860,6 +1152,21 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         JobTemplateId: template?.Id || sourceTemplate.id,
         JobTemplateCode: template?.TemplateCode || sourceTemplate.templateCode,
         JobTemplateRevision: template?.Revision ?? sourceTemplate.revision ?? null,
+        MaterialRequirements: (template?.Materials || []).map((m, index) => ({
+          Id: 0,
+          SequenceNumber: m.SequenceNumber || (index + 1) * 10,
+          ProductId: m.ProductId || null,
+          RawMaterialId: m.RawMaterialId || null,
+          PartNo: m.ProductId
+            ? m.ProductPartNo || ""
+            : m.RawMaterialPartNo || "",
+          PartName: m.ProductId
+            ? m.ProductName || ""
+            : m.RawMaterialName || "",
+          QuantityNeeded: m.Quantity,
+          Notes: m.Notes || "",
+          ItemType: m.ProductId ? "product" : "rm",
+        })),
       }));
       setNewRoutingStep({
         sequence: Math.max(...steps.map((s) => s.sequence)) + 10,
@@ -869,7 +1176,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       });
 
       toast.success(
-        `${steps.length} step(s) added from template ${template?.TemplateCode || ""}`.trim()
+        `${steps.length} step(s) and ${(template?.Materials || []).length} material line(s) added from template ${
+          template?.TemplateCode || ""
+        }`.trim()
       );
       if (unavailableReferences > 0) {
         toast.warning(
@@ -1015,6 +1324,15 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       CmmRequired: false,
       InspectionNotes: "",
       Operations: operations,
+      Materials: (formData.MaterialRequirements || []).map((m, index) => ({
+        Id: 0,
+        SequenceNumber: m.SequenceNumber || (index + 1) * 10,
+        ProductId: m.ProductId || null,
+        RawMaterialId: m.RawMaterialId || null,
+        Quantity: m.QuantityNeeded,
+        Notes: m.Notes || "",
+        ItemType: m.ProductId ? "product" : "rm",
+      })),
       CategoryValueIds: [],
       IsSystem: false,
     };
@@ -1845,6 +2163,24 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
   };
 
+  const jobIsShort = isJobShortMaterial(formData.Status, formData.MaterialRequirements);
+  const materialLines = formData.MaterialRequirements || [];
+  const materialNeedsKit = jobMaterialNeedsKit(materialLines);
+  const materialKitOpen = materialKitForced ?? materialNeedsKit;
+  const materialIssueRows = materialUsage.filter((row) => !isFinishedGoodsMove(row));
+  const materialSummary =
+    materialLines.length === 0
+      ? "No planned material"
+      : materialLines
+          .map((line) => {
+            const label = (line.PartNo || line.PartName || "Item").trim();
+            const needed = Number(line.QuantityNeeded) || 0;
+            const issued = Number(line.QuantityIssued) || 0;
+            const ready = (line.Id || 0) > 0;
+            return `${label} ${formatInventoryQty(issued, ready)}/${formatInventoryQty(needed, true)} issued`;
+          })
+          .join(" · ");
+
   return (
     <div
       className="job-order-slideout-overlay"
@@ -2015,6 +2351,16 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             </button>
           </div>
         </div>
+
+        {jobIsShort && (
+          <div className="jo-short-material-banner" role="status">
+            <strong>Short material</strong>
+            <span>
+              Needed is more than reserved, issued, and available at this location.
+              Pause a step with “Waiting for material” if the shop is blocked.
+            </span>
+          </div>
+        )}
 
         <form className="job-order-slideout-form" onSubmit={handleSubmit}>
           <div className="job-order-slideout-content">
@@ -2246,11 +2592,414 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
               </div>
             </div>
 
-            {/* Job Router Section */}
-            <div style={{ marginBottom: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            {/* Job: kit material first, then manufacturing steps */}
+            <div className="jo-job-block">
+              <div className="jo-job-block__material">
+                <div className="jo-job-block__head">
+                  <div>
+                    <h3>
+                      Material
+                      {materialNeedsKit ? <span className="jo-job-block__kicker">Kit first</span> : null}
+                    </h3>
+                    <p className="jo-job-block__hint">
+                      Issue to the job before starting the first step. Reserve holds stock on the
+                      shelf. Lots go oldest first.
+                    </p>
+                  </div>
+                  <div className="jo-job-block__actions">
+                    {materialLines.length > 0 && (
+                      <button
+                        type="button"
+                        className="jo-router-action-btn jo-router-action-btn--save-template"
+                        onClick={() => setMaterialKitForced(!materialKitOpen)}
+                      >
+                        {materialKitOpen ? "Hide" : "Show"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="jo-router-action-btn jo-router-action-btn--build"
+                      onClick={() => {
+                        handleAddMaterialRequirement();
+                        setMaterialKitForced(true);
+                      }}
+                    >
+                      + Add material
+                    </button>
+                  </div>
+                </div>
+                {!materialKitOpen ? (
+                  <p className="jo-material-summary">{materialSummary}</p>
+                ) : (
+                  <div className="jo-material-kit">
+                    {materialLines.length === 0 ? (
+                      <p className="jo-material-empty">
+                        No planned material. Add lines here or apply a job template.
+                      </p>
+                    ) : (
+                      <div className="jo-material-table-wrap">
+                        <table className="jo-material-table">
+                          <thead>
+                            <tr>
+                              <th>Item</th>
+                              <th className="is-num">Required</th>
+                              <th className="is-notes">Notes</th>
+                              <th className="is-num">Available</th>
+                              <th className="is-num">Reserved</th>
+                              <th className="is-num">Used</th>
+                              <th className="is-actions">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {materialLines.map((line, index) => {
+                              const type = materialRowType(line);
+                              const selectedId =
+                                type === "product" ? line.ProductId || "" : line.RawMaterialId || "";
+                              const snapshotReady = (line.Id || 0) > 0;
+                              const lineShort = isMaterialLineShort(line);
+                              const shortQty = materialShortageQty(line);
+                              const reserveQty = remainingToReserve(line);
+                              const issueQty = remainingToIssue(line);
+                              const uncoveredQty = remainingUncovered(line);
+                              const neededQty = Number(line.QuantityNeeded) || 0;
+                              const issuedQty = Number(line.QuantityIssued) || 0;
+                              const showReserve = snapshotReady && uncoveredQty > 0;
+                              const showIssue = snapshotReady && neededQty > issuedQty;
+                              const canReserve = reserveQty > 0;
+                              const canIssue = issueQty > 0;
+                              const actionsBusy = materialActionBusy !== null;
+                              const selectedCatalog =
+                                type === "product"
+                                  ? products.find((p) => p.id === selectedId)
+                                  : rawMaterials.find((rm) => rm.id === selectedId);
+                              const selectedItemTitle = selectedCatalog
+                                ? catalogItemLabel(
+                                    selectedCatalog.partNo,
+                                    selectedCatalog.partName,
+                                    "isRemnant" in selectedCatalog && selectedCatalog.isRemnant
+                                      ? "remnant"
+                                      : undefined
+                                  )
+                                : "";
+                              const onHandHint = snapshotReady
+                                ? `On hand ${formatInventoryQty(line.QuantityOnHand, true)}${
+                                    line.LocationName ? ` at ${line.LocationName}` : ""
+                                  }`
+                                : "Save the job to see stock at the job location";
+                              return (
+                                <tr
+                                  key={line.Id || `new-${index}`}
+                                  className={lineShort ? "is-short" : undefined}
+                                >
+                                  <td className="jo-material-item-cell">
+                                    <div className="jo-material-item-row">
+                                      <select
+                                        className="form-input jo-material-type"
+                                        value={type}
+                                        onChange={(e) =>
+                                          handleMaterialRequirementTypeChange(
+                                            index,
+                                            e.target.value === "product" ? "product" : "rm"
+                                          )
+                                        }
+                                      >
+                                        <option value="rm">Raw material</option>
+                                        <option value="product">Product</option>
+                                      </select>
+                                      <select
+                                        className="form-input jo-material-item"
+                                        value={selectedId}
+                                        title={selectedItemTitle}
+                                        onChange={(e) =>
+                                          handleMaterialRequirementItemChange(
+                                            index,
+                                            e.target.value === ""
+                                              ? null
+                                              : parseInt(e.target.value, 10)
+                                          )
+                                        }
+                                      >
+                                        <option value="">Select...</option>
+                                        {type === "product"
+                                          ? products.map((p) => (
+                                              <option key={p.id} value={p.id}>
+                                                {catalogItemLabel(p.partNo, p.partName)}
+                                              </option>
+                                            ))
+                                          : rawMaterials.map((rm) => (
+                                              <option key={rm.id} value={rm.id}>
+                                                {catalogItemLabel(
+                                                  rm.partNo,
+                                                  rm.partName,
+                                                  rm.isRemnant ? "remnant" : undefined
+                                                )}
+                                              </option>
+                                            ))}
+                                      </select>
+                                    </div>
+                                  </td>
+                                  <td className="is-num">
+                                    <input
+                                      type="number"
+                                      className="form-input no-spinner jo-material-qty"
+                                      min={0}
+                                      step="0.01"
+                                      value={line.QuantityNeeded}
+                                      onChange={(e) =>
+                                        handleMaterialRequirementFieldChange(
+                                          index,
+                                          "QuantityNeeded",
+                                          e.target.value === "" ? 0 : parseFloat(e.target.value)
+                                        )
+                                      }
+                                      onWheel={(e) => e.currentTarget.blur()}
+                                    />
+                                  </td>
+                                  <td className="is-notes">
+                                    <input
+                                      type="text"
+                                      className="form-input jo-material-notes"
+                                      maxLength={200}
+                                      value={line.Notes || ""}
+                                      onChange={(e) =>
+                                        handleMaterialRequirementFieldChange(
+                                          index,
+                                          "Notes",
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="Notes"
+                                    />
+                                  </td>
+                                  <td
+                                    className="is-num"
+                                    title={onHandHint}
+                                    style={{
+                                      color: lineShort ? "#b91c1c" : undefined,
+                                      fontWeight: lineShort ? 600 : undefined,
+                                    }}
+                                  >
+                                    {formatInventoryQty(line.QuantityAvailable, snapshotReady)}
+                                    {lineShort ? (
+                                      <div className="jo-material-short">Short {shortQty}</div>
+                                    ) : null}
+                                  </td>
+                                  <td className="is-num">
+                                    {formatInventoryQty(line.QuantityReserved, snapshotReady)}
+                                  </td>
+                                  <td className="is-num">
+                                    {formatInventoryQty(line.QuantityIssued, snapshotReady)}
+                                  </td>
+                                  <td className="is-actions">
+                                    {showIssue && (
+                                      <button
+                                        type="button"
+                                        className={`jo-material-btn jo-material-btn--issue${
+                                          actionsBusy ? " is-busy" : ""
+                                        }`}
+                                        disabled={actionsBusy || !canIssue}
+                                        onClick={() => void handleIssueMaterialLine(line)}
+                                        title={
+                                          canIssue
+                                            ? `Issue ${issueQty} to this job (oldest lot first)`
+                                            : "No stock (including this job's reservation) to issue"
+                                        }
+                                      >
+                                        {materialActionBusy === `issue-${line.Id}`
+                                          ? "…"
+                                          : canIssue
+                                            ? `Issue ${issueQty}`
+                                            : "Issue"}
+                                      </button>
+                                    )}
+                                    {showReserve && (
+                                      <button
+                                        type="button"
+                                        className={`jo-material-btn jo-material-btn--reserve${
+                                          actionsBusy ? " is-busy" : ""
+                                        }`}
+                                        disabled={actionsBusy || !canReserve}
+                                        onClick={() => void handleReserveMaterialLine(line)}
+                                        title={
+                                          canReserve
+                                            ? `Reserve ${reserveQty} at the job location`
+                                            : "No available stock at the job location"
+                                        }
+                                      >
+                                        {materialActionBusy === `reserve-${line.Id}`
+                                          ? "…"
+                                          : canReserve
+                                            ? `Reserve ${reserveQty}`
+                                            : "Reserve"}
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="jo-material-btn jo-material-btn--delete"
+                                      onClick={() => handleRemoveMaterialRequirement(index)}
+                                    >
+                                      Delete
+                                    </button>
+                                    {showReserve && !canReserve && !canIssue ? (
+                                      <div className="jo-material-stock-hint">
+                                        No stock at job location
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {jobOrderId > 0 &&
+                      (jobReservations.length > 0 || materialIssueRows.length > 0) && (
+                        <>
+                          <div className="jo-material-kit__tabs" role="tablist">
+                            {jobReservations.length > 0 && (
+                              <button
+                                type="button"
+                                role="tab"
+                                className={`jo-material-kit__tab${
+                                  materialLedgerPanel === "reserved" ? " is-active" : ""
+                                }`}
+                                aria-selected={materialLedgerPanel === "reserved"}
+                                onClick={() =>
+                                  setMaterialLedgerPanel((panel) =>
+                                    panel === "reserved" ? "none" : "reserved"
+                                  )
+                                }
+                              >
+                                Reserved ({jobReservations.length})
+                              </button>
+                            )}
+                            {materialIssueRows.length > 0 && (
+                              <button
+                                type="button"
+                                role="tab"
+                                className={`jo-material-kit__tab${
+                                  materialLedgerPanel === "used" ? " is-active" : ""
+                                }`}
+                                aria-selected={materialLedgerPanel === "used"}
+                                onClick={() =>
+                                  setMaterialLedgerPanel((panel) =>
+                                    panel === "used" ? "none" : "used"
+                                  )
+                                }
+                              >
+                                Used ({materialIssueRows.length})
+                              </button>
+                            )}
+                          </div>
+                          {materialLedgerPanel === "reserved" && jobReservations.length > 0 && (
+                            <div className="jo-material-kit__panel">
+                              <table className="jo-material-table jo-material-table--ledger">
+                                <thead>
+                                  <tr>
+                                    <th>Part</th>
+                                    <th>Location</th>
+                                    <th className="is-num">Qty</th>
+                                    <th></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {jobReservations.map((row) => (
+                                    <tr key={row.id}>
+                                      <td>
+                                        <strong>{row.partNo || "—"}</strong>
+                                        {row.partName ? (
+                                          <div className="jo-material-sub">{row.partName}</div>
+                                        ) : null}
+                                      </td>
+                                      <td>{row.locationName || "—"}</td>
+                                      <td className="is-num" style={{ fontWeight: 600 }}>
+                                        {row.quantity}
+                                      </td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="btn-small"
+                                          onClick={async () => {
+                                            const result =
+                                              await InventoryService.ReleaseReservation(row.id);
+                                            if (result.success) {
+                                              toast.success("Reservation released");
+                                              if (jobOrderId > 0) {
+                                                await loadJobOrder();
+                                              }
+                                              await loadMaterialUsage();
+                                            } else {
+                                              toast.error(result.error || "Could not release");
+                                            }
+                                          }}
+                                        >
+                                          Release
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {materialLedgerPanel === "used" && materialIssueRows.length > 0 && (
+                            <div className="jo-material-kit__panel">
+                              <table className="jo-material-table jo-material-table--ledger">
+                                <thead>
+                                  <tr>
+                                    <th>When</th>
+                                    <th>Type</th>
+                                    <th>Part</th>
+                                    <th>Location</th>
+                                    <th className="is-num">Qty</th>
+                                    <th>Lot / heat</th>
+                                    <th>Notes</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {materialIssueRows.map((row) => (
+                                    <tr key={row.id}>
+                                      <td>{formatUsageWhen(row.transactionDate)}</td>
+                                      <td>
+                                        {row.transactionTypeName || row.transactionType || "—"}
+                                      </td>
+                                      <td>
+                                        <strong>{row.partNo || "—"}</strong>
+                                        {row.partName ? (
+                                          <div className="jo-material-sub">{row.partName}</div>
+                                        ) : null}
+                                      </td>
+                                      <td>{row.locationName || "—"}</td>
+                                      <td
+                                        className="is-num"
+                                        style={{
+                                          color: row.quantity < 0 ? "#b91c1c" : "#047857",
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        {row.quantity > 0 ? `+${row.quantity}` : row.quantity}
+                                      </td>
+                                      <td>{row.lotNumber || "—"}</td>
+                                      <td className="jo-material-ledger-notes">
+                                        {row.notes || "—"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      )}
+                  </div>
+                )}
+              </div>
+
+            <div className="jo-job-block__steps">
+              <div className="jo-job-block__steps-head">
                 <div>
-                  <h3 style={{ margin: 0, fontSize: "1.125rem", fontWeight: 600 }}>Job Router - Manufacturing Steps</h3>
+                  <h3>Manufacturing steps</h3>
                   {formData.JobTemplateCode && (
                     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.375rem" }}>
                       <span
@@ -2811,110 +3560,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 </div>
               </div>
             </div>
-
-            {jobOrderId > 0 && (
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 0.35rem 0", fontSize: "1rem", fontWeight: 600 }}>Reserved</h3>
-              <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem" }}>
-                Qty held on the shelf for this job. Issue it from Inventory (linked to this job) to consume the hold.
-              </p>
-              {jobReservations.length === 0 ? (
-                <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>Nothing reserved for this job.</p>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", borderRadius: "0.375rem" }}>
-                    <thead>
-                      <tr style={{ backgroundColor: "#f3f4f6", textAlign: "left" }}>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Part</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Location</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280", textAlign: "right" }}>Qty</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {jobReservations.map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid #e5e7eb" }}>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", fontWeight: 600 }}>
-                            {row.partNo || "—"}
-                            {row.partName ? (
-                              <div style={{ fontWeight: 400, color: "#6b7280", fontSize: "0.75rem" }}>{row.partName}</div>
-                            ) : null}
-                          </td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.locationName || "—"}</td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", textAlign: "right", fontWeight: 600 }}>{row.quantity}</td>
-                          <td style={{ padding: "0.5rem 0.75rem" }}>
-                            <button
-                              type="button"
-                              className="btn-small"
-                              onClick={async () => {
-                                const result = await InventoryService.ReleaseReservation(row.id);
-                                if (result.success) {
-                                  toast.success("Reservation released");
-                                  loadMaterialUsage();
-                                } else {
-                                  toast.error(result.error || "Could not release");
-                                }
-                              }}
-                            >
-                              Release
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
-            )}
-
-            {jobOrderId > 0 && (
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 0.35rem 0", fontSize: "1rem", fontWeight: 600 }}>Material used</h3>
-              <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.8125rem" }}>
-                Issued from stock to this job, or received on a job PO (job buys do not stay on the shelf).
-              </p>
-              {materialUsage.filter((row) => !isFinishedGoodsMove(row)).length === 0 ? (
-                <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>No material recorded for this job yet.</p>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", borderRadius: "0.375rem" }}>
-                    <thead>
-                      <tr style={{ backgroundColor: "#f3f4f6", textAlign: "left" }}>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>When</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Type</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Part</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Location</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280", textAlign: "right" }}>Qty</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Lot / heat</th>
-                        <th style={{ padding: "0.5rem 0.75rem", fontSize: "0.75rem", color: "#6b7280" }}>Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {materialUsage.filter((row) => !isFinishedGoodsMove(row)).map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid #e5e7eb" }}>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{formatUsageWhen(row.transactionDate)}</td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.transactionTypeName || row.transactionType || "—"}</td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", fontWeight: 600 }}>
-                            {row.partNo || "—"}
-                            {row.partName ? (
-                              <div style={{ fontWeight: 400, color: "#6b7280", fontSize: "0.75rem" }}>{row.partName}</div>
-                            ) : null}
-                          </td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem" }}>{row.locationName || "—"}</td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.875rem", textAlign: "right", color: row.quantity < 0 ? "#b91c1c" : "#047857", fontWeight: 600 }}>
-                            {row.quantity > 0 ? `+${row.quantity}` : row.quantity}
-                          </td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem" }}>{row.lotNumber || "—"}</td>
-                          <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem", color: "#6b7280" }}>{row.notes || "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            )}
 
             {jobOrderId > 0 && materialUsage.some(isFinishedGoodsMove) && (
             <div style={{ marginTop: "1.25rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
@@ -3427,17 +4073,26 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             {trackingDialog.type === "pause" && (
               <>
                 <h4>Pause operation</h4>
-                <p className="jo-track-dialog-hint">Optional hold reason (you can skip):</p>
+                <p className="jo-track-dialog-hint">
+                  {jobIsShort
+                    ? "This job is short on material. “Waiting for material” is the usual hold reason:"
+                    : "Optional hold reason (you can skip):"}
+                </p>
                 <div className="jo-track-dialog-list">
                   {JOB_STEP_PAUSE_REASONS.map((reason) => (
                     <button
                       key={reason}
                       type="button"
-                      className="jo-track-dialog-option"
+                      className={`jo-track-dialog-option${
+                        jobIsShort && reason === WAITING_FOR_MATERIAL_REASON
+                          ? " is-suggested"
+                          : ""
+                      }`}
                       disabled={trackingSaving}
                       onClick={() => void confirmPauseStep(reason)}
                     >
                       {reason}
+                      {jobIsShort && reason === WAITING_FOR_MATERIAL_REASON ? " (suggested)" : ""}
                     </button>
                   ))}
                 </div>
@@ -3836,4 +4491,5 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
 };
 
 export default JobOrderSlideout;
+
 
