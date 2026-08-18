@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services.Auth;
 using CimmpleAPI.Utilities;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
@@ -25,12 +26,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
+        private readonly IAuthService _authService;
 
-        public EmployeeController(CimmpleDbContext context, IWebHostEnvironment environment, IConfiguration configuration)
+        public EmployeeController(
+            CimmpleDbContext context,
+            IWebHostEnvironment environment,
+            IConfiguration configuration,
+            IAuthService authService)
         {
             _context = context;
             _environment = environment;
             _configuration = configuration;
+            _authService = authService;
         }
 
         [HttpGet("GetEmployees")]
@@ -38,35 +45,122 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                var employees = _context.UserDetails
+                var users = _context.UserDetails
                     .Where(u => u.TenantID == tenantid && (u.VendorId == null || u.VendorId == 0))
-                    .GroupJoin(_context.UserRole,
-                        u => u.Role,
-                        r => r.RoleID,
-                        (u, roles) => new { User = u, Roles = roles })
-                    .SelectMany(
-                        x => x.Roles.DefaultIfEmpty(),
-                        (x, r) => new
-                        {
-                            user_UniqueID = x.User.User_UniqueID,
-                            firstName = x.User.FirstName,
-                            lastName = x.User.LastName,
-                            email = x.User.Email,
-                            userName = x.User.UserName,
-                            status = x.User.Status ?? "Active",
-                            role = x.User.Role,
-                            roleName = r != null ? r.RoleName : "",
-                            employeeType = x.User.EmployeeType ?? "",
-                            empCode = x.User.EmpCode ?? "",
-                            phone1 = x.User.Phone1 ?? "",
-                            date_of_hire = x.User.Date_of_hire ?? "",
-                            address = x.User.Address ?? "",
-                            city = x.User.City ?? "",
-                            state = x.User.State ?? "",
-                            zip = x.User.Zip ?? "",
-                            profilePic = x.User.ProfilePic ?? ""
-                        })
+                    .Select(u => new
+                    {
+                        u.User_UniqueID,
+                        u.FirstName,
+                        u.LastName,
+                        u.Email,
+                        u.UserName,
+                        u.Status,
+                        u.Role,
+                        u.EmployeeType,
+                        u.EmpCode,
+                        u.Phone1,
+                        u.Date_of_hire,
+                        u.Address,
+                        u.City,
+                        u.State,
+                        u.Zip,
+                        u.ProfilePic,
+                        u.DefaultLocationId,
+                        u.CanAccessAllLocations,
+                        HasPassword = u.Password != null && u.Password != ""
+                    })
                     .ToList();
+
+                var roleIds = users.Where(u => u.Role.HasValue).Select(u => u.Role!.Value).Distinct().ToList();
+                var roles = _context.UserRole
+                    .Where(r => roleIds.Contains(r.RoleID))
+                    .ToDictionary(r => r.RoleID, r => r.RoleName ?? "");
+
+                var userIds = users.Select(u => u.User_UniqueID).ToList();
+                var mappings = _context.UserMapping
+                    .Where(m => userIds.Contains(m.userId))
+                    .Select(m => new { m.userId, m.locationId })
+                    .ToList();
+
+                var locationIds = mappings.Select(m => m.locationId)
+                    .Concat(users.Where(u => u.DefaultLocationId.HasValue).Select(u => u.DefaultLocationId!.Value))
+                    .Distinct()
+                    .ToList();
+
+                var locationNames = _context.Locations
+                    .Where(l => l.TenantId == tenantid && locationIds.Contains(l.LocationId))
+                    .ToDictionary(l => l.LocationId, l => l.Name ?? l.Code ?? ("#" + l.LocationId));
+
+                var mappingsByUser = mappings
+                    .GroupBy(m => m.userId)
+                    .ToDictionary(g => g.Key, g => g.Select(x => x.locationId).ToList());
+
+                var employees = users.Select(u =>
+                {
+                    var userName = u.UserName ?? "";
+                    var hasPassword = u.HasPassword;
+                    var hasLoginAccess = hasPassword && !string.IsNullOrWhiteSpace(userName);
+
+                    var assignedIds = mappingsByUser.TryGetValue(u.User_UniqueID, out var ids)
+                        ? ids
+                        : new List<int>();
+
+                    string locationName = "";
+                    if (u.DefaultLocationId.HasValue &&
+                        locationNames.TryGetValue(u.DefaultLocationId.Value, out var defaultName))
+                    {
+                        locationName = defaultName;
+                        if (u.CanAccessAllLocations)
+                        {
+                            locationName += " (all)";
+                        }
+                        else if (assignedIds.Count > 1)
+                        {
+                            locationName += $" (+{assignedIds.Count - 1})";
+                        }
+                    }
+                    else if (assignedIds.Count > 0)
+                    {
+                        var firstId = assignedIds[0];
+                        locationName = locationNames.TryGetValue(firstId, out var firstName)
+                            ? firstName
+                            : $"#{firstId}";
+                        if (assignedIds.Count > 1)
+                        {
+                            locationName += $" (+{assignedIds.Count - 1})";
+                        }
+                    }
+                    else if (u.CanAccessAllLocations)
+                    {
+                        locationName = "All locations";
+                    }
+
+                    return new
+                    {
+                        user_UniqueID = u.User_UniqueID,
+                        firstName = u.FirstName,
+                        lastName = u.LastName,
+                        email = u.Email,
+                        userName,
+                        status = u.Status ?? "Active",
+                        role = u.Role,
+                        roleName = u.Role.HasValue && roles.TryGetValue(u.Role.Value, out var rn) ? rn : "",
+                        employeeType = u.EmployeeType ?? "",
+                        empCode = u.EmpCode ?? "",
+                        phone1 = u.Phone1 ?? "",
+                        date_of_hire = u.Date_of_hire ?? "",
+                        address = u.Address ?? "",
+                        city = u.City ?? "",
+                        state = u.State ?? "",
+                        zip = u.Zip ?? "",
+                        profilePic = u.ProfilePic ?? "",
+                        locationName,
+                        defaultLocationId = u.DefaultLocationId,
+                        canAccessAllLocations = u.CanAccessAllLocations,
+                        hasPassword,
+                        hasLoginAccess
+                    };
+                }).ToList();
 
                 return Ok(new { result = employees });
             }
@@ -130,7 +224,12 @@ namespace CimmpleAPI.Controllers
                     tenantID = employee.TenantID,
                     dob = employee.DOB ?? "",
                     ssn = employee.SSN ?? "",
-                    profilePic = employee.ProfilePic ?? ""
+                    profilePic = employee.ProfilePic ?? "",
+                    // True only when a password exists — username alone is not enough to log in
+                    hasPassword = !string.IsNullOrEmpty(employee.Password),
+                    canLogin = !string.IsNullOrWhiteSpace(employee.UserName)
+                        && !string.IsNullOrEmpty(employee.Password)
+                        && string.Equals(employee.Status, "Active", StringComparison.OrdinalIgnoreCase)
                 };
 
                 return Ok(new { result = result });
@@ -338,6 +437,42 @@ namespace CimmpleAPI.Controllers
                 employee.Street = "";
                 employee.DOB = request.DOB ?? "";
                 employee.SSN = request.SSN ?? "";
+
+                var loginAccessEnabled = !string.IsNullOrWhiteSpace(request.UserName);
+                var passwordProvided = !string.IsNullOrWhiteSpace(request.Password);
+                var hasExistingPassword = !isNew && !string.IsNullOrEmpty(employee.Password);
+
+                if (!loginAccessEnabled)
+                {
+                    // Disable login: clear credentials so the account cannot authenticate
+                    employee.UserName = "";
+                    employee.Password = "";
+                    employee.PasswordSalt = "";
+                    employee.ChangePassword = "No";
+                    employee.FailedLoginCount = 0;
+                    employee.LockoutEndUtc = null;
+                }
+                else if (passwordProvided)
+                {
+                    var settings = await _context.SystemSettings
+                        .FirstOrDefaultAsync(s => s.TenantId == request.TenantID)
+                        ?? new SystemSettings { TenantId = request.TenantID };
+
+                    if (!_authService.ValidatePasswordAgainstPolicy(request.Password!, settings, out var policyError))
+                    {
+                        return BadRequest(new { error = policyError ?? "Password does not meet policy requirements" });
+                    }
+
+                    await _authService.EnsurePasswordHashedAsync(employee, request.Password!);
+                    employee.PwdResetDate = DateTime.UtcNow;
+                    employee.ChangePassword = "N";
+                    employee.FailedLoginCount = 0;
+                    employee.LockoutEndUtc = null;
+                }
+                else if (isNew || !hasExistingPassword)
+                {
+                    return BadRequest(new { error = "Password is required to enable login access" });
+                }
 
                 if (isNew)
                 {
@@ -1145,6 +1280,8 @@ namespace CimmpleAPI.Controllers
         public int TenantID { get; set; }
         public string DOB { get; set; }
         public string SSN { get; set; }
+        /// <summary>Optional plaintext password when enabling or changing login access. Never returned from GET.</summary>
+        public string? Password { get; set; }
     }
 
     public class EmployeeImportRequest

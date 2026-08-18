@@ -29,6 +29,11 @@ export interface CreateVendorInvoiceRequest {
   dueDate?: string;
   paymentMethod?: string;
   notes?: string;
+  /** Input tax rate percent (0–100) */
+  taxRate?: number;
+  /** Input tax amount; when omitted server computes from taxRate × subtotal */
+  taxAmount?: number;
+  freightCharge?: number;
 }
 
 export interface VendorInvoice {

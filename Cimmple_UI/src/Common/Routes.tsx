@@ -1,43 +1,45 @@
 import React from "react";
-import CustomerMaster from "../Modules/Masters/CustomerMaster";
-import VendorMaster from "../Modules/Masters/VendorMaster";
-import BankMaster from "../Modules/Masters/BankMaster";
-import WorkstationMaster from "../Modules/Masters/WorkstationMaster";
-import EmployeeMaster from "../Modules/Masters/EmployeeMaster";
-import LocationMaster from "../Modules/Masters/LocationMaster";
-import ProcessMaster from "../Modules/Masters/ProcessMaster";
-import JobTemplateMaster from "../Modules/Masters/JobTemplateMaster";
-import CategoryMaster from "../Modules/Masters/CategoryMaster";
-import PriceBreakdownMaster from "../Modules/Masters/PriceBreakdownMaster";
-import CreditCardMaster from "../Modules/Masters/CreditCardMaster";
-import ChartofAccountsMaster from "../Modules/Masters/ChartofAccountsMaster";
-import ProductMaster from "../Modules/Masters/ProductMaster";
-import RawMaterialMaster from "../Modules/Masters/RawMaterialMaster";
-import CustomerQuotations from "../Modules/Quotations/CustomerQuotations";
-import VendorQuotations from "../Modules/Quotations/VendorQuotations";
-import VendorOrders from "../Modules/Purchasing/VendorOrders";
-import VendorReceiving from "../Modules/Purchasing/VendorReceiving";
-import Inventory from "../Modules/Inventory/Inventory";
-import VendorInvoices from "../Modules/Purchasing/VendorInvoices";
-import CustomerOrders from "../Modules/Orders/CustomerOrders";
-import CustomerShipments from "../Modules/Orders/CustomerShipments";
-import CustomerInvoices from "../Modules/Orders/CustomerInvoices";
-import JobOrders from "../Modules/JobOrders/JobOrders";
-import UserManagement from "../Modules/UserManagement/UserManagement";
-import Quality from "../Modules/Quality/Quality";
-import PaymentDashboard from "../Modules/Accounting/PaymentDashboard";
-import AccountsPayable from "../Modules/Accounting/AccountsPayable";
-import AccountsReceivable from "../Modules/Accounting/AccountsReceivable";
-import BankReconciliation from "../Modules/Accounting/BankReconciliation";
-import FinancialReports from "../Modules/Accounting/FinancialReports";
-import JournalEntries from "../Modules/Accounting/JournalEntries";
-import GeneralLedger from "../Modules/Accounting/GeneralLedger";
-import AccountingPeriods from "../Modules/Accounting/AccountingPeriods";
-import AccountingSetup from "../Modules/Accounting/AccountingSetup";
-import SystemSettings from "../Modules/Settings/SystemSettings";
-import Documents from "../Modules/Documents/Documents";
-import BusinessIntelligence from "../Modules/Reports/BusinessIntelligence";
-import Dashboard from "../Modules/Dashboard/Dashboard";
+
+const Dashboard = React.lazy(() => import("../Modules/Dashboard/Dashboard"));
+const CustomerMaster = React.lazy(() => import("../Modules/Masters/CustomerMaster"));
+const VendorMaster = React.lazy(() => import("../Modules/Masters/VendorMaster"));
+const BankMaster = React.lazy(() => import("../Modules/Masters/BankMaster"));
+const WorkstationMaster = React.lazy(() => import("../Modules/Masters/WorkstationMaster"));
+const EmployeeMaster = React.lazy(() => import("../Modules/Masters/EmployeeMaster"));
+const LocationMaster = React.lazy(() => import("../Modules/Masters/LocationMaster"));
+const ProcessMaster = React.lazy(() => import("../Modules/Masters/ProcessMaster"));
+const JobTemplateMaster = React.lazy(() => import("../Modules/Masters/JobTemplateMaster"));
+const CategoryMaster = React.lazy(() => import("../Modules/Masters/CategoryMaster"));
+const PriceBreakdownMaster = React.lazy(() => import("../Modules/Masters/PriceBreakdownMaster"));
+const CreditCardMaster = React.lazy(() => import("../Modules/Masters/CreditCardMaster"));
+const ChartofAccountsMaster = React.lazy(() => import("../Modules/Masters/ChartofAccountsMaster"));
+const ProductMaster = React.lazy(() => import("../Modules/Masters/ProductMaster"));
+const RawMaterialMaster = React.lazy(() => import("../Modules/Masters/RawMaterialMaster"));
+const NCRCodeMaster = React.lazy(() => import("../Modules/Masters/NCRCodeMaster"));
+const CustomerQuotations = React.lazy(() => import("../Modules/Quotations/CustomerQuotations"));
+const VendorQuotations = React.lazy(() => import("../Modules/Quotations/VendorQuotations"));
+const VendorOrders = React.lazy(() => import("../Modules/Purchasing/VendorOrders"));
+const VendorReceiving = React.lazy(() => import("../Modules/Purchasing/VendorReceiving"));
+const Inventory = React.lazy(() => import("../Modules/Inventory/Inventory"));
+const VendorInvoices = React.lazy(() => import("../Modules/Purchasing/VendorInvoices"));
+const CustomerOrders = React.lazy(() => import("../Modules/Orders/CustomerOrders"));
+const CustomerShipments = React.lazy(() => import("../Modules/Orders/CustomerShipments"));
+const CustomerInvoices = React.lazy(() => import("../Modules/Orders/CustomerInvoices"));
+const JobOrders = React.lazy(() => import("../Modules/JobOrders/JobOrders"));
+const UserManagement = React.lazy(() => import("../Modules/UserManagement/UserManagement"));
+const Quality = React.lazy(() => import("../Modules/Quality/Quality"));
+const PaymentDashboard = React.lazy(() => import("../Modules/Accounting/PaymentDashboard"));
+const AccountsPayable = React.lazy(() => import("../Modules/Accounting/AccountsPayable"));
+const AccountsReceivable = React.lazy(() => import("../Modules/Accounting/AccountsReceivable"));
+const BankReconciliation = React.lazy(() => import("../Modules/Accounting/BankReconciliation"));
+const FinancialReports = React.lazy(() => import("../Modules/Accounting/FinancialReports"));
+const JournalEntries = React.lazy(() => import("../Modules/Accounting/JournalEntries"));
+const GeneralLedger = React.lazy(() => import("../Modules/Accounting/GeneralLedger"));
+const AccountingPeriods = React.lazy(() => import("../Modules/Accounting/AccountingPeriods"));
+const AccountingSetup = React.lazy(() => import("../Modules/Accounting/AccountingSetup"));
+const SystemSettings = React.lazy(() => import("../Modules/Settings/SystemSettings"));
+const Documents = React.lazy(() => import("../Modules/Documents/Documents"));
+const BusinessIntelligence = React.lazy(() => import("../Modules/Reports/BusinessIntelligence"));
 
 export const protectedRoutes: any[] = [
   {
@@ -169,6 +171,11 @@ export const protectedRoutes: any[] = [
     path: "/job-orders",
     name: "Job Orders",
     Component: JobOrders,
+  },
+  {
+    path: "/quality/ncr-codes",
+    name: "NCR Code Master",
+    Component: NCRCodeMaster,
   },
   {
     path: "/quality",

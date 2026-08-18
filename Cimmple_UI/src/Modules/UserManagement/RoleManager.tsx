@@ -11,9 +11,10 @@ import "./RoleManager.scss";
 interface RoleManagerProps {
   onClose: () => void;
   onSave: () => void;
+  onManagePermissions?: (roleId: number) => void;
 }
 
-const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
+const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePermissions }) => {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -139,8 +140,16 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
           orderNo: formData.orderNo || undefined,
           resetPwd: formData.resetPwd
         };
-        await UserManagementService.CreateRole(createRequest);
+        const result = await UserManagementService.CreateRole(createRequest);
         toast.success("Role created successfully");
+        setShowForm(false);
+        setEditingRole(null);
+        await loadRoles();
+        onSave();
+        if (onManagePermissions && result?.role?.id) {
+          onManagePermissions(result.role.id);
+        }
+        return;
       }
 
       setShowForm(false);
@@ -186,6 +195,9 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
                 <button className="btn btn-primary" onClick={handleCreate}>
                   <i className="fas fa-plus"></i> Create New Role
                 </button>
+                <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.8125rem', color: '#6b7280' }}>
+                  Permissions belong to the role. Configure them here before assigning the role to employees.
+                </p>
               </div>
 
               <div className="roles-list">
@@ -213,6 +225,15 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave }) => {
                           <td>{role.description || '-'}</td>
                           <td>
                             <div className="action-buttons">
+                              {onManagePermissions && (
+                                <button
+                                  className="btn btn-sm btn-info"
+                                  onClick={() => onManagePermissions(role.id)}
+                                  title="Manage Permissions"
+                                >
+                                  <i className="fas fa-key"></i>
+                                </button>
+                              )}
                               <button
                                 className="btn btn-sm btn-secondary"
                                 onClick={() => handleEdit(role)}

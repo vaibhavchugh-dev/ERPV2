@@ -4,6 +4,7 @@ import {
   JobTemplateService,
   JobTemplateReq,
   JobTemplateOperation,
+  JobTemplateMaterial,
   JobTemplateAttachment,
   JOB_TEMPLATE_ATTACHMENT_TYPES,
   JOB_TEMPLATE_INSPECTION_TYPES,
@@ -23,11 +24,12 @@ import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs
 import DeletionImpactDialog, {
   DeletionImpactResult,
 } from "../../Common/Components/DeletionImpactDialog";
+import { InventoryService, RawMaterial } from "../../Common/Services/InventoryService";
 import "./JobTemplateMasterSlideout.scss";
 
 interface JobTemplateMasterSlideoutProps {
   jobTemplateId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 type TabId =
@@ -83,6 +85,7 @@ const emptyForm = (): JobTemplateReq => ({
   CmmRequired: false,
   InspectionNotes: "",
   Operations: [],
+  Materials: [],
   CategoryValueIds: [],
   IsSystem: false,
 });
@@ -96,6 +99,19 @@ const formatBytes = (bytes: number): string => {
 const toNumberOrNull = (value: string): number | null =>
   value === "" ? null : parseFloat(value);
 
+type CatalogProduct = { id: number; partNo: string; partName: string };
+
+const catalogItemLabel = (
+  partNo?: string | null,
+  partName?: string | null,
+  extra?: string
+): string => {
+  const no = (partNo || "").trim();
+  const name = (partName || "").trim();
+  const label = no && name ? `${no} — ${name}` : no || name || "Item";
+  return extra ? `${label} (${extra})` : label;
+};
+
 const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   jobTemplateId,
   onClose,
@@ -105,6 +121,8 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>([]);
   const [attachments, setAttachments] = useState<JobTemplateAttachment[]>([]);
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
+  const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
 
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const [loading, setLoading] = useState(false);
@@ -136,10 +154,12 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         tenantID = 1;
       }
 
-      const [processList, workstationList, types] = await Promise.all([
+      const [processList, workstationList, types, productList, rawList] = await Promise.all([
         ProcessService.GetProcesses({ tenantid: tenantID }),
         WorkstationService.GetWorkstations({ tenantid: tenantID }),
         CategoryService.GetCategoryTypes(true),
+        InventoryService.GetProducts(),
+        InventoryService.GetRawMaterials(),
       ]);
 
       if (processList && Array.isArray(processList)) {
@@ -149,6 +169,27 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         setWorkstations(workstationList.filter((w) => w.isActive !== false));
       }
       setCategoryTypes((types || []).filter((t) => t.isActive));
+      setProducts(
+        (productList || [])
+          .filter((p) => p.id > 0)
+          .map((p) => ({
+            id: p.id,
+            partNo: p.partNo || "",
+            partName: p.partName || "",
+          }))
+          .sort((a, b) => (a.partNo || a.partName).localeCompare(b.partNo || b.partName))
+      );
+      setRawMaterials(
+        (rawList || [])
+          .filter((rm) => rm.isActive !== false)
+          .slice()
+          .sort((a, b) => {
+            const aRem = a.isRemnant ? 1 : 0;
+            const bRem = b.isRemnant ? 1 : 0;
+            if (aRem !== bRem) return aRem - bRem;
+            return (a.partNo || a.partName || "").localeCompare(b.partNo || b.partName || "");
+          })
+      );
     } catch (error) {
       console.error("[JobTemplateSlideout] Error loading lookups:", error);
     }
@@ -246,6 +287,109 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
   const handleRemoveOperation = (index: number) => {
     updateOperations(formData.Operations.filter((_, i) => i !== index));
+  };
+
+  const updateMaterials = (materials: JobTemplateMaterial[]) => {
+    handleInputChange("Materials", materials);
+  };
+
+  const handleAddMaterial = () => {
+    const lines = formData.Materials || [];
+    const nextSequence =
+      lines.length > 0
+        ? Math.max(...lines.map((m) => m.SequenceNumber || 0)) + 10
+        : 10;
+    const line: JobTemplateMaterial = {
+      Id: 0,
+      SequenceNumber: nextSequence,
+      ProductId: null,
+      RawMaterialId: null,
+      Quantity: 1,
+      Notes: "",
+      ItemType: "rm",
+    };
+    updateMaterials([...lines, line]);
+  };
+
+  const handleRemoveMaterial = (index: number) => {
+    updateMaterials((formData.Materials || []).filter((_, i) => i !== index));
+  };
+
+  const handleMaterialChange = (
+    index: number,
+    field: keyof JobTemplateMaterial,
+    value: string | number | null
+  ) => {
+    const materials = (formData.Materials || []).map((line, i) =>
+      i === index ? { ...line, [field]: value } : line
+    );
+    updateMaterials(materials);
+  };
+
+  const handleMaterialTypeChange = (index: number, type: "rm" | "product") => {
+    const materials = (formData.Materials || []).map((line, i) =>
+      i === index
+        ? {
+            ...line,
+            ItemType: type,
+            ProductId: null,
+            RawMaterialId: null,
+            ProductPartNo: "",
+            ProductName: "",
+            RawMaterialPartNo: "",
+            RawMaterialName: "",
+          }
+        : line
+    );
+    updateMaterials(materials);
+  };
+
+  const materialRowType = (line: JobTemplateMaterial): "rm" | "product" => {
+    if (line.ItemType === "product" || (line.ProductId != null && line.ProductId > 0))
+      return "product";
+    return "rm";
+  };
+
+  const handleMaterialItemChange = (index: number, itemId: number | null) => {
+    const lines = formData.Materials || [];
+    const line = lines[index];
+    if (!line) return;
+    const type = materialRowType(line);
+    if (type === "product") {
+      const product = products.find((p) => p.id === itemId);
+      updateMaterials(
+        lines.map((row, i) =>
+          i === index
+            ? {
+                ...row,
+                ProductId: itemId,
+                RawMaterialId: null,
+                ProductPartNo: product?.partNo || "",
+                ProductName: product?.partName || "",
+                RawMaterialPartNo: "",
+                RawMaterialName: "",
+              }
+            : row
+        )
+      );
+      return;
+    }
+    const rm = rawMaterials.find((r) => r.id === itemId);
+    updateMaterials(
+      lines.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              RawMaterialId: itemId,
+              ProductId: null,
+              RawMaterialPartNo: rm?.partNo || "",
+              RawMaterialName: rm?.partName || "",
+              ProductPartNo: "",
+              ProductName: "",
+            }
+          : row
+      )
+    );
   };
 
   /**
@@ -423,7 +567,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         toast.info("You can now attach drawings and documents to this template");
       }
 
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error saving job template:", error);
       const message = error?.response?.data?.error || error?.message || "Unknown error";
@@ -448,7 +592,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         `${formData.TemplateName} (Copy)`
       );
       toast.success("Job template cloned successfully");
-      onClose();
+      onClose(true);
     } catch (error: any) {
       const message = error?.response?.data?.error || error?.message || "Unknown error";
       toast.error(`Error cloning job template: ${message}`);
@@ -483,7 +627,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       await JobTemplateService.DeleteJobTemplate(jobTemplateId);
       toast.success("Job template deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error deleting job template:", error);
       toast.error(`Error deleting job template: ${error.message || "Unknown error"}`);
@@ -935,6 +1079,132 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
           {/* ---------- Material ---------- */}
           <div className={tabClass("material")}>
+            <div className="jt-section-header">
+              <div>
+                <p className="jt-section-title">Material required</p>
+                <p className="jt-section-hint">
+                  These lines copy onto a job when this template is applied. Quantity is
+                  copied as-is — it is not multiplied by job qty.
+                </p>
+              </div>
+              <button type="button" className="jt-add-button" onClick={handleAddMaterial}>
+                + Add material
+              </button>
+            </div>
+
+            {(formData.Materials || []).length === 0 ? (
+              <div className="jt-empty-block" style={{ marginBottom: "1.25rem" }}>
+                <p>No planned material</p>
+                <small>Add raw material or product lines so jobs start with a bill of material</small>
+              </div>
+            ) : (
+              <div className="jt-operations" style={{ marginBottom: "1.25rem" }}>
+                <div className="jt-operations-scroll">
+                  <table className="jt-operations-table jt-materials-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: "7rem" }}>Type</th>
+                        <th>Item</th>
+                        <th style={{ width: "6.5rem" }}>Qty</th>
+                        <th>Notes</th>
+                        <th style={{ width: "3rem" }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(formData.Materials || []).map((line, index) => {
+                        const type = materialRowType(line);
+                        const selectedId =
+                          type === "product" ? line.ProductId || "" : line.RawMaterialId || "";
+                        return (
+                          <tr key={index}>
+                            <td>
+                              <select
+                                value={type}
+                                onChange={(e) =>
+                                  handleMaterialTypeChange(
+                                    index,
+                                    e.target.value === "product" ? "product" : "rm"
+                                  )
+                                }
+                              >
+                                <option value="rm">Raw material</option>
+                                <option value="product">Product</option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                value={selectedId}
+                                onChange={(e) =>
+                                  handleMaterialItemChange(
+                                    index,
+                                    e.target.value === "" ? null : parseInt(e.target.value, 10)
+                                  )
+                                }
+                              >
+                                <option value="">Select...</option>
+                                {type === "product"
+                                  ? products.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {catalogItemLabel(p.partNo, p.partName)}
+                                      </option>
+                                    ))
+                                  : rawMaterials.map((rm) => (
+                                      <option key={rm.id} value={rm.id}>
+                                        {catalogItemLabel(
+                                          rm.partNo,
+                                          rm.partName,
+                                          rm.isRemnant ? "remnant" : undefined
+                                        )}
+                                      </option>
+                                    ))}
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                className="no-spinner"
+                                min={0}
+                                step="0.01"
+                                value={line.Quantity}
+                                onChange={(e) =>
+                                  handleMaterialChange(
+                                    index,
+                                    "Quantity",
+                                    e.target.value === "" ? 0 : parseFloat(e.target.value)
+                                  )
+                                }
+                                onWheel={(e) => e.currentTarget.blur()}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                maxLength={200}
+                                value={line.Notes || ""}
+                                onChange={(e) =>
+                                  handleMaterialChange(index, "Notes", e.target.value)
+                                }
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="jt-icon-button is-danger"
+                                title="Remove material"
+                                onClick={() => handleRemoveMaterial(index)}
+                              >
+                                🗑
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="DefaultMaterial">Default Material</label>

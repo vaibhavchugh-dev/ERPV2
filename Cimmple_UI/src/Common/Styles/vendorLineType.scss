@@ -1,0 +1,50 @@
+/* Line type is a required classifier — color-code so it is hard to miss. */
+.vo-line-type-col {
+  color: #1e3a8a;
+}
+
+.vo-line-type-select {
+  min-width: 148px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.375rem;
+  border-width: 1.5px;
+  cursor: pointer;
+}
+
+.vo-line-type--raw {
+  background: #ecfdf5;
+  border-color: #059669;
+  color: #065f46;
+}
+
+.vo-line-type--finished {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #1e40af;
+}
+
+.vo-line-type--tool {
+  background: #fffbeb;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+.vo-line-type--service {
+  background: #f5f3ff;
+  border-color: #7c3aed;
+  color: #5b21b6;
+}
+
+.vo-line-type--subcontract {
+  background: #f0fdfa;
+  border-color: #0d9488;
+  color: #115e59;
+}
+
+.vo-line-type--other {
+  background: #f3f4f6;
+  border-color: #6b7280;
+  color: #374151;
+}

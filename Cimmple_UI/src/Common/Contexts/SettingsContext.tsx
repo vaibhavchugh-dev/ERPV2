@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { SystemSettingsService, SystemSettings } from '../Services/SystemSettingsService';
+import { applyRuntimeSettings } from '../Utils/settingsRuntime';
 
 interface SettingsContextType {
   settings: SystemSettings | null;
@@ -64,8 +65,10 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       const hasToken = !!localStorage.getItem('token');
 
       if (tenantId === 0 || !hasToken) {
-        // No session yet — use defaults (avoid 401 during login)
-        setSettings(getDefaultSettings(tenantId || 1));
+        // No session yet — use defaults in React only (avoid 401 during login).
+        // Do not write defaults into localStorage; that overwrites login session values.
+        const defaults = getDefaultSettings(tenantId || 1);
+        setSettings(defaults);
         setLoading(false);
         return;
       }
@@ -73,10 +76,21 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       try {
         const loadedSettings = await SystemSettingsService.GetSettings(tenantId);
         setSettings(loadedSettings);
+        applyRuntimeSettings(loadedSettings);
       } catch (err: any) {
         console.warn('[SettingsContext] Failed to load settings, using defaults:', err.message);
-        // Use defaults if loading fails - app continues working
-        setSettings(getDefaultSettings(tenantId));
+        // Use defaults in React, but keep any sessionTimeoutMinutes already set by login
+        const defaults = getDefaultSettings(tenantId);
+        try {
+          const existing = JSON.parse(localStorage.getItem('storage') || '{}');
+          if (Number(existing.sessionTimeoutMinutes) > 0) {
+            defaults.sessionTimeoutMinutes = Number(existing.sessionTimeoutMinutes);
+          }
+        } catch {
+          // ignore
+        }
+        setSettings(defaults);
+        applyRuntimeSettings(defaults);
       }
     } catch (err: any) {
       console.error('[SettingsContext] Error loading settings:', err);
@@ -84,7 +98,9 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       // Always provide defaults as fallback
       const storage = JSON.parse(localStorage.getItem('storage') || '{}');
       const tenantId = storage?.tenantID || 1;
-      setSettings(getDefaultSettings(tenantId));
+      const defaults = getDefaultSettings(tenantId);
+      setSettings(defaults);
+      applyRuntimeSettings(defaults);
     } finally {
       setLoading(false);
     }
@@ -127,5 +143,3 @@ export const useSettingsSafe = (): SystemSettings => {
   
   return context.settings;
 };
-
-

@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { NavLink, useHistory } from "react-router-dom";
+import React, { useCallback, useEffect, useState } from "react";
+import { NavLink, useHistory, useLocation } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import {
   faHome,
   faUsers,
@@ -19,8 +20,6 @@ import {
   faFileInvoiceDollar,
   faShoppingCart,
   faBriefcase,
-  faChevronDown,
-  faChevronRight,
   faClipboardList,
   faShoppingBag,
   faTruck,
@@ -29,518 +28,368 @@ import {
   faWarehouse,
   faBook,
   faTable,
-  faLock
+  faLock,
+  faTimes,
+  faChevronRight,
 } from "@fortawesome/free-solid-svg-icons";
-import { User } from "../Services/User";
 import { AuthService } from "../Services/AuthService";
 import "./Sidebar.scss";
 
+interface NavItem {
+  icon: IconDefinition;
+  title: string;
+  path: string;
+}
+
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
+
+interface NavSection {
+  id: string;
+  title: string;
+  icon: IconDefinition;
+  items: NavItem[];
+  groups?: NavGroup[];
+}
+
 const Sidebar: React.FC = () => {
   const history = useHistory();
+  const location = useLocation();
   const storage = JSON.parse(localStorage.getItem("storage") || "{}");
   const userName = storage?.userName || "User";
   const userRole = storage?.role || "Administrator";
-  const [activeSection, setActiveSection] = useState<string | null>(null); // All collapsed by default
-
-  // Helper function to handle section toggle (accordion behavior)
-  const toggleSection = (sectionName: string) => {
-    setActiveSection(activeSection === sectionName ? null : sectionName);
-  };
+  const [activeSection, setActiveSection] = useState<string | null>(null);
 
   const filterByPermission = <T extends { path: string }>(items: T[]): T[] =>
-    items.filter((item) => item.path === "/home" || AuthService.hasPermissionForPath(item.path));
+    items.filter((item) => AuthService.hasPermissionForPath(item.path));
 
-  const menuItems = [
-    {
-      icon: faHome,
-      title: "Dashboard",
-      path: "/home",
-    },
+  const menuItems: NavItem[] = [
+    { icon: faHome, title: "Dashboard", path: "/home" },
   ];
 
-  const salesItems = [
-    {
-      icon: faFileInvoice,
-      title: "Customer Quotations",
-      path: "/quotations/customer",
-    },
-    {
-      icon: faShoppingCart,
-      title: "Customer Orders",
-      path: "/orders/customer",
-    },
-    {
-      icon: faTruck,
-      title: "Customer Shipments",
-      path: "/orders/customer-shipments",
-    },
-    {
-      icon: faFileInvoiceDollar,
-      title: "Customer Invoices",
-      path: "/orders/customer-invoices",
-    },
-    {
-      icon: faBriefcase,
-      title: "Job Orders",
-      path: "/job-orders",
-    },
+  const salesItems: NavItem[] = [
+    { icon: faFileInvoice, title: "Customer Quotations", path: "/quotations/customer" },
+    { icon: faShoppingCart, title: "Customer Orders", path: "/orders/customer" },
+    { icon: faTruck, title: "Customer Shipments", path: "/orders/customer-shipments" },
+    { icon: faFileInvoiceDollar, title: "Customer Invoices", path: "/orders/customer-invoices" },
+    { icon: faBriefcase, title: "Job Orders", path: "/job-orders" },
   ];
 
-  const qualityItems = [
-    {
-      icon: faShieldAlt,
-      title: "Non Conformance Reports",
-      path: "/quality",
-    },
+  const qualityItems: NavItem[] = [
+    { icon: faShieldAlt, title: "Non Conformance Reports", path: "/quality" },
+    { icon: faTable, title: "NCR Code Master", path: "/quality/ncr-codes" },
   ];
 
-  const reportsItems = [
-    {
-      icon: faChartLine,
-      title: "Business Intelligence",
-      path: "/reports",
-    },
+  const reportsItems: NavItem[] = [
+    { icon: faChartLine, title: "Business Intelligence", path: "/reports" },
   ];
 
-  const purchasingItems = [
-    {
-      icon: faFileInvoice,
-      title: "Vendor Quotations",
-      path: "/quotations/vendor",
-    },
-    {
-      icon: faShoppingCart,
-      title: "Vendor Orders",
-      path: "/purchasing/vendor-orders",
-    },
-    {
-      icon: faClipboardList,
-      title: "Vendor Receiving",
-      path: "/purchasing/vendor-receiving",
-    },
-    {
-      icon: faFileInvoiceDollar,
-      title: "Vendor Invoices",
-      path: "/purchasing/vendor-invoices",
-    },
-    {
-      icon: faWarehouse,
-      title: "Inventory",
-      path: "/inventory",
-    },
+  const purchasingItems: NavItem[] = [
+    { icon: faFileInvoice, title: "Vendor Quotations", path: "/quotations/vendor" },
+    { icon: faShoppingCart, title: "Vendor Orders", path: "/purchasing/vendor-orders" },
+    { icon: faClipboardList, title: "Vendor Receiving", path: "/purchasing/vendor-receiving" },
+    { icon: faFileInvoiceDollar, title: "Vendor Invoices", path: "/purchasing/vendor-invoices" },
+    { icon: faWarehouse, title: "Inventory", path: "/inventory" },
   ];
 
-  const accountingItems = [
-    {
-      icon: faChartLine,
-      title: "Payment Dashboard",
-      path: "/accounts/dashboard",
-    },
-    {
-      icon: faDollarSign,
-      title: "Accounts Payable (AP)",
-      path: "/accounts/payable",
-    },
-    {
-      icon: faCreditCard,
-      title: "Accounts Receivable (AR)",
-      path: "/accounts/receivable",
-    },
-    {
-      icon: faUniversity,
-      title: "Bank Reconciliation",
-      path: "/accounts/banks",
-    },
-    {
-      icon: faFileInvoice,
-      title: "Financial Reports",
-      path: "/accounts/reports",
-    },
-    {
-      icon: faBook,
-      title: "Journal Entries",
-      path: "/accounts/journal-entries",
-    },
-    {
-      icon: faTable,
-      title: "GL Account Activity",
-      path: "/accounts/general-ledger",
-    },
-    {
-      icon: faLock,
-      title: "Period Close & Audit",
-      path: "/accounts/periods",
-    },
-    {
-      icon: faCog,
-      title: "Accounting Setup",
-      path: "/accounts/setup",
-    },
-    {
-      icon: faUniversity,
-      title: "Bank Master",
-      path: "/masters/bank",
-    },
-    {
-      icon: faCreditCard,
-      title: "Credit Card Master",
-      path: "/masters/creditcard",
-    },
-    {
-      icon: faChartLine,
-      title: "Chart of Accounts Master",
-      path: "/masters/chartofaccounts",
-    },
+  const documentsItems: NavItem[] = [
+    { icon: faFolderOpen, title: "Documents", path: "/documents" },
   ];
 
-  const documentsItems = [
-    {
-      icon: faFolderOpen,
-      title: "Documents",
-      path: "/documents",
-    },
-  ];
+  const filterGroups = (groups: NavGroup[]): NavGroup[] =>
+    groups
+      .map((group) => ({ ...group, items: filterByPermission(group.items) }))
+      .filter((group) => group.items.length > 0);
 
-  const administrationItems = [
+  const accountingGroups = filterGroups([
     {
-      icon: faUsers,
-      title: "User Management",
-      path: "/user-management",
+      title: "Payables & receivables",
+      items: [
+        { icon: faChartLine, title: "Payment Dashboard", path: "/accounts/dashboard" },
+        { icon: faDollarSign, title: "Accounts Payable (AP)", path: "/accounts/payable" },
+        { icon: faCreditCard, title: "Accounts Receivable (AR)", path: "/accounts/receivable" },
+        { icon: faUniversity, title: "Bank Reconciliation", path: "/accounts/banks" },
+      ],
     },
     {
-      icon: faCog,
-      title: "System Settings",
-      path: "/settings",
+      title: "Ledger & reporting",
+      items: [
+        { icon: faBook, title: "Journal Entries", path: "/accounts/journal-entries" },
+        { icon: faTable, title: "GL Account Activity", path: "/accounts/general-ledger" },
+        { icon: faFileInvoice, title: "Financial Reports", path: "/accounts/reports" },
+        { icon: faLock, title: "Period Close & Audit", path: "/accounts/periods" },
+      ],
     },
     {
-      icon: faUsers,
-      title: "Customer Master",
-      path: "/masters/customer",
+      title: "Setup",
+      items: [
+        { icon: faCog, title: "Accounting Setup", path: "/accounts/setup" },
+        { icon: faChartLine, title: "Chart of Accounts Master", path: "/masters/chartofaccounts" },
+        { icon: faUniversity, title: "Bank Master", path: "/masters/bank" },
+        { icon: faCreditCard, title: "Credit Card Master", path: "/masters/creditcard" },
+      ],
     },
-    {
-      icon: faBuilding,
-      title: "Vendor Master",
-      path: "/masters/vendor",
-    },
-    {
-      icon: faDesktop,
-      title: "Workstation Master",
-      path: "/masters/workstation",
-    },
-    {
-      icon: faUserTie,
-      title: "Employee Master",
-      path: "/masters/employee",
-    },
-    {
-      icon: faMapMarkerAlt,
-      title: "Location Master",
-      path: "/masters/location",
-    },
-    {
-      icon: faCog,
-      title: "Process Master",
-      path: "/masters/process",
-    },
-    {
-      icon: faClipboardList,
-      title: "Job Template Master",
-      path: "/masters/jobtemplate",
-    },
-    {
-      icon: faTable,
-      title: "Category Master",
-      path: "/masters/category",
-    },
-    {
-      icon: faDollarSign,
-      title: "Price Breakdown Master",
-      path: "/masters/pricebreakdown",
-    },
-    {
-      icon: faBox,
-      title: "Product Master",
-      path: "/masters/product",
-    },
-    {
-      icon: faBox,
-      title: "Raw Material Master",
-      path: "/masters/raw-material",
-    },
-  ];
+  ]);
 
-  console.log("Sidebar rendering - Sales & Orders, Purchasing, Quality, Accounting, Administration");
+  const accountingItems: NavItem[] = accountingGroups.flatMap((group) => group.items);
+
+  const administrationGroups = filterGroups([
+    {
+      title: "Access & settings",
+      items: [
+        { icon: faUsers, title: "User Management", path: "/user-management" },
+        { icon: faCog, title: "System Settings", path: "/settings" },
+      ],
+    },
+    {
+      title: "Business partners",
+      items: [
+        { icon: faUsers, title: "Customer Master", path: "/masters/customer" },
+        { icon: faBuilding, title: "Vendor Master", path: "/masters/vendor" },
+        { icon: faUserTie, title: "Employee Master", path: "/masters/employee" },
+      ],
+    },
+    {
+      title: "Shop floor & production",
+      items: [
+        { icon: faMapMarkerAlt, title: "Location Master", path: "/masters/location" },
+        { icon: faDesktop, title: "Workstation Master", path: "/masters/workstation" },
+        { icon: faCog, title: "Process Master", path: "/masters/process" },
+        { icon: faClipboardList, title: "Job Template Master", path: "/masters/jobtemplate" },
+      ],
+    },
+    {
+      title: "Catalog & classification",
+      items: [
+        { icon: faBox, title: "Product Master", path: "/masters/product" },
+        { icon: faBox, title: "Raw Material Master", path: "/masters/raw-material" },
+        { icon: faDollarSign, title: "Price Breakdown Master", path: "/masters/pricebreakdown" },
+        { icon: faTable, title: "Category Master", path: "/masters/category" },
+      ],
+    },
+  ]);
+
+  const administrationItems: NavItem[] = administrationGroups.flatMap((group) => group.items);
 
   const visibleMenuItems = filterByPermission(menuItems);
-  const visibleSalesItems = filterByPermission(salesItems);
-  const visibleQualityItems = filterByPermission(qualityItems);
-  const visibleReportsItems = filterByPermission(reportsItems);
-  const visiblePurchasingItems = filterByPermission(purchasingItems);
-  const visibleAccountingItems = filterByPermission(accountingItems);
-  const visibleDocumentsItems = filterByPermission(documentsItems);
-  const visibleAdministrationItems = filterByPermission(administrationItems);
+
+  const sections: NavSection[] = [
+    { id: "sales", title: "Sales & Orders", icon: faClipboardList, items: filterByPermission(salesItems) },
+    { id: "purchasing", title: "Purchasing", icon: faShoppingBag, items: filterByPermission(purchasingItems) },
+    { id: "quality", title: "Quality", icon: faShieldAlt, items: filterByPermission(qualityItems) },
+    { id: "documents", title: "Documents", icon: faFolderOpen, items: filterByPermission(documentsItems) },
+    { id: "reports", title: "Reports", icon: faChartLine, items: filterByPermission(reportsItems) },
+    {
+      id: "accounting",
+      title: "Accounting",
+      icon: faDollarSign,
+      items: accountingItems,
+      groups: accountingGroups,
+    },
+    {
+      id: "administration",
+      title: "Administration",
+      icon: faCog,
+      items: administrationItems,
+      groups: administrationGroups,
+    },
+  ];
+
+  const openSection = sections.find((section) => section.id === activeSection) ?? null;
+
+  const closeSecondary = useCallback(() => {
+    setActiveSection(null);
+  }, []);
+
+  const handleSectionClick = (section: NavSection) => {
+    if (section.items.length === 0) return;
+
+    if (section.items.length === 1) {
+      closeSecondary();
+      history.push(section.items[0].path);
+      return;
+    }
+
+    setActiveSection((current) => (current === section.id ? null : section.id));
+  };
+
+  const pathBelongsToSection = (section: NavSection, pathname: string) =>
+    section.items.some(
+      (item) => pathname === item.path || pathname.startsWith(`${item.path}/`)
+    );
+
+  const renderNavList = (items: NavItem[], sectionId: string) => (
+    <ul className="nav-list">
+      {items.map((item) => (
+        <li key={item.path}>
+          <NavLink
+            to={item.path}
+            className={`nav-item nav-item-${sectionId}`}
+            activeClassName="active"
+            onClick={closeSecondary}
+          >
+            <FontAwesomeIcon icon={item.icon} size="lg" />
+            <span>{item.title}</span>
+          </NavLink>
+        </li>
+      ))}
+    </ul>
+  );
+
+  // Close secondary when leaving a multi-item section (e.g. navigating to /home).
+  // Do not auto-open on refresh or initial load — only open on section click.
+  useEffect(() => {
+    if (location.pathname === "/home") {
+      setActiveSection(null);
+      return;
+    }
+
+    const matched = sections.find((section) =>
+      pathBelongsToSection(section, location.pathname)
+    );
+
+    if (!matched || matched.items.length <= 1) {
+      setActiveSection(null);
+    }
+    // Intentionally depend only on pathname so closing the panel is not undone on re-render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
+
+  // Escape closes secondary
+  useEffect(() => {
+    if (!activeSection) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSecondary();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [activeSection, closeSecondary]);
+
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-brand">
-          <div className="brand-logo">
-            <img src="/logo.svg" alt="Cimmple ERP" width="50" height="50" />
-          </div>
-          <div className="brand-text">
-            <h1>Cimmple ERP</h1>
-            <span>Business Portal</span>
-          </div>
-        </div>
-      </div>
-
-      <nav className="sidebar-nav">
-        <div className="nav-section">
-          {visibleMenuItems.map((item, index) => (
-            <div
-              key={index}
-              className="nav-dashboard-item"
-              onClick={() => {
-                // Navigate to dashboard
-                history.push(item.path);
-              }}
-              style={{ cursor: 'pointer' }}
-            >
-              <FontAwesomeIcon icon={item.icon} size="sm" />
-              <span>{item.title}</span>
+    <div className="sidebar-shell">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="sidebar-brand">
+            <div className="brand-logo">
+              <img src="/logo.svg" alt="Cimmple ERP" width="50" height="50" />
             </div>
-          ))}
+            <div className="brand-text">
+              <h1>Cimmple ERP</h1>
+              <span>Business Portal</span>
+            </div>
+          </div>
         </div>
 
-        <div className="nav-section">
+        <nav className="sidebar-nav">
+          <div className="nav-section">
+            {visibleMenuItems.map((item) => (
+              <div
+                key={item.path}
+                className="nav-dashboard-item"
+                onClick={() => {
+                  closeSecondary();
+                  history.push(item.path);
+                }}
+              >
+                <FontAwesomeIcon icon={item.icon} size="sm" />
+                <span>{item.title}</span>
+              </div>
+            ))}
+          </div>
+
+          {sections.map((section) => {
+            const isEmpty = section.items.length === 0;
+            const hasFlyout = section.items.length > 1;
+            const isOpen = hasFlyout && activeSection === section.id;
+            const isCurrent = pathBelongsToSection(section, location.pathname);
+
+            return (
+              <div className="nav-section" key={section.id}>
+                <div
+                  className={`nav-section-header${isOpen ? " is-open" : ""}${isCurrent && !isOpen ? " is-active" : ""}${isEmpty ? " is-disabled" : ""}`}
+                  onClick={() => handleSectionClick(section)}
+                  role="button"
+                  tabIndex={isEmpty ? -1 : 0}
+                  aria-expanded={hasFlyout ? isOpen : undefined}
+                  aria-disabled={isEmpty}
+                  onKeyDown={(event) => {
+                    if (isEmpty) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleSectionClick(section);
+                    }
+                  }}
+                >
+                  <FontAwesomeIcon icon={section.icon} size="sm" />
+                  <span>{section.title}</span>
+                  {hasFlyout && (
+                    <FontAwesomeIcon
+                      icon={faChevronRight}
+                      size="sm"
+                      className="nav-flyout-icon"
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <div className="user-avatar">
+              <FontAwesomeIcon icon={faUser} size="sm" />
+            </div>
+            <div className="user-info">
+              <div className="user-name">{userName}</div>
+              <div className="user-role">{userRole}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {openSection && (
+        <>
           <div
-            className="nav-section-header"
-            onClick={() => toggleSection('sales')}
+            className="sidebar-secondary-backdrop"
+            onClick={closeSecondary}
+            aria-hidden="true"
+          />
+          <aside
+            className="sidebar-secondary"
+            aria-label={openSection.title}
           >
-            <FontAwesomeIcon icon={faClipboardList} size="sm" />
-            <span>Sales & Orders</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'sales' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'sales' && (
-            <ul className="nav-list">
-              {visibleSalesItems.map((item, index) => (
-                <li key={`sales-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-sales"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('purchasing')}
-          >
-            <FontAwesomeIcon icon={faShoppingBag} size="sm" />
-            <span>Purchasing</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'purchasing' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'purchasing' && (
-            <ul className="nav-list">
-              {visiblePurchasingItems.map((item, index) => (
-                <li key={`purchasing-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-purchasing"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('quality')}
-          >
-            <FontAwesomeIcon icon={faShieldAlt} size="sm" />
-            <span>Quality</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'quality' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'quality' && (
-            <ul className="nav-list">
-              {visibleQualityItems.map((item, index) => (
-                <li key={`quality-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-quality"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('documents')}
-          >
-            <FontAwesomeIcon icon={faFolderOpen} size="sm" />
-            <span>Documents</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'documents' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'documents' && (
-            <ul className="nav-list">
-              {visibleDocumentsItems.map((item, index) => (
-                <li key={`documents-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-documents"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('reports')}
-          >
-            <FontAwesomeIcon icon={faChartLine} size="sm" />
-            <span>Reports</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'reports' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'reports' && (
-            <ul className="nav-list">
-              {visibleReportsItems.map((item, index) => (
-                <li key={`reports-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-reports"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('accounting')}
-          >
-            <FontAwesomeIcon icon={faDollarSign} size="sm" />
-            <span>Accounting</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'accounting' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'accounting' && (
-            <ul className="nav-list">
-              {visibleAccountingItems.map((item, index) => (
-                <li key={`accounting-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-accounting"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div
-            className="nav-section-header"
-            onClick={() => toggleSection('administration')}
-          >
-            <FontAwesomeIcon icon={faCog} size="sm" />
-            <span>Administration</span>
-            <FontAwesomeIcon
-              icon={activeSection === 'administration' ? faChevronDown : faChevronRight}
-              size="sm"
-              className="nav-toggle-icon"
-            />
-          </div>
-          {activeSection === 'administration' && (
-            <ul className="nav-list">
-              {visibleAdministrationItems.map((item, index) => (
-                <li key={`administration-${index}`}>
-                  <NavLink
-                    to={item.path}
-                    className="nav-item nav-item-administration"
-                    activeClassName="active"
-                  >
-                    <FontAwesomeIcon icon={item.icon} size="lg" />
-                    <span>{item.title}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </nav>
-
-      <div className="sidebar-footer">
-        <div className="sidebar-user">
-          <div className="user-avatar">
-            <FontAwesomeIcon icon={faUser} size="sm" />
-          </div>
-          <div className="user-info">
-            <div className="user-name">{userName}</div>
-            <div className="user-role">{userRole}</div>
-          </div>
-        </div>
-      </div>
-    </aside>
+            <div className="sidebar-secondary-header">
+              <h2>{openSection.title}</h2>
+              <button
+                type="button"
+                className="sidebar-secondary-close"
+                onClick={closeSecondary}
+                aria-label="Close menu"
+              >
+                <FontAwesomeIcon icon={faTimes} size="sm" />
+              </button>
+            </div>
+            <nav className="sidebar-secondary-nav">
+              {openSection.groups && openSection.groups.length > 0
+                ? openSection.groups.map((group) => (
+                    <div className="nav-group" key={group.title}>
+                      <h3 className="nav-group-title">{group.title}</h3>
+                      {renderNavList(group.items, openSection.id)}
+                    </div>
+                  ))
+                : renderNavList(openSection.items, openSection.id)}
+            </nav>
+          </aside>
+        </>
+      )}
+    </div>
   );
 };
 

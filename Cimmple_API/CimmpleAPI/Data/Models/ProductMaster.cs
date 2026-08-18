@@ -14,6 +14,16 @@ namespace CimmpleAPI.Data.Models
         public int? Noofday { get; set; }
         public string? pdescription { get; set; }
         public int? customerid { get; set; }
+
+        /// <summary>
+        /// How this finished part is sourced: Make (shop), Buy (vendor), or Both.
+        /// </summary>
+        [MaxLength(20)]
+        public string? SourcingType { get; set; }
+
+        public decimal? ReorderPoint { get; set; }
+
+        public decimal? ReorderQuantity { get; set; }
     }
 
     public class PartBreakupSetup

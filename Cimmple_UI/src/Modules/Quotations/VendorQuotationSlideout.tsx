@@ -5,18 +5,42 @@ import {
   QuotationService,
   VendorQuotationMasterReq,
   QuotationDetailReq,
+  DiscountType,
 } from "../../Common/Services/QuotationService";
 import { VendorService } from "../../Common/Services/VendorService";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
+import {
+  VENDOR_ORDER_LINE_TYPES,
+  DEFAULT_VENDOR_ORDER_LINE_TYPE,
+  defaultLineTypeForOrder,
+  deriveOrderMaterialType,
+  lineTypeAccentClass,
+  isBlankQuoteOrOrderLine,
+  lineTypeFromQuotationType,
+} from "../../Common/Constants/vendorOrderLineTypes";
+import RawMaterialCombobox from "../../Common/Components/RawMaterialCombobox";
+import ProductMasterCombobox from "../../Common/Components/ProductMasterCombobox";
+import {
+  CustomerPartOption,
+  ProductMaster,
+} from "../../Common/Services/ProductMasterService";
+import { RawMaterial } from "../../Common/Services/InventoryService";
+import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
+import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import {
+  VendorPartCombobox,
+  formatPartHistoryHint,
+  looksLikeJobPartNo,
+} from "../../Common/Components/CustomerPartCombobox";
 import "./VendorQuotationSlideout.scss";
 
 interface VendorQuotationSlideoutProps {
   quotationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
@@ -48,6 +72,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
   const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
@@ -66,6 +91,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [jobOrderDropdownOpen, setJobOrderDropdownOpen] = useState<Map<number, boolean>>(new Map());
   const [jobOrderDropdownPositions, setJobOrderDropdownPositions] = useState<Map<number, { top: number; left: number; width: number }>>(new Map());
   const [selectedJobOrders, setSelectedJobOrders] = useState<Map<number, Set<number>>>(new Map()); // Map of detail index to Set of jobOrderIDs
+  const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
+  const [coaAccounts, setCoaAccounts] = useState<ChartofAccountMaster[]>([]);
+  const [companyDefaultExpenseGlcode, setCompanyDefaultExpenseGlcode] = useState("");
+  const [defaultExpenseGlcode, setDefaultExpenseGlcode] = useState("");
   // Refs for job order input fields
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   // Store display values for numeric fields (as strings) to allow clearing
@@ -186,6 +215,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   useEffect(() => {
     loadVendors();
     loadJobOrders();
+    loadCoaDefaults();
     if (quotationId > 0) {
       loadQuotation();
     } else {
@@ -225,6 +255,26 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
+  const accountIdToGlcode = (accountId?: number | null): string =>
+    accountId && accountId > 0 ? String(accountId) : "";
+
+  const loadCoaDefaults = async () => {
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const tenantID = storage?.tenantID || 0;
+      const [accounts, settings] = await Promise.all([
+        ChartofAccountsService.GetChartofAccounts({ tenantid: tenantID }),
+        AccountingService.GetAccountingSettings(),
+      ]);
+      setCoaAccounts((accounts || []).filter((a) => a.isActive !== false));
+      const companyGl = accountIdToGlcode(settings?.defaultExpenseAccountId);
+      setCompanyDefaultExpenseGlcode(companyGl);
+      setDefaultExpenseGlcode((prev) => prev || companyGl);
+    } catch (error) {
+      console.error("Error loading COA defaults:", error);
+    }
+  };
+
   const getFirstLine = (text: string): string => {
     if (!text) return "";
     // Get the first line (split by newline and take first part)
@@ -251,13 +301,36 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           quotationNumber: result.PONumber
         });
 
-        // Ensure Details is always an array
+        // Ensure Details is always an array; migrate legacy JO# values from PartNo → JobNumber
+        const normalizedDetails = (result.Details || []).map((detail: any) => {
+          const partNo = detail.PartNo || "";
+          const jobNumber = detail.JobNumber || "";
+          if (looksLikeJobPartNo(partNo) && !jobNumber.trim()) {
+            return { ...detail, JobNumber: partNo, PartNo: "" };
+          }
+          if (looksLikeJobPartNo(partNo) && jobNumber.trim()) {
+            return { ...detail, PartNo: "" };
+          }
+          return detail;
+        });
         const formDataWithDetails = {
           ...result,
-          Details: result.Details || [],
+          Details: normalizedDetails,
           QuotationType: result.QuotationType || "Material",
         };
         setFormData(formDataWithDetails);
+        setPartHistoryByRow(new Map());
+        if (formDataWithDetails.VendorID && formDataWithDetails.VendorID > 0) {
+          try {
+            const vendor = await VendorService.GetVendorById(formDataWithDetails.VendorID);
+            const vendorGl =
+              accountIdToGlcode((vendor as any)?.defaultExpenseAccountId) ||
+              companyDefaultExpenseGlcode;
+            setDefaultExpenseGlcode(vendorGl);
+          } catch {
+            /* keep company default */
+          }
+        }
         if (result.Attachments && Array.isArray(result.Attachments) && result.Attachments.length > 0) {
           const cleanedAttachments = result.Attachments.map(a => ({
             id: a.id || 0,
@@ -287,35 +360,29 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           setCommentIdCounter(1);
         }
 
-        // Initialize selectedJobOrders based on loaded PartNo values
+        // Initialize selectedJobOrders from JobNumber (or legacy PartNo JO refs)
         const newSelectedJobOrders = new Map<number, Set<number>>();
-        if (result.Details && Array.isArray(result.Details)) {
-          result.Details.forEach((detail: any, index: number) => {
-            if (detail.PartNo && detail.PartNo.trim() !== "") {
-              const partNoValue = detail.PartNo.trim();
+        normalizedDetails.forEach((detail: any, index: number) => {
+          const jobSource = (detail.JobNumber || "").trim() || (looksLikeJobPartNo(detail.PartNo) ? (detail.PartNo || "").trim() : "");
+          if (!jobSource) return;
 
-              // Parse job numbers from PartNo (e.g., "JO#1001, JO#1002" or "JOB001, JOB002")
-              const jobNumbers = partNoValue.split(",").map((s: string) => s.trim());
-
-              const selectedIds = new Set<number>();
-              jobNumbers.forEach((jobNum: string) => {
-                // Try to match with available job orders
-                const matchingJobOrder = availableJobOrders.find(jo => {
-                  return jo.jobNumber === jobNum ||
-                         `JO#${jo.jobOrderNumber}` === jobNum ||
-                         jo.jobOrderNumber?.toString() === jobNum.replace("JO#", "");
-                });
-                if (matchingJobOrder) {
-                  selectedIds.add(matchingJobOrder.jobOrderID);
-                }
-              });
-
-              if (selectedIds.size > 0) {
-                newSelectedJobOrders.set(index, selectedIds);
-              }
+          const jobNumbers = jobSource.split(",").map((s: string) => s.trim()).filter(Boolean);
+          const selectedIds = new Set<number>();
+          jobNumbers.forEach((jobNum: string) => {
+            const matchingJobOrder = availableJobOrders.find(jo => {
+              return jo.jobNumber === jobNum ||
+                     `JO#${jo.jobOrderNumber}` === jobNum ||
+                     jo.jobOrderNumber?.toString() === jobNum.replace(/^JO#?/i, "");
+            });
+            if (matchingJobOrder) {
+              selectedIds.add(matchingJobOrder.jobOrderID);
             }
           });
-        }
+
+          if (selectedIds.size > 0) {
+            newSelectedJobOrders.set(index, selectedIds);
+          }
+        });
         setSelectedJobOrders(newSelectedJobOrders);
       }
     } catch (error: any) {
@@ -336,6 +403,32 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       UserId: storage?.userId || 0,
       UserToken: storage?.userToken || 0,
       Tenantid: storage?.tenantID || 0,
+      Details:
+        prev.Details && prev.Details.length > 0
+          ? prev.Details
+          : [
+              {
+                ID: 0,
+                ItemNo: 1,
+                PartName: "",
+                PartNo: "",
+                LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+                DueDate: today,
+                JobNumber: "",
+                JobDesc: "",
+                QtyOrdered: 1,
+                Unit: "EA",
+                UnitPrice: 0,
+                JobPriority: 0,
+                Discount: 0,
+                DiscountType: "Percent",
+                ProductId: undefined,
+                RawMaterialId: undefined,
+                LeadTime: today,
+                Notes: "",
+                glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+              },
+            ],
     }));
   };
 
@@ -368,10 +461,19 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             }
           }
 
-          // Update form data with default contact person
+          // Update form data with default contact person and expense defaults
+          const vendorExpenseGl =
+            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+            companyDefaultExpenseGlcode;
+          setDefaultExpenseGlcode(vendorExpenseGl);
           setFormData(prev => ({
             ...prev,
             BuyerName: defaultContactPerson,
+            Details: (prev.Details || []).map((d) =>
+              !d.glcode || !String(d.glcode).trim()
+                ? { ...d, glcode: vendorExpenseGl }
+                : d
+            ),
           }));
         }
       } catch (error) {
@@ -392,9 +494,16 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const calculateLineTotal = (detail: QuotationDetailReq): number => {
-    const subtotal = detail.QtyOrdered * detail.UnitPrice;
-    const discountAmount = (subtotal * detail.Discount) / 100;
-    return subtotal - discountAmount;
+    const qty = Number(detail.QtyOrdered) || 0;
+    const unitPrice = Number(detail.UnitPrice) || 0;
+    const discount = Number(detail.Discount) || 0;
+    const subtotal = qty * unitPrice;
+    if (subtotal <= 0) return 0;
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(Math.max(discount, 0), subtotal)
+        : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
   };
 
   const handleAddDetail = () => {
@@ -410,6 +519,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         ItemNo: newItemNo,
         PartName: "",
         PartNo: "",
+        LineType:
+          details[details.length - 1]?.LineType ||
+          DEFAULT_VENDOR_ORDER_LINE_TYPE,
         DueDate: today,
         JobNumber: "",
         JobDesc: "",
@@ -418,9 +530,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
+        RawMaterialId: undefined,
         LeadTime: today,
         Notes: "",
+        glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
       };
 
       const total = [...details, newDetail].reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
@@ -437,7 +552,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const handleDetailChange = (index: number, field: keyof QuotationDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...(prev.Details || [])];
-      newDetails[index] = { ...newDetails[index], [field]: value };
+      const current = { ...newDetails[index], [field]: value };
+
+      if (field === "LineType") {
+        const nextType = String(value || "");
+        if (nextType === "RawMaterial") {
+          current.ProductId = undefined;
+        } else if (nextType === "FinishedProduct") {
+          current.RawMaterialId = undefined;
+        } else {
+          current.ProductId = undefined;
+          current.RawMaterialId = undefined;
+        }
+      }
+
+      newDetails[index] = current;
       
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
 
@@ -450,7 +579,94 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     setIsStateChanged(true);
   };
 
+  const applyVendorPart = (index: number, part: CustomerPartOption) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: part.partNo,
+        PartName: part.partName || current.PartName,
+        Unit: part.unit || current.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
+        ProductId: part.productId ?? current.ProductId,
+        RawMaterialId: undefined,
+        QtyOrdered:
+          part.suggestedQty && part.suggestedQty > 0
+            ? part.suggestedQty
+            : current.QtyOrdered || 1,
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.set(itemNo, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyFinishedProduct = (index: number, product: ProductMaster) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: product.partNo || "",
+        PartName: product.partName || current.PartName,
+        Unit: product.unit || current.Unit || "EA",
+        UnitPrice:
+          product.avgUnitPrice > 0 ? product.avgUnitPrice : current.UnitPrice,
+        ProductId: product.productId,
+        RawMaterialId: undefined,
+        LineType: "FinishedProduct",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const applyRawMaterial = (index: number, material: RawMaterial) => {
+    setFormData((prev) => {
+      const details = [...(prev.Details || [])];
+      const current = details[index];
+      if (!current) return prev;
+      details[index] = {
+        ...current,
+        PartNo: material.partNo || "",
+        PartName: material.partName || current.PartName,
+        Unit: material.unit || current.Unit || "EA",
+        UnitPrice:
+          material.unitCost > 0 ? material.unitCost : current.UnitPrice,
+        RawMaterialId: material.id,
+        ProductId: undefined,
+        LineType: "RawMaterial",
+      };
+      const total = details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: details, TotalAmount: total };
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details?.[index]?.ItemNo;
+      if (itemNo != null) next.delete(itemNo);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
   const handleDeleteDetail = (index: number) => {
+    const removed = formData.Details?.[index];
     setFormData((prev) => {
       const newDetails = (prev.Details || []).filter((_, i) => i !== index);
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
@@ -461,6 +677,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         TotalAmount: total,
       };
     });
+    if (removed) {
+      setPartHistoryByRow((prev) => {
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+    }
     setIsStateChanged(true);
   };
 
@@ -501,7 +724,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           };
           await QuotationService.SaveVendorQuotation(duplicatedQuotation);
           toast.success("Quotation duplicated successfully");
-          onClose();
+          onClose(true);
         }
       } catch (error: any) {
         console.error("Error duplicating quotation:", error);
@@ -586,7 +809,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         BuyerName: formData.BuyerName,
         VendorRefNo: formData.VendorRefNo,
         OrderType: "Vendor",
-        MaterialType: formData.QuotationType, // Use quotation type as material type
+        MaterialType: deriveOrderMaterialType(
+          (formData.Details || [])
+            .filter((d) => !isBlankQuoteOrOrderLine(d))
+            .map((d) => d.LineType || lineTypeFromQuotationType(formData.QuotationType))
+        ),
         QuotationId: quotationId, // Link to original quotation (use prop, not formData.OrderID)
         QuotationNo: quotationNumber, // Quotation number for reference
         Details: formData.Details.map(detail => {
@@ -605,6 +832,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             JobId: jobId, // Required field - extract from JobNumber or use 0
             PartName: detail.PartName,
             PartNo: detail.PartNo,
+            LineType: detail.LineType || lineTypeFromQuotationType(formData.QuotationType),
+            RawMaterialId: detail.RawMaterialId,
             DueDate: convertDateToISO(detail.DueDate),
             JobNumber: detail.JobNumber,
             JobDesc: detail.JobDesc,
@@ -613,6 +842,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             UnitPrice: detail.UnitPrice,
             JobPriority: detail.JobPriority,
             Discount: detail.Discount,
+            DiscountType: (detail.DiscountType === "Amount" ? "Amount" : "Percent") as "Percent" | "Amount",
             ProductId: detail.ProductId,
             LeadTime: detail.LeadTime,
             Notes: detail.Notes,
@@ -620,7 +850,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             ShippingStatus: "",
             InvoicedQty: 0,
             InvoiceStatus: "",
-            glcode: "", // Required field - default to empty string
+            glcode: detail.glcode || "", // Expense account for PO / bill posting
             Received: "No", // Required field - default to "No"
           };
         }),
@@ -678,7 +908,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       toast.success("Quotation converted to vendor order successfully");
 
       // Close the slideout after successful conversion
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error converting quotation to vendor order:", error);
       toast.error(`Error converting quotation: ${error.message || "Unknown error"}`);
@@ -759,7 +989,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         await QuotationService.DeleteVendorQuotation(quotationId);
         toast.success("All dependencies and quotation deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         setDeletionImpact(updatedImpact);
         toast.warning("Some dependencies could not be deleted. Please try again.");
@@ -793,7 +1023,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       await QuotationService.DeleteVendorQuotation(quotationId);
       toast.success("Quotation deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting quotation:", error);
       toast.error(`Error deleting quotation: ${error.message || "Unknown error"}`);
@@ -840,7 +1070,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       setShowMultiVendorDialog(false);
       setSelectedVendorIds(new Set());
       setIncludeAttachments(true); // Reset to default
-      onClose(); // Close slideout to refresh the list
+      onClose(true); // Close slideout to refresh the list
     } catch (error: any) {
       console.error("Error sending to multiple vendors:", error);
       toast.error(`Error: ${error.message || "Failed to send quotation"}`);
@@ -859,55 +1089,84 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Basic validation
+  const resolveSaveStatus = (mode: "draft" | "submit"): string => {
+    if (mode === "draft") {
+      return "Draft";
+    }
+    const current = (formData.Status || "").trim();
+    if (
+      current === "Sent" ||
+      current === "Accepted" ||
+      current === "Converted" ||
+      current === "Rejected"
+    ) {
+      return current;
+    }
+    return "Sent";
+  };
+
+  const handleSave = async (mode: "draft" | "submit") => {
     if (!formData.VendorID || formData.VendorID <= 0) {
       toast.error("Vendor is required");
       return;
     }
-    
+
     if (!formData.OrderDate) {
       toast.error("Quotation date is required");
       return;
     }
-    
+
+    const filledDetails = (formData.Details || []).filter(
+      (d) => !isBlankQuoteOrOrderLine(d)
+    );
+    if (filledDetails.length === 0) {
+      toast.error("At least one line item is required");
+      return;
+    }
+
+    const status = resolveSaveStatus(mode);
     setLoading(true);
+    setSavingAction(mode);
     try {
       const dataToSave: VendorQuotationMasterReq = {
         ...formData,
+        Status: status,
+        QuotationType: deriveOrderMaterialType(
+          filledDetails.map(
+            (d) => d.LineType || defaultLineTypeForOrder(formData.QuotationType)
+          )
+        ),
+        Details: filledDetails,
         Attachments: attachments || [],
         Comments: comments || [],
       };
-      
-      console.log("Saving vendor quotation:", dataToSave);
-      console.log("Details count:", dataToSave.Details?.length || 0);
-      if (dataToSave.Details && dataToSave.Details.length > 0) {
-        console.log("First detail:", JSON.stringify(dataToSave.Details[0], null, 2));
-        console.log("First detail PartNo:", dataToSave.Details[0].PartNo);
-      }
-      
+
       const result = await QuotationService.SaveVendorQuotation(dataToSave);
-      console.log("Save result:", result);
-      
-      toast.success(result.message || (quotationId > 0 ? "Quotation updated successfully" : "Quotation created successfully"));
+
+      if (mode === "draft") {
+        toast.success(quotationId > 0 ? "Quotation saved as draft" : "Quotation created as draft");
+      } else if (status === "Sent" && formData.Status !== "Sent") {
+        toast.success("Quotation marked as Sent");
+      } else {
+        toast.success(result.message || (quotationId > 0 ? "Quotation updated successfully" : "Quotation created successfully"));
+      }
       setIsStateChanged(false);
-      
-      // Update the OrderID in formData if it was a new quotation
+
       if (formData.OrderID === 0 && result.id > 0) {
-        setFormData(prev => ({
+        setFormData((prev) => ({
           ...prev,
-          OrderID: result.id
+          OrderID: result.id,
+          Status: status,
         }));
       }
-      
-      onClose(); // This will trigger loadQuotations in the parent component
+
+      onClose(true);
     } catch (error: any) {
       toast.error(`Error saving quotation: ${error.message || "Unknown error"}`);
       console.error("Error saving quotation:", error);
     } finally {
       setLoading(false);
+      setSavingAction(null);
     }
   };
 
@@ -1031,7 +1290,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           </div>
         </div>
 
-        <form className="vendor-quotation-slideout-form" onSubmit={handleSave}>
+        <form className="vendor-quotation-slideout-form" onSubmit={(e) => e.preventDefault()}>
           <div className="vendor-quotation-slideout-content">
             {/* Basic Information */}
             <div className="form-row">
@@ -1154,37 +1413,6 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               </div>
             </div>
 
-            {/* Quotation Type Selection */}
-            <div className="form-row">
-              <div className="form-group">
-                <label>Quotation Type <span className="required">*</span></label>
-                <div className="radio-group">
-                  <label className="radio-label">
-                    <input
-                      type="radio"
-                      name="quotationType"
-                      value="Material"
-                      checked={formData.QuotationType === "Material"}
-                      onChange={(e) => handleInputChange("QuotationType", e.target.value)}
-                    />
-                    <span style={{ marginRight: "0.5rem" }}>📦</span>
-                    Material
-                  </label>
-                  <label className="radio-label">
-                    <input
-                      type="radio"
-                      name="quotationType"
-                      value="Service"
-                      checked={formData.QuotationType === "Service"}
-                      onChange={(e) => handleInputChange("QuotationType", e.target.value)}
-                    />
-                    <span style={{ marginRight: "0.5rem" }}>🔧</span>
-                    Service
-                  </label>
-                </div>
-              </div>
-            </div>
-
             {/* Line Items */}
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -1216,13 +1444,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <thead>
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Item #</th>
+                        <th className="vo-line-type-col" style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "148px" }}>
+                          Line type <span className="required">*</span>
+                        </th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Description</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part/Job No</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Job No</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "80px" }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "120px" }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Discount</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>Discount % / $</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "180px" }}>Account</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Action</th>
                       </tr>
@@ -1237,18 +1470,102 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                           .filter(Boolean) as JobOrderMaster[];
                         const displayText = selectedJobOrdersList.length > 0
                           ? selectedJobOrdersList.map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`).join(", ")
-                          : detail.PartNo || "";
+                          : detail.JobNumber || (looksLikeJobPartNo(detail.PartNo) ? detail.PartNo : "");
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
+                        const lineType =
+                          detail.LineType ||
+                          defaultLineTypeForOrder(formData.QuotationType);
 
                         return (
-                          <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <React.Fragment key={detail.ItemNo}>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
+                            <td style={{ padding: "0.75rem" }}>
+                              <select
+                                className={`form-input vo-line-type-select ${lineTypeAccentClass(lineType)}`}
+                                title="Line type is copied to the vendor PO on convert. Check this before saving."
+                                value={lineType}
+                                onChange={(e) =>
+                                  handleDetailChange(index, "LineType", e.target.value)
+                                }
+                              >
+                                {VENDOR_ORDER_LINE_TYPES.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={{ padding: "0.75rem", position: "relative" }}>
+                              {lineType === "RawMaterial" ? (
+                                <RawMaterialCombobox
+                                  value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                  rawMaterialId={detail.RawMaterialId}
+                                  suggestedPartName={detail.PartName}
+                                  suggestedUnit={detail.Unit}
+                                  suggestedUnitCost={detail.UnitPrice}
+                                  vendorId={formData.VendorID}
+                                  scrollContainerSelector=".vendor-quotation-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        RawMaterialId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(material) => applyRawMaterial(index, material)}
+                                />
+                              ) : lineType === "FinishedProduct" ? (
+                                <ProductMasterCombobox
+                                  value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                  productId={detail.ProductId}
+                                  scrollContainerSelector=".vendor-quotation-slideout-content"
+                                  onChange={(partNo) => {
+                                    setFormData((prev) => {
+                                      const details = [...(prev.Details || [])];
+                                      if (!details[index]) return prev;
+                                      details[index] = {
+                                        ...details[index],
+                                        PartNo: partNo,
+                                        ProductId: undefined,
+                                      };
+                                      return { ...prev, Details: details };
+                                    });
+                                    setIsStateChanged(true);
+                                  }}
+                                  onSelect={(product) => applyFinishedProduct(index, product)}
+                                />
+                              ) : (
+                              <VendorPartCombobox
+                                value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
+                                vendorId={formData.VendorID}
+                                vendorSelected={!!formData.VendorID && formData.VendorID > 0}
+                                scrollContainerSelector=".vendor-quotation-slideout-content"
+                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
+                                onSelectPart={(part) => applyVendorPart(index, part)}
+                                onHistoryMatch={(part) => {
+                                  setPartHistoryByRow((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(detail.ItemNo, part);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              )}
+                            </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
                               <input
                                 type="text"
                                 className="form-input"
-                                style={{ 
-                                  width: "100%", 
-                                  minWidth: "150px", 
+                                style={{
+                                  width: "100%",
+                                  minWidth: "150px",
                                   cursor: "pointer",
                                   textOverflow: "ellipsis",
                                   overflow: "hidden",
@@ -1336,13 +1653,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                               newMap.set(index, newSet);
                                               return newMap;
                                             });
-                                            // Update PartNo with selected job numbers
+                                            // Persist job refs on JobNumber (Part No stays free for part history)
                                             const jobNumbers = Array.from(newSet)
                                               .map(id => jobOrders.find(jo => jo.jobOrderID === id))
                                               .filter((jo): jo is JobOrderMaster => jo !== undefined)
                                               .map(jo => jo.jobNumber || `JO#${jo.jobOrderNumber}`)
                                               .join(", ");
-                                            handleDetailChange(index, "PartNo", jobNumbers);
+                                            handleDetailChange(index, "JobNumber", jobNumbers);
                                             setIsStateChanged(true);
                                           }}
                                           style={{
@@ -1612,45 +1929,79 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 }}
                               />
                             </td>
-                            <td style={{ padding: "0.75rem", width: "100px" }}>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "80px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      handleDetailChange(index, "Discount", 0);
-                                    } else {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      const val = parseFloat(inputVal);
-                                      if (!isNaN(val) && val >= 0 && val <= 100) {
-                                        handleDetailChange(index, "Discount", val);
+                            <td style={{ padding: "0.75rem" }}>
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      (e.target.value === "Amount" ? "Amount" : "Percent") as DiscountType
+                                    )
+                                  }
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      if (inputVal === "" || inputVal === ".") {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        handleDetailChange(index, "Discount", 0);
+                                      } else {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        const val = parseFloat(inputVal);
+                                        if (!isNaN(val) && val >= 0) {
+                                          handleDetailChange(index, "Discount", val);
+                                        }
                                       }
-                                    }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                              />
+                                      return newMap;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                               ${lineTotal.toFixed(2)}
+                            </td>
+                            <td style={{ padding: "0.75rem" }}>
+                              <select
+                                className="form-input"
+                                style={{ minWidth: "170px", fontSize: "0.8125rem", padding: "0.35rem 0.5rem" }}
+                                value={detail.glcode || ""}
+                                onChange={(e) => handleDetailChange(index, "glcode", e.target.value)}
+                                title="Expense account for vendor bill posting"
+                              >
+                                <option value="">Company / vendor default</option>
+                                {coaAccounts.map((coa) => (
+                                  <option key={`vq-coa-${index}-${coa.accountID}`} value={String(coa.accountID)}>
+                                    {coa.accountCode} - {coa.accountName}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <input
@@ -1680,12 +2031,30 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               </button>
                             </td>
                           </tr>
+                          {historyHint ? (
+                            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ padding: 0, border: "none" }} />
+                              <td
+                                colSpan={11}
+                                style={{
+                                  padding: "0 0.75rem 0.5rem",
+                                  fontSize: "0.6875rem",
+                                  color: "#6b7280",
+                                  lineHeight: 1.3,
+                                }}
+                                title={historyHint}
+                              >
+                                {historyHint}
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
                     <tfoot>
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
-                        <td colSpan={7} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
+                        <td colSpan={8} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                           ${formData.TotalAmount.toFixed(2)}
                         </td>
@@ -1900,8 +2269,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : "Save"}
+            <button
+              type="button"
+              className="btn-draft"
+              disabled={loading}
+              onClick={() => handleSave("draft")}
+            >
+              {savingAction === "draft" ? "Saving..." : "Save as Draft"}
+            </button>
+            <button
+              type="button"
+              className="btn-submit"
+              disabled={loading}
+              onClick={() => handleSave("submit")}
+            >
+              {savingAction === "submit" ? "Saving..." : "Sent"}
             </button>
           </div>
         </form>

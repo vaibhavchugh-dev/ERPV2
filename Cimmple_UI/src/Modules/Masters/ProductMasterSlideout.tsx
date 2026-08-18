@@ -7,23 +7,33 @@ import {
 } from "../../Common/Services/ProductMasterService";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import CustomerQuotationSlideout from "../Quotations/CustomerQuotationSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMasterSlideout.scss";
 
 interface ProductMasterSlideoutProps {
   partNo: string;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
   partNo,
   onClose,
 }) => {
+  const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
+  const formatCurrency = (value?: number) => {
+    if (value === undefined || value === null) return "N/A";
+    return formatCurrencyRaw(value);
+  };
+  const handleDismiss = () => onClose(false);
   const [productData, setProductData] = useState<ProductMasterDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [showQuotationSlideout, setShowQuotationSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
+  const [reorderPoint, setReorderPoint] = useState("");
+  const [reorderQuantity, setReorderQuantity] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (partNo) {
@@ -37,6 +47,12 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
       const product = await ProductMasterService.GetProductById(partNo);
       if (product) {
         setProductData(product);
+        setReorderPoint(
+          product.reorderPoint == null ? "" : String(product.reorderPoint)
+        );
+        setReorderQuantity(
+          product.reorderQuantity == null ? "" : String(product.reorderQuantity)
+        );
       } else {
         toast.error("Product not found");
         onClose();
@@ -47,26 +63,6 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
       onClose();
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (value?: number) => {
-    if (value === undefined || value === null) return "N/A";
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
     }
   };
 
@@ -87,12 +83,58 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
     return null;
   }
 
+  const productMasterId = productData.id || productData.productId;
+  const canEditReorder =
+    productData.source === "ProductMaster" && !!productMasterId;
+
+  const parseOptionalNumber = (value: string): number | null | undefined => {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    return Number.isNaN(n) ? undefined : n;
+  };
+
+  const handleSaveReorder = async () => {
+    if (!canEditReorder || !productMasterId) {
+      toast.error("Sync this part into Product Master before setting reorder.");
+      return;
+    }
+    const rp = parseOptionalNumber(reorderPoint);
+    const rq = parseOptionalNumber(reorderQuantity);
+    if (rp === undefined || (rp != null && rp < 0)) {
+      toast.error("Reorder point must be a number 0 or greater.");
+      return;
+    }
+    if (rq === undefined || (rq != null && rq < 0)) {
+      toast.error("Reorder quantity must be a number 0 or greater.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await ProductMasterService.SaveReorderPolicy({
+        id: productMasterId,
+        reorderPoint: rp,
+        reorderQuantity: rq,
+      });
+      setProductData({
+        ...productData,
+        reorderPoint: saved.reorderPoint ?? null,
+        reorderQuantity: saved.reorderQuantity ?? null,
+      });
+      toast.success("Reorder policy saved. Inventory low stock uses this.");
+    } catch (error: any) {
+      toast.error(error?.message || "Could not save reorder policy.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>Product Details</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -144,6 +186,55 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
                 </div>
               </div>
             </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Sourcing</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={productData.sourcingType || "Make"}
+                  readOnly
+                />
+                <small style={{ color: "#6b7280" }}>
+                  Make = shop-made, Buy = purchased finished good, Both = make-or-buy
+                </small>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Reorder point</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className="form-input"
+                  value={reorderPoint}
+                  onChange={(e) => setReorderPoint(e.target.value)}
+                  readOnly={!canEditReorder}
+                  placeholder={canEditReorder ? "Qty that triggers low stock" : ""}
+                />
+              </div>
+              <div className="form-group">
+                <label>Reorder quantity</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className="form-input"
+                  value={reorderQuantity}
+                  onChange={(e) => setReorderQuantity(e.target.value)}
+                  readOnly={!canEditReorder}
+                  placeholder={canEditReorder ? "Suggested buy/make qty" : ""}
+                />
+              </div>
+            </div>
+            {!canEditReorder && (
+              <small style={{ color: "#6b7280", display: "block", marginTop: "-0.5rem" }}>
+                Sync this part into Product Master to set reorder for Inventory.
+              </small>
+            )}
 
             {/* Second Row: Unit, Avg Price, Min Price, Max Price (4 columns) */}
             <div className="form-row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "1rem" }}>
@@ -449,9 +540,19 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
 
           {/* Footer */}
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Close
             </button>
+            {canEditReorder && (
+              <button
+                type="button"
+                className="btn-submit"
+                onClick={handleSaveReorder}
+                disabled={saving}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            )}
           </div>
         </div>
       </div>

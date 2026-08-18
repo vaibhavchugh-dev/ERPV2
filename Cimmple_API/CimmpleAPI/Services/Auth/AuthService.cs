@@ -168,7 +168,11 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var settings = await GetSettingsAsync(user.TenantID);
-            return (await BuildLoginResponseAsync(user, "erp", settings), null, 200);
+            var portalType = user.VendorId.HasValue && user.VendorId.Value > 0 ? "vendor" : "erp";
+            var response = await BuildLoginResponseAsync(user, portalType, settings);
+            // Persist rotated refresh token — without this, the next refresh fails and the UI force-logs out.
+            await _db.SaveChangesAsync();
+            return (response, null, 200);
         }
 
         public async Task LogoutAsync(int userId)

@@ -6,9 +6,13 @@ const Instense = axios.create();
 
 Instense.defaults.baseURL = `${API_ROOT.backendHost}`;
 
-let refreshPromise: Promise<string | null> | null = null;
-
 const forceRedirectToLogin = () => {
+  try {
+    // Do not set idle-logout flag — 401/session expiry is not inactivity
+    localStorage.removeItem("logOutFromIdlePopUp");
+  } catch {
+    // ignore
+  }
   try {
     AuthService.clearSession("all");
   } catch {
@@ -37,16 +41,10 @@ const getBearerToken = () => {
   return localStorage.getItem("token");
 };
 
+/** Shares AuthService single-flight refresh with SessionKeepAlive. */
 const tryRefreshToken = async (): Promise<string | null> => {
-  if (!refreshPromise) {
-    refreshPromise = (async () => {
-      const refreshed = await AuthService.refresh();
-      return refreshed?.accessToken ?? null;
-    })().finally(() => {
-      refreshPromise = null;
-    });
-  }
-  return refreshPromise;
+  const refreshed = await AuthService.refresh();
+  return refreshed?.accessToken ?? null;
 };
 
 Instense.interceptors.request.use((config) => {
@@ -79,7 +77,7 @@ Instense.interceptors.request.use((config) => {
   }
 
   const locationId = localStorage.getItem("locationId");
-  if (locationId && locationId !== "0") {
+  if (!isVendor && locationId && locationId !== "0") {
     config.headers["X-Location-Id"] = locationId;
   }
 

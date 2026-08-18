@@ -46,6 +46,8 @@ namespace CimmpleAPI.Data.Models
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount ($).</summary>
+        public string? DiscountType { get; set; }
         public int Tenantid { get; set; }
         public int? productid { get; set; }
         public string leadTime { get; set; }
@@ -115,6 +117,8 @@ namespace CimmpleAPI.Data.Models
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount ($).</summary>
+        public string? DiscountType { get; set; }
         public int Tenantid { get; set; }
         public int? productid { get; set; }
         public string leadTime { get; set; }

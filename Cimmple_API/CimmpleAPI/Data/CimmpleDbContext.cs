@@ -51,6 +51,7 @@ namespace CimmpleAPI.Data
         // Job Template Entities
         public DbSet<JobTemplateMaster> JobTemplateMaster { get; set; }
         public DbSet<JobTemplateOperation> JobTemplateOperation { get; set; }
+        public DbSet<JobTemplateMaterial> JobTemplateMaterial { get; set; }
         public DbSet<JobTemplateCategory> JobTemplateCategory { get; set; }
         public DbSet<JobTemplateAttachment> JobTemplateAttachment { get; set; }
 
@@ -77,6 +78,7 @@ namespace CimmpleAPI.Data
 
         // Job Order Entities
         public DbSet<JobOrderMaster> JobOrderMaster { get; set; }
+        public DbSet<JobMaterialRequirement> JobMaterialRequirement { get; set; }
 
         public DbSet<VendorOrder> VendorOrders { get; set; }
         public DbSet<VendorOrderDetail> VendorOrderDetails { get; set; }
@@ -129,6 +131,7 @@ namespace CimmpleAPI.Data
         public DbSet<InventoryTransactionType> InventoryTransactionType { get; set; }
         public DbSet<InventoryLot> InventoryLot { get; set; }
         public DbSet<InventoryLotBalance> InventoryLotBalance { get; set; }
+        public DbSet<InventoryReservation> InventoryReservation { get; set; }
 
         // Transaction Entities
         public DbSet<Transactions> Transactions { get; set; }
@@ -141,6 +144,7 @@ namespace CimmpleAPI.Data
         public DbSet<TransCoa> TransCoa { get; set; }
         public DbSet<GlAccountingPeriodLock> GlAccountingPeriodLocks { get; set; }
         public DbSet<GlAuditEvent> GlAuditEvents { get; set; }
+        public DbSet<AccountingDefaults> AccountingDefaults { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -238,6 +242,26 @@ namespace CimmpleAPI.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            modelBuilder.Entity<JobTemplateMaterial>(entity =>
+            {
+                entity.ToTable("JobTemplateMaterial");
+                entity.Property(e => e.Quantity).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Notes).HasMaxLength(200);
+                entity.HasIndex(e => new { e.JobTemplateId, e.SequenceNumber });
+                entity.HasOne(e => e.JobTemplate)
+                    .WithMany(t => t.Materials)
+                    .HasForeignKey(e => e.JobTemplateId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Product)
+                    .WithMany()
+                    .HasForeignKey(e => e.ProductId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.RawMaterial)
+                    .WithMany()
+                    .HasForeignKey(e => e.RawMaterialId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
             modelBuilder.Entity<JobTemplateCategory>(entity =>
             {
                 entity.ToTable("JobTemplateCategory");
@@ -332,6 +356,8 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.InvoiceStatus).IsRequired(false);
                 // Map ProductId to productid column
                 entity.Property(e => e.ProductId).HasColumnName("productid");
+                entity.Property(e => e.RawMaterialId).HasColumnName("RawMaterialId");
+                entity.HasIndex(e => e.RawMaterialId);
                 entity.HasOne(d => d.VendorOrder)
                     .WithMany(o => o.VendorOrderDetails)
                     .HasForeignKey(d => d.OrderID);
@@ -501,6 +527,26 @@ namespace CimmpleAPI.Data
                     .OnDelete(DeleteBehavior.SetNull);
             });
 
+            modelBuilder.Entity<JobMaterialRequirement>(entity =>
+            {
+                entity.ToTable("JobMaterialRequirement");
+                entity.Property(e => e.QuantityNeeded).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Notes).HasMaxLength(200);
+                entity.HasIndex(e => e.JobOrderId);
+                entity.HasOne(e => e.JobOrder)
+                    .WithMany()
+                    .HasForeignKey(e => e.JobOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(e => e.Product)
+                    .WithMany()
+                    .HasForeignKey(e => e.ProductId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.RawMaterial)
+                    .WithMany()
+                    .HasForeignKey(e => e.RawMaterialId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
             // =============================================
             // INVENTORY MODULE CONFIGURATIONS
             // =============================================
@@ -631,6 +677,17 @@ namespace CimmpleAPI.Data
                 entity.ToTable("GlAuditEvents");
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => new { e.TenantId, e.OccurredUtc });
+            });
+
+            modelBuilder.Entity<AccountingDefaults>(entity =>
+            {
+                entity.ToTable("AccountingDefaults");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.TenantId).IsUnique();
+                entity.Property(e => e.CompanyName).HasMaxLength(200);
+                entity.Property(e => e.FiscalYearStart).HasMaxLength(10);
+                entity.Property(e => e.DefaultCurrency).HasMaxLength(10);
+                entity.Property(e => e.TaxRate).HasColumnType("decimal(18,2)");
             });
 
             // Seed default transaction types

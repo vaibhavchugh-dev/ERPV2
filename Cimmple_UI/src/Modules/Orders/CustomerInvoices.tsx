@@ -6,10 +6,12 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerInvoicesService, CustomerInvoiceSummary } from "../../Common/Services/CustomerInvoicesService";
 import { InvoiceService } from "../../Common/Services/InvoiceService";
+import { PdfService } from "../../Common/Services/PdfService";
 import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -19,6 +21,7 @@ interface CustomerPaymentModalProps {
 }
 
 const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -33,26 +36,6 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
   );
   const [notes, setNotes] = useState('');
   const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,6 +363,7 @@ interface FilterOptions {
 const CustomerInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -458,26 +442,6 @@ const CustomerInvoices: React.FC = () => {
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
   const getStatusBadge = (status: string, daysOverdue?: number) => {
     const statusLower = status.toLowerCase();
 
@@ -525,9 +489,27 @@ const CustomerInvoices: React.FC = () => {
     setShowPaymentModal(true);
   };
 
-  const handlePrintInvoice = (invoice: CustomerInvoiceSummary) => {
-    // TODO: Open print modal or generate PDF
-    toast.info(`Printing invoice ${invoice.invoiceNo}`);
+  const handlePrintInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!invoice?.id) {
+      toast.error("Invoice not loaded");
+      return;
+    }
+
+    try {
+      const blob = await PdfService.GenerateInvoice(invoice.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Invoice_${invoice.invoiceNo || invoice.id}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success("Invoice PDF generated successfully");
+    } catch (error: any) {
+      console.error("Error generating invoice PDF:", error);
+      toast.error(error.response?.data?.error || "Failed to generate invoice PDF");
+    }
   };
 
   const handleVoidInvoice = (invoice: CustomerInvoiceSummary) => {
@@ -731,6 +713,7 @@ const CustomerInvoices: React.FC = () => {
         data={invoices}
         columns={columns}
         loading={loading}
+        enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         filters={[

@@ -1354,6 +1354,79 @@ namespace CimmpleAPI.Data.Migrations
                     b.ToTable("EntityMaster");
                 });
 
+            modelBuilder.Entity("CimmpleAPI.Data.Models.AccountingDefaults", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CompanyName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DefaultAccountsPayableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultAccountsReceivableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DefaultCurrency")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<int?>("DefaultExpenseAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultFreightInAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultFreightOutAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultInputTaxAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultInventoryAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultOtherChargeAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultRevenueAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DefaultSalesTaxPayableAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FiscalYearStart")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<decimal>("TaxRate")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("AccountingDefaults", (string)null);
+                });
+
             modelBuilder.Entity("CimmpleAPI.Data.Models.GlAccountingPeriodLock", b =>
                 {
                     b.Property<int>("Id")
@@ -1535,6 +1608,69 @@ namespace CimmpleAPI.Data.Migrations
                         .HasFilter("[RawMaterialId] IS NOT NULL");
 
                     b.ToTable("InventoryBalance", (string)null);
+                });
+
+            modelBuilder.Entity("CimmpleAPI.Data.Models.InventoryReservation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("CreatedBy")
+                        .HasColumnType("int")
+                        .HasColumnName("CreatedBy");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedDate");
+
+                    b.Property<int>("LocationId")
+                        .HasColumnType("int")
+                        .HasColumnName("LocationId");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("Notes");
+
+                    b.Property<int?>("ProductId")
+                        .HasColumnType("int")
+                        .HasColumnName("ProductId");
+
+                    b.Property<decimal>("Quantity")
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("Quantity");
+
+                    b.Property<int?>("RawMaterialId")
+                        .HasColumnType("int")
+                        .HasColumnName("RawMaterialId");
+
+                    b.Property<int>("ReferenceId")
+                        .HasColumnType("int")
+                        .HasColumnName("ReferenceId");
+
+                    b.Property<string>("ReferenceType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("ReferenceType");
+
+                    b.Property<int>("Tenantid")
+                        .HasColumnType("int")
+                        .HasColumnName("Tenantid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocationId");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("RawMaterialId");
+
+                    b.HasIndex("Tenantid", "ReferenceType", "ReferenceId");
+
+                    b.ToTable("InventoryReservation", (string)null);
                 });
 
             modelBuilder.Entity("CimmpleAPI.Data.Models.InventoryLot", b =>
@@ -2037,6 +2173,9 @@ namespace CimmpleAPI.Data.Migrations
 
                     b.Property<DateTime>("DueDate")
                         .HasColumnType("datetime2");
+
+                    b.Property<bool>("EnableJobTracking")
+                        .HasColumnType("bit");
 
                     b.Property<string>("JobDesc")
                         .HasColumnType("nvarchar(max)");
@@ -2814,6 +2953,10 @@ namespace CimmpleAPI.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("PoNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("Photos")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
@@ -2871,6 +3014,16 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<int>("TotalQuantity")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("VendorId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("VendorName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int?>("VendorOrderId")
                         .HasColumnType("int");
 
                     b.HasKey("NcrId");
@@ -3187,6 +3340,16 @@ namespace CimmpleAPI.Data.Migrations
 
                     b.Property<string>("pdescription")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SourcingType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<decimal?>("ReorderPoint")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("ReorderQuantity")
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("tenantid")
                         .HasColumnType("int");
@@ -4234,6 +4397,9 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<int>("accountid")
                         .HasColumnType("int");
 
+                    b.Property<int?>("expenseAccountId")
+                        .HasColumnType("int");
+
                     b.Property<int>("vendorid")
                         .HasColumnType("int");
 
@@ -4362,6 +4528,9 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("FreightCharge")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("PaidAmount")
@@ -4853,6 +5022,10 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("int")
                         .HasColumnName("QtyOrdered");
 
+                    b.Property<int?>("RawMaterialId")
+                        .HasColumnType("int")
+                        .HasColumnName("RawMaterialId");
+
                     b.Property<string>("Received")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)")
@@ -4891,6 +5064,8 @@ namespace CimmpleAPI.Data.Migrations
                     b.HasKey("ID");
 
                     b.HasIndex("OrderID");
+
+                    b.HasIndex("RawMaterialId");
 
                     b.ToTable("VendorOrderDetails", (string)null);
                 });
@@ -5030,6 +5205,10 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<int>("JobPriority")
                         .HasColumnType("int");
 
+                    b.Property<string>("LineType")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<int>("OrderID")
                         .HasColumnType("int");
 
@@ -5067,6 +5246,9 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("productid")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RawMaterialId")
                         .HasColumnType("int");
 
                     b.HasKey("ID");
@@ -5377,6 +5559,31 @@ namespace CimmpleAPI.Data.Migrations
                 });
 
             modelBuilder.Entity("CimmpleAPI.Data.Models.InventoryBalance", b =>
+                {
+                    b.HasOne("CimmpleAPI.Data.Models.Location", "Location")
+                        .WithMany()
+                        .HasForeignKey("LocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("CimmpleAPI.Data.Models.ProductMaster", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("CimmpleAPI.Data.Models.RawMaterialMaster", "RawMaterial")
+                        .WithMany()
+                        .HasForeignKey("RawMaterialId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Location");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("RawMaterial");
+                });
+
+            modelBuilder.Entity("CimmpleAPI.Data.Models.InventoryReservation", b =>
                 {
                     b.HasOne("CimmpleAPI.Data.Models.Location", "Location")
                         .WithMany()

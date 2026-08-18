@@ -28,16 +28,12 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetInvoiceableItems called - TenantId: {tenantId}, OrderId: {orderId}");
 
                 var detailsList = _context.CustomerOrderDetails
+                    .AsNoTracking()
                     .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
                     .ToList();
 
-                Console.WriteLine($"Found {detailsList.Count} order details for order {orderId}");
-
-                // Calculate InvoicedQty from InvoiceDetails (same as GetOrderById)
-                // This ensures accuracy even if stored value is out of sync
                 var orderDetailIds = detailsList.Select(d => d.ID).ToList();
                 var invoiceDetails = _context.InvoiceDetail
                     .Where(id => id.OrderDetailID.HasValue && orderDetailIds.Contains(id.OrderDetailID.Value))
@@ -46,13 +42,33 @@ namespace CimmpleAPI.Controllers
                         im => im.Id,
                         (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
                     .Where(x => x.TenantId == tenantId)
-                    .GroupBy(x => x.OrderDetailID.Value)
+                    .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
-                var invoiceableItems = detailsList.Select(d => {
+                var shippedByDetail = _context.ShippingDetails
+                    .Where(sd => sd.OrderDetailID.HasValue && orderDetailIds.Contains(sd.OrderDetailID.Value))
+                    .Join(_context.Shipping,
+                        sd => sd.ShipmentId,
+                        s => s.Id,
+                        (sd, s) => new { sd.OrderDetailID, sd.ShippedQty, s.TenantId })
+                    .Where(x => x.TenantId == tenantId)
+                    .GroupBy(x => x.OrderDetailID!.Value)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
+
+                var jobOrdersByDetail = _context.JobOrderMaster
+                    .AsNoTracking()
+                    .Where(jo => jo.Tenantid == tenantId && orderDetailIds.Contains(jo.CustomerOrderDetailID))
+                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status })
+                    .ToList()
+                    .GroupBy(jo => jo.CustomerOrderDetailID)
+                    .ToDictionary(g => g.Key, g => g.First().Status ?? "Draft");
+
+                var invoiceableItems = detailsList.Select(d =>
+                {
                     var calculatedInvoicedQty = invoiceDetails.ContainsKey(d.ID) ? invoiceDetails[d.ID] : d.InvoicedQty;
-                    var shippedQty = GetShippedQtyForOrderDetail(d.ID, tenantId);
+                    var shippedQty = shippedByDetail.ContainsKey(d.ID) ? shippedByDetail[d.ID] : 0;
                     var availableToInvoice = shippedQty - calculatedInvoicedQty;
+                    var hasJobOrder = jobOrdersByDetail.ContainsKey(d.ID);
 
                     return new
                     {
@@ -67,21 +83,10 @@ namespace CimmpleAPI.Controllers
                         invoiceStatus = d.InvoiceStatus ?? "Not Invoiced",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
-                        hasJobOrder = _context.JobOrderMaster
-                            .Any(jo => jo.CustomerOrderDetailID == d.ID && jo.Tenantid == tenantId),
-                        jobOrderStatus = _context.JobOrderMaster
-                            .Where(jo => jo.CustomerOrderDetailID == d.ID && jo.Tenantid == tenantId)
-                            .Select(jo => jo.Status)
-                            .FirstOrDefault() ?? "No Job Order"
+                        hasJobOrder,
+                        jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order"
                     };
                 }).ToList();
-
-                var itemsWithAvailableQty = invoiceableItems.Where(i => i.availableQty > 0).ToList();
-                Console.WriteLine($"Found {itemsWithAvailableQty.Count} items with available quantity to invoice out of {invoiceableItems.Count} total items");
-                if (itemsWithAvailableQty.Count > 0)
-                {
-                    Console.WriteLine($"Items with available quantity: {string.Join(", ", itemsWithAvailableQty.Select(i => $"Item {i.itemNo} ({i.partNo}): {i.availableQty} available (shipped: {i.shippedQty}, invoiced: {i.invoicedQty})"))}");
-                }
 
                 return Ok(new { result = invoiceableItems });
             }
@@ -125,12 +130,51 @@ namespace CimmpleAPI.Controllers
                     // Generate invoice number
                     var invoiceNumber = GenerateInvoiceNumber(tenantId);
 
-                    // Calculate totals
+                    // Calculate totals (Amount = line net; TotalAmount = net + tax + shipping + other)
                     decimal subtotal = 0;
                     foreach (var item in request.LineItems)
                     {
                         var lineTotal = (item.UnitPrice * item.QtyToInvoice) * (1 - item.Discount / 100);
                         subtotal += lineTotal;
+                    }
+                    subtotal = Math.Round(subtotal, 2);
+
+                    var saleTaxRate = request.SaleTax ?? 0m;
+                    if (saleTaxRate < 0m || saleTaxRate > 100m)
+                        return BadRequest(new { error = "Sale tax rate must be between 0 and 100." });
+
+                    var saleTaxAmount = GlAccountResolutionService.ResolveTaxAmount(
+                        subtotal, saleTaxRate, request.SaleTaxAmount);
+                    if (saleTaxAmount > 0m)
+                    {
+                        var salesTaxAccountId = GlAccountResolutionService.ResolveSalesTaxPayable(_context, tenantId);
+                        if (!salesTaxAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Sales tax was entered but Sales Tax Payable is not configured. Set Default Sales Tax Payable in Accounting Setup → Default Accounts."
+                            });
+                        }
+                    }
+
+                    var shippingCharge = GlAccountResolutionService.NormalizeChargeAmount(request.ShippingCharge);
+                    if (shippingCharge > 0m &&
+                        !GlAccountResolutionService.ResolveFreightOut(_context, tenantId).HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Shipping/freight was entered but Freight Out is not configured. Set Default Freight Out in Accounting Setup → Default Accounts."
+                        });
+                    }
+
+                    var otherCharge = GlAccountResolutionService.NormalizeChargeAmount(request.OtherCharge);
+                    if (otherCharge > 0m &&
+                        !GlAccountResolutionService.ResolveOtherCharge(_context, tenantId).HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Other charge was entered but Other Charge account is not configured. Set Default Other Charge in Accounting Setup → Default Accounts."
+                        });
                     }
 
                     // Create invoice header
@@ -142,12 +186,12 @@ namespace CimmpleAPI.Controllers
                         InvoiceDate = request.InvoiceDate ?? DateTime.Now,
                         DueDate = request.DueDate ?? DateTime.Now.AddDays(30),
                         AccountingPeriod = $"{DateTime.Now.Year}{DateTime.Now.Month:D2}", // YYYYMM format
-                        ShippingCharge = 0,
-                        OtherCharge = 0,
-                        SaleTax = 0,
-                        SaleTaxAmount = 0,
+                        ShippingCharge = shippingCharge,
+                        OtherCharge = otherCharge,
+                        SaleTax = saleTaxRate,
+                        SaleTaxAmount = saleTaxAmount,
                         Amount = subtotal,
-                        TotalAmount = subtotal, // Could add tax, shipping, etc. later
+                        TotalAmount = Math.Round(subtotal + saleTaxAmount + shippingCharge + otherCharge, 2),
                         PaidAmount = 0,
                         InternalNotes = request.Notes ?? "",
                         CheckNo = "", // Initialize required string field
@@ -210,13 +254,13 @@ namespace CimmpleAPI.Controllers
                     UpdateOrderInvoiceStatus(request.OrderId, tenantId);
 
                     // Auto-post invoice to GL so P&L receives revenue activity.
-                    var receivableAccountId = ResolveAccountsReceivableGlAccountId(tenantId);
+                    var receivableAccountId = GlAccountResolutionService.ResolveAccountsReceivable(_context, tenantId);
                     if (!receivableAccountId.HasValue)
-                        return BadRequest(new { error = "Unable to determine Accounts Receivable GL account. Configure an active AR account in Chart of Accounts." });
+                        return BadRequest(new { error = "Unable to determine Accounts Receivable GL account. Set Default Accounts Receivable in Accounting Setup, or configure an active AR account in Chart of Accounts." });
 
-                    var revenueAccountId = ResolveRevenueGlAccountId(tenantId);
+                    var revenueAccountId = GlAccountResolutionService.ResolveRevenue(_context, tenantId);
                     if (!revenueAccountId.HasValue)
-                        return BadRequest(new { error = "Unable to determine Revenue GL account. Configure an active Revenue account in Chart of Accounts." });
+                        return BadRequest(new { error = "Unable to determine Revenue GL account. Set Default Revenue in Accounting Setup, or configure an active Revenue account in Chart of Accounts." });
 
                     var invoicePeriodKey = !string.IsNullOrWhiteSpace(invoice.AccountingPeriod) &&
                                            GlWorkflowService.TryNormalizePeriodKey(invoice.AccountingPeriod, out var normalizedPeriod, out _)
@@ -243,6 +287,7 @@ namespace CimmpleAPI.Controllers
                     _context.JournalEntries.Add(invoiceHeader);
                     _context.SaveChanges();
 
+                    // Dr AR (gross). Cr Revenue (net). Cr tax / shipping / other when applicable.
                     _context.JournalEntryFrom.Add(new JournalDetailsFrom
                     {
                         JournalEntryId = invoiceHeader.Id,
@@ -254,9 +299,42 @@ namespace CimmpleAPI.Controllers
                     {
                         JournalEntryId = invoiceHeader.Id,
                         AccountId = revenueAccountId.Value,
-                        Amount = invoice.TotalAmount,
+                        Amount = invoice.Amount,
                         Description = postingDesc
                     });
+                    if (invoice.SaleTaxAmount > 0m)
+                    {
+                        var salesTaxAccountId = GlAccountResolutionService.ResolveSalesTaxPayable(_context, tenantId);
+                        _context.JournalEntryTo.Add(new JournalDetailsTo
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = salesTaxAccountId!.Value,
+                            Amount = invoice.SaleTaxAmount,
+                            Description = $"{postingDesc} (sales tax)"
+                        });
+                    }
+                    if (invoice.ShippingCharge > 0m)
+                    {
+                        var freightOutAccountId = GlAccountResolutionService.ResolveFreightOut(_context, tenantId);
+                        _context.JournalEntryTo.Add(new JournalDetailsTo
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = freightOutAccountId!.Value,
+                            Amount = invoice.ShippingCharge,
+                            Description = $"{postingDesc} (shipping)"
+                        });
+                    }
+                    if (invoice.OtherCharge > 0m)
+                    {
+                        var otherChargeAccountId = GlAccountResolutionService.ResolveOtherCharge(_context, tenantId);
+                        _context.JournalEntryTo.Add(new JournalDetailsTo
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = otherChargeAccountId!.Value,
+                            Amount = invoice.OtherCharge,
+                            Description = $"{postingDesc} (other charge)"
+                        });
+                    }
 
                     GlWorkflowService.AddAudit(_context, tenantId, "CustomerInvoiceAutoPost", GetUserId(), invoiceHeader.Id, null, invoicePeriodKey, postingRef);
                     _context.SaveChanges();
@@ -429,88 +507,80 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetAllInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
+                var now = DateTime.Now;
 
-                // Debug: Check if there are any invoices at all
-                var totalInvoices = _context.InvoiceMaster.Where(im => im.TenantId == tenantId).Count();
-                Console.WriteLine($"Total invoices in database for tenant {tenantId}: {totalInvoices}");
-
-                var totalInvoiceDetails = _context.InvoiceDetail
-                    .Join(_context.InvoiceMaster, id => id.InvoiceId, im => im.Id, (id, im) => new { id, im })
-                    .Where(x => x.im.TenantId == tenantId)
-                    .Count();
-                Console.WriteLine($"Total invoice details in database for tenant {tenantId}: {totalInvoiceDetails}");
-
-                // Debug: Check customer orders and their invoicing status
-                var customerOrdersWithInvoicing = _context.CustomerOrderDetails
-                    .Where(cod => cod.Tenantid == tenantId)
-                    .Select(cod => new {
-                        OrderId = cod.OrderID,
-                        PartNo = cod.PartNo,
-                        QtyOrdered = cod.QtyOrdered,
-                        ShippedQty = cod.ShippedQty,
-                        InvoicedQty = cod.InvoicedQty,
-                        InvoiceStatus = cod.InvoiceStatus
-                    })
-                    .ToList();
-
-                Console.WriteLine($"Customer order details for tenant {tenantId}:");
-                foreach (var detail in customerOrdersWithInvoicing)
+                DateTime? startDate = null;
+                DateTime? endDate = null;
+                switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
-                    Console.WriteLine($"  Order {detail.OrderId}, Part {detail.PartNo}: Ordered={detail.QtyOrdered}, Invoiced={detail.InvoicedQty}, Status={detail.InvoiceStatus}");
+                    case "last 7 days":
+                        startDate = now.Date.AddDays(-7);
+                        break;
+                    case "last 30 days":
+                        startDate = now.Date.AddDays(-30);
+                        break;
+                    case "this month":
+                        startDate = new DateTime(now.Year, now.Month, 1);
+                        break;
+                    case "last month":
+                        startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                        endDate = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                        break;
+                    case "all":
+                        break;
+                    default:
+                        startDate = now.Date.AddDays(-30);
+                        break;
                 }
 
-                // Check if there are any shipped but not invoiced items
-                var shippedNotInvoiced = customerOrdersWithInvoicing
-                    .Where(d => d.InvoicedQty < d.QtyOrdered && d.ShippedQty > d.InvoicedQty)
-                    .ToList();
-
-                Console.WriteLine($"Items that can be invoiced (shipped but not fully invoiced): {shippedNotInvoiced.Count}");
-                foreach (var item in shippedNotInvoiced)
-                {
-                    Console.WriteLine($"  Order {item.OrderId}, Part {item.PartNo}: Shipped={item.ShippedQty}, Invoiced={item.InvoicedQty}, Can invoice={item.ShippedQty - item.InvoicedQty}");
-                }
-                Console.WriteLine($"GetAllInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
-
-                // Get all customer invoices from database (simplified approach)
-                var invoiceIds = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId)
-                    .Select(im => im.Id)
-                    .ToList();
-
-                var invoices = new List<dynamic>();
-                foreach (var invoiceId in invoiceIds)
-                {
-                    var invoice = _context.InvoiceMaster
-                        .Where(im => im.Id == invoiceId)
-                        .First();
-
-                    var invoiceDetails = _context.InvoiceDetail
-                        .Where(id => id.InvoiceId == invoiceId)
-                        .ToList();
-
-                    var orderId = invoiceDetails.FirstOrDefault()?.OrderId ?? 0;
-                    var customerOrder = _context.CustomerOrder
-                        .Where(co => co.OrderID == orderId && co.Tenantid == tenantId)
-                        .FirstOrDefault();
-
-                    if (customerOrder != null)
+                var detailAggs = _context.InvoiceDetail.AsNoTracking()
+                    .GroupBy(d => d.InvoiceId)
+                    .Select(g => new
                     {
-                        invoices.Add(new
-                        {
-                            Invoice = invoice,
-                            CustomerOrder = customerOrder,
-                            TotalItems = invoiceDetails.Sum(id => id.qty),
-                            ItemCount = invoiceDetails.Count(),
-                            TotalAmount = invoice.TotalAmount
-                        });
-                    }
+                        InvoiceId = g.Key,
+                        TotalItems = g.Sum(x => x.qty),
+                        ItemCount = g.Count(),
+                        OrderId = g.Min(x => x.OrderId)
+                    });
+
+                var query =
+                    from im in _context.InvoiceMaster.AsNoTracking()
+                    where im.TenantId == tenantId
+                    join agg in detailAggs on im.Id equals agg.InvoiceId
+                    join co in _context.CustomerOrder.AsNoTracking()
+                        on new { OrderID = agg.OrderId, Tenantid = tenantId }
+                        equals new { co.OrderID, co.Tenantid }
+                    select new
+                    {
+                        Invoice = im,
+                        CustomerOrder = co,
+                        agg.TotalItems,
+                        agg.ItemCount
+                    };
+
+                if (startDate.HasValue)
+                    query = query.Where(x => x.Invoice.InvoiceDate >= startDate.Value);
+                if (endDate.HasValue)
+                    query = query.Where(x => x.Invoice.InvoiceDate <= endDate.Value);
+                if (customerId.HasValue)
+                    query = query.Where(x => x.CustomerOrder.CustomerID == customerId.Value);
+                if (!string.IsNullOrWhiteSpace(searchTerm))
+                {
+                    var term = searchTerm.Trim();
+                    var numericMatch = int.TryParse(term, out var numericValue) ? numericValue : (int?)null;
+                    query = query.Where(x =>
+                        (x.Invoice.PrefixInvoiceNo != null && x.Invoice.PrefixInvoiceNo.Contains(term)) ||
+                        (numericMatch.HasValue && x.Invoice.InvoiceNo == numericMatch.Value) ||
+                        (numericMatch.HasValue && x.CustomerOrder.PONumber == numericMatch.Value) ||
+                        (x.CustomerOrder.CustomerName != null && x.CustomerOrder.CustomerName.Contains(term)) ||
+                        (x.CustomerOrder.customercode != null && x.CustomerOrder.customercode.Contains(term)));
                 }
 
-                Console.WriteLine($"Found {invoices.Count} customer invoices in database");
+                var rows = query
+                    .OrderByDescending(x => x.Invoice.InvoiceDate)
+                    .ToList();
 
-                // Format the results
-                var invoiceSummaries = invoices
+                var invoiceSummaries = rows
                     .Select(x => new
                     {
                         id = x.Invoice.Id,
@@ -524,71 +594,26 @@ namespace CimmpleAPI.Controllers
                         totalItems = x.TotalItems,
                         itemCount = x.ItemCount,
                         amount = x.Invoice.Amount,
-                        totalAmount = x.TotalAmount,
+                        totalAmount = x.Invoice.TotalAmount,
                         paidAmount = GetEffectivePaidAmount(x.Invoice),
                         balanceDue = GetBalanceDue(x.Invoice),
                         status = ResolveCustomerInvoiceStatus(x.Invoice),
                         daysOverdue = GetDaysOverdue(x.Invoice)
                     })
-                    .OrderByDescending(x => x.invoiceDate)
                     .ToList();
 
-                Console.WriteLine($"GetAllInvoices - Found {invoiceSummaries.Count} customer invoices");
-
-                // Apply filters
-                if (!string.IsNullOrEmpty(searchTerm))
+                if (!string.IsNullOrWhiteSpace(status) &&
+                    !string.Equals(status, "All", StringComparison.OrdinalIgnoreCase))
                 {
-                    invoiceSummaries = invoiceSummaries.Where(x =>
-                        x.invoiceNo.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
-                        x.customerName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
-                        x.orderNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)).ToList();
+                    invoiceSummaries = invoiceSummaries
+                        .Where(x => string.Equals(x.status, status, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
                 }
-
-                if (customerId.HasValue)
-                {
-                    // Filter by customer - we'd need to join with customer table
-                    // For now, skip this filter
-                }
-
-                // Date range filter (simplified)
-                var startDate = DateTime.Now.AddDays(-30);
-                switch (dateRange.ToLower())
-                {
-                    case "Last 7 Days":
-                        startDate = DateTime.Now.AddDays(-7);
-                        break;
-                    case "Last 30 Days":
-                        startDate = DateTime.Now.AddDays(-30);
-                        break;
-                    case "This Month":
-                        startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
-                        break;
-                    case "Last Month":
-                        startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1);
-                        var endOfLastMonth = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddDays(-1);
-                        invoiceSummaries = invoiceSummaries.Where(x =>
-                            DateTime.Parse(x.invoiceDate) >= startDate &&
-                            DateTime.Parse(x.invoiceDate) <= endOfLastMonth).ToList();
-                        break;
-                    case "All":
-                    default:
-                        startDate = DateTime.MinValue;
-                        break;
-                }
-
-                if (startDate != DateTime.MinValue && dateRange.ToLower() != "last month")
-                {
-                    invoiceSummaries = invoiceSummaries.Where(x => DateTime.Parse(x.invoiceDate) >= startDate).ToList();
-                }
-
-                Console.WriteLine($"GetAllInvoices - Returning {invoiceSummaries.Count} filtered invoices");
 
                 return Ok(new { result = invoiceSummaries });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in GetAllInvoices: {ex.Message}");
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
                 return StatusCode(500, new { error = ex.Message });
             }
         }
@@ -871,7 +896,7 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
-                    var bankAccountId = ResolveBankGlAccountId(tenantId, bankId);
+                    var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
                     if (!bankAccountId.HasValue)
                     {
                         return BadRequest(new
@@ -880,7 +905,7 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    var accountsReceivableAccountId = ResolveAccountsReceivableGlAccountId(tenantId);
+                    var accountsReceivableAccountId = GlAccountResolutionService.ResolveAccountsReceivable(_context, tenantId);
                     if (!accountsReceivableAccountId.HasValue)
                     {
                         return BadRequest(new
@@ -1011,102 +1036,6 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private int? ResolveBankGlAccountId(int tenantId, int? bankId)
-        {
-            if (bankId.HasValue && bankId.Value > 0)
-            {
-                var mappedAccountId = _context.BankCOAMapping
-                    .Where(m => m.bankid == bankId.Value)
-                    .Select(m => (int?)m.accountid)
-                    .FirstOrDefault();
-
-                if (mappedAccountId.HasValue && IsActiveAccountForTenant(tenantId, mappedAccountId.Value))
-                    return mappedAccountId.Value;
-
-                var bank = _context.BankMaster
-                    .AsNoTracking()
-                    .FirstOrDefault(b => b.Id == bankId.Value && b.TenantId == tenantId);
-                if (bank != null && !string.IsNullOrWhiteSpace(bank.coa))
-                {
-                    if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
-                        IsActiveAccountForTenant(tenantId, parsedAccountId))
-                    {
-                        return parsedAccountId;
-                    }
-
-                    var byCode = _context.ChartofAccounts
-                        .AsNoTracking()
-                        .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == bank.coa.Trim())
-                        .Select(c => (int?)c.AccountID)
-                        .FirstOrDefault();
-                    if (byCode.HasValue)
-                        return byCode;
-                }
-            }
-
-            // Final fallback: allow posting to the first active cash/bank account for the tenant.
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("bank") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("cash") ? 1 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("bank") ? 2 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("cash") ? 3 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("bank") ? 4 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("cash") ? 5 : 6)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && (c.AccountType.ToLower().Contains("bank") || c.AccountType.ToLower().Contains("cash"))) ||
-                    (c.AccountName != null && (c.AccountName.ToLower().Contains("bank") || c.AccountName.ToLower().Contains("cash"))) ||
-                    (c.MainGroup != null && (c.MainGroup.ToLower().Contains("bank") || c.MainGroup.ToLower().Contains("cash"))))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveAccountsReceivableGlAccountId(int tenantId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountName != null && c.AccountName.ToLower().Contains("accounts receivable") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("receivable") ? 1 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("receivable") ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountName != null && c.AccountName.ToLower().Contains("receivable")) ||
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("receivable")) ||
-                    (c.MainGroup != null && c.MainGroup.ToLower().Contains("receivable")))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveRevenueGlAccountId(int tenantId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("revenue") ? 0 :
-                    c.AccountName != null && (c.AccountName.ToLower().Contains("revenue") || c.AccountName.ToLower().Contains("sales")) ? 1 :
-                    c.MainGroup != null && (c.MainGroup.ToLower().Contains("revenue") || c.MainGroup.ToLower().Contains("sales")) ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("revenue")) ||
-                    (c.AccountName != null && (c.AccountName.ToLower().Contains("revenue") || c.AccountName.ToLower().Contains("sales"))) ||
-                    (c.MainGroup != null && (c.MainGroup.ToLower().Contains("revenue") || c.MainGroup.ToLower().Contains("sales"))))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private bool IsActiveAccountForTenant(int tenantId, int accountId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Any(c => c.Tenantid == tenantId && c.AccountID == accountId && c.IsActive);
-        }
-
         private static string BuildAutoPostingReference(string prefix, string? documentNo, int documentId)
         {
             var safeDoc = string.IsNullOrWhiteSpace(documentNo) ? documentId.ToString() : documentNo.Trim();
@@ -1173,6 +1102,14 @@ namespace CimmpleAPI.Controllers
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
         public string Notes { get; set; }
+        /// <summary>Optional sales tax rate percent (0–100).</summary>
+        public decimal? SaleTax { get; set; }
+        /// <summary>Optional sales tax amount. When omitted, computed from SaleTax × net subtotal.</summary>
+        public decimal? SaleTaxAmount { get; set; }
+        /// <summary>Optional shipping / freight billed to customer.</summary>
+        public decimal? ShippingCharge { get; set; }
+        /// <summary>Optional other charges billed to customer.</summary>
+        public decimal? OtherCharge { get; set; }
     }
 
     public class InvoiceLineItem

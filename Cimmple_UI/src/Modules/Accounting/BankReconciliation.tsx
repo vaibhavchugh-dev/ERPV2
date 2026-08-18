@@ -4,8 +4,11 @@ import { faUniversity, faCheckCircle, faExclamationTriangle, faSync, faDownload,
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, BankTransaction, BankAccount } from "../../Common/Services/AccountingService";
 import { BankService } from "../../Common/Services/BankService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const BankReconciliation: React.FC = () => {
+  const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
+  const formatCurrency = (amount: number) => formatCurrencyRaw(Math.abs(amount));
   const [selectedAccount, setSelectedAccount] = useState<number>(1);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
@@ -157,21 +160,6 @@ const BankReconciliation: React.FC = () => {
 
   const handleExportReport = () => {
     toast.success('Reconciliation report exported');
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(Math.abs(amount));
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
   };
 
   const selectedAccountData = accounts.find(acc => acc.id === selectedAccount);

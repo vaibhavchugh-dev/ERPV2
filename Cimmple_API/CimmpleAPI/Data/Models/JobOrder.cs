@@ -38,6 +38,7 @@ namespace CimmpleAPI.Data.Models
         [MaxLength(50)]
         public string? JobTemplateCode { get; set; }
         public int? JobTemplateRevision { get; set; }
+        public bool EnableJobTracking { get; set; }
         public DateTime CreatedDate { get; set; }
         public DateTime? ModifiedDate { get; set; }
     }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -16,11 +17,70 @@ namespace CimmpleAPI.Controllers
     [ApiController]
     public class QualityController : ApiBaseController
     {
-        private readonly CimmpleDbContext _context;
+        private static readonly HashSet<string> AllowedPhotoExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"
+        };
+        private const long MaxPhotoSizeBytes = 8 * 1024 * 1024;
+        private const int MaxPhotosPerNcr = 10;
 
-        public QualityController(CimmpleDbContext context)
+        private readonly CimmpleDbContext _context;
+        private readonly IWebHostEnvironment _environment;
+
+        public QualityController(CimmpleDbContext context, IWebHostEnvironment environment)
         {
             _context = context;
+            _environment = environment;
+        }
+
+        private static int _ncrExternalColumnsReady;
+
+        private async Task EnsureNcrExternalColumnsAsync()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _ncrExternalColumnsReady, 1, 0) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await _context.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH('dbo.NonConformanceReports', 'VendorId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        VendorId int NULL,
+        VendorName nvarchar(200) NULL,
+        VendorOrderId int NULL,
+        PoNumber nvarchar(50) NULL;
+END
+IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        NcrCodeId int NULL,
+        NcrCode nvarchar(50) NULL;
+END");
+            }
+            catch
+            {
+                System.Threading.Interlocked.Exchange(ref _ncrExternalColumnsReady, 0);
+            }
+        }
+
+        private async Task ResolveNcrCodeFieldsAsync(NonConformanceReport ncr)
+        {
+            if (ncr.NcrCodeId.GetValueOrDefault() > 0)
+            {
+                var code = await _context.NCRCodeMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == ncr.NcrCodeId && c.TenantId == ncr.TenantId);
+
+                ncr.NcrCode = code?.NCRCode ?? "";
+            }
+            else
+            {
+                ncr.NcrCodeId = null;
+                ncr.NcrCode = ncr.NcrCode ?? "";
+            }
         }
 
                 // GET: api/Quality/FixDatabase
@@ -274,61 +334,229 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string severity = null,
             [FromQuery] string source = null,
             [FromQuery] int? jobOrderId = null,
+            [FromQuery] int? customerId = null,
             [FromQuery] string dateFrom = null,
-            [FromQuery] string dateTo = null)
+            [FromQuery] string dateTo = null,
+            [FromQuery] bool overdueOnly = false,
+            [FromQuery] bool openOnly = false)
         {
             try
             {
-                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}");
+                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}, status={status}, category={category}, severity={severity}, source={source}, jobOrderId={jobOrderId}, customerId={customerId}, dateFrom={dateFrom}, dateTo={dateTo}, overdueOnly={overdueOnly}, openOnly={openOnly}");
 
-                // Use raw SQL to completely bypass EF null reference issues
-                var rawResults = await _context.NonConformanceReports
-                    .FromSqlRaw(@"
-                        SELECT
-                            NcrId,
-                            ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
-                            ISNULL(Title, 'Untitled NCR') as Title,
-                            ISNULL(Description, '') as Description,
-                            ISNULL(Category, 'Other') as Category,
-                            ISNULL(Severity, 'Minor') as Severity,
-                            ISNULL(Status, 'Open') as Status,
-                            ISNULL(Source, 'Internal') as Source,
-                            ReportedBy,
-                            ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
-                            Photos,
-                            ReportedDate,
-                            CreatedDate
-                        FROM NonConformanceReports
-                        WHERE TenantId = {0}", tenantId)
-                    .AsNoTracking()
-                    .OrderByDescending(n => n.ReportedDate)
-                    .Select(n => new {
-                        ncrId = n.NcrId,
-                        ncrNumber = n.NcrNumber,
-                        title = n.Title,
-                        description = n.Description ?? "",
-                        category = n.Category,
-                        severity = n.Severity,
-                        status = n.Status,
-                        source = n.Source,
-                        reportedBy = n.ReportedBy,
-                        reportedByName = n.ReportedByName ?? "Unknown User",
-                        photos = n.Photos ?? "",
-                        reportedDate = n.ReportedDate.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                        createdDate = n.CreatedDate.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                    })
-                    .ToListAsync();
+                await EnsureNcrExternalColumnsAsync();
 
-                Console.WriteLine($"Raw SQL query returned {rawResults.Count} NCRs");
-                if (rawResults.Count > 0) {
-                    Console.WriteLine("NCR IDs in result:");
-                    foreach (var ncr in rawResults) {
-                        Console.WriteLine($"  NCR ID: {ncr.ncrId}, Number: {ncr.ncrNumber}, Title: {ncr.title}");
+                var sql = @"
+                    SELECT
+                        NcrId,
+                        ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                        ISNULL(Title, 'Untitled NCR') as Title,
+                        ISNULL(Description, '') as Description,
+                        ISNULL(Category, 'Other') as Category,
+                        ISNULL(Severity, 'Minor') as Severity,
+                        ISNULL(Status, 'Open') as Status,
+                        ISNULL(Source, 'Internal') as Source,
+                        JobOrderId,
+                        ISNULL(JobOrderNumber, '') as JobOrderNumber,
+                        ISNULL(PartNo, '') as PartNo,
+                        ISNULL(PartName, '') as PartName,
+                        CustomerId,
+                        ISNULL(CustomerName, '') as CustomerName,
+                        VendorId,
+                        ISNULL(VendorName, '') as VendorName,
+                        VendorOrderId,
+                        ISNULL(PoNumber, '') as PoNumber,
+                        NcrCodeId,
+                        ISNULL(NcrCode, '') as NcrCode,
+                        ReportedBy,
+                        ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                        Photos,
+                        ReportedDate,
+                        DueDate,
+                        CreatedDate
+                    FROM NonConformanceReports
+                    WHERE TenantId = @tenantId";
+
+                var parameters = new List<(string Name, object Value)>
+                {
+                    ("@tenantId", tenantId)
+                };
+
+                if (openOnly)
+                {
+                    sql += " AND Status IN ('Open', 'Under_Investigation')";
+                }
+                else if (!string.IsNullOrWhiteSpace(status) &&
+                         !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Status = @status";
+                    parameters.Add(("@status", status.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(category) &&
+                    !string.Equals(category, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Category = @category";
+                    parameters.Add(("@category", category.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(severity) &&
+                    !string.Equals(severity, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Severity = @severity";
+                    parameters.Add(("@severity", severity.Trim()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(source) &&
+                    !string.Equals(source, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    sql += " AND Source = @source";
+                    parameters.Add(("@source", source.Trim()));
+                }
+
+                if (jobOrderId.HasValue && jobOrderId.Value > 0)
+                {
+                    sql += " AND JobOrderId = @jobOrderId";
+                    parameters.Add(("@jobOrderId", jobOrderId.Value));
+                }
+
+                if (customerId.HasValue && customerId.Value > 0)
+                {
+                    sql += " AND CustomerId = @customerId";
+                    parameters.Add(("@customerId", customerId.Value));
+                }
+
+                if (DateTime.TryParse(dateFrom, out var parsedFrom))
+                {
+                    sql += " AND ReportedDate >= @dateFrom";
+                    parameters.Add(("@dateFrom", parsedFrom.Date));
+                }
+
+                if (DateTime.TryParse(dateTo, out var parsedTo))
+                {
+                    // Inclusive end-of-day for date-only strings
+                    var exclusiveEnd = parsedTo.Date.AddDays(1);
+                    sql += " AND ReportedDate < @dateTo";
+                    parameters.Add(("@dateTo", exclusiveEnd));
+                }
+
+                if (overdueOnly)
+                {
+                    sql += " AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status <> 'Closed'";
+                }
+
+                sql += " ORDER BY ReportedDate DESC";
+
+                var rawResults = new List<object>();
+
+                await _context.Database.OpenConnectionAsync();
+                try
+                {
+                    using (var command = _context.Database.GetDbConnection().CreateCommand())
+                    {
+                        command.CommandText = sql;
+                        foreach (var (name, value) in parameters)
+                        {
+                            var param = command.CreateParameter();
+                            param.ParameterName = name;
+                            param.Value = value ?? DBNull.Value;
+                            command.Parameters.Add(param);
+                        }
+
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                var ncrId = reader.GetInt32(reader.GetOrdinal("NcrId"));
+                                rawResults.Add(new
+                                {
+                                    ncrId,
+                                    ncrNumber = reader.IsDBNull(reader.GetOrdinal("NcrNumber"))
+                                        ? $"NCR-{ncrId}"
+                                        : reader.GetString(reader.GetOrdinal("NcrNumber")),
+                                    title = reader.IsDBNull(reader.GetOrdinal("Title"))
+                                        ? "Untitled NCR"
+                                        : reader.GetString(reader.GetOrdinal("Title")),
+                                    description = reader.IsDBNull(reader.GetOrdinal("Description"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("Description")),
+                                    category = reader.IsDBNull(reader.GetOrdinal("Category"))
+                                        ? "Other"
+                                        : reader.GetString(reader.GetOrdinal("Category")),
+                                    severity = reader.IsDBNull(reader.GetOrdinal("Severity"))
+                                        ? "Minor"
+                                        : reader.GetString(reader.GetOrdinal("Severity")),
+                                    status = reader.IsDBNull(reader.GetOrdinal("Status"))
+                                        ? "Open"
+                                        : reader.GetString(reader.GetOrdinal("Status")),
+                                    source = reader.IsDBNull(reader.GetOrdinal("Source"))
+                                        ? "Internal"
+                                        : reader.GetString(reader.GetOrdinal("Source")),
+                                    jobOrderId = reader.IsDBNull(reader.GetOrdinal("JobOrderId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("JobOrderId")),
+                                    jobOrderNumber = reader.IsDBNull(reader.GetOrdinal("JobOrderNumber"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("JobOrderNumber")),
+                                    partNo = reader.IsDBNull(reader.GetOrdinal("PartNo"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("PartNo")),
+                                    partName = reader.IsDBNull(reader.GetOrdinal("PartName"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("PartName")),
+                                    customerId = reader.IsDBNull(reader.GetOrdinal("CustomerId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("CustomerId")),
+                                    customerName = reader.IsDBNull(reader.GetOrdinal("CustomerName"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("CustomerName")),
+                                    vendorId = reader.IsDBNull(reader.GetOrdinal("VendorId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("VendorId")),
+                                    vendorName = reader.IsDBNull(reader.GetOrdinal("VendorName"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("VendorName")),
+                                    vendorOrderId = reader.IsDBNull(reader.GetOrdinal("VendorOrderId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("VendorOrderId")),
+                                    poNumber = reader.IsDBNull(reader.GetOrdinal("PoNumber"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("PoNumber")),
+                                    ncrCodeId = reader.IsDBNull(reader.GetOrdinal("NcrCodeId"))
+                                        ? (int?)null
+                                        : reader.GetInt32(reader.GetOrdinal("NcrCodeId")),
+                                    ncrCode = reader.IsDBNull(reader.GetOrdinal("NcrCode"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("NcrCode")),
+                                    reportedBy = reader.IsDBNull(reader.GetOrdinal("ReportedBy"))
+                                        ? 0
+                                        : reader.GetInt32(reader.GetOrdinal("ReportedBy")),
+                                    reportedByName = reader.IsDBNull(reader.GetOrdinal("ReportedByName"))
+                                        ? "Unknown User"
+                                        : reader.GetString(reader.GetOrdinal("ReportedByName")),
+                                    photos = reader.IsDBNull(reader.GetOrdinal("Photos"))
+                                        ? ""
+                                        : reader.GetString(reader.GetOrdinal("Photos")),
+                                    reportedDate = reader.IsDBNull(reader.GetOrdinal("ReportedDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("ReportedDate")).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                    dueDate = reader.IsDBNull(reader.GetOrdinal("DueDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("DueDate")).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                                    createdDate = reader.IsDBNull(reader.GetOrdinal("CreatedDate"))
+                                        ? null
+                                        : reader.GetDateTime(reader.GetOrdinal("CreatedDate")).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                                });
+                            }
+                        }
                     }
+                }
+                finally
+                {
+                    await _context.Database.CloseConnectionAsync();
                 }
 
                 Console.WriteLine($"Returning {rawResults.Count} NCR objects");
-
                 return Ok(new { result = rawResults });
             }
             catch (Exception ex)
@@ -346,6 +574,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 Console.WriteLine($"GetNCR called with id: {id}, tenantId: {tenantId}");
+                await EnsureNcrExternalColumnsAsync();
 
                 // Use raw ADO.NET to completely bypass EF issues
                 Console.WriteLine("Starting ADO.NET query...");
@@ -372,6 +601,12 @@ namespace CimmpleAPI.Controllers
                                 ISNULL(PartName, '') as PartName,
                                 CustomerId,
                                 CustomerName,
+                                VendorId,
+                                ISNULL(VendorName, '') as VendorName,
+                                VendorOrderId,
+                                ISNULL(PoNumber, '') as PoNumber,
+                                NcrCodeId,
+                                ISNULL(NcrCode, '') as NcrCode,
                                 ISNULL(DefectLocation, '') as DefectLocation,
                                 ISNULL(DefectQuantity, 0) as DefectQuantity,
                                 ISNULL(TotalQuantity, 0) as TotalQuantity,
@@ -399,10 +634,23 @@ namespace CimmpleAPI.Controllers
                             FROM NonConformanceReports
                             WHERE NcrId = @id";
 
+                        if (tenantId > 0)
+                        {
+                            command.CommandText += " AND TenantId = @tenantId";
+                        }
+
                         var idParam = command.CreateParameter();
                         idParam.ParameterName = "@id";
                         idParam.Value = id;
                         command.Parameters.Add(idParam);
+
+                        if (tenantId > 0)
+                        {
+                            var tenantParam = command.CreateParameter();
+                            tenantParam.ParameterName = "@tenantId";
+                            tenantParam.Value = tenantId;
+                            command.Parameters.Add(tenantParam);
+                        }
 
                         Console.WriteLine($"Executing query for NCR ID: {id}");
                         await _context.Database.OpenConnectionAsync();
@@ -434,6 +682,12 @@ namespace CimmpleAPI.Controllers
                                 partName = reader.IsDBNull(reader.GetOrdinal("PartName")) ? "" : reader.GetString(reader.GetOrdinal("PartName")),
                                 customerId = reader.IsDBNull(reader.GetOrdinal("CustomerId")) ? 0 : reader.GetInt32(reader.GetOrdinal("CustomerId")),
                                 customerName = reader.IsDBNull(reader.GetOrdinal("CustomerName")) ? "" : reader.GetString(reader.GetOrdinal("CustomerName")),
+                                vendorId = reader.IsDBNull(reader.GetOrdinal("VendorId")) ? 0 : reader.GetInt32(reader.GetOrdinal("VendorId")),
+                                vendorName = reader.IsDBNull(reader.GetOrdinal("VendorName")) ? "" : reader.GetString(reader.GetOrdinal("VendorName")),
+                                vendorOrderId = reader.IsDBNull(reader.GetOrdinal("VendorOrderId")) ? 0 : reader.GetInt32(reader.GetOrdinal("VendorOrderId")),
+                                poNumber = reader.IsDBNull(reader.GetOrdinal("PoNumber")) ? "" : reader.GetString(reader.GetOrdinal("PoNumber")),
+                                ncrCodeId = reader.IsDBNull(reader.GetOrdinal("NcrCodeId")) ? 0 : reader.GetInt32(reader.GetOrdinal("NcrCodeId")),
+                                ncrCode = reader.IsDBNull(reader.GetOrdinal("NcrCode")) ? "" : reader.GetString(reader.GetOrdinal("NcrCode")),
                                 defectLocation = reader.IsDBNull(reader.GetOrdinal("DefectLocation")) ? "" : reader.GetString(reader.GetOrdinal("DefectLocation")),
                                 defectQuantity = reader.IsDBNull(reader.GetOrdinal("DefectQuantity")) ? 0 : reader.GetInt32(reader.GetOrdinal("DefectQuantity")),
                                 totalQuantity = reader.IsDBNull(reader.GetOrdinal("TotalQuantity")) ? 0 : reader.GetInt32(reader.GetOrdinal("TotalQuantity")),
@@ -490,6 +744,12 @@ namespace CimmpleAPI.Controllers
                     partName = rawResults.partName,
                     customerId = rawResults.customerId,
                     customerName = rawResults.customerName,
+                    vendorId = rawResults.vendorId,
+                    vendorName = rawResults.vendorName,
+                    vendorOrderId = rawResults.vendorOrderId,
+                    poNumber = rawResults.poNumber,
+                    ncrCodeId = rawResults.ncrCodeId,
+                    ncrCode = rawResults.ncrCode,
                     defectLocation = rawResults.defectLocation,
                     defectQuantity = rawResults.defectQuantity,
                     totalQuantity = rawResults.totalQuantity,
@@ -532,6 +792,7 @@ namespace CimmpleAPI.Controllers
         {
             Console.WriteLine("=== CREATENCR CALLED ===");
             Console.WriteLine("CreateNCR endpoint called");
+            await EnsureNcrExternalColumnsAsync();
 
             // Read the raw request body for debugging
             string rawContent;
@@ -625,22 +886,39 @@ namespace CimmpleAPI.Controllers
                 ncr.CorrectiveAction = ncr.CorrectiveAction ?? "";
                 ncr.PreventiveAction = ncr.PreventiveAction ?? "";
                 ncr.Notes = ncr.Notes ?? "";
+                ncr.JobOrderNumber = ncr.JobOrderNumber ?? "";
+                ncr.CustomerName = ncr.CustomerName ?? "";
+                ncr.VendorName = ncr.VendorName ?? "";
+                ncr.PoNumber = ncr.PoNumber ?? "";
+                ncr.VendorId = ncr.VendorId.GetValueOrDefault() > 0 ? ncr.VendorId : 0;
+                ncr.VendorOrderId = ncr.VendorOrderId.GetValueOrDefault() > 0 ? ncr.VendorOrderId : 0;
+                ncr.DefectDescription = ncr.DefectDescription ?? "";
+                ncr.RootCauseCategory = ncr.RootCauseCategory ?? "Other";
+                ncr.ReportedByName = ncr.ReportedByName ?? "";
+                ncr.InvestigatedByName = ncr.InvestigatedByName ?? "";
+                ncr.ApprovedByName = ncr.ApprovedByName ?? "";
 
-                // Initialize nullable int fields
-                ncr.JobOrderId = ncr.JobOrderId ?? 0;
-                ncr.RoutingStepId = ncr.RoutingStepId ?? 0;
-                ncr.CustomerId = ncr.CustomerId ?? 0;
-                // For non-nullable ints, ensure they have valid values
+                // Initialize nullable int fields (columns are required ints; 0 = unset)
+                ncr.JobOrderId = ncr.JobOrderId.GetValueOrDefault() > 0 ? ncr.JobOrderId : 0;
+                ncr.RoutingStepId = ncr.RoutingStepId.GetValueOrDefault() > 0 ? ncr.RoutingStepId : 0;
+                ncr.CustomerId = ncr.CustomerId.GetValueOrDefault() > 0 ? ncr.CustomerId : 0;
                 ncr.DefectQuantity = ncr.DefectQuantity > 0 ? ncr.DefectQuantity : 0;
                 ncr.TotalQuantity = ncr.TotalQuantity > 0 ? ncr.TotalQuantity : 0;
 
+                // Do not persist base64 data URLs in nvarchar(4000) — upload after create
+                if (string.IsNullOrWhiteSpace(ncr.Photos) ||
+                    ncr.Photos.IndexOf("data:", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    ncr.Photos.Length > 3500)
+                {
+                    ncr.Photos = null;
+                }
+
                 Console.WriteLine($"Creating NCR with title: {ncr.Title}, tenantId: {ncr.TenantId}");
 
-                // Auto-generate NCR number starting from NCR#1000
+                // Auto-generate NCR number starting from NCR#1000, scoped to tenant
                 Console.WriteLine("=== STARTING NCR NUMBER GENERATION ===");
-                // First, get all NCR numbers that match the NCR# pattern
                 var ncrNumbers = await _context.NonConformanceReports
-                    .Where(n => n.NcrNumber != null && n.NcrNumber.StartsWith("NCR#"))
+                    .Where(n => n.TenantId == ncr.TenantId && n.NcrNumber != null && n.NcrNumber.StartsWith("NCR#"))
                     .Select(n => n.NcrNumber)
                     .ToListAsync();
 
@@ -742,6 +1020,7 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine("====================================");
 
                 Console.WriteLine("Adding NCR to context...");
+                await ResolveNcrCodeFieldsAsync(ncr);
                 _context.NonConformanceReports.Add(ncr);
 
                 Console.WriteLine("Saving changes to database...");
@@ -818,13 +1097,7 @@ namespace CimmpleAPI.Controllers
                 // Return with proper camelCase field names for frontend compatibility
                 var result = new {
                     ncrId = ncr.NcrId,
-                    ncrNumber = actualResponseNcrNumber, // Use what's actually in the database
-                    debugInfo = new {
-                        calculatedNextNumber = nextNumber,
-                        expectedNcrNumber = responseNcrNumber,
-                        actualDatabaseNcrNumber = actualNcrNumber,
-                        inMemoryNcrNumber = ncr.NcrNumber
-                    },
+                    ncrNumber = actualResponseNcrNumber,
                     title = ncr.Title,
                     description = ncr.Description,
                     category = ncr.Category,
@@ -838,6 +1111,10 @@ namespace CimmpleAPI.Controllers
                     partName = ncr.PartName,
                     customerId = ncr.CustomerId,
                     customerName = ncr.CustomerName,
+                    vendorId = ncr.VendorId,
+                    vendorName = ncr.VendorName,
+                    vendorOrderId = ncr.VendorOrderId,
+                    poNumber = ncr.PoNumber,
                     defectLocation = ncr.DefectLocation,
                     defectQuantity = ncr.DefectQuantity,
                     totalQuantity = ncr.TotalQuantity,
@@ -883,6 +1160,8 @@ namespace CimmpleAPI.Controllers
             {
                 // Use raw ADO.NET to update safely and avoid EF null reference issues
                 Console.WriteLine($"=== UPDATENCR CALLED ===");
+                await EnsureNcrExternalColumnsAsync();
+                await ResolveNcrCodeFieldsAsync(ncrUpdate);
                 Console.WriteLine($"UpdateNCR called for id: {id}");
                 Console.WriteLine($"Update data - Title: '{ncrUpdate.Title}', Status: '{ncrUpdate.Status}'");
 
@@ -898,6 +1177,17 @@ namespace CimmpleAPI.Controllers
                             Source = @Source,
                             JobOrderId = @JobOrderId,
                             JobOrderNumber = @JobOrderNumber,
+                            RoutingStepId = @RoutingStepId,
+                            PartNo = @PartNo,
+                            PartName = @PartName,
+                            CustomerId = @CustomerId,
+                            CustomerName = @CustomerName,
+                            VendorId = @VendorId,
+                            VendorName = @VendorName,
+                            VendorOrderId = @VendorOrderId,
+                            PoNumber = @PoNumber,
+                            NcrCodeId = @NcrCodeId,
+                            NcrCode = @NcrCode,
                             DefectLocation = @DefectLocation,
                             DefectQuantity = @DefectQuantity,
                             TotalQuantity = @TotalQuantity,
@@ -908,9 +1198,13 @@ namespace CimmpleAPI.Controllers
                             ImmediateAction = @ImmediateAction,
                             CorrectiveAction = @CorrectiveAction,
                             PreventiveAction = @PreventiveAction,
+                            ReportedBy = @ReportedBy,
+                            ReportedByName = @ReportedByName,
                             InvestigatedBy = @InvestigatedBy,
+                            InvestigatedByName = @InvestigatedByName,
                             InvestigatedDate = @InvestigatedDate,
                             ApprovedBy = @ApprovedBy,
+                            ApprovedByName = @ApprovedByName,
                             ApprovedDate = @ApprovedDate,
                             DueDate = @DueDate,
                             ClosedDate = @ClosedDate,
@@ -927,21 +1221,42 @@ namespace CimmpleAPI.Controllers
                     AddParameter(command, "@Severity", ncrUpdate.Severity);
                     AddParameter(command, "@Status", ncrUpdate.Status);
                     AddParameter(command, "@Source", ncrUpdate.Source);
-                    AddParameter(command, "@JobOrderId", ncrUpdate.JobOrderId);
-                    AddParameter(command, "@JobOrderNumber", ncrUpdate.JobOrderNumber);
+                    AddParameter(command, "@JobOrderId", ncrUpdate.JobOrderId.GetValueOrDefault() > 0 ? ncrUpdate.JobOrderId : 0);
+                    AddParameter(command, "@JobOrderNumber", ncrUpdate.JobOrderNumber ?? "");
+                    AddParameter(command, "@RoutingStepId", ncrUpdate.RoutingStepId.GetValueOrDefault() > 0 ? ncrUpdate.RoutingStepId : 0);
+                    AddParameter(command, "@PartNo", ncrUpdate.PartNo ?? "");
+                    AddParameter(command, "@PartName", ncrUpdate.PartName ?? "");
+                    AddParameter(command, "@CustomerId", ncrUpdate.CustomerId.GetValueOrDefault() > 0 ? ncrUpdate.CustomerId : 0);
+                    AddParameter(command, "@CustomerName", ncrUpdate.CustomerName ?? "");
+                    AddParameter(command, "@VendorId", ncrUpdate.VendorId.GetValueOrDefault() > 0 ? ncrUpdate.VendorId : 0);
+                    AddParameter(command, "@VendorName", ncrUpdate.VendorName ?? "");
+                    AddParameter(command, "@VendorOrderId", ncrUpdate.VendorOrderId.GetValueOrDefault() > 0 ? ncrUpdate.VendorOrderId : 0);
+                    AddParameter(command, "@PoNumber", ncrUpdate.PoNumber ?? "");
+                    AddParameter(command, "@NcrCodeId", ncrUpdate.NcrCodeId.GetValueOrDefault() > 0 ? ncrUpdate.NcrCodeId : 0);
+                    AddParameter(command, "@NcrCode", ncrUpdate.NcrCode ?? "");
                     AddParameter(command, "@DefectLocation", ncrUpdate.DefectLocation);
                     AddParameter(command, "@DefectQuantity", ncrUpdate.DefectQuantity);
                     AddParameter(command, "@TotalQuantity", ncrUpdate.TotalQuantity);
                     AddParameter(command, "@DefectDescription", ncrUpdate.DefectDescription);
-                    AddParameter(command, "@Photos", ncrUpdate.Photos);
+                    var photosToStore = ncrUpdate.Photos;
+                    if (!string.IsNullOrWhiteSpace(photosToStore) &&
+                        (photosToStore.IndexOf("data:", StringComparison.OrdinalIgnoreCase) >= 0 || photosToStore.Length > 3500))
+                    {
+                        photosToStore = null;
+                    }
+                    AddParameter(command, "@Photos", photosToStore);
                     AddParameter(command, "@RootCause", ncrUpdate.RootCause);
                     AddParameter(command, "@RootCauseCategory", ncrUpdate.RootCauseCategory);
                     AddParameter(command, "@ImmediateAction", ncrUpdate.ImmediateAction);
                     AddParameter(command, "@CorrectiveAction", ncrUpdate.CorrectiveAction);
                     AddParameter(command, "@PreventiveAction", ncrUpdate.PreventiveAction);
+                    AddParameter(command, "@ReportedBy", ncrUpdate.ReportedBy);
+                    AddParameter(command, "@ReportedByName", ncrUpdate.ReportedByName ?? "");
                     AddParameter(command, "@InvestigatedBy", ncrUpdate.InvestigatedBy);
+                    AddParameter(command, "@InvestigatedByName", ncrUpdate.InvestigatedByName ?? "");
                     AddParameter(command, "@InvestigatedDate", ncrUpdate.InvestigatedDate);
                     AddParameter(command, "@ApprovedBy", ncrUpdate.ApprovedBy);
+                    AddParameter(command, "@ApprovedByName", ncrUpdate.ApprovedByName ?? "");
                     AddParameter(command, "@ApprovedDate", ncrUpdate.ApprovedDate);
                     AddParameter(command, "@DueDate", ncrUpdate.DueDate);
 
@@ -1019,6 +1334,75 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "NCR not found" });
                 }
 
+                // Drop stale step NCR pointers so Job Details no longer shows the deleted NCR.
+                var jobOrdersToClean = new List<JobOrderMaster>();
+                if (ncr.JobOrderId.HasValue && ncr.JobOrderId.Value > 0)
+                {
+                    var linked = await _context.JobOrderMaster
+                        .FirstOrDefaultAsync(j =>
+                            j.JobOrderID == ncr.JobOrderId.Value &&
+                            j.Tenantid == tenantId);
+                    if (linked != null)
+                        jobOrdersToClean.Add(linked);
+                }
+
+                // Fallback: scan tenant job orders when JobOrderId was not stored on the NCR.
+                if (jobOrdersToClean.Count == 0)
+                {
+                    var candidates = await _context.JobOrderMaster
+                        .Where(j =>
+                            j.Tenantid == tenantId &&
+                            j.RoutingStepsJson != null &&
+                            j.RoutingStepsJson.Contains(ncrId.ToString()))
+                        .ToListAsync();
+                    jobOrdersToClean.AddRange(candidates);
+                }
+
+                foreach (var jobOrder in jobOrdersToClean)
+                {
+                    if (string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
+                        continue;
+
+                    try
+                    {
+                        var steps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                            jobOrder.RoutingStepsJson,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                        if (steps == null || steps.Count == 0)
+                            continue;
+
+                        var changed = false;
+                        foreach (var step in steps)
+                        {
+                            if (step.ncrFlags == null || step.ncrFlags.Count == 0)
+                                continue;
+
+                            var before = step.ncrFlags.Count;
+                            step.ncrFlags = step.ncrFlags
+                                .Where(f => f == null || f.ncrId != ncrId)
+                                .ToList();
+                            if (step.ncrFlags.Count != before)
+                                changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            var routingOptions = new JsonSerializerOptions
+                            {
+                                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                                WriteIndented = false
+                            };
+                            jobOrder.RoutingStepsJson = JsonSerializer.Serialize(steps, routingOptions);
+                            jobOrder.ModifiedDate = DateTime.UtcNow;
+                        }
+                    }
+                    catch
+                    {
+                        // Do not block NCR deletion if routing JSON is malformed.
+                    }
+                }
+
                 _context.NonConformanceReports.Remove(ncr);
                 await _context.SaveChangesAsync();
 
@@ -1091,32 +1475,96 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = new { message = "NCR not found" } });
 
                 var files = Request.Form.Files;
-                var photoUrls = new List<string>();
-
-                // Process uploaded files (save to disk or cloud storage)
-                // For now, we'll just simulate successful upload
-                foreach (var file in files)
+                if (files == null || files.Count == 0)
                 {
-                    if (file.Length > 0)
-                    {
-                        // In a real implementation, you'd save the file and get the URL
-                        // For demo purposes, we'll create a placeholder URL
-                        var fileName = $"{Guid.NewGuid()}_{file.FileName}";
-                        var fileUrl = $"/uploads/ncr-photos/{fileName}";
-                        photoUrls.Add(fileUrl);
-                    }
+                    return BadRequest(new { error = new { message = "At least one photo is required" } });
                 }
 
-                // Photo upload functionality removed - no photos field in the model
+                var existing = ParsePhotoUrls(ncr.Photos);
+                if (existing.Count + files.Count > MaxPhotosPerNcr)
+                {
+                    return BadRequest(new { error = new { message = $"A maximum of {MaxPhotosPerNcr} photos is allowed per NCR" } });
+                }
 
+                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+                var folderPath = Path.Combine(webRootPath, "uploads", "ncr-photos", ncr.TenantId.ToString(), ncrId.ToString());
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+                    if (!AllowedPhotoExtensions.Contains(extension))
+                    {
+                        return BadRequest(new { error = new { message = $"Invalid file type '{extension}'" } });
+                    }
+
+                    if (file.Length > MaxPhotoSizeBytes)
+                    {
+                        return BadRequest(new { error = new { message = "Each photo must be 8MB or smaller" } });
+                    }
+
+                    var uniqueFileName = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}{extension}";
+                    var filePath = Path.Combine(folderPath, uniqueFileName);
+                    using (var stream = new FileStream(filePath, FileMode.Create))
+                    {
+                        await file.CopyToAsync(stream);
+                    }
+
+                    existing.Add($"/uploads/ncr-photos/{ncr.TenantId}/{ncrId}/{uniqueFileName}");
+                }
+
+                ncr.Photos = JsonSerializer.Serialize(existing);
+                ncr.ModifiedDate = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
 
-                return Ok(new { result = photoUrls });
+                return Ok(new { result = existing });
             }
             catch (Exception ex)
             {
                 return BadRequest(new { error = new { message = ex.Message } });
             }
+        }
+
+        private static List<string> ParsePhotoUrls(string? photos)
+        {
+            var urls = new List<string>();
+            if (string.IsNullOrWhiteSpace(photos))
+            {
+                return urls;
+            }
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<List<string>>(photos);
+                if (parsed == null)
+                {
+                    return urls;
+                }
+
+                foreach (var item in parsed)
+                {
+                    if (string.IsNullOrWhiteSpace(item) ||
+                        item.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    urls.Add(item);
+                }
+            }
+            catch
+            {
+                // Ignore unparseable legacy payloads
+            }
+
+            return urls;
         }
 
         // GET: api/Quality/CheckTable

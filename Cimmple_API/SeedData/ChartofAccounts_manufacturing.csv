@@ -1,0 +1,71 @@
+AccountCode,AccountName,AccountType,MainGroup
+1000,Cash - Operating,Asset,Current Assets
+1005,Cash in Bank - Operating,Asset,Current Assets
+1010,Petty Cash,Asset,Current Assets
+1020,Accounts Receivable - Trade,Asset,Current Assets
+1030,Allowance for Doubtful Accounts,Asset,Current Assets
+1100,Raw Materials Inventory,Asset,Current Assets
+1110,Work in Process Inventory,Asset,Current Assets
+1120,Finished Goods Inventory,Asset,Current Assets
+1140,Input Tax Recoverable,Asset,Current Assets
+1200,Prepaid Expenses,Asset,Current Assets
+1210,Prepaid Insurance,Asset,Current Assets
+1300,Deposits & Other Current Assets,Asset,Current Assets
+1500,Machinery & Equipment,Asset,Fixed Assets
+1510,Accumulated Depreciation - Machinery,Asset,Fixed Assets
+1520,Vehicles & Material Handling,Asset,Fixed Assets
+1530,Leasehold Improvements,Asset,Fixed Assets
+1540,Office Equipment & IT,Asset,Fixed Assets
+1550,Accumulated Depreciation - Other PP&E,Asset,Fixed Assets
+1600,Tooling & Fixtures (Capitalized),Asset,Fixed Assets
+2000,Accounts Payable - Trade,Liability,Current Liabilities
+2010,Accounts Payable - Other,Liability,Current Liabilities
+2100,Accrued Payroll,Liability,Current Liabilities
+2110,Payroll Taxes Payable,Liability,Current Liabilities
+2120,Accrued Expenses,Liability,Current Liabilities
+2130,Sales & Use Tax Payable,Liability,Current Liabilities
+2140,Customer Deposits / Deferred Revenue,Liability,Current Liabilities
+2200,Notes Payable - Short Term,Liability,Current Liabilities
+2300,Current Portion of Long-Term Debt,Liability,Current Liabilities
+2500,Long-Term Debt,Liability,Long-term Liabilities
+2600,Finance Lease Liability,Liability,Long-term Liabilities
+3000,Opening Balance Equity,Equity,Equity
+3010,Common Stock,Equity,Equity
+3020,Additional Paid-In Capital,Equity,Equity
+3030,Retained Earnings,Equity,Equity
+3040,Distributions / Dividends,Equity,Equity
+4000,Sales - Manufactured Products,Revenue,Operating Revenue
+4010,Sales - Services / Jobbing,Revenue,Operating Revenue
+4020,"Scrap, Rework & Other Operating Income",Revenue,Operating Revenue
+4030,Sales Discounts & Allowances,Revenue,Operating Revenue
+4050,Shipping / Freight Income,Revenue,Operating Revenue
+4060,Other Charges Income,Revenue,Operating Revenue
+5000,Direct Materials,Expense,Cost of Goods Sold
+5010,Direct Labor - Production,Expense,Cost of Goods Sold
+5020,Production Overhead Applied,Expense,Cost of Goods Sold
+5030,Subcontract / Outside Processing,Expense,Cost of Goods Sold
+5040,Freight-In (Inventory),Expense,Cost of Goods Sold
+5050,Inventory Shrinkage & Obsolescence,Expense,Cost of Goods Sold
+6000,Indirect Materials - Shop,Expense,Manufacturing Overhead
+6010,Production Supervision Salaries,Expense,Manufacturing Overhead
+6020,Equipment Maintenance - Production,Expense,Manufacturing Overhead
+6030,Utilities - Manufacturing,Expense,Manufacturing Overhead
+6040,Depreciation - Production Equipment,Expense,Manufacturing Overhead
+6050,Quality Control & Inspection,Expense,Manufacturing Overhead
+6060,Shop Supplies - Production,Expense,Manufacturing Overhead
+6100,Rent - Warehouse & Production,Expense,Operating Expenses
+6200,Salaries - Sales & Administration,Expense,Operating Expenses
+6210,Employee Benefits - SG&A,Expense,Operating Expenses
+6300,Professional Fees,Expense,Operating Expenses
+6310,Insurance - General,Expense,Operating Expenses
+6400,Office Supplies,Expense,Operating Expenses
+6500,Shipping & Freight Out,Expense,Operating Expenses
+6600,Marketing & Advertising,Expense,Operating Expenses
+6700,Travel & Entertainment,Expense,Operating Expenses
+6800,Bank & Merchant Fees,Expense,Operating Expenses
+7000,R&D - Materials & Supplies,Expense,Research & Development
+7010,R&D - Labor,Expense,Research & Development
+7020,R&D - Outside Services,Expense,Research & Development
+8000,Interest Expense,Expense,Other Expense
+8010,Interest Income,Revenue,Other Income
+8020,Gain/Loss on Disposal of Assets,Revenue,Other Income

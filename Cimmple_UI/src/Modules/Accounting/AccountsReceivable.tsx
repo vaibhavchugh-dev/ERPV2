@@ -3,6 +3,8 @@ import { toast } from "react-toastify";
 import { faCheckCircle, faEnvelope, faPhone, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { InvoiceService, InvoiceSummary } from "../../Common/Services/InvoiceService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { isEmailNotificationsEnabled } from "../../Common/Utils/settingsRuntime";
 import CustomerInvoiceDetailModal from "../Orders/CustomerInvoiceDetailModal";
 
 interface ARFilterOptions {
@@ -14,6 +16,7 @@ interface ARFilterOptions {
 }
 
 const AccountsReceivable: React.FC = () => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ARFilterOptions>({
@@ -75,6 +78,10 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const handleSendReminder = (invoice: InvoiceSummary) => {
+    if (!isEmailNotificationsEnabled()) {
+      toast.error('Email notifications are disabled in System Settings (General).');
+      return;
+    }
     // In a real app, this would send an email reminder
     toast.success(`Payment reminder sent to ${invoice.customerName} for invoice ${invoice.invoiceNo}`);
   };
@@ -100,6 +107,10 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const handleBulkReminders = () => {
+    if (!isEmailNotificationsEnabled()) {
+      toast.error('Email notifications are disabled in System Settings (General).');
+      return;
+    }
     const overdueInvoices = invoices.filter(inv => inv.daysOverdue && inv.daysOverdue > 0);
     if (overdueInvoices.length === 0) {
       toast.info('No overdue invoices to send reminders for');
@@ -107,21 +118,6 @@ const AccountsReceivable: React.FC = () => {
     }
 
     toast.success(`Payment reminders sent to ${overdueInvoices.length} customers`);
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
   };
 
   const getStatusBadge = (status: string, daysOverdue?: number) => {

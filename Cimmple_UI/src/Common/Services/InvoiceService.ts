@@ -29,6 +29,12 @@ export interface CreateInvoiceRequest {
   invoiceDate?: string;
   dueDate?: string;
   notes?: string;
+  /** Sales tax rate percent (0–100) */
+  saleTax?: number;
+  /** Sales tax amount; when omitted server computes from saleTax × subtotal */
+  saleTaxAmount?: number;
+  shippingCharge?: number;
+  otherCharge?: number;
 }
 
 export interface Invoice {

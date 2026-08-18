@@ -15,7 +15,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface LocationMasterSlideoutProps {
   locationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
@@ -249,7 +249,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       await LocationService.DeleteLocation(locationId);
       toast.success("Location deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting location:", error);
       toast.error(`Error deleting location: ${error.message || "Unknown error"}`);
@@ -354,7 +354,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
           : "Location created successfully"
       );
       setIsStateChanged(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving location:", error);
       toast.error(`Error saving location: ${error.message || "Unknown error"}`);

@@ -4,6 +4,7 @@ import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AuthService } from "../Common/Services/AuthService";
 import { User } from "../Common/Services/User";
+import { protectedRoutes } from "../Common/Routes";
 import "./Login.scss";
 
 export const ChangePassword: React.FC = () => {
@@ -26,7 +27,9 @@ export const ChangePassword: React.FC = () => {
       storage.mustChangePassword = false;
       localStorage.setItem("storage", JSON.stringify(storage));
       toast.success("Password updated");
-      history.push("/home");
+      history.push(
+        AuthService.getDefaultLandingPath(protectedRoutes.map((r) => r.path as string))
+      );
     } catch (error: any) {
       toast.error(error?.response?.data?.message || "Failed to change password");
     } finally {

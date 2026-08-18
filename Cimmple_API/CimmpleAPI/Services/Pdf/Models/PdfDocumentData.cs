@@ -35,6 +35,16 @@ namespace CimmpleAPI.Services.Pdf.Models
         public decimal DiscountAmount { get; set; }
         public decimal Amount { get; set; }
         public string Notes { get; set; } = "";
+        /// <summary>Qty break unit prices marked Include in Print (shown under the line as price gradation).</summary>
+        public List<PdfQtyPriceOption> PrintQtyOptions { get; set; } = new();
+    }
+
+    public class PdfQtyPriceOption
+    {
+        public int Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal DiscountAmount { get; set; }
+        public decimal Amount { get; set; }
     }
 
     public class PdfRoutingStep
@@ -46,6 +56,10 @@ namespace CimmpleAPI.Services.Pdf.Models
         public string TechnicianName { get; set; } = "";
         public int? EstimatedTime { get; set; }
         public string Status { get; set; } = "";
+        /// <summary>Shop-floor scan payload (cimmple://jo/{id}/step/{stepId}).</summary>
+        public string ScanCode { get; set; } = "";
+        /// <summary>Pre-rendered QR PNG for the ScanCode (printed on the router).</summary>
+        public byte[]? QrPng { get; set; }
     }
 }
 

@@ -157,13 +157,15 @@ const JobTemplateMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadTemplates();
-    // Refresh facets only if the user has already opened the filter panel,
-    // otherwise leave the deferred load alone.
-    if (showFilters || categoryTypes.length > 0) {
-      loadCategoryTypes();
+    if (refreshList) {
+      loadTemplates();
+      // Refresh facets only if the user has already opened the filter panel,
+      // otherwise leave the deferred load alone.
+      if (showFilters || categoryTypes.length > 0) {
+        loadCategoryTypes();
+      }
     }
   };
 

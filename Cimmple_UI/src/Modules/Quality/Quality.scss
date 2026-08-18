@@ -21,10 +21,20 @@
   align-items: center;
   gap: 1rem;
   transition: all 0.2s;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
 
   &:hover {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     transform: translateY(-1px);
+  }
+
+  &.active {
+    outline: 2px solid #2563eb;
+    outline-offset: 1px;
   }
 
   &.warning {
@@ -122,6 +132,32 @@
 .badge-secondary {
   background-color: #f3f4f6;
   color: #374151;
+}
+
+.ncr-due-overdue {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.ncr-quick-filter-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 0.5rem;
+  color: #1e40af;
+  font-size: 0.875rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* Responsive adjustments */

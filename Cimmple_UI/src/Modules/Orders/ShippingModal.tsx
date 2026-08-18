@@ -218,14 +218,25 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                       <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                         {item.partName}
                       </div>
-                      <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                        Available: {item.availableQty} units
+                      <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+                        Open on order: {item.availableQty} units
+                        {item.quantityOnHand != null && (
+                          <span style={{ marginLeft: "0.5rem" }}>
+                            • On hand: {item.quantityOnHand}
+                          </span>
+                        )}
                         {item.hasJobOrder && (
-                          <span style={{ marginLeft: '0.5rem', color: item.jobOrderStatus === 'Completed' ? '#10b981' : '#f59e0b' }}>
+                          <span style={{ marginLeft: "0.5rem", color: item.jobOrderStatus === "Completed" ? "#10b981" : "#f59e0b" }}>
                             • Job Order: {item.jobOrderStatus}
                           </span>
                         )}
                       </div>
+                      {item.quantityOnHand != null &&
+                        (quantities[item.id] || 0) > item.quantityOnHand && (
+                          <div style={{ fontSize: "0.8125rem", color: "#b45309", marginTop: "0.25rem" }}>
+                            Ships short — on hand {item.quantityOnHand}, shipping {quantities[item.id] || 0}. Allowed during transition.
+                          </div>
+                        )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <label style={{ fontSize: '0.875rem' }}>Ship:</label>

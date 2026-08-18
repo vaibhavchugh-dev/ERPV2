@@ -364,14 +364,14 @@ namespace CimmpleAPI.Services.Pdf.Templates
             table.ColumnsDefinition(columns =>
             {
                 columns.RelativeColumn(0.85f); // Part No
-                columns.RelativeColumn(2.4f); // Description
-                columns.RelativeColumn(0.85f); // Date
+                columns.RelativeColumn(2.2f); // Description
+                columns.ConstantColumn(58); // Date (MM/dd/yyyy — fixed width avoids wrap)
                 columns.RelativeColumn(0.4f); // Unit
                 columns.RelativeColumn(0.4f); // Qty
                 columns.RelativeColumn(0.95f); // Unit Price
                 columns.RelativeColumn(0.7f); // Discount
                 columns.RelativeColumn(0.95f); // Amount
-                columns.RelativeColumn(1.4f); // Notes
+                columns.RelativeColumn(1.3f); // Notes
             });
 
             // Header row
@@ -385,6 +385,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
                     
                     // Use shorter text for narrow columns to prevent wrapping
                     var displayText = headerText;
+                    if (index == 2) displayText = "Date"; // Est. Date / Due Date — keep single line
                     if (index == 3) displayText = "Unit"; // Unit column
                     if (index == 4) displayText = "Qty"; // Qty column
                     if (index == 6) displayText = "Disc."; // Discount column
@@ -414,8 +415,26 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 var rowBg = rowIndex % 2 == 0 ? "#FFFFFF" : LightBg;
 
                 table.Cell().Element(c => CellStyle(c, rowBg)).Text(item.PartNo ?? "").FontSize(9).FontColor(DarkText);
-                table.Cell().Element(c => CellStyle(c, rowBg)).Text(item.PartDescription ?? "").FontSize(9).FontColor(DarkText);
-                table.Cell().Element(c => CellStyle(c, rowBg)).Text(item.Date ?? "").FontSize(9).FontColor(MediumText);
+                table.Cell().Element(c => CellStyle(c, rowBg)).Column(col =>
+                {
+                    col.Item().Text(item.PartDescription ?? "").FontSize(9).FontColor(DarkText);
+                    if (item.PrintQtyOptions != null && item.PrintQtyOptions.Count > 0)
+                    {
+                        var optionText = "Unit price by qty: " + string.Join("  |  ",
+                            item.PrintQtyOptions
+                                .OrderBy(o => o.Qty)
+                                .Select(o => $"{o.Qty} @ {FormatCurrency(o.UnitPrice)}/ea"));
+                        col.Item().PaddingTop(2).Text(optionText)
+                            .FontSize(7)
+                            .FontColor(MediumText);
+                    }
+                });
+                table.Cell().Element(c => CellStyleTight(c, rowBg))
+                    .AlignCenter()
+                    .Text(item.Date ?? "")
+                    .FontSize(8)
+                    .FontColor(MediumText)
+                    .WrapAnywhere(false);
                 table.Cell().Element(c => CellStyle(c, rowBg)).Text(item.Unit ?? "EA").FontSize(9).FontColor(MediumText);
                 table.Cell().Element(c => CellStyle(c, rowBg)).AlignRight().Text(item.Qty.ToString()).FontSize(9).FontColor(DarkText);
                 table.Cell().Element(c => CellStyle(c, rowBg)).AlignRight().Text(FormatCurrency(item.UnitPrice)).FontSize(9).FontColor(DarkText);
@@ -443,6 +462,16 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 .BorderColor(BorderColor)
                 .PaddingVertical(6)
                 .PaddingHorizontal(6);
+        }
+
+        protected IContainer CellStyleTight(IContainer container, string backgroundColor)
+        {
+            return container
+                .Background(backgroundColor)
+                .BorderBottom(1)
+                .BorderColor(BorderColor)
+                .PaddingVertical(6)
+                .PaddingHorizontal(2);
         }
 
         protected string FormatCurrency(decimal amount)

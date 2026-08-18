@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -7,11 +7,12 @@ import {
   OrderDetailForReceiving,
 } from "../../Common/Services/VendorReceivingService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import "./VendorReceivingDetail.scss";
 
 interface VendorReceivingDetailProps {
   orderId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 interface ReceivingFormData {
@@ -20,18 +21,56 @@ interface ReceivingFormData {
   receivedDate: string;
   locationId?: number;
   notes: string;
+  lotNumber: string;
+}
+
+/** Stock lines that book inventory need a location when a master id is present. */
+function willBookInventory(detail: OrderDetailForReceiving): boolean {
+  const jobTied =
+    (detail.jobId != null && detail.jobId > 0) ||
+    !!(detail.jobNumber && detail.jobNumber.trim());
+  if (jobTied) return false;
+
+  const lineType = (detail.lineType || "").trim();
+  if (
+    lineType === "Service" ||
+    lineType === "Subcontract" ||
+    lineType === "Tool" ||
+    lineType === "Other"
+  ) {
+    return false;
+  }
+  if (lineType === "RawMaterial") {
+    return (
+      !!(detail.rawMaterialId && detail.rawMaterialId > 0) ||
+      !!(detail.productId && detail.productId > 0) // legacy until re-picked as RM
+    );
+  }
+  if (lineType === "FinishedProduct") {
+    return !!(detail.productId && detail.productId > 0);
+  }
+  // Legacy product-only stock lines
+  return !!(detail.productId && detail.productId > 0 && !detail.rawMaterialId);
 }
 
 const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   orderId,
   onClose,
 }) => {
+  const listNeedsRefreshRef = useRef(false);
+  const { locationId: activeLocationId } = useActiveLocation();
   const [order, setOrder] = useState<OrderForReceivingDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [receiving, setReceiving] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [receivingForms, setReceivingForms] = useState<Map<number, ReceivingFormData>>(new Map());
   const [showReceivingForm, setShowReceivingForm] = useState<Map<number, boolean>>(new Map());
+
+  const defaultReceiveLocationId = (): number | undefined => {
+    if (order?.locationId && order.locationId > 0) return order.locationId;
+    if (activeLocationId > 0) return activeLocationId;
+    return undefined;
+  };
 
   useEffect(() => {
     loadOrder();
@@ -76,8 +115,9 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       orderDetailId: detail.id,
       receivedQty: detail.pendingQty,
       receivedDate: new Date().toISOString().split('T')[0],
-      locationId: order?.locationId,
+      locationId: defaultReceiveLocationId(),
       notes: "",
+      lotNumber: "",
     };
 
     setReceivingForms(prev => {
@@ -120,6 +160,11 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       return;
     }
 
+    if (willBookInventory(detail) && !(formData.locationId && formData.locationId > 0)) {
+      toast.error("Select a location — this stock receipt will update inventory.");
+      return;
+    }
+
     setReceiving(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -131,11 +176,13 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         receivedDate: formData.receivedDate,
         locationId: formData.locationId,
         notes: formData.notes,
+        lotNumber: formData.lotNumber,
         tenantid: tenantID,
       });
 
       if (result.success) {
         toast.success(result.message || "Items received successfully");
+        listNeedsRefreshRef.current = true;
         handleCancelReceiving(detail.id);
         loadOrder(); // Reload to get updated quantities
       } else {
@@ -160,6 +207,19 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       return;
     }
 
+    const missingLocation = formsToSubmit.find(([detailId, formData]) => {
+      const detail = order?.details.find((d) => d.id === detailId);
+      return (
+        detail &&
+        willBookInventory(detail) &&
+        !(formData.locationId && formData.locationId > 0)
+      );
+    });
+    if (missingLocation) {
+      toast.error("Select a location for every stock line that updates inventory.");
+      return;
+    }
+
     setReceiving(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -174,6 +234,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
             receivedDate: formData.receivedDate,
             locationId: formData.locationId,
             notes: formData.notes,
+            lotNumber: formData.lotNumber,
             tenantid: tenantID,
           })
         )
@@ -182,6 +243,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       const failed = results.filter(r => !r.success);
       if (failed.length === 0) {
         toast.success(`Successfully received ${formsToSubmit.length} item(s)`);
+        listNeedsRefreshRef.current = true;
         setReceivingForms(new Map());
         setShowReceivingForm(new Map());
         loadOrder();
@@ -220,7 +282,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
   if (loading) {
     return createPortal(
-      <div className="slideout-overlay" onClick={onClose}>
+      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
           <div className="page-loading">
             <div className="loading-spinner"></div>
@@ -234,11 +296,11 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
   if (!order) {
     return createPortal(
-      <div className="slideout-overlay" onClick={onClose}>
+      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
         <div className="form-card" onClick={(e) => e.stopPropagation()}>
           <div style={{ padding: "2rem", textAlign: "center" }}>
             <p>Order not found</p>
-            <button className="btn-submit" onClick={onClose}>
+            <button className="btn-submit" onClick={() => onClose(listNeedsRefreshRef.current)}>
               Close
             </button>
           </div>
@@ -251,7 +313,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   const hasPendingReceiving = Array.from(receivingForms.values()).some(f => f.receivedQty > 0);
 
   return createPortal(
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
       <div className="receiving-detail-card" onClick={(e) => e.stopPropagation()}>
         <div className="receiving-header">
           <div>
@@ -260,7 +322,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
               {order.vendorName} • Order Date: {formatDate(order.orderDate)}
             </p>
           </div>
-          <button className="btn-close" onClick={onClose}>
+          <button className="btn-close" onClick={() => onClose(listNeedsRefreshRef.current)}>
             ×
           </button>
         </div>
@@ -387,7 +449,10 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                   />
                                 </div>
                                 <div className="form-group">
-                                  <label>Location</label>
+                                  <label>
+                                    Location
+                                    {willBookInventory(detail) ? " *" : ""}
+                                  </label>
                                   <select
                                     value={formData.locationId || ""}
                                     onChange={(e) => {
@@ -403,9 +468,30 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                     {locations.map((loc) => (
                                       <option key={loc.locationId} value={loc.locationId}>
                                         {loc.name}
+                                        {activeLocationId === loc.locationId ? " (working site)" : ""}
                                       </option>
                                     ))}
                                   </select>
+                                  {willBookInventory(detail) && (
+                                    <small>Required — this receipt updates inventory on hand</small>
+                                  )}
+                                </div>
+                                <div className="form-group">
+                                  <label>Lot / heat (optional)</label>
+                                  <input
+                                    type="text"
+                                    value={formData.lotNumber}
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      setReceivingForms((prev) => {
+                                        const newMap = new Map(prev);
+                                        newMap.set(detail.id, { ...formData, lotNumber: value });
+                                        return newMap;
+                                      });
+                                    }}
+                                    placeholder="e.g. H-8841"
+                                  />
+                                  <small>Mill heat or vendor lot for material certs</small>
                                 </div>
                               </div>
                               <div className="form-row">

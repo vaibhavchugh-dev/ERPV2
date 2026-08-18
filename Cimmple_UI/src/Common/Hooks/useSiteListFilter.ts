@@ -14,13 +14,49 @@ const isWorkingSite = (loc: { locType?: number | null }) => {
 };
 
 /**
- * Optional site filter for shared multi-site list pages.
- * Defaults to All sites (tenant-wide). Working site is available as a quick choice.
+ * Site filter for shared multi-site list pages.
+ * Defaults to the TopBar working site so switching location reloads that site's data.
+ * Users can still choose "All sites" for a tenant-wide view.
  */
 export function useSiteListFilter() {
   const { locationId: workingSiteId } = useActiveLocation();
+
+  const isLocationAllowed = useCallback((locationId: number) => {
+    if (locationId <= 0) return false;
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      if (storage?.canAccessAllLocations) return true;
+      const allowed = AuthService.getAllowedLocations();
+      return allowed.some((l) => l.locationId === locationId);
+    } catch {
+      return false;
+    }
+  }, []);
+
   const [sites, setSites] = useState<LocationMaster[]>([]);
-  const [locationFilter, setLocationFilter] = useState<number | "">("");
+  const [locationFilter, setLocationFilter] = useState<number | "">(() => {
+    if (workingSiteId > 0) {
+      try {
+        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+        if (storage?.canAccessAllLocations) return workingSiteId;
+        const allowed = AuthService.getAllowedLocations();
+        if (allowed.some((l) => l.locationId === workingSiteId)) return workingSiteId;
+      } catch {
+        /* ignore */
+      }
+    }
+    return "";
+  });
+
+  // Follow TopBar working site when it changes (including after Layout remount).
+  useEffect(() => {
+    if (workingSiteId <= 0) return;
+    if (!isLocationAllowed(workingSiteId)) {
+      setLocationFilter("");
+      return;
+    }
+    setLocationFilter(workingSiteId);
+  }, [workingSiteId, isLocationAllowed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,7 +68,8 @@ export function useSiteListFilter() {
         const cached = AuthService.getAllowedLocations();
 
         let list: LocationMaster[] = [];
-        if (!canAccessAll && cached.length > 0) {
+        // Prefer login-cached locations (including admins) to skip a redundant GetLocations call.
+        if (cached.length > 0) {
           list = cached.map((l) => ({
             locationId: l.locationId,
             name: l.name || "",
@@ -49,14 +86,11 @@ export function useSiteListFilter() {
             webaddress: "",
             status: "Active",
           }));
-        } else if (tenantId > 0) {
+        } else if (canAccessAll && tenantId > 0) {
           const data = await LocationService.GetLocations({ tenantid: tenantId });
           list = Array.isArray(data) ? data : [];
-          if (!canAccessAll && cached.length > 0) {
-            const allowed = new Set(cached.map((l) => l.locationId));
-            list = list.filter((l) => allowed.has(l.locationId));
-          }
         }
+        // Restricted users with empty cache: leave list empty (no tenant-wide fallback).
         if (!cancelled) {
           setSites(list.filter(isWorkingSite));
         }
@@ -68,6 +102,14 @@ export function useSiteListFilter() {
       cancelled = true;
     };
   }, []);
+
+  // Drop a working-site filter the user is not allowed to query (avoids API 403).
+  useEffect(() => {
+    if (locationFilter === "" || locationFilter <= 0) return;
+    if (!isLocationAllowed(Number(locationFilter))) {
+      setLocationFilter("");
+    }
+  }, [locationFilter, isLocationAllowed]);
 
   const filterOptions = useMemo(
     () => [
@@ -89,7 +131,11 @@ export function useSiteListFilter() {
 
   /** Pass to list APIs; undefined means all sites. */
   const locationIdParam =
-    locationFilter === "" || locationFilter <= 0 ? undefined : locationFilter;
+    locationFilter === "" || locationFilter <= 0
+      ? undefined
+      : isLocationAllowed(Number(locationFilter))
+        ? Number(locationFilter)
+        : undefined;
 
   const masterListFilter = useMemo(
     () => ({
