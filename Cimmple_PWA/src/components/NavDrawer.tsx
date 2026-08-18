@@ -71,7 +71,7 @@ export function NavDrawer({ open, userName, onClose, onLogout }: NavDrawerProps)
         aria-modal="true"
         aria-label="Menu"
       >
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+        <div className="flex items-center justify-between px-5 pt-[calc(1.25rem+env(safe-area-inset-top,0px))] pb-3">
           <div>
             <div className="font-extrabold text-slate-900 text-base leading-tight dark:text-white">Cimmple Shop Floor</div>
             <div className="text-xs font-medium text-slate-500 mt-0.5 truncate max-w-[200px] dark:text-slate-300">
