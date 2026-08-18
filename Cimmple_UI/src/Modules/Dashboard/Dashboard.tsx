@@ -52,10 +52,12 @@ import {
   QualityStatus,
   UpcomingDeadline
 } from "../../Common/Services/DashboardService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./Dashboard.scss";
 
 const Dashboard: React.FC = () => {
   const history = useHistory();
+  const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("This Month");
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -74,53 +76,36 @@ const Dashboard: React.FC = () => {
 
   const loadDashboardData = async () => {
     setLoading(true);
-    try {
-      const [
-        metricsData,
-        productionData,
-        revenueData,
-        activitiesData,
-        alertsData,
-        customersData,
-        productsData,
-        qualityData,
-        deadlinesData
-      ] = await Promise.all([
-        DashboardService.GetMetrics(dateRange),
-        DashboardService.GetProductionStatus("This Week"),
-        DashboardService.GetRevenueTrends("30days"),
-        DashboardService.GetRecentActivities(20),
-        DashboardService.GetAlerts(),
-        DashboardService.GetTopCustomers(5),
-        DashboardService.GetTopProducts(5),
-        DashboardService.GetQualityStatus(),
-        DashboardService.GetUpcomingDeadlines(7)
-      ]);
+    let metricsFailed = false;
 
+    // Critical path: unblock the shell as soon as metrics arrive.
+    try {
+      const metricsData = await DashboardService.GetMetrics(dateRange);
       if (metricsData) setMetrics(metricsData);
-      if (productionData) setProductionStatus(productionData);
-      if (revenueData) setRevenueTrends(revenueData);
-      if (activitiesData) setRecentActivities(activitiesData);
-      if (alertsData) setAlerts(alertsData);
-      if (customersData) setTopCustomers(customersData);
-      if (productsData) setTopProducts(productsData);
-      if (qualityData) setQualityStatus(qualityData);
-      if (deadlinesData) setUpcomingDeadlines(deadlinesData);
     } catch (error) {
-      console.error("Error loading dashboard data:", error);
-      toast.error("Failed to load dashboard data");
+      metricsFailed = true;
+      console.error("Error loading dashboard metrics:", error);
+      toast.error("Failed to load dashboard metrics");
     } finally {
       setLoading(false);
     }
-  };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount);
+    // Secondary widgets load in parallel and paint as each completes.
+    const secondary = [
+      DashboardService.GetProductionStatus("This Week").then((d) => d && setProductionStatus(d)),
+      DashboardService.GetRevenueTrends("30days").then((d) => d && setRevenueTrends(d)),
+      DashboardService.GetRecentActivities(20).then((d) => d && setRecentActivities(d)),
+      DashboardService.GetAlerts().then((d) => d && setAlerts(d)),
+      DashboardService.GetTopCustomers(5).then((d) => d && setTopCustomers(d)),
+      DashboardService.GetTopProducts(5).then((d) => d && setTopProducts(d)),
+      DashboardService.GetQualityStatus().then((d) => d && setQualityStatus(d)),
+      DashboardService.GetUpcomingDeadlines(7).then((d) => d && setUpcomingDeadlines(d)),
+    ];
+
+    const results = await Promise.allSettled(secondary);
+    if (!metricsFailed && results.some((r) => r.status === "rejected")) {
+      console.error("Some dashboard widgets failed to load", results);
+    }
   };
 
   const formatDate = (dateString: string): string => {

@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.Json;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Repositories;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using Serilog;
@@ -64,6 +65,10 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
+
+// Legacy user repository (UserController login / maintenance helpers)
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 
 // Auth services
 builder.Services.Configure<TokenConfigOptions>(builder.Configuration.GetSection(TokenConfigOptions.SectionName));
@@ -134,46 +139,14 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// CLI: import chart of accounts from CSV. First row may be a header
-// (AccountID,AccountCode,...) as produced by Scripts/Normalize-COA-ToMasterSchema.ps1. Example:
-//   dotnet run --project Cimmple_API/CimmpleAPI -- import-coa "C:\...\ChartofAccounts_master.csv"
-if (args.Length >= 2 && string.Equals(args[0], "import-coa", StringComparison.OrdinalIgnoreCase))
-{
-    var csvPath = args[1].Trim().Trim('"');
-    if (!File.Exists(csvPath))
-    {
-        Console.Error.WriteLine($"COA CSV not found: {csvPath}");
-        Environment.Exit(1);
-    }
-
-    var connectionString = builder.Configuration.GetConnectionString("DB")
-        ?? throw new InvalidOperationException("ConnectionStrings:DB is not configured.");
-
-    var optionsBuilder = new DbContextOptionsBuilder<CimmpleDbContext>();
-    optionsBuilder.UseSqlServer(connectionString);
-
-    using var db = new CimmpleDbContext(optionsBuilder.Options);
-    var importOk = false;
-    try
-    {
-        var r = ChartOfAccountsCsvImporter.Import(db, csvPath);
-        Console.WriteLine($"Chart of accounts import finished. Updated={r.Updated}, Inserted={r.Inserted}, Skipped={r.Skipped}");
-        importOk = true;
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"COA import failed: {ex.Message}");
-        Log.Fatal(ex, "COA import failed");
-    }
-
-    Log.CloseAndFlush();
-    Environment.Exit(importOk ? 0 : 1);
-}
-
-// CLI: seed typical manufacturing COA rows (idempotent by tenant + account code). Example:
-//   dotnet run --project Cimmple_API/CimmpleAPI -- seed-manufacturing-coa
-//   dotnet run --project Cimmple_API/CimmpleAPI -- seed-manufacturing-coa 101
-if (args.Length >= 1 && string.Equals(args[0], "seed-manufacturing-coa", StringComparison.OrdinalIgnoreCase))
+// CLI: seed the canonical manufacturing Chart of Accounts (idempotent by tenant + account code).
+// Does not delete or overwrite existing accounts (including legacy codes). Examples:
+//   dotnet run --project Cimmple_API/CimmpleAPI -- seed-coa
+//   dotnet run --project Cimmple_API/CimmpleAPI -- seed-coa 101
+// Alias: seed-manufacturing-coa (same behavior)
+if (args.Length >= 1 &&
+    (string.Equals(args[0], "seed-coa", StringComparison.OrdinalIgnoreCase) ||
+     string.Equals(args[0], "seed-manufacturing-coa", StringComparison.OrdinalIgnoreCase)))
 {
     var tenantId = 1;
     if (args.Length >= 2)
@@ -196,13 +169,13 @@ if (args.Length >= 1 && string.Equals(args[0], "seed-manufacturing-coa", StringC
     try
     {
         var (inserted, skipped) = ManufacturingChartOfAccountsSeed.Apply(db, tenantId);
-        Console.WriteLine($"Manufacturing COA seed finished for tenant {tenantId}. Inserted={inserted}, Skipped (already present)={skipped}.");
+        Console.WriteLine($"Canonical COA seed finished for tenant {tenantId}. Inserted={inserted}, Skipped (already present)={skipped}.");
         seedOk = true;
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Manufacturing COA seed failed: {ex.Message}");
-        Log.Fatal(ex, "Manufacturing COA seed failed");
+        Console.Error.WriteLine($"COA seed failed: {ex.Message}");
+        Log.Fatal(ex, "COA seed failed");
     }
 
     Log.CloseAndFlush();

@@ -12,6 +12,9 @@ namespace CimmpleAPI.Data.Models
         [Column(TypeName = "decimal(18,2)")]
         public decimal Discount { get; set; }
 
+        /// <summary>Percent (default) or Amount ($).</summary>
+        public string? DiscountType { get; set; }
+
         public DateTime? DueDate { get; set; }
 
         public int? Groupid { get; set; }
@@ -50,6 +53,16 @@ namespace CimmpleAPI.Data.Models
         public int? jobdetailId { get; set; }
 
         public int? productid { get; set; }
+
+        /// <summary>Raw material master id when LineType is RawMaterial.</summary>
+        public int? RawMaterialId { get; set; }
+
+        /// <summary>
+        /// Line-level category: RawMaterial, FinishedProduct, Tool, Service, Subcontract, Other.
+        /// Copied onto the vendor PO when the quotation is converted.
+        /// </summary>
+        [MaxLength(50)]
+        public string? LineType { get; set; }
 
         public string notes { get; set; }
 

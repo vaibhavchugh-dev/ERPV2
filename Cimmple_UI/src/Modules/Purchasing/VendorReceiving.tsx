@@ -56,10 +56,12 @@ const VendorReceiving: React.FC = () => {
     setShowDetail(true);
   };
 
-  const handleCloseDetail = () => {
+  const handleCloseDetail = (refreshList = false) => {
     setShowDetail(false);
     setSelectedOrderId(0);
-    loadOrders();
+    if (refreshList) {
+      loadOrders();
+    }
   };
 
   const formatDate = (dateStr: string): string => {
@@ -164,6 +166,7 @@ const VendorReceiving: React.FC = () => {
         columns={columns}
         onRowClick={handleRowClick}
         loading={loading}
+        enablePagination
         searchPlaceholder="Search by PO #, vendor..."
         searchFields={["orderNumber", "vendorName", "vendorCode"]}
       />

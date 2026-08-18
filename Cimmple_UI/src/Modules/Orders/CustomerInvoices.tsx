@@ -6,8 +6,12 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerInvoicesService, CustomerInvoiceSummary } from "../../Common/Services/CustomerInvoicesService";
 import { InvoiceService } from "../../Common/Services/InvoiceService";
+import { PdfService } from "../../Common/Services/PdfService";
 import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
+import BankAccountSelect from "../../Common/Components/BankAccountSelect";
+import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -17,25 +21,21 @@ interface CustomerPaymentModalProps {
 }
 
 const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [checkNo, setCheckNo] = useState('');
-  const [paymentAmount, setPaymentAmount] = useState(invoice.amount.toString());
+  const invoiceTotal = invoice.totalAmount ?? invoice.amount;
+  const balanceDue = Math.max(
+    0,
+    Number(invoice.balanceDue ?? invoiceTotal - (invoice.paidAmount ?? 0))
+  );
+  const [paymentAmount, setPaymentAmount] = useState(
+    balanceDue > 0 ? balanceDue.toFixed(2) : invoiceTotal.toFixed(2)
+  );
   const [notes, setNotes] = useState('');
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+  const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,8 +51,13 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
       return;
     }
 
-    if (amount > invoice.amount) {
-      toast.error('Payment amount cannot exceed invoice total');
+    if (amount > balanceDue + 0.009) {
+      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      return;
+    }
+
+    if (!bankId) {
+      toast.error('Please select a bank account');
       return;
     }
 
@@ -64,7 +69,8 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
         PaymentDate: paymentDate,
         CheckNo: checkNo || undefined,
         PaymentAmount: amount,
-        Notes: notes || undefined
+        Notes: notes || undefined,
+        BankId: bankId
       };
 
       await InvoiceService.RecordCustomerPayment(invoice.id, paymentData);
@@ -162,7 +168,10 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontWeight: '600', fontSize: '1rem', color: '#1f2937' }}>
-                    ${invoice.amount.toFixed(2)}
+                    Balance: {formatCurrency(balanceDue)}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    Total: {formatCurrency(invoiceTotal)}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Due: {formatDate(invoice.dueDate)}
@@ -229,7 +238,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                       type="number"
                       step="0.01"
                       min="0"
-                      max={invoice.amount}
+                      max={balanceDue}
                       required
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
@@ -264,6 +273,15 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div style={{ marginTop: '1rem' }}>
+                <BankAccountSelect
+                  banks={banks}
+                  value={bankId}
+                  onChange={setBankId}
+                  loading={banksLoading}
+                />
               </div>
 
               <div style={{ marginTop: '1rem' }}>
@@ -345,6 +363,7 @@ interface FilterOptions {
 const CustomerInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -423,31 +442,17 @@ const CustomerInvoices: React.FC = () => {
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
   const getStatusBadge = (status: string, daysOverdue?: number) => {
     const statusLower = status.toLowerCase();
 
     if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
+    } else if (statusLower === 'partially paid') {
+      return (
+        <span className="badge badge-info">
+          Partially Paid{daysOverdue && daysOverdue > 0 ? ` · ${daysOverdue}d overdue` : ''}
+        </span>
+      );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
       return <span className="badge badge-danger">Overdue {daysOverdue ? `(${daysOverdue}d)` : ''}</span>;
     } else if (statusLower === 'void') {
@@ -484,9 +489,27 @@ const CustomerInvoices: React.FC = () => {
     setShowPaymentModal(true);
   };
 
-  const handlePrintInvoice = (invoice: CustomerInvoiceSummary) => {
-    // TODO: Open print modal or generate PDF
-    toast.info(`Printing invoice ${invoice.invoiceNo}`);
+  const handlePrintInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!invoice?.id) {
+      toast.error("Invoice not loaded");
+      return;
+    }
+
+    try {
+      const blob = await PdfService.GenerateInvoice(invoice.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Invoice_${invoice.invoiceNo || invoice.id}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success("Invoice PDF generated successfully");
+    } catch (error: any) {
+      console.error("Error generating invoice PDF:", error);
+      toast.error(error.response?.data?.error || "Failed to generate invoice PDF");
+    }
   };
 
   const handleVoidInvoice = (invoice: CustomerInvoiceSummary) => {
@@ -690,6 +713,7 @@ const CustomerInvoices: React.FC = () => {
         data={invoices}
         columns={columns}
         loading={loading}
+        enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         filters={[
@@ -714,6 +738,7 @@ const CustomerInvoices: React.FC = () => {
         isOpen={showDetailModal}
         onClose={handleCloseDetailModal}
         invoiceId={selectedInvoiceId}
+        onPaymentComplete={loadInvoices}
       />
 
       {/* Order Slideout */}

@@ -1,16 +1,23 @@
 import * as React from "react";
-import "bootstrap/dist/css/bootstrap.min.css";
 import { BrowserRouter as Router, Switch, Route } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
-import { ProtectedLayout } from "./Common/Components/ProtectedLayout";
 import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
 import { ChangePassword } from "./Login/ChangePassword";
-import VendorProtectedLayout from "./VendorPortal/VendorProtectedLayout";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
 import "./App.scss";
-import "react-toastify/dist/ReactToastify.css";
 import moment from "moment-timezone";
+
+const ProtectedLayout = React.lazy(() =>
+  import("./Common/Components/ProtectedLayout").then((m) => ({ default: m.ProtectedLayout }))
+);
+const VendorProtectedLayout = React.lazy(() => import("./VendorPortal/VendorProtectedLayout"));
+
+const RouteFallback: React.FC = () => (
+  <div className="route-loading" style={{ padding: "2rem", textAlign: "center" }}>
+    Loading…
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const settings = useSettingsSafe();
@@ -34,13 +41,15 @@ const AppContent: React.FC = () => {
         pauseOnHover
       />
       <Router>
-        <Switch>
-          <Route exact path="/login" component={Login} />
-          <Route exact path="/logout" component={Logout} />
-          <Route exact path="/change-password" component={ChangePassword} />
-          <Route path="/vendor" component={VendorProtectedLayout} />
-          <Route path="/" component={ProtectedLayout} />
-        </Switch>
+        <React.Suspense fallback={<RouteFallback />}>
+          <Switch>
+            <Route exact path="/login" component={Login} />
+            <Route exact path="/logout" component={Logout} />
+            <Route exact path="/change-password" component={ChangePassword} />
+            <Route path="/vendor" component={VendorProtectedLayout} />
+            <Route path="/" component={ProtectedLayout} />
+          </Switch>
+        </React.Suspense>
       </Router>
     </div>
   );

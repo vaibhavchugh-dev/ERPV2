@@ -99,6 +99,34 @@ export class PdfService {
     return response.data;
   };
 
+  public static GenerateNCR = async (ncrId: number): Promise<Blob> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    const locationId = this.getLocationId();
+
+    const url = `/Pdf/GenerateNCR?ncrId=${ncrId}&tenantId=${tenantID}${locationId ? `&locationId=${locationId}` : ""}`;
+    try {
+      const response = await Instense.get(url, {
+        responseType: "blob",
+      });
+      return response.data;
+    } catch (error: any) {
+      const data = error?.response?.data;
+      if (data instanceof Blob) {
+        try {
+          const text = await data.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.error) {
+            throw new Error(typeof parsed.error === "string" ? parsed.error : parsed.error.message || text);
+          }
+        } catch {
+          // fall through to original error
+        }
+      }
+      throw error;
+    }
+  };
+
   public static GenerateJobOrder = async (jobOrderId: number): Promise<Blob> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;

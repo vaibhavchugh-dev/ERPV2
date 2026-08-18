@@ -29,6 +29,12 @@ export interface CreateInvoiceRequest {
   invoiceDate?: string;
   dueDate?: string;
   notes?: string;
+  /** Sales tax rate percent (0–100) */
+  saleTax?: number;
+  /** Sales tax amount; when omitted server computes from saleTax × subtotal */
+  saleTaxAmount?: number;
+  shippingCharge?: number;
+  otherCharge?: number;
 }
 
 export interface Invoice {
@@ -63,6 +69,8 @@ export interface InvoiceDetail {
   saleTaxAmount: number;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   paymentMethod?: string;
   paymentDate?: string;
   checkNo?: string;
@@ -94,6 +102,8 @@ export interface InvoiceSummary {
   itemCount: number;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   status: string;
   daysOverdue?: number;
 }
@@ -104,6 +114,7 @@ export interface RecordCustomerPaymentRequest {
   CheckNo?: string;
   PaymentAmount?: number;
   Notes?: string;
+  BankId?: number;
 }
 
 export class InvoiceService {

@@ -43,6 +43,8 @@ export interface MasterListPageProps<T = any> {
   onLoadData?: () => Promise<void>;
   searchPlaceholder?: string;
   searchFields?: (keyof T | string)[]; // Fields to search in
+  /** Custom row matcher (e.g. JO# / CO# display formats). Overrides default field search when provided. */
+  matchRowSearch?: (row: T, searchLower: string) => boolean;
   filters?: {
     label: string;
     options: FilterOption[];
@@ -75,6 +77,7 @@ const MasterListPage = <T extends Record<string, any>>({
   onLoadData,
   searchPlaceholder = "Search...",
   searchFields = [],
+  matchRowSearch,
   filters = [],
   emptyMessage = "No data available",
   getRowId,
@@ -124,6 +127,10 @@ const MasterListPage = <T extends Record<string, any>>({
   const effectivePageSize = pageSize || (enablePagination ? settings?.defaultPageSize || 10 : data.length);
 
   useEffect(() => {
+    setCurrentPage(1);
+  }, [effectivePageSize]);
+
+  useEffect(() => {
     if (onLoadData) {
       onLoadData();
     }
@@ -142,6 +149,10 @@ const MasterListPage = <T extends Record<string, any>>({
     if (!searchTerm) return true;
 
     const searchLower = searchTerm.toLowerCase();
+
+    if (matchRowSearch) {
+      return matchRowSearch(row, searchLower);
+    }
 
     // If searchFields specified, only search those
     if (searchFields.length > 0) {

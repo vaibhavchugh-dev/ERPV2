@@ -11,6 +11,7 @@ export interface ShippableItem {
   shippingStatus: string;
   hasJobOrder: boolean;
   jobOrderStatus: string;
+  quantityOnHand?: number | null;
 }
 
 export interface ShipmentLineItem {
@@ -51,20 +52,10 @@ export class ShippingService {
   ): Promise<ShippableItem[] | null> => {
     const url = `/Shipping/GetShippableItems/${orderId}`;
     try {
-      console.log('[Ship Debug] Calling GetShippableItems for orderId:', orderId);
       const response = await Instense.get(url);
-      console.log('[Ship Debug] GetShippableItems response:', response.data);
-      const result = response.data.result as ShippableItem[];
-      console.log('[Ship Debug] GetShippableItems result:', result);
-      return result;
+      return response.data.result as ShippableItem[];
     } catch (error: any) {
       console.error("Error fetching shippable items:", error);
-      console.error("Error details:", {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        url: error.config?.url
-      });
       return null;
     }
   };

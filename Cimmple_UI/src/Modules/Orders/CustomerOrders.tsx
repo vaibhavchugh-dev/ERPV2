@@ -2,13 +2,18 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { OrderService, OrderMaster } from "../../Common/Services/OrderService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerOrders.scss";
 
 const CustomerOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<OrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -17,7 +22,7 @@ const CustomerOrders: React.FC = () => {
 
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [locationIdParam]);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -54,7 +59,10 @@ const CustomerOrders: React.FC = () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const result = await OrderService.GetOrders({ tenantid: tenantID });
+      const result = await OrderService.GetOrders({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       
       if (result && Array.isArray(result)) {
         setOrders(result);
@@ -81,32 +89,16 @@ const CustomerOrders: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
     setSelectedOrderId(0);
-    loadOrders();
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
+    if (refreshList) {
+      loadOrders();
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
-  };
+  const formatDate = (dateStr: string): string =>
+    formatDateOnlyFromApi(dateStr, true) || dateStr;
 
   const getStatusBadge = (status: string) => {
     if (!status || status.trim() === "") {
@@ -190,9 +182,11 @@ const CustomerOrders: React.FC = () => {
         columns={columns}
         data={filteredOrders}
         loading={loading}
+        enablePagination
         onAdd={handleAddOrder}
         onRowClick={handleRowClick}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [
@@ -218,6 +212,7 @@ const CustomerOrders: React.FC = () => {
         <CustomerOrderSlideout
           orderId={selectedOrderId}
           onClose={handleCloseSlideout}
+          onSaved={(id) => setSelectedOrderId(id)}
         />
       )}
     </div>

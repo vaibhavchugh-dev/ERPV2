@@ -56,7 +56,7 @@ export interface BankMasterReq {
 
 export class BankService {
   public static GetBanklist = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<BankMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -73,9 +73,11 @@ export class BankService {
     }
 
     const url = `/Bank/GetBanklist`;
-    return Instense.get(url, {
-      params: { tenantid: tenantID },
-    }).then((response) => {
+    const params: Record<string, number> = { tenantid: tenantID };
+    if (request.locationId && request.locationId > 0) {
+      params.locationId = request.locationId;
+    }
+    return Instense.get(url, { params }).then((response) => {
       const result = response.data.result as BankMaster[];
       return result;
     });
@@ -112,10 +114,10 @@ export class BankService {
       tenantID = 1; // Default tenant ID for development
     }
     
-    const locationId = storage?.locationId || 0;
+    const locationId = Number(localStorage.getItem("locationId") || 0);
 
     request.TenantID = tenantID;
-    request.locationId = locationId;
+    request.locationId = locationId > 0 ? locationId : 0;
 
     const url = `/Bank/SaveBankData`;
     return Instense.post(url, request).then((response) => {

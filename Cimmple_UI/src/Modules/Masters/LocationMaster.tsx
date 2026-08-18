@@ -105,9 +105,11 @@ const LocationMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadLocations();
+    if (refreshList) {
+      loadLocations();
+    }
   };
 
   const handleSort = (column: keyof LocationMaster) => {

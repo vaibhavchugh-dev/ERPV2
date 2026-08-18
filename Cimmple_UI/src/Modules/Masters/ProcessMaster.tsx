@@ -96,9 +96,11 @@ const ProcessMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadProcesses();
+    if (refreshList) {
+      loadProcesses();
+    }
   };
 
   const handleSort = (column: keyof ProcessMaster) => {

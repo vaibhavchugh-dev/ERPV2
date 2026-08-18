@@ -6,7 +6,9 @@ using System.IO;
 using System.Text.Json;
 using CimmpleAPI.Services.Pdf;
 using CimmpleAPI.Services.Pdf.Models;
+using CimmpleAPI.Services.Pdf.Templates;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Models;
 
 namespace CimmpleAPI.Controllers
 {
@@ -62,17 +64,23 @@ namespace CimmpleAPI.Controllers
                     ShippingAddress = BuildShippingAddress(customer),
                     BuyerName = quotation.BuyerName ?? "",
                     PhoneNumber = customer?.phone_number ?? "",
-                    LineItems = quotationDetails.Select(d => new PdfLineItem
+                    LineItems = quotationDetails.Select(d =>
                     {
-                        PartNo = d.PartNo ?? "",
-                        PartDescription = d.partname ?? "",
-                        Date = FormatDate(d.DueDate),
-                        Unit = d.Unit ?? "EA",
-                        Qty = d.QtyOrdered,
-                        UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
-                        Notes = d.notes ?? ""
+                        var subtotal = d.QtyOrdered * d.UnitPrice;
+                        var discountAmount = CalculateDiscountAmount(subtotal, d.Discount, d.DiscountType);
+                        return new PdfLineItem
+                        {
+                            PartNo = d.PartNo ?? "",
+                            PartDescription = d.partname ?? "",
+                            Date = FormatDate(d.DueDate),
+                            Unit = d.Unit ?? "EA",
+                            Qty = d.QtyOrdered,
+                            UnitPrice = d.UnitPrice,
+                            DiscountAmount = discountAmount,
+                            Amount = subtotal - discountAmount,
+                            Notes = d.notes ?? "",
+                            PrintQtyOptions = BuildPrintQtyOptions(d.QuantityTiers, d.Discount, d.DiscountType)
+                        };
                     }).ToList(),
                     TotalAmount = quotation.TotalAmount
                 };
@@ -133,17 +141,22 @@ namespace CimmpleAPI.Controllers
                     ShippingAddress = BuildShippingAddress(customer),
                     BuyerName = order.BuyerName ?? "",
                     PhoneNumber = customer?.phone_number ?? "",
-                    LineItems = orderDetails.Select(d => new PdfLineItem
+                    LineItems = orderDetails.Select(d =>
                     {
-                        PartNo = d.PartNo ?? "",
-                        PartDescription = d.partname ?? "",
-                        Date = FormatDate(d.DueDate),
-                        Unit = d.Unit ?? "EA",
-                        Qty = d.QtyOrdered,
-                        UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
-                        Notes = d.notes ?? ""
+                        var subtotal = d.QtyOrdered * d.UnitPrice;
+                        var discountAmount = CalculateDiscountAmount(subtotal, d.Discount, d.DiscountType);
+                        return new PdfLineItem
+                        {
+                            PartNo = d.PartNo ?? "",
+                            PartDescription = d.partname ?? "",
+                            Date = FormatDate(d.DueDate),
+                            Unit = d.Unit ?? "EA",
+                            Qty = d.QtyOrdered,
+                            UnitPrice = d.UnitPrice,
+                            DiscountAmount = discountAmount,
+                            Amount = subtotal - discountAmount,
+                            Notes = d.notes ?? ""
+                        };
                     }).ToList(),
                     TotalAmount = order.TotalAmount
                 };
@@ -441,8 +454,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.Notes ?? ""
                     }).ToList(),
                     TotalAmount = order.TotalAmount
@@ -513,8 +526,8 @@ namespace CimmpleAPI.Controllers
                         Unit = d.Unit ?? "EA",
                         Qty = d.QtyOrdered,
                         UnitPrice = d.UnitPrice,
-                        DiscountAmount = (d.QtyOrdered * d.UnitPrice) * (d.Discount / 100),
-                        Amount = (d.QtyOrdered * d.UnitPrice) * (1 - d.Discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
+                        Amount = (d.QtyOrdered * d.UnitPrice) - CalculateDiscountAmount(d.QtyOrdered * d.UnitPrice, d.Discount, d.DiscountType),
                         Notes = d.notes ?? ""
                     }).ToList(),
                     TotalAmount = quotation.TotalAmount
@@ -651,15 +664,29 @@ namespace CimmpleAPI.Controllers
                         if (doc.RootElement.ValueKind == JsonValueKind.Array)
                         {
                             routingSteps = doc.RootElement.EnumerateArray()
-                                .Select(step => new PdfRoutingStep
+                                .Select(step =>
                                 {
-                                    Sequence = step.TryGetProperty("sequence", out var seq) ? seq.GetInt32() : 0,
-                                    ProcessName = step.TryGetProperty("processName", out var pn) ? pn.GetString() ?? "" : "",
-                                    Description = step.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
-                                    WorkstationName = step.TryGetProperty("workstationName", out var ws) ? ws.GetString() ?? "" : "",
-                                    TechnicianName = step.TryGetProperty("technicianName", out var tech) ? tech.GetString() ?? "" : "",
-                                    EstimatedTime = step.TryGetProperty("estimatedTime", out var et) && et.ValueKind == JsonValueKind.Number ? et.GetInt32() : null,
-                                    Status = step.TryGetProperty("status", out var status) ? status.GetString() ?? "" : ""
+                                    var stepId = step.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+                                        ? idEl.GetInt32()
+                                        : (int?)null;
+                                    var scanCode = step.TryGetProperty("scanCode", out var sc) && sc.ValueKind == JsonValueKind.String
+                                        ? sc.GetString() ?? ""
+                                        : "";
+                                    if (string.IsNullOrWhiteSpace(scanCode) && stepId.HasValue && stepId.Value > 0)
+                                        scanCode = QrCodeHelper.BuildStepScanCode(jobOrderId, stepId.Value);
+
+                                    return new PdfRoutingStep
+                                    {
+                                        Sequence = step.TryGetProperty("sequence", out var seq) && seq.ValueKind == JsonValueKind.Number ? seq.GetInt32() : 0,
+                                        ProcessName = step.TryGetProperty("processName", out var pn) ? pn.GetString() ?? "" : "",
+                                        Description = step.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
+                                        WorkstationName = step.TryGetProperty("workstationName", out var ws) ? ws.GetString() ?? "" : "",
+                                        TechnicianName = step.TryGetProperty("technicianName", out var tech) ? tech.GetString() ?? "" : "",
+                                        EstimatedTime = step.TryGetProperty("estimatedTime", out var et) && et.ValueKind == JsonValueKind.Number ? et.GetInt32() : null,
+                                        Status = step.TryGetProperty("status", out var status) ? status.GetString() ?? "" : "",
+                                        ScanCode = scanCode,
+                                        QrPng = QrCodeHelper.GeneratePng(scanCode)
+                                    };
                                 })
                                 .OrderBy(rs => rs.Sequence)
                                 .ToList();
@@ -779,6 +806,271 @@ namespace CimmpleAPI.Controllers
             return address;
         }
 
+        [HttpGet("GenerateNCR")]
+        public async Task<IActionResult> GenerateNCR([FromQuery] int ncrId, [FromQuery] int tenantId, [FromQuery] int? locationId = null)
+        {
+            try
+            {
+                await EnsureNcrVendorColumnsAsync();
+
+                var ncr = await LoadNcrForPdfAsync(ncrId, tenantId);
+
+                if (ncr == null)
+                    return NotFound(new { error = "NCR not found" });
+
+                var companyInfo = await GetCompanyInfo(tenantId, locationId);
+                var pdfData = new PdfDocumentData
+                {
+                    CompanyName = companyInfo.CompanyName,
+                    CompanyAddress = companyInfo.CompanyAddress,
+                    CompanyCityStateZip = companyInfo.CompanyCityStateZip,
+                    CompanyEmail = companyInfo.CompanyEmail,
+                    CompanyPhone = companyInfo.CompanyPhone,
+                    CompanyWebAddress = companyInfo.CompanyWebAddress,
+                    LogoPath = companyInfo.LogoPath,
+                    CustomerName = ncr.CustomerName ?? ncr.VendorName ?? "",
+                    LineItems = new List<PdfLineItem>()
+                };
+
+                var ncrNumber = string.IsNullOrWhiteSpace(ncr.NcrNumber) ? $"NCR-{ncr.NcrId}" : ncr.NcrNumber;
+                var pdfBytes = _pdfService.GenerateNcrPdf(pdfData, new NcrPdfContent
+                {
+                    NcrNumber = ncrNumber,
+                    Title = ncr.Title,
+                    Status = ncr.Status,
+                    Source = ncr.Source,
+                    Category = ncr.Category,
+                    Severity = ncr.Severity,
+                    Description = ncr.Description,
+                    JobOrderNumber = ncr.JobOrderNumber,
+                    PartNo = ncr.PartNo,
+                    PartName = ncr.PartName,
+                    CustomerName = ncr.CustomerName,
+                    VendorName = ncr.VendorName,
+                    PoNumber = ncr.PoNumber,
+                    NcrCode = ncr.NcrCode,
+                    DefectLocation = ncr.DefectLocation,
+                    DefectQuantity = ncr.DefectQuantity,
+                    TotalQuantity = ncr.TotalQuantity,
+                    DefectDescription = ncr.DefectDescription,
+                    DueDate = FormatDate(ncr.DueDate),
+                    ReportedBy = ncr.ReportedByName,
+                    ReportedDate = FormatDate(ncr.ReportedDate),
+                    Investigator = ncr.InvestigatedByName,
+                    Approver = ncr.ApprovedByName,
+                    RootCauseCategory = ncr.RootCauseCategory,
+                    RootCause = ncr.RootCause,
+                    ImmediateAction = ncr.ImmediateAction,
+                    CorrectiveAction = ncr.CorrectiveAction,
+                    PreventiveAction = ncr.PreventiveAction,
+                    CostImpact = ncr.CostImpact.HasValue ? ncr.CostImpact.Value.ToString("0.00") : "",
+                    Notes = ncr.Notes
+                });
+
+                return File(pdfBytes, "application/pdf", $"NCR_{ncrNumber}_{DateTime.Now:yyyy-MM-dd}.pdf");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private static int _ncrVendorColumnsReady;
+
+        private async Task EnsureNcrVendorColumnsAsync()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _ncrVendorColumnsReady, 1, 0) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await _context.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH('dbo.NonConformanceReports', 'VendorId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        VendorId int NULL,
+        VendorName nvarchar(200) NULL,
+        VendorOrderId int NULL,
+        PoNumber nvarchar(50) NULL;
+END
+IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+BEGIN
+    ALTER TABLE dbo.NonConformanceReports ADD
+        NcrCodeId int NULL,
+        NcrCode nvarchar(50) NULL;
+END");
+            }
+            catch
+            {
+                System.Threading.Interlocked.Exchange(ref _ncrVendorColumnsReady, 0);
+            }
+        }
+
+        private sealed class NcrPdfRow
+        {
+            public int NcrId { get; set; }
+            public string NcrNumber { get; set; } = "";
+            public string Title { get; set; } = "";
+            public string Description { get; set; } = "";
+            public string Category { get; set; } = "";
+            public string Severity { get; set; } = "";
+            public string Status { get; set; } = "";
+            public string Source { get; set; } = "";
+            public string JobOrderNumber { get; set; } = "";
+            public string PartNo { get; set; } = "";
+            public string PartName { get; set; } = "";
+            public string CustomerName { get; set; } = "";
+            public string VendorName { get; set; } = "";
+            public string PoNumber { get; set; } = "";
+            public string NcrCode { get; set; } = "";
+            public string DefectLocation { get; set; } = "";
+            public int DefectQuantity { get; set; }
+            public int TotalQuantity { get; set; }
+            public string DefectDescription { get; set; } = "";
+            public string RootCauseCategory { get; set; } = "";
+            public string RootCause { get; set; } = "";
+            public string ImmediateAction { get; set; } = "";
+            public string CorrectiveAction { get; set; } = "";
+            public string PreventiveAction { get; set; } = "";
+            public string ReportedByName { get; set; } = "";
+            public DateTime? ReportedDate { get; set; }
+            public string InvestigatedByName { get; set; } = "";
+            public string ApprovedByName { get; set; } = "";
+            public DateTime? DueDate { get; set; }
+            public decimal? CostImpact { get; set; }
+            public string Notes { get; set; } = "";
+        }
+
+        private async Task<NcrPdfRow?> LoadNcrForPdfAsync(int ncrId, int tenantId)
+        {
+            await using var command = _context.Database.GetDbConnection().CreateCommand();
+            command.CommandText = @"
+                SELECT TOP 1
+                    NcrId,
+                    ISNULL(NcrNumber, 'NCR-' + CAST(NcrId AS VARCHAR(10))) as NcrNumber,
+                    ISNULL(Title, 'Untitled NCR') as Title,
+                    ISNULL(Description, '') as Description,
+                    ISNULL(Category, 'Other') as Category,
+                    ISNULL(Severity, 'Minor') as Severity,
+                    ISNULL(Status, 'Open') as Status,
+                    ISNULL(Source, 'Internal') as Source,
+                    ISNULL(JobOrderNumber, '') as JobOrderNumber,
+                    ISNULL(PartNo, '') as PartNo,
+                    ISNULL(PartName, '') as PartName,
+                    ISNULL(CustomerName, '') as CustomerName,
+                    ISNULL(VendorName, '') as VendorName,
+                    ISNULL(PoNumber, '') as PoNumber,
+                    ISNULL(NcrCode, '') as NcrCode,
+                    ISNULL(DefectLocation, '') as DefectLocation,
+                    ISNULL(DefectQuantity, 0) as DefectQuantity,
+                    ISNULL(TotalQuantity, 0) as TotalQuantity,
+                    ISNULL(DefectDescription, '') as DefectDescription,
+                    ISNULL(RootCauseCategory, '') as RootCauseCategory,
+                    ISNULL(RootCause, '') as RootCause,
+                    ISNULL(ImmediateAction, '') as ImmediateAction,
+                    ISNULL(CorrectiveAction, '') as CorrectiveAction,
+                    ISNULL(PreventiveAction, '') as PreventiveAction,
+                    ISNULL(ReportedByName, 'Unknown User') as ReportedByName,
+                    ReportedDate,
+                    ISNULL(InvestigatedByName, '') as InvestigatedByName,
+                    ISNULL(ApprovedByName, '') as ApprovedByName,
+                    DueDate,
+                    CostImpact,
+                    ISNULL(Notes, '') as Notes
+                FROM NonConformanceReports
+                WHERE NcrId = @ncrId";
+
+            if (tenantId > 0)
+            {
+                command.CommandText += " AND TenantId = @tenantId";
+            }
+
+            var idParam = command.CreateParameter();
+            idParam.ParameterName = "@ncrId";
+            idParam.Value = ncrId;
+            command.Parameters.Add(idParam);
+
+            if (tenantId > 0)
+            {
+                var tenantParam = command.CreateParameter();
+                tenantParam.ParameterName = "@tenantId";
+                tenantParam.Value = tenantId;
+                command.Parameters.Add(tenantParam);
+            }
+
+            if (command.Connection!.State != System.Data.ConnectionState.Open)
+            {
+                await command.Connection.OpenAsync();
+            }
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            static string ReadString(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? "" : r.GetString(ordinal);
+            }
+
+            static int ReadInt(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? 0 : r.GetInt32(ordinal);
+            }
+
+            static DateTime? ReadDate(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? null : r.GetDateTime(ordinal);
+            }
+
+            static decimal? ReadDecimal(System.Data.Common.DbDataReader r, string column)
+            {
+                var ordinal = r.GetOrdinal(column);
+                return r.IsDBNull(ordinal) ? null : r.GetDecimal(ordinal);
+            }
+
+            return new NcrPdfRow
+            {
+                NcrId = ReadInt(reader, "NcrId"),
+                NcrNumber = ReadString(reader, "NcrNumber"),
+                Title = ReadString(reader, "Title"),
+                Description = ReadString(reader, "Description"),
+                Category = ReadString(reader, "Category"),
+                Severity = ReadString(reader, "Severity"),
+                Status = ReadString(reader, "Status"),
+                Source = ReadString(reader, "Source"),
+                JobOrderNumber = ReadString(reader, "JobOrderNumber"),
+                PartNo = ReadString(reader, "PartNo"),
+                PartName = ReadString(reader, "PartName"),
+                CustomerName = ReadString(reader, "CustomerName"),
+                VendorName = ReadString(reader, "VendorName"),
+                PoNumber = ReadString(reader, "PoNumber"),
+                NcrCode = ReadString(reader, "NcrCode"),
+                DefectLocation = ReadString(reader, "DefectLocation"),
+                DefectQuantity = ReadInt(reader, "DefectQuantity"),
+                TotalQuantity = ReadInt(reader, "TotalQuantity"),
+                DefectDescription = ReadString(reader, "DefectDescription"),
+                RootCauseCategory = ReadString(reader, "RootCauseCategory"),
+                RootCause = ReadString(reader, "RootCause"),
+                ImmediateAction = ReadString(reader, "ImmediateAction"),
+                CorrectiveAction = ReadString(reader, "CorrectiveAction"),
+                PreventiveAction = ReadString(reader, "PreventiveAction"),
+                ReportedByName = ReadString(reader, "ReportedByName"),
+                ReportedDate = ReadDate(reader, "ReportedDate"),
+                InvestigatedByName = ReadString(reader, "InvestigatedByName"),
+                ApprovedByName = ReadString(reader, "ApprovedByName"),
+                DueDate = ReadDate(reader, "DueDate"),
+                CostImpact = ReadDecimal(reader, "CostImpact"),
+                Notes = ReadString(reader, "Notes")
+            };
+        }
+
         private async Task<(string CompanyName, string CompanyAddress, string CompanyCityStateZip, string CompanyEmail, string CompanyPhone, string CompanyWebAddress, string LogoPath)> GetCompanyInfo(int tenantId, int? locationId)
         {
             // Try to get location data first if locationId is provided
@@ -882,6 +1174,124 @@ namespace CimmpleAPI.Controllers
             if (!string.IsNullOrEmpty(entity.zip)) parts.Add(entity.zip);
             
             return string.Join(", ", parts);
+        }
+
+        private static decimal CalculateDiscountAmount(decimal subtotal, decimal discount, string? discountType)
+        {
+            if (discount <= 0) return 0;
+            if (string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase))
+            {
+                return Math.Min(discount, subtotal);
+            }
+            return subtotal * (discount / 100m);
+        }
+
+        private static List<PdfQtyPriceOption> BuildPrintQtyOptions(
+            string? quantityTiersJson,
+            decimal discount,
+            string? discountType)
+        {
+            var options = new List<PdfQtyPriceOption>();
+            if (string.IsNullOrWhiteSpace(quantityTiersJson))
+            {
+                return options;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(quantityTiersJson);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    return options;
+                }
+
+                if (!TryGetPropertyIgnoreCase(root, "quantities", out var quantitiesElem) ||
+                    quantitiesElem.ValueKind != JsonValueKind.Array)
+                {
+                    return options;
+                }
+
+                var quantities = quantitiesElem.EnumerateArray()
+                    .Select(e => e.TryGetInt32(out var q) ? q : 0)
+                    .ToList();
+
+                var includeFlags = new List<bool>();
+                if (TryGetPropertyIgnoreCase(root, "includeInPrint", out var includeElem) &&
+                    includeElem.ValueKind == JsonValueKind.Array)
+                {
+                    includeFlags = includeElem.EnumerateArray()
+                        .Select(e => e.ValueKind == JsonValueKind.True ||
+                                     (e.ValueKind == JsonValueKind.False ? false :
+                                      e.ValueKind == JsonValueKind.Number && e.GetInt32() != 0))
+                        .ToList();
+                }
+
+                var unitPrices = new decimal[quantities.Count];
+                if (TryGetPropertyIgnoreCase(root, "breakdownPrices", out var breakdownElem) &&
+                    breakdownElem.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var bp in breakdownElem.EnumerateArray())
+                    {
+                        if (!TryGetPropertyIgnoreCase(bp, "prices", out var pricesElem) ||
+                            pricesElem.ValueKind != JsonValueKind.Array)
+                        {
+                            continue;
+                        }
+
+                        var prices = pricesElem.EnumerateArray()
+                            .Select(p => p.TryGetDecimal(out var val) ? val : 0m)
+                            .ToList();
+
+                        for (int i = 0; i < quantities.Count && i < prices.Count; i++)
+                        {
+                            unitPrices[i] += prices[i];
+                        }
+                    }
+                }
+
+                for (int i = 0; i < quantities.Count; i++)
+                {
+                    var include = i < includeFlags.Count ? includeFlags[i] : false;
+                    if (!include || quantities[i] <= 0)
+                    {
+                        continue;
+                    }
+
+                    var qty = quantities[i];
+                    var unitPrice = unitPrices[i];
+                    var subtotal = qty * unitPrice;
+                    var discountAmount = CalculateDiscountAmount(subtotal, discount, discountType);
+                    options.Add(new PdfQtyPriceOption
+                    {
+                        Qty = qty,
+                        UnitPrice = unitPrice,
+                        DiscountAmount = discountAmount,
+                        Amount = Math.Max(0, subtotal - discountAmount)
+                    });
+                }
+            }
+            catch
+            {
+                // Ignore malformed matrix JSON
+            }
+
+            return options;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+        {
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = prop.Value;
+                    return true;
+                }
+            }
+
+            value = default;
+            return false;
         }
 
         private string FormatDate(DateTime? date)

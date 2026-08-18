@@ -1,13 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -16,19 +21,29 @@ namespace CimmpleAPI.Controllers
     public class QuotationController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public QuotationController(CimmpleDbContext context)
+        public QuotationController(CimmpleDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
 
         [HttpGet("GetQuotations")]
-        public IActionResult GetQuotations([FromQuery] int tenantid)
+        public IActionResult GetQuotations([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                var quotations = _context.QuotationOrder
-                    .Where(q => q.Tenantid == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var quotationsQuery = _context.QuotationOrder.Where(q => q.Tenantid == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    quotationsQuery = quotationsQuery.Where(q => q.Locationid == filterLocationId.Value);
+                }
+
+                var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
                     .Select(q => new
                     {
@@ -47,7 +62,42 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                return Ok(new { result = quotations });
+                // convertedOrderId stores CustomerOrder.OrderID; resolve PONumber for display (CO#)
+                var convertedOrderIds = quotations
+                    .Where(q => q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0)
+                    .Select(q => q.convertedOrderId!.Value)
+                    .Distinct()
+                    .ToList();
+                var convertedOrderNumbers = convertedOrderIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : _context.CustomerOrder
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == tenantid && convertedOrderIds.Contains(o.OrderID))
+                        .Select(o => new { o.OrderID, o.PONumber })
+                        .ToList()
+                        .ToDictionary(o => o.OrderID, o => o.PONumber);
+
+                var quotationsWithOrderNumber = quotations.Select(q => new
+                {
+                    q.orderID,
+                    q.quotationNumber,
+                    q.customerID,
+                    q.customerCode,
+                    q.customerName,
+                    q.orderDate,
+                    q.totalAmount,
+                    q.status,
+                    q.customerRefNo,
+                    q.isConverted,
+                    q.convertedOrderId,
+                    convertedOrderNumber = q.convertedOrderId.HasValue &&
+                        convertedOrderNumbers.TryGetValue(q.convertedOrderId.Value, out var po)
+                        ? (int?)po
+                        : null,
+                    q.locationId
+                }).ToList();
+
+                return Ok(new { result = quotationsWithOrderNumber });
             }
             catch (Exception ex)
             {
@@ -127,6 +177,7 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         leadTime = d.leadTime ?? "",
                         notes = d.notes ?? "",
@@ -134,28 +185,7 @@ namespace CimmpleAPI.Controllers
                     });
                 }
 
-                // Load attachments from JSON
-                List<QuotationAttachmentDto> attachments = null;
-                try
-                {
-                    if (!string.IsNullOrEmpty(quotation.AttachmentsJson))
-                    {
-                        Console.WriteLine($"Loading attachments JSON: {quotation.AttachmentsJson}");
-                        var options = new JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                            PropertyNameCaseInsensitive = true
-                        };
-                        attachments = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(quotation.AttachmentsJson, options);
-                        Console.WriteLine($"Deserialized {attachments?.Count ?? 0} attachments");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error deserializing attachments: {ex.Message}");
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
-                    attachments = null;
-                }
+                var attachments = GetQuotationAttachmentDtos(quotation.OrderID, quotation.Tenantid, quotation.AttachmentsJson);
 
                 // Load comments from JSON
                 List<QuotationCommentDto> comments = null;
@@ -199,15 +229,26 @@ namespace CimmpleAPI.Controllers
                     customerRefNo = quotation.CustomerRefNo ?? "",
                     isConverted = quotation.isConverted ?? 0,
                     convertedOrderId = quotation.convertedOrderId,
+                    convertedOrderNumber = quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0
+                        ? _context.CustomerOrder
+                            .AsNoTracking()
+                            .Where(o => o.OrderID == quotation.convertedOrderId.Value && o.Tenantid == tenantId)
+                            .Select(o => (int?)o.PONumber)
+                            .FirstOrDefault()
+                        : null,
                     locationId = quotation.Locationid,
                     details = details,
-                    attachments = attachments != null ? attachments.Select(a => new
+                    attachments = attachments.Select(a => new
                     {
                         id = a.Id,
                         name = a.Name,
                         size = a.Size,
-                        fileUrl = a.FileUrl
-                    }).ToList() : null,
+                        fileUrl = a.FileUrl,
+                        fileUniqueno = a.FileUniqueno,
+                        uploadFile = a.UploadFile,
+                        pageNo = a.PageNo,
+                        createdBy = a.CreatedBy
+                    }).ToList(),
                     comments = comments != null ? comments.Select(c => new
                     {
                         id = c.Id,
@@ -226,26 +267,50 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SaveQuotation")]
-        public IActionResult SaveQuotation([FromBody] QuotationReq request)
+        [Consumes("multipart/form-data", "application/json")]
+        public async Task<IActionResult> SaveQuotation()
         {
             try
             {
-                if (request == null)
+                QuotationReq? request = null;
+                List<IFormFile> newFiles = new List<IFormFile>();
+
+                if (Request.HasFormContentType)
                 {
-                    // Try to get model state errors
-                    var errors = ModelState
-                        .Where(x => x.Value.Errors.Count > 0)
-                        .Select(x => new { Field = x.Key, Errors = x.Value.Errors.Select(e => e.ErrorMessage) })
-                        .ToList();
-                    
-                    Console.WriteLine($"Request is null. Model state errors: {System.Text.Json.JsonSerializer.Serialize(errors)}");
-                    return BadRequest(new { error = "Request is null", modelErrors = errors, details = "Model binding failed. Check property names and types." });
+                    var form = await Request.ReadFormAsync();
+                    var formField = form["formField"].FirstOrDefault()
+                                 ?? form["FormField"].FirstOrDefault();
+
+                    if (string.IsNullOrWhiteSpace(formField))
+                    {
+                        return BadRequest(new { error = "formField is required for multipart SaveQuotation" });
+                    }
+
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    request = JsonSerializer.Deserialize<QuotationReq>(formField, options);
+                    newFiles = form.Files?.Where(f => f != null && f.Length > 0).ToList()
+                               ?? new List<IFormFile>();
+                }
+                else
+                {
+                    using var reader = new StreamReader(Request.Body);
+                    var body = await reader.ReadToEndAsync();
+                    if (string.IsNullOrWhiteSpace(body))
+                    {
+                        return BadRequest(new { error = "Request body is required" });
+                    }
+
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    request = JsonSerializer.Deserialize<QuotationReq>(body, options);
                 }
 
-                // Log the received request for debugging
-                Console.WriteLine($"Received SaveQuotation request - OrderID: {request.OrderID}, CustomerID: {request.CustomerID}, Tenantid: {request.Tenantid}");
+                if (request == null)
+                {
+                    return BadRequest(new { error = "Request is null", details = "Model binding / deserialization failed." });
+                }
 
-                // Validate required fields
+                Console.WriteLine($"Received SaveQuotation request - OrderID: {request.OrderID}, CustomerID: {request.CustomerID}, Tenantid: {request.Tenantid}, NewFiles: {newFiles.Count}, DeletedAttachments: {request.DeletedAttachmentIds?.Count ?? 0}");
+
                 if (request.CustomerID <= 0)
                 {
                     return BadRequest(new { error = "Customer is required" });
@@ -256,11 +321,16 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Details cannot be null" });
                 }
 
+                if (request.Tenantid <= 0)
+                {
+                    request.Tenantid = GetTenantId();
+                }
+
+                int createdBy = request.UserId > 0 ? request.UserId : (GetUserId() ?? 0);
                 QuotationOrder quotation;
 
                 if (request.OrderID > 0)
                 {
-                    // Update existing quotation
                     quotation = _context.QuotationOrder
                         .FirstOrDefault(q => q.OrderID == request.OrderID && q.Tenantid == request.Tenantid);
 
@@ -271,8 +341,6 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
-                    // Get next PO Number - simple increment from existing max
-                    // Load existing quotations to memory first to avoid LINQ translation issues
                     var existingQuotations = _context.QuotationOrder
                         .Where(q => q.Tenantid == request.Tenantid)
                         .ToList();
@@ -280,26 +348,18 @@ namespace CimmpleAPI.Controllers
                     int nextPONumber;
                     if (existingQuotations.Any())
                     {
-                        // Find the maximum PONumber from existing quotations
                         var maxPONumber = existingQuotations.Max(q => q.PONumber);
-                        // Always increment from max, ensuring minimum is 1000
                         nextPONumber = Math.Max(1000, maxPONumber + 1);
-                        Console.WriteLine($"Found {existingQuotations.Count} existing quotations. Max PONumber: {maxPONumber}, Next: {nextPONumber}");
                     }
                     else
                     {
-                        // No existing quotations, start from 1000
                         nextPONumber = 1000;
-                        Console.WriteLine("No existing quotations found. Starting from 1000");
                     }
 
-                    Console.WriteLine($"Assigning PONumber: {nextPONumber} to new quotation");
-
-                    // Create new quotation with the calculated PONumber
                     quotation = new QuotationOrder
                     {
                         Tenantid = request.Tenantid,
-                        OrderDate = request.OrderDate,
+                        OrderDate = request.OrderDate.Date,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
                         PONumber = nextPONumber
@@ -307,7 +367,7 @@ namespace CimmpleAPI.Controllers
                     _context.QuotationOrder.Add(quotation);
                 }
 
-                // Update fields
+                quotation.OrderDate = request.OrderDate.Date;
                 quotation.CustomerID = request.CustomerID;
                 quotation.customercode = request.CustomerCode ?? "";
                 quotation.CustomerName = request.CustomerName ?? "";
@@ -320,26 +380,10 @@ namespace CimmpleAPI.Controllers
                 quotation.ExternalOrderDate = request.ExternalOrderDate;
                 quotation.BuyerName = request.BuyerName ?? "";
                 quotation.CustomerRefNo = request.CustomerRefNo ?? "";
-                quotation.Locationid = request.LocationId;
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLocationId, out var forbidLoc))
+                    return forbidLoc!;
+                quotation.Locationid = resolvedLocationId > 0 ? resolvedLocationId : request.LocationId;
 
-                // Save attachments as JSON
-                if (request.Attachments != null && request.Attachments.Count > 0)
-                {
-                    var attachmentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        PropertyNameCaseInsensitive = true,
-                        WriteIndented = false
-                    };
-                    quotation.AttachmentsJson = JsonSerializer.Serialize(request.Attachments, attachmentOptions);
-                    Console.WriteLine($"Saved attachments JSON: {quotation.AttachmentsJson}");
-                }
-                else
-                {
-                    quotation.AttachmentsJson = null;
-                }
-
-                // Save comments as JSON
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
                     var commentOptions = new JsonSerializerOptions
@@ -354,18 +398,17 @@ namespace CimmpleAPI.Controllers
                     quotation.CommentsJson = null;
                 }
 
+                // Persist quotation first so new attachments can use OrderID.
                 _context.SaveChanges();
 
                 // Handle quotation details
                 if (request.Details != null && request.Details.Count > 0)
                 {
-                    // Delete existing details
                     var existingDetails = _context.QuotationOrderDetails
                         .Where(d => d.OrderID == quotation.OrderID && d.Tenantid == request.Tenantid)
                         .ToList();
                     _context.QuotationOrderDetails.RemoveRange(existingDetails);
 
-                    // Add new details
                     foreach (var detail in request.Details)
                     {
                         var quotationDetail = new QuotationOrderDetails
@@ -374,7 +417,7 @@ namespace CimmpleAPI.Controllers
                             ItemNo = detail.ItemNo,
                             partname = detail.PartName ?? "",
                             PartNo = detail.PartNo ?? "",
-                            DueDate = detail.DueDate,
+                            DueDate = detail.DueDate.Date,
                             JobNumber = detail.JobNumber ?? "",
                             JobDesc = detail.JobDesc ?? "",
                             QtyOrdered = detail.QtyOrdered,
@@ -382,6 +425,7 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detail.UnitPrice,
                             JobPriority = detail.JobPriority,
                             Discount = detail.Discount,
+                            DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
                             Tenantid = request.Tenantid,
                             productid = detail.ProductId,
                             leadTime = detail.LeadTime ?? "",
@@ -396,7 +440,57 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                 }
 
-                return Ok(new { result = new { id = quotation.OrderID, message = "Quotation saved successfully" } });
+                // Process deleted existing attachments (Azure + DB) without touching retained ones.
+                if (request.DeletedAttachmentIds != null && request.DeletedAttachmentIds.Count > 0)
+                {
+                    await ProcessDeletedQuotationAttachments(
+                        quotation.OrderID,
+                        request.Tenantid,
+                        request.DeletedAttachmentIds);
+                }
+
+                // Upload only newly added files. Existing attachments are never re-uploaded.
+                if (newFiles.Count > 0)
+                {
+                    var uploadError = await UploadNewQuotationAttachments(
+                        quotation,
+                        newFiles,
+                        createdBy);
+
+                    if (!string.IsNullOrEmpty(uploadError))
+                    {
+                        return StatusCode(500, new { error = uploadError });
+                    }
+                }
+
+                SyncQuotationAttachmentsJson(quotation);
+                _context.SaveChanges();
+
+                var attachments = GetQuotationAttachmentDtos(
+                    quotation.OrderID,
+                    quotation.Tenantid,
+                    quotation.AttachmentsJson);
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = quotation.OrderID,
+                        poNumber = quotation.PONumber,
+                        message = "Quotation saved successfully",
+                        attachments = attachments.Select(a => new
+                        {
+                            id = a.Id,
+                            name = a.Name,
+                            size = a.Size,
+                            fileUrl = a.FileUrl,
+                            fileUniqueno = a.FileUniqueno,
+                            uploadFile = a.UploadFile,
+                            pageNo = a.PageNo,
+                            createdBy = a.CreatedBy
+                        }).ToList()
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -528,8 +622,260 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("DuplicateQuotation")]
+        public async Task<IActionResult> DuplicateQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var source = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Quotation not found" });
+                }
+
+                var sourceDetails = _context.QuotationOrderDetails
+                    .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToList();
+
+                var existingQuotations = _context.QuotationOrder
+                    .Where(q => q.Tenantid == tenantId)
+                    .ToList();
+                int nextPONumber = existingQuotations.Any()
+                    ? Math.Max(1000, existingQuotations.Max(q => q.PONumber) + 1)
+                    : 1000;
+
+                var duplicate = new QuotationOrder
+                {
+                    Tenantid = source.Tenantid,
+                    CustomerID = source.CustomerID,
+                    customercode = source.customercode ?? "",
+                    CustomerName = source.CustomerName ?? "",
+                    address = source.address ?? "",
+                    CustomerPoNumber = source.CustomerPoNumber ?? "",
+                    OrderDate = DateTime.Now.Date,
+                    TotalAmount = source.TotalAmount,
+                    UserId = source.UserId,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    shippingInstructions = source.shippingInstructions ?? "",
+                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
+                    ExternalOrderDate = source.ExternalOrderDate,
+                    BuyerName = source.BuyerName ?? "",
+                    CustomerRefNo = "",
+                    isConverted = 0,
+                    convertedOrderId = null,
+                    Locationid = source.Locationid,
+                    CommentsJson = null,
+                    AttachmentsJson = null,
+                    PONumber = nextPONumber
+                };
+                _context.QuotationOrder.Add(duplicate);
+                _context.SaveChanges();
+
+                foreach (var detail in sourceDetails)
+                {
+                    _context.QuotationOrderDetails.Add(new QuotationOrderDetails
+                    {
+                        OrderID = duplicate.OrderID,
+                        ItemNo = detail.ItemNo,
+                        partname = detail.partname ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = detail.DueDate,
+                        JobNumber = detail.JobNumber ?? "",
+                        JobDesc = detail.JobDesc ?? "",
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "",
+                        UnitPrice = detail.UnitPrice,
+                        JobPriority = detail.JobPriority,
+                        Discount = detail.Discount,
+                        DiscountType = detail.DiscountType,
+                        Tenantid = tenantId,
+                        productid = detail.productid,
+                        leadTime = detail.leadTime ?? "",
+                        notes = detail.notes ?? "",
+                        QuantityTiers = detail.QuantityTiers
+                    });
+                }
+                _context.SaveChanges();
+
+                var sourceAttachments = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToList();
+
+                int createdBy = GetUserId() ?? source.UserId;
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.QuotationOrderAttachment.Any()
+                        ? _context.QuotationOrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    _context.QuotationOrderAttachment.Add(new QuotationOrderAttachment
+                    {
+                        orderid = duplicate.OrderID,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    });
+                    _context.SaveChanges();
+                }
+
+                SyncQuotationAttachmentsJson(duplicate);
+                _context.SaveChanges();
+
+                return Ok(new { result = new { id = duplicate.OrderID, message = "Quotation duplicated successfully" } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
+        public class CopyAttachmentsToOrderRequest
+        {
+            public List<int> AttachmentIds { get; set; } = new List<int>();
+        }
+
+        /// <summary>
+        /// Copies selected quotation attachment blobs into the Orders folder and writes OrderAttachment + AttachmentsJson.
+        /// </summary>
+        [HttpPost("CopyAttachmentsToOrder")]
+        public async Task<IActionResult> CopyAttachmentsToOrder(
+            [FromQuery] int quotationId,
+            [FromQuery] int orderId,
+            [FromQuery] int tenantId,
+            [FromBody] CopyAttachmentsToOrderRequest? request)
+        {
+            try
+            {
+                var quotation = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                var order = _context.CustomerOrder
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (quotation == null || order == null)
+                {
+                    return NotFound(new { error = "Quotation or order not found" });
+                }
+
+                var selectedIds = request?.AttachmentIds ?? new List<int>();
+                var sourceQuery = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId);
+                if (selectedIds.Count > 0)
+                {
+                    sourceQuery = sourceQuery.Where(a => selectedIds.Contains(a.Id));
+                }
+                var sourceAttachments = sourceQuery.OrderBy(a => a.Id).ToList();
+
+                int createdBy = GetUserId() ?? 0;
+                var copiedDtos = new List<QuotationAttachmentDto>();
+
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.OrderAttachment.Any()
+                        ? _context.OrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.OrdersFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    var orderAtt = new OrderAttachment
+                    {
+                        orderid = orderId,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    };
+                    _context.OrderAttachment.Add(orderAtt);
+                    _context.SaveChanges();
+
+                    copiedDtos.Add(new QuotationAttachmentDto
+                    {
+                        Id = orderAtt.Id,
+                        Name = orderAtt.Name,
+                        Size = orderAtt.size,
+                        FileUrl = orderAtt.UploadFile,
+                        FileUniqueno = orderAtt.FileUniqueno,
+                        UploadFile = orderAtt.UploadFile,
+                        PageNo = orderAtt.Pageno,
+                        CreatedBy = orderAtt.createdby
+                    });
+                }
+
+                var attachmentOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    WriteIndented = false
+                };
+                order.AttachmentsJson = copiedDtos.Count > 0
+                    ? JsonSerializer.Serialize(copiedDtos, attachmentOptions)
+                    : null;
+                _context.SaveChanges();
+
+                return Ok(new { result = new { message = "Attachments copied", count = copiedDtos.Count, attachments = copiedDtos } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
         [HttpDelete("DeleteQuotation")]
-        public IActionResult DeleteQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
         {
             try
             {
@@ -541,12 +887,25 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
-                // Delete associated attachments first
+                // Delete associated attachments (Azure blobs + DB rows)
                 var attachments = _context.QuotationOrderAttachment
-                    .Where(a => a.orderid == quotationId)
+                    .Where(a => a.orderid == quotationId && a.TenantID == tenantId)
                     .ToList();
                 if (attachments.Any())
                 {
+                    var blobInfos = attachments
+                        .Where(a => !string.IsNullOrEmpty(a.UploadFile))
+                        .Select(a => ModuleFileStorage.CreateFileInfo(
+                            tenantId,
+                            ModuleFileStorage.QuotationsFolder,
+                            a.UploadFile))
+                        .ToList();
+
+                    if (blobInfos.Count > 0)
+                    {
+                        await ModuleFileStorage.DeleteManyAsync(_context, _configuration, blobInfos);
+                    }
+
                     _context.QuotationOrderAttachment.RemoveRange(attachments);
                 }
 
@@ -574,13 +933,23 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetVendorQuotations")]
-        public IActionResult GetVendorQuotations([FromQuery] int tenantid)
+        public IActionResult GetVendorQuotations([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 // Filter out response-only quotations - these are child quotations that shouldn't appear in listing
-                var quotations = _context.VendorQuotations
-                    .Where(q => q.Tenantid == tenantid && (q.IsResponseOnly == null || q.IsResponseOnly == false))
+                var quotationsQuery = _context.VendorQuotations
+                    .Where(q => q.Tenantid == tenantid && (q.IsResponseOnly == null || q.IsResponseOnly == false));
+
+                if (filterLocationId.HasValue)
+                {
+                    quotationsQuery = quotationsQuery.Where(q => q.locationid == filterLocationId.Value);
+                }
+
+                var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
                     .Select(q => new
                     {
@@ -764,9 +1133,13 @@ namespace CimmpleAPI.Controllers
                         unitPrice = d.UnitPrice,
                         jobPriority = d.JobPriority,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
+                        rawMaterialId = d.RawMaterialId,
+                        lineType = NormalizeVendorQuotationLineType(d.LineType, quotation.VendorOrderType),
                         leadTime = "",
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson) 
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null
@@ -919,6 +1292,26 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Vendor is required" });
                 }
 
+                var isVendorPortal = IsVendorPortal();
+                var tokenVendorId = GetVendorId();
+                if (isVendorPortal)
+                {
+                    if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0)
+                    {
+                        return StatusCode(403, new { message = "Vendor portal account is not linked to a vendor" });
+                    }
+
+                    if (tokenVendorId.Value != vendorID)
+                    {
+                        return StatusCode(403, new { message = "You can only update quotations for your vendor account" });
+                    }
+
+                    if (orderID <= 0)
+                    {
+                        return BadRequest(new { error = "Vendor portal can only update an existing quotation" });
+                    }
+                }
+
                 if (!request.TryGetProperty("Details", out JsonElement detailsElem) || detailsElem.ValueKind != JsonValueKind.Array || detailsElem.GetArrayLength() == 0)
                 {
                     return BadRequest(new { error = "At least one detail item is required" });
@@ -982,6 +1375,11 @@ namespace CimmpleAPI.Controllers
                     if (quotation == null)
                     {
                         return NotFound(new { error = "Vendor quotation not found" });
+                    }
+
+                    if (isVendorPortal && quotation.VendorID != tokenVendorId)
+                    {
+                        return StatusCode(403, new { message = "You can only update quotations for your vendor account" });
                     }
                     
                     // Re-attach the entity for update
@@ -1079,7 +1477,19 @@ namespace CimmpleAPI.Controllers
                 quotation.contactName = request.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "";
                 quotation.VendorOrderType = request.TryGetProperty("QuotationType", out JsonElement quotationTypeElem2) ? quotationTypeElem2.GetString() ?? "Material" : "Material";
                 quotation.AdditionalNotes = request.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : null;
-                quotation.locationid = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number ? locationIdElem.GetInt32() : (int?)null;
+                if (isVendorPortal)
+                {
+                    // Vendor portal is not location-scoped; keep the RFQ's existing site.
+                }
+                else
+                {
+                    var requestedVendorQuoteLoc = request.TryGetProperty("LocationId", out JsonElement locationIdElem) && locationIdElem.ValueKind == JsonValueKind.Number
+                        ? locationIdElem.GetInt32()
+                        : (int?)null;
+                    if (!TryResolveLocationId(requestedVendorQuoteLoc, out var resolvedVendorQuoteLoc, out var forbidVendorQuoteLoc))
+                        return forbidVendorQuoteLoc!;
+                    quotation.locationid = resolvedVendorQuoteLoc > 0 ? resolvedVendorQuoteLoc : requestedVendorQuoteLoc;
+                }
                 // Only update convertedOrderId if it's provided and valid
                 // CRITICAL: Backend SaveVendorOrder already sets this correctly with PONumber
                 // If convertedOrderId is already set and the incoming value is an OrderID (likely > 1000 or matches a pattern),
@@ -1256,7 +1666,11 @@ namespace CimmpleAPI.Controllers
                             Tenantid = tenantid,
                             ItemNo = detailElem.TryGetProperty("ItemNo", out JsonElement itemNoElem) ? itemNoElem.GetInt32() : (detailElem.TryGetProperty("itemNo", out JsonElement itemNoElemLower) ? itemNoElemLower.GetInt32() : 0),
                             itemname = detailElem.TryGetProperty("PartName", out JsonElement partNameElem) ? partNameElem.GetString() ?? "" : (detailElem.TryGetProperty("partName", out JsonElement partNameElemLower) ? partNameElemLower.GetString() ?? "" : ""),
-                            glcode = "",
+                            glcode = detailElem.TryGetProperty("glcode", out JsonElement glcodeElem) && glcodeElem.ValueKind == JsonValueKind.String
+                                ? (glcodeElem.GetString() ?? "")
+                                : (detailElem.TryGetProperty("Glcode", out JsonElement glcodeElemUpper) && glcodeElemUpper.ValueKind == JsonValueKind.String
+                                    ? (glcodeElemUpper.GetString() ?? "")
+                                    : ""),
                             JobId = 0,
                             JobNumber = detailElem.TryGetProperty("JobNumber", out JsonElement jobNumberElem) ? jobNumberElem.GetString() ?? "" : (detailElem.TryGetProperty("jobNumber", out JsonElement jobNumberElemLower) ? jobNumberElemLower.GetString() ?? "" : ""),
                             JobDesc = detailElem.TryGetProperty("JobDesc", out JsonElement jobDescElem) ? jobDescElem.GetString() ?? "" : (detailElem.TryGetProperty("jobDesc", out JsonElement jobDescElemLower) ? jobDescElemLower.GetString() ?? "" : ""),
@@ -1265,11 +1679,25 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement unitPriceElem) ? unitPriceElem.GetDecimal() : (detailElem.TryGetProperty("unitPrice", out JsonElement unitPriceElemLower) ? unitPriceElemLower.GetDecimal() : 0),
                             JobPriority = detailElem.TryGetProperty("JobPriority", out JsonElement jobPriorityElem) ? jobPriorityElem.GetInt32() : (detailElem.TryGetProperty("jobPriority", out JsonElement jobPriorityElemLower) ? jobPriorityElemLower.GetInt32() : 0),
                             Discount = detailElem.TryGetProperty("Discount", out JsonElement discountElem) ? discountElem.GetDecimal() : (detailElem.TryGetProperty("discount", out JsonElement discountElemLower) ? discountElemLower.GetDecimal() : 0),
+                            DiscountType = detailElem.TryGetProperty("DiscountType", out JsonElement discountTypeElem) && discountTypeElem.ValueKind == JsonValueKind.String
+                                ? (string.Equals(discountTypeElem.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                : (detailElem.TryGetProperty("discountType", out JsonElement discountTypeElemLower) && discountTypeElemLower.ValueKind == JsonValueKind.String
+                                    ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                                    : "Percent"),
                             Received = "",
                             productid = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (detailElem.TryGetProperty("productId", out JsonElement productIdElemLower) && productIdElemLower.ValueKind == JsonValueKind.Number ? productIdElemLower.GetInt32() : (int?)null),
+                            RawMaterialId = ReadNullableIntJson(detailElem, "RawMaterialId", "rawMaterialId"),
+                            LineType = NormalizeVendorQuotationLineType(ReadStringJson(detailElem, "LineType", "lineType"), quotation.VendorOrderType),
                             notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) && notesElem.ValueKind == JsonValueKind.String ? notesElem.GetString() : (detailElem.TryGetProperty("notes", out JsonElement notesElemLower) && notesElemLower.ValueKind == JsonValueKind.String ? notesElemLower.GetString() : null),
                             PartNo = partNoValue
                         };
+
+                        if (string.IsNullOrWhiteSpace(detail.itemname)
+                            && string.IsNullOrWhiteSpace(detail.PartNo)
+                            && detail.UnitPrice == 0)
+                        {
+                            continue;
+                        }
 
                         // Save line item attachments as JSON
                         if (detailElem.TryGetProperty("Attachments", out JsonElement detailAttachmentsElem) && detailAttachmentsElem.ValueKind == JsonValueKind.Array && detailAttachmentsElem.GetArrayLength() > 0)
@@ -1318,6 +1746,9 @@ namespace CimmpleAPI.Controllers
                         string savedPartNoMsg = string.IsNullOrEmpty(saved.PartNo) ? "NULL or EMPTY" : saved.PartNo;
                         Console.WriteLine($"Saved detail ItemNo: {saved.ItemNo}, PartNo: {savedPartNoMsg}");
                     }
+
+                    quotation.VendorOrderType = DeriveVendorQuotationType(savedDetails, quotation.VendorOrderType);
+                    _context.SaveChanges();
                 }
 
                 // Handle multi-vendor quotation status updates
@@ -1534,6 +1965,63 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static string? ReadStringJson(JsonElement elem, string pascal, string camel)
+        {
+            if (elem.TryGetProperty(pascal, out var a) && a.ValueKind == JsonValueKind.String)
+                return a.GetString();
+            if (elem.TryGetProperty(camel, out var b) && b.ValueKind == JsonValueKind.String)
+                return b.GetString();
+            return null;
+        }
+
+        private static int? ReadNullableIntJson(JsonElement elem, string pascal, string camel)
+        {
+            if (elem.TryGetProperty(pascal, out var a) && a.ValueKind == JsonValueKind.Number)
+                return a.GetInt32();
+            if (elem.TryGetProperty(camel, out var b) && b.ValueKind == JsonValueKind.Number)
+                return b.GetInt32();
+            return null;
+        }
+
+        private static string NormalizeVendorQuotationLineType(string? value, string? quotationType)
+        {
+            var allowed = new[] { "RawMaterial", "FinishedProduct", "Tool", "Service", "Subcontract", "Other" };
+            var v = (value ?? "").Trim();
+            if (string.IsNullOrEmpty(v))
+                return string.Equals(quotationType, "Service", StringComparison.OrdinalIgnoreCase) ? "Service" : "RawMaterial";
+            foreach (var a in allowed)
+            {
+                if (string.Equals(v, a, StringComparison.OrdinalIgnoreCase))
+                    return a;
+            }
+            return "Other";
+        }
+
+        private static string DeriveVendorQuotationType(
+            IReadOnlyCollection<VendorQuotationsDetails> details,
+            string? storedType)
+        {
+            var types = details
+                .Select(d => NormalizeVendorQuotationLineType(d.LineType, storedType))
+                .ToList();
+            if (types.Count == 0)
+                return string.Equals(storedType, "Service", StringComparison.OrdinalIgnoreCase) ? "Service" : "Material";
+
+            static bool ServiceLike(string t) =>
+                t.Equals("Service", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Subcontract", StringComparison.OrdinalIgnoreCase);
+            static bool GoodsLike(string t) =>
+                t.Equals("RawMaterial", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("FinishedProduct", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Tool", StringComparison.OrdinalIgnoreCase);
+
+            var anyService = types.Any(ServiceLike);
+            var anyGoods = types.Any(GoodsLike);
+            if (anyService && anyGoods) return "Mixed";
+            if (anyService && !anyGoods) return "Service";
+            return "Material";
+        }
+
         [HttpPost("ConvertVendorQuotationToOrder")]
         public IActionResult ConvertVendorQuotationToOrder([FromQuery] int quotationId, [FromBody] dynamic requestData)
         {
@@ -1584,7 +2072,7 @@ namespace CimmpleAPI.Controllers
                     BuyerName = "",
                     VendorRefNo = "",
                     OrderType = "Vendor",
-                    MaterialType = "Material",
+                    MaterialType = DeriveVendorQuotationType(quotationDetails, quotation.VendorOrderType),
                     QuotationId = quotation.OrderID, // Store the quotation ID
                     QuotationNo = $"VQ#{quotation.PONumber}", // Store the quotation number
                     LocationId = quotation.locationid,
@@ -1625,7 +2113,10 @@ namespace CimmpleAPI.Controllers
                         UnitPrice = quoteDetail.UnitPrice,
                         JobPriority = quoteDetail.JobPriority,
                         Discount = quoteDetail.Discount,
+                        DiscountType = string.IsNullOrWhiteSpace(quoteDetail.DiscountType) ? "Percent" : quoteDetail.DiscountType,
                         ProductId = quoteDetail.productid,
+                        RawMaterialId = quoteDetail.RawMaterialId,
+                        LineType = NormalizeVendorQuotationLineType(quoteDetail.LineType, quotation.VendorOrderType),
                         LeadTime = "",
                         Notes = quoteDetail.notes ?? "",
                         ShippedQty = 0,
@@ -1880,8 +2371,11 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = 0, // Start with 0 - vendors enter actual pricing
                             JobPriority = sourceDetail.JobPriority,
                             Discount = 0, // Start with 0 - vendors enter actual discounts
+                            DiscountType = "Percent",
                             Tenantid = tenantid,
                             productid = sourceDetail.productid,
+                            RawMaterialId = sourceDetail.RawMaterialId,
+                            LineType = sourceDetail.LineType,
                             notes = sourceDetail.notes,
                             glcode = sourceDetail.glcode ?? "",
                             JobId = sourceDetail.JobId,
@@ -2024,8 +2518,12 @@ namespace CimmpleAPI.Controllers
                         unit = d.Unit ?? "EA",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         dueDate = d.DueDate,
                         notes = d.notes ?? "",
+                        glcode = d.glcode ?? "",
+                        lineType = d.LineType ?? "",
+                        rawMaterialId = d.RawMaterialId,
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson)
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null
@@ -2055,6 +2553,557 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, new { error = ex.Message });
             }
         }
+
+        /// <summary>
+        /// Upload quotation attachments to Azure Blob Storage and create QuotationOrderAttachment records.
+        /// Requires an existing quotation (orderId). Follows WorkflowAPI QuotationSaveFile storage pattern.
+        /// </summary>
+        [HttpPost("QuotationSaveFile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> QuotationSaveFile(IFormCollection form)
+        {
+            try
+            {
+                var files = form.Files;
+                if (files == null || files.Count == 0)
+                {
+                    return BadRequest(new { error = "At least one file is required" });
+                }
+
+                if (!form.ContainsKey("orderId") && !form.ContainsKey("OrderId") && !form.ContainsKey("formField"))
+                {
+                    return BadRequest(new { error = "orderId or formField is required" });
+                }
+
+                int orderId = 0;
+                int tenantId = GetTenantId();
+                int createdBy = GetUserId() ?? 0;
+
+                if (form.ContainsKey("formField") && !string.IsNullOrWhiteSpace(form["formField"]))
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var request = JsonSerializer.Deserialize<QuotationAttachmentUploadContext>(form["formField"]!, options);
+                    if (request != null)
+                    {
+                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.TenantId > 0) tenantId = request.TenantId;
+                        if (request.TenantID > 0) tenantId = request.TenantID;
+                        if (request.Tenantid > 0) tenantId = request.Tenantid;
+                    }
+                }
+
+                if (orderId <= 0)
+                {
+                    var orderIdValue = form.ContainsKey("orderId") ? form["orderId"].ToString()
+                        : form.ContainsKey("OrderId") ? form["OrderId"].ToString() : "";
+                    int.TryParse(orderIdValue, out orderId);
+                }
+
+                if (form.ContainsKey("tenantId") && int.TryParse(form["tenantId"], out var formTenant) && formTenant > 0)
+                {
+                    tenantId = formTenant;
+                }
+
+                if (orderId <= 0)
+                {
+                    return BadRequest(new { error = "A saved quotation (orderId) is required before uploading attachments" });
+                }
+
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var quotation = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == orderId && q.Tenantid == tenantId);
+                if (quotation == null)
+                {
+                    return NotFound(new { error = "Quotation not found" });
+                }
+
+                var uploaded = new List<QuotationAttachmentDto>();
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length <= 0)
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                    var displayName = Path.GetFileName(file.FileName);
+
+                    int nextFileUniqueNo = 1;
+                    if (_context.QuotationOrderAttachment.Any())
+                    {
+                        nextFileUniqueNo = _context.QuotationOrderAttachment.Max(x => x.FileUniqueno) + 1;
+                    }
+
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+                    var attachment = new QuotationOrderAttachment
+                    {
+                        orderid = orderId,
+                        Name = displayName,
+                        size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = "0",
+                        createdby = createdBy
+                    };
+
+                    _context.QuotationOrderAttachment.Add(attachment);
+                    _context.SaveChanges();
+
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.QuotationsFolder,
+                        blobName,
+                        createdBy);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
+                    {
+                        _context.QuotationOrderAttachment.Remove(attachment);
+                        _context.SaveChanges();
+                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                    }
+
+                    uploaded.Add(MapAttachmentDto(attachment));
+                }
+
+                SyncQuotationAttachmentsJson(quotation);
+                _context.SaveChanges();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        orderId,
+                        attachments = uploaded,
+                        message = "Files uploaded successfully"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Returns quotation attachments with base64 FileCode loaded from Azure Blob Storage.
+        /// </summary>
+        [HttpGet("GetQuotationUploadFileWithFileCode")]
+        public IActionResult GetQuotationUploadFileWithFileCode([FromQuery] int orderId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                if (tenantId <= 0) tenantId = GetTenantId();
+                if (orderId <= 0)
+                {
+                    return BadRequest(new { error = "orderId is required" });
+                }
+
+                var attachments = _context.QuotationOrderAttachment
+                    .Where(a => a.orderid == orderId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToList();
+
+                var result = new List<object>();
+                foreach (var file in attachments)
+                {
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.QuotationsFolder,
+                        file.UploadFile);
+
+                    var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                    string? fileCode = null;
+                    if (bytes != null && bytes.Length > 0)
+                    {
+                        fileCode = Convert.ToBase64String(bytes);
+                    }
+
+                    result.Add(new
+                    {
+                        id = file.Id,
+                        orderid = file.orderid,
+                        name = file.Name,
+                        size = file.size,
+                        fileUniqueno = file.FileUniqueno,
+                        uploadFile = file.UploadFile,
+                        tenantID = file.TenantID,
+                        fileCode,
+                        pageNo = file.Pageno ?? "0",
+                        createdby = file.createdby,
+                        contentType = ModuleFileStorage.GetContentType(file.Name ?? file.UploadFile)
+                    });
+                }
+
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Single-file binary download for document viewing (inline Content-Disposition).
+        /// One Azure blob read per request; no base64 encoding.
+        /// </summary>
+        [HttpGet("GetQuotationAttachmentFile")]
+        public IActionResult GetQuotationAttachmentFile(
+            [FromQuery] int orderId,
+            [FromQuery] int fileUniqueno,
+            [FromQuery] int tenantId = 0,
+            [FromQuery] bool download = false)
+        {
+            try
+            {
+                if (orderId <= 0 || fileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "orderId and fileUniqueno are required" });
+                }
+
+                if (tenantId <= 0) tenantId = GetTenantId();
+
+                var attachment = _context.QuotationOrderAttachment.FirstOrDefault(a =>
+                    a.FileUniqueno == fileUniqueno &&
+                    a.orderid == orderId &&
+                    a.TenantID == tenantId);
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.QuotationsFolder,
+                    attachment.UploadFile);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? attachment.UploadFile);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.Name);
+
+                if (download)
+                {
+                    return File(bytes, contentType, fileName);
+                }
+
+                // Inline for viewer consumption (blob response without forced download).
+                Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName}\"";
+                Response.Headers["X-Attachment-Id"] = attachment.Id.ToString();
+                Response.Headers["X-File-Name"] = fileName;
+                return File(bytes, contentType);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpPost("DownloadQuotationAttachment")]
+        public IActionResult DownloadQuotationAttachment([FromBody] QuotationAttachmentDownloadRequest request)
+        {
+            try
+            {
+                if (request == null || request.OrderId <= 0)
+                {
+                    return BadRequest(new { error = "orderId is required" });
+                }
+
+                int tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
+                QuotationOrderAttachment? attachment = null;
+
+                if (request.FileUniqueno > 0)
+                {
+                    attachment = _context.QuotationOrderAttachment.FirstOrDefault(a =>
+                        a.FileUniqueno == request.FileUniqueno &&
+                        a.orderid == request.OrderId &&
+                        a.TenantID == tenantId);
+                }
+                else if (!string.IsNullOrEmpty(request.UploadFile))
+                {
+                    attachment = _context.QuotationOrderAttachment.FirstOrDefault(a =>
+                        a.UploadFile == request.UploadFile &&
+                        a.orderid == request.OrderId &&
+                        a.TenantID == tenantId);
+                }
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.QuotationsFolder,
+                    attachment.UploadFile);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var downloadName = ModuleFileStorage.SanitizeFileName(
+                    !string.IsNullOrWhiteSpace(request.Name) ? request.Name : attachment.Name);
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? attachment.UploadFile);
+
+                return File(bytes, contentType, downloadName);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpPost("DeleteQuotationUploadedFile")]
+        public async Task<IActionResult> DeleteQuotationUploadedFile([FromBody] QuotationAttachmentDeleteRequest request)
+        {
+            try
+            {
+                if (request == null || request.OrderId <= 0 || request.FileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "orderId and fileUniqueno are required" });
+                }
+
+                int tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
+                var attachment = _context.QuotationOrderAttachment.FirstOrDefault(a =>
+                    a.FileUniqueno == request.FileUniqueno &&
+                    a.orderid == request.OrderId &&
+                    a.TenantID == tenantId);
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.QuotationsFolder,
+                    attachment.UploadFile);
+
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+
+                _context.QuotationOrderAttachment.Remove(attachment);
+                _context.SaveChanges();
+
+                var quotation = _context.QuotationOrder
+                    .FirstOrDefault(q => q.OrderID == request.OrderId && q.Tenantid == tenantId);
+                if (quotation != null)
+                {
+                    SyncQuotationAttachmentsJson(quotation);
+                    _context.SaveChanges();
+                }
+
+                return Ok(new { result = new { message = "Attachment deleted successfully" } });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private async Task ProcessDeletedQuotationAttachments(
+            int orderId,
+            int tenantId,
+            List<int> deletedAttachmentIds)
+        {
+            var uniqueIds = deletedAttachmentIds
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            if (uniqueIds.Count == 0)
+            {
+                return;
+            }
+
+            var toDelete = _context.QuotationOrderAttachment
+                .Where(a => a.orderid == orderId
+                            && a.TenantID == tenantId
+                            && uniqueIds.Contains(a.Id))
+                .ToList();
+
+            foreach (var attachment in toDelete)
+            {
+                if (!string.IsNullOrEmpty(attachment.UploadFile))
+                {
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.QuotationsFolder,
+                        attachment.UploadFile);
+
+                    await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+                }
+            }
+
+            if (toDelete.Count > 0)
+            {
+                _context.QuotationOrderAttachment.RemoveRange(toDelete);
+                _context.SaveChanges();
+            }
+        }
+
+        /// <summary>
+        /// Uploads only newly selected files. Never re-uploads existing Azure blobs.
+        /// </summary>
+        private async Task<string?> UploadNewQuotationAttachments(
+            QuotationOrder quotation,
+            List<IFormFile> newFiles,
+            int createdBy)
+        {
+            foreach (var file in newFiles)
+            {
+                if (file == null || file.Length <= 0)
+                {
+                    continue;
+                }
+
+                var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                var displayName = Path.GetFileName(file.FileName);
+
+                int nextFileUniqueNo = 1;
+                if (_context.QuotationOrderAttachment.Any())
+                {
+                    nextFileUniqueNo = _context.QuotationOrderAttachment.Max(x => x.FileUniqueno) + 1;
+                }
+
+                var blobName = $"{nextFileUniqueNo}{ext}";
+                var attachment = new QuotationOrderAttachment
+                {
+                    orderid = quotation.OrderID,
+                    Name = displayName,
+                    size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                    FileUniqueno = nextFileUniqueNo,
+                    UploadFile = blobName,
+                    TenantID = quotation.Tenantid,
+                    FileCode = "",
+                    Pageno = "0",
+                    createdby = createdBy
+                };
+
+                _context.QuotationOrderAttachment.Add(attachment);
+                _context.SaveChanges();
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    quotation.Tenantid,
+                    ModuleFileStorage.QuotationsFolder,
+                    blobName,
+                    createdBy);
+
+                var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                if (!uploadedOk)
+                {
+                    _context.QuotationOrderAttachment.Remove(attachment);
+                    _context.SaveChanges();
+                    return $"Failed to upload file '{displayName}' to Azure Storage";
+                }
+            }
+
+            return null;
+        }
+
+        private List<QuotationAttachmentDto> GetQuotationAttachmentDtos(int orderId, int tenantId, string? attachmentsJsonFallback)
+        {
+            var dbAttachments = _context.QuotationOrderAttachment
+                .Where(a => a.orderid == orderId && a.TenantID == tenantId)
+                .OrderBy(a => a.Id)
+                .ToList();
+
+            if (dbAttachments.Count > 0)
+            {
+                return dbAttachments.Select(MapAttachmentDto).ToList();
+            }
+
+            // Backward compatibility: metadata previously stored only in AttachmentsJson
+            if (!string.IsNullOrEmpty(attachmentsJsonFallback))
+            {
+                try
+                {
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        PropertyNameCaseInsensitive = true
+                    };
+                    return JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(attachmentsJsonFallback, options)
+                           ?? new List<QuotationAttachmentDto>();
+                }
+                catch
+                {
+                    return new List<QuotationAttachmentDto>();
+                }
+            }
+
+            return new List<QuotationAttachmentDto>();
+        }
+
+        private void SyncQuotationAttachmentsJson(QuotationOrder quotation)
+        {
+            var attachments = _context.QuotationOrderAttachment
+                .Where(a => a.orderid == quotation.OrderID && a.TenantID == quotation.Tenantid)
+                .OrderBy(a => a.Id)
+                .Select(a => new QuotationAttachmentDto
+                {
+                    Id = a.Id,
+                    Name = a.Name ?? "",
+                    Size = a.size,
+                    FileUrl = a.UploadFile ?? "",
+                    FileUniqueno = a.FileUniqueno,
+                    UploadFile = a.UploadFile ?? "",
+                    PageNo = a.Pageno ?? "0",
+                    CreatedBy = a.createdby
+                })
+                .ToList();
+
+            if (attachments.Count == 0)
+            {
+                quotation.AttachmentsJson = null;
+                return;
+            }
+
+            var attachmentOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true,
+                WriteIndented = false
+            };
+            quotation.AttachmentsJson = JsonSerializer.Serialize(attachments, attachmentOptions);
+        }
+
+        private static QuotationAttachmentDto MapAttachmentDto(QuotationOrderAttachment a)
+        {
+            return new QuotationAttachmentDto
+            {
+                Id = a.Id,
+                Name = a.Name ?? "",
+                Size = a.size,
+                FileUrl = a.UploadFile ?? "",
+                FileUniqueno = a.FileUniqueno,
+                UploadFile = a.UploadFile ?? "",
+                PageNo = a.Pageno ?? "0",
+                CreatedBy = a.createdby
+            };
+        }
+    }
+
+    public class QuotationAttachmentUploadContext
+    {
+        public int OrderId { get; set; }
+        public int OrderID { get; set; }
+        public int TenantId { get; set; }
+        public int TenantID { get; set; }
+        public int Tenantid { get; set; }
     }
 
     public class QuotationReq
@@ -2080,6 +3129,10 @@ namespace CimmpleAPI.Controllers
         public int? LocationId { get; set; }
         public List<QuotationDetailReq> Details { get; set; } = new List<QuotationDetailReq>();
         public List<QuotationAttachmentDto> Attachments { get; set; } = new List<QuotationAttachmentDto>();
+        /// <summary>
+        /// QuotationOrderAttachment.Id values removed in the UI and pending deletion on save.
+        /// </summary>
+        public List<int> DeletedAttachmentIds { get; set; } = new List<int>();
         public List<QuotationCommentDto> Comments { get; set; } = new List<QuotationCommentDto>();
     }
 
@@ -2089,6 +3142,27 @@ namespace CimmpleAPI.Controllers
         public string Name { get; set; } = "";
         public int Size { get; set; }
         public string FileUrl { get; set; } = "";
+        public int FileUniqueno { get; set; }
+        public string UploadFile { get; set; } = "";
+        public string PageNo { get; set; } = "0";
+        public int CreatedBy { get; set; }
+        public string? FileCode { get; set; }
+    }
+
+    public class QuotationAttachmentDeleteRequest
+    {
+        public int OrderId { get; set; }
+        public int TenantId { get; set; }
+        public int FileUniqueno { get; set; }
+    }
+
+    public class QuotationAttachmentDownloadRequest
+    {
+        public int OrderId { get; set; }
+        public int TenantId { get; set; }
+        public int FileUniqueno { get; set; }
+        public string? Name { get; set; }
+        public string? UploadFile { get; set; }
     }
 
     public class QuotationCommentDto
@@ -2113,6 +3187,8 @@ namespace CimmpleAPI.Controllers
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount.</summary>
+        public string DiscountType { get; set; } = "Percent";
         public int? ProductId { get; set; }
         public string LeadTime { get; set; } = "";
         public string Notes { get; set; } = "";
@@ -2123,6 +3199,8 @@ namespace CimmpleAPI.Controllers
     {
         public List<int> Quantities { get; set; } = new List<int>(); // Simple quantity values for column headers
         public List<BreakdownPriceDto> BreakdownPrices { get; set; } = new List<BreakdownPriceDto>();
+        /// <summary>One flag per quantity column. All default off.</summary>
+        public List<bool> IncludeInPrint { get; set; } = new List<bool>();
     }
 
     public class BreakdownPriceDto

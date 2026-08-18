@@ -1,55 +1,23 @@
-import moment from 'moment-timezone';
 import { SystemSettings } from './Services/SystemSettingsService';
+import { formatCurrency, formatUtcToTimezone } from './Utils/Formatting';
 
 export class Utils {
   public static GetUserToken = (): string | null => {
     return localStorage.getItem("token");
   };
 
-  // Backward compatible - maintains existing behavior
+  // Backward compatible - uses System Settings when available
   public static currencyFormat = (value: number, settings?: SystemSettings | null): string => {
-    // Use settings if provided, otherwise fall back to defaults
-    const currency = settings?.defaultCurrency || 'USD';
-    const locale = settings?.locale || 'en-US';
-    const decimalPlaces = settings?.decimalPlaces ?? 2;
-    
-    try {
-      return new Intl.NumberFormat(locale, {
-        style: 'currency',
-        currency: currency,
-        minimumFractionDigits: decimalPlaces,
-        maximumFractionDigits: decimalPlaces
-      }).format(value);
-    } catch (error) {
-      // Fallback to original behavior if Intl fails
-      console.warn('Error formatting currency, using fallback:', error);
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD'
-      }).format(value);
-    }
+    return formatCurrency(value, settings);
   };
 
-  // Backward compatible - maintains existing behavior
+  // Backward compatible - uses System Settings when available
   public static convertUtcToTimezoneFormat = (
     utcDateTime: any,
     timeZone?: string,
     settings?: SystemSettings | null
   ): string => {
-    try {
-      // Use settings timezone if provided, otherwise use parameter, otherwise default
-      const timeZoneValue = settings?.timezone || 
-                           (timeZone && timeZone.trim() !== "" ? timeZone : null) || 
-                           "America/New_York";
-      
-      // Use settings date format if available, otherwise default
-      const dateFormat = settings?.dateFormat || "MM/DD/YY";
-      
-      return moment.utc(utcDateTime).tz(timeZoneValue).format(dateFormat);
-    } catch (error) {
-      console.error("Error in convertUtcToTimezoneFormat:", error);
-      return utcDateTime;
-    }
+    return formatUtcToTimezone(utcDateTime, settings, timeZone);
   };
 
   public static getCookie = (name: string): string | null => {

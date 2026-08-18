@@ -17,6 +17,14 @@ export interface EmployeeMaster {
   city: string;
   state: string;
   zip: string;
+  /** True when a password exists */
+  hasPassword?: boolean;
+  /** True when username + password exist (can authenticate if Active) */
+  hasLoginAccess?: boolean;
+  /** Starting / assigned location label for listing */
+  locationName?: string;
+  defaultLocationId?: number | null;
+  canAccessAllLocations?: boolean;
 }
 
 export interface EmployeeMasterReq {
@@ -47,6 +55,12 @@ export interface EmployeeMasterReq {
   TenantID: number;
   DOB: string;
   SSN: string;
+  /** Plaintext password when enabling/changing login access — never returned from GET */
+  Password?: string;
+  /** True when a password hash exists (can authenticate if username + active) */
+  HasPassword?: boolean;
+  /** True when username + password exist and status is Active */
+  CanLogin?: boolean;
 }
 
 export interface EmployeeImportRow {
@@ -184,6 +198,8 @@ export class EmployeeService {
         TenantID: result.tenantID,
         DOB: result.dob || "",
         SSN: result.ssn || "",
+        HasPassword: !!result.hasPassword,
+        CanLogin: !!result.canLogin,
       } as EmployeeMasterReq;
     });
   };
@@ -240,6 +256,49 @@ export class EmployeeService {
       const result = response.data.result;
       return result;
     });
+  };
+
+  public static SaveEmployeeData = async (
+    request: EmployeeMasterReq,
+    file?: File | null
+  ): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === 'development') {
+      tenantID = 1;
+    }
+    request.TenantID = tenantID;
+
+    const url = `/Employee/SaveEmployeeData`;
+    const formData = new FormData();
+    if (file) {
+      formData.append("file", file);
+    } else {
+      formData.append("file", new File([], "", { type: "application/octet-stream" }));
+    }
+    formData.append("formField", JSON.stringify(request));
+
+    return Instense.post(url, formData).then((response) => {
+      return response.data.result;
+    });
+  };
+
+  public static GetProfilePic = async (
+    request: { userId: number; tenantId?: number }
+  ): Promise<Blob | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = request.tenantId || storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === 'development') {
+      tenantID = 1;
+    }
+
+    const url = `/Employee/GetProfilePic`;
+    return Instense.get(url, {
+      params: { userId: request.userId, tenantId: tenantID },
+      responseType: "blob",
+    }).then((response) => {
+      return response.data;
+    }).catch(() => null);
   };
 
   public static GetAllRoles = async (

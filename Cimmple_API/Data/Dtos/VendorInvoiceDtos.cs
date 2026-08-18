@@ -47,6 +47,7 @@ namespace CimmpleAPI.Data.Dtos
         public int? PvrNo { get; set; }
         public string Series { get; set; }
         public int? BankId { get; set; }
+        public decimal? PaymentAmount { get; set; }
     }
 
     // Legacy DTOs for backward compatibility with OrderController

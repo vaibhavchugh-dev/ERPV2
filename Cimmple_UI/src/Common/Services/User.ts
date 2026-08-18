@@ -1,4 +1,3 @@
-import { API_ROOT } from "./Api-config";
 import Instense from "./Axios-config";
 import { AuthService } from "./AuthService";
 
@@ -20,5 +19,10 @@ export class User {
     }
     User.isAuthenticated = false;
     return {};
+  };
+
+  public static UnderMaintenance = async (): Promise<any> => {
+    const url = `/User/UnderMaintenance`;
+    return Instense.get(url).then((response) => response.data);
   };
 }

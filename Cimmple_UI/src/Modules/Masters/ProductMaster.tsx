@@ -5,13 +5,16 @@ import { ProductMasterService, ProductMaster } from "../../Common/Services/Produ
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProductMasterSlideout from "./ProductMasterSlideout";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
   { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
+  { key: "sourcingType", label: "Sourcing", sortKey: "sourcingType" },
   { key: "unit", label: "Unit", sortKey: "unit" },
-  { key: "totalQtyOrdered", label: "Total Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyOrdered", label: "Qty Ordered", sortKey: "totalQtyOrdered" },
+  { key: "totalQtyQuoted", label: "Qty Quoted", sortKey: "totalQtyQuoted" },
   { key: "avgUnitPrice", label: "Avg Unit Price", sortKey: "avgUnitPrice" },
   { key: "orderCount", label: "Orders", sortKey: "orderCount" },
   { key: "quotationCount", label: "Quotations", sortKey: "quotationCount" },
@@ -23,6 +26,7 @@ const COLUMN_PREFERENCE_KEY = "productMaster.hiddenColumns";
 const ProductMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatCurrency, formatDate } = useFormatting();
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedPartNo, setSelectedPartNo] = useState<string>("");
@@ -86,13 +90,24 @@ const ProductMasterComponent: React.FC = () => {
       ]);
       const orderList = Array.isArray(fromOrders) ? fromOrders : [];
       const masterList = Array.isArray(fromMaster) ? fromMaster : [];
+      const masterByPartNo = new Map(
+        masterList.map((p) => [(p.partNo || "").toLowerCase(), p])
+      );
+      const mergedOrders = orderList.map((p) => {
+        const master = masterByPartNo.get((p.partNo || "").toLowerCase());
+        return {
+          ...p,
+          productId: p.productId || master?.productId,
+          sourcingType: master?.sourcingType || p.sourcingType || "Make",
+        };
+      });
       const orderPartNos = new Set(
-        orderList.map((p) => (p.partNo || "").toLowerCase())
+        mergedOrders.map((p) => (p.partNo || "").toLowerCase())
       );
       const masterOnly = masterList.filter(
         (p) => !orderPartNos.has((p.partNo || "").toLowerCase())
       );
-      setProducts([...orderList, ...masterOnly]);
+      setProducts([...mergedOrders, ...masterOnly]);
     } catch (error: any) {
       console.error("[ProductMaster] Error loading products:", error);
       toast.error(`Error loading products: ${error.message || "Unknown error"}`);
@@ -107,9 +122,11 @@ const ProductMasterComponent: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadProducts();
+    if (refreshList) {
+      loadProducts();
+    }
   };
 
   const handleSyncFromOrders = async () => {
@@ -118,9 +135,9 @@ const ProductMasterComponent: React.FC = () => {
       const result = await ProductMasterService.SyncFromOrders();
       if (result) {
         toast.success(
-          result.added > 0
+          result.added > 0 || (result.updated ?? 0) > 0 || (result.linkedPoLines ?? 0) > 0
             ? result.message
-            : "Product Master is already in sync with orders."
+            : "Product Master is already in sync."
         );
       }
       loadProducts();
@@ -179,35 +196,28 @@ const ProductMasterComponent: React.FC = () => {
     );
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch {
-      return dateString;
-    }
-  };
-
   const renderCell = (product: ProductMaster, key: string): React.ReactNode => {
     switch (key) {
       case "partNo":
         return product.partNo || "";
       case "partName":
         return product.partName || "";
+      case "sourcingType": {
+        const t = product.sourcingType || "Make";
+        const cls =
+          t === "Buy"
+            ? "badge-secondary"
+            : t === "Both"
+            ? "badge-info"
+            : "badge-success";
+        return <span className={`badge ${cls}`}>{t}</span>;
+      }
       case "unit":
         return product.unit || "";
       case "totalQtyOrdered":
         return product.totalQtyOrdered.toLocaleString();
+      case "totalQtyQuoted":
+        return (product.totalQtyQuoted ?? 0).toLocaleString();
       case "avgUnitPrice":
         return formatCurrency(product.avgUnitPrice);
       case "orderCount":
@@ -236,7 +246,9 @@ const ProductMasterComponent: React.FC = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Product Master</h1>
-          <p className="page-subtitle">All parts from customer orders</p>
+          <p className="page-subtitle">
+            Shop-made (Make) and purchased finished goods (Buy). Both = make-or-buy.
+          </p>
         </div>
         <div className="page-actions">
           <ColumnChooser
@@ -252,7 +264,7 @@ const ProductMasterComponent: React.FC = () => {
             className="btn btn-primary"
             onClick={handleSyncFromOrders}
             disabled={syncing}
-            title="Add distinct parts from orders and quotations into the Product Master table (for Inventory and other modules)"
+            title="Add parts from customer orders (Make) and vendor finished-product POs (Buy)"
           >
             {syncing ? "Syncing…" : "Sync from orders"}
           </button>

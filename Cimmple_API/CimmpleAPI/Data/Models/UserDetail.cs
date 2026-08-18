@@ -55,6 +55,7 @@ namespace CimmpleAPI.Data.Models
         public string? SearchSSN { get; set; }
         public string? EmpCode { get; set; }
         public int? Empid { get; set; }
+        public string? ProfilePic { get; set; }
 
         /// <summary>Preferred active location after login.</summary>
         public int? DefaultLocationId { get; set; }
@@ -106,6 +107,31 @@ namespace CimmpleAPI.Data.Models
         public int Id { get; set; }
         public int userId { get; set; }
         public int locationId { get; set; }
+    }
+
+    public class FileInfor
+    {
+        public string ContainerName { get; set; } = "data";
+        public string Dirname { get; set; } = "";
+        public string UploadFileName { get; set; } = "";
+        public int tenantID { get; set; }
+        public string type { get; set; } = "";
+        public int userUniqueno { get; set; }
+    }
+
+    public class FaceValidationResult
+    {
+        public bool IsValid { get; set; }
+        public string Message { get; set; } = "";
+        public string FaceId { get; set; } = "";
+    }
+
+    public class gcwConfig
+    {
+        [Key]
+        public int id { get; set; }
+        public string? KeyName { get; set; }
+        public string? KeyValue { get; set; }
     }
 }
 

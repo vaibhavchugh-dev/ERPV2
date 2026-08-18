@@ -22,16 +22,30 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetVendorInvoices")]
-        public IActionResult GetVendorInvoices([FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public IActionResult GetVendorInvoices(
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? vendorId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
 
-                var invoices = _context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId)
-                    .ToList();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var invoicesQuery = _context.VendorInvoiceMaster
+                    .Where(vim => vim.TenantId == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    invoicesQuery = invoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                }
+
+                var invoices = invoicesQuery.ToList();
 
                 Console.WriteLine($"Found {invoices.Count} vendor invoices in database");
 
@@ -47,12 +61,13 @@ namespace CimmpleAPI.Controllers
                         dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Amount,
                         totalAmount = invoice.TotalAmount,
+                        paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                        balanceDue = GetVendorBalanceDue(invoice),
                         status = GetVendorInvoiceStatus(invoice),
                         isApproved = invoice.Approved,
-                        paymentStatus = invoice.isPaid == 1 ? "Paid" :
-                                       invoice.Paydate.HasValue ? "Paid" : "Unpaid",
-                        daysOverdue = invoice.Paydate == null && invoice.DueDate < DateTime.Now ?
-                                     (int)(DateTime.Now - invoice.DueDate).TotalDays : (int?)null
+                        paymentStatus = GetEffectiveVendorPaidAmount(invoice) >= invoice.TotalAmount - 0.009m ? "Paid" :
+                                       GetEffectiveVendorPaidAmount(invoice) > 0.009m ? "Partially Paid" : "Unpaid",
+                        daysOverdue = GetVendorDaysOverdue(invoice)
                     })
                     .OrderByDescending(x => x.invoiceDate)
                     .ToList();
@@ -101,6 +116,8 @@ namespace CimmpleAPI.Controllers
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
+                    paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                    balanceDue = GetVendorBalanceDue(invoice),
                     paymentMethod = invoice.PaymentMethod,
                     paymentDate = invoice.Paydate?.ToString("yyyy-MM-dd"),
                     checkNo = invoice.CkNo,
@@ -146,6 +163,38 @@ namespace CimmpleAPI.Controllers
                     // Generate invoice number
                     var invoiceNumber = GenerateVendorInvoiceNumber(tenantId);
 
+                    if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
+                        return forbidLoc!;
+
+                    var netAmount = Math.Round(request.LineItems.Sum(item => item.Amount), 2);
+                    var taxRate = request.TaxRate ?? 0m;
+                    if (taxRate < 0m || taxRate > 100m)
+                        return BadRequest(new { error = "Tax rate must be between 0 and 100." });
+
+                    var taxAmount = GlAccountResolutionService.ResolveTaxAmount(
+                        netAmount, taxRate, request.TaxAmount);
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        if (!inputTaxAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Input tax was entered but Input Tax Recoverable is not configured. Set Default Input Tax account in Accounting Setup → Default Accounts."
+                            });
+                        }
+                    }
+
+                    var freightCharge = GlAccountResolutionService.NormalizeChargeAmount(request.FreightCharge);
+                    if (freightCharge > 0m &&
+                        !GlAccountResolutionService.ResolveFreightIn(_context, tenantId).HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Freight was entered but Freight In is not configured. Set Default Freight In in Accounting Setup → Default Accounts."
+                        });
+                    }
+
                     // Create vendor invoice header
                     var invoice = new VendorInvoiceMaster
                     {
@@ -158,9 +207,11 @@ namespace CimmpleAPI.Controllers
                         VendorCode = request.VendorCode,
                         VendorName = request.VendorName,
                         vid = request.VendorId,
-                        locationId = request.LocationId ?? 1,
-                        Amount = request.LineItems.Sum(item => item.Amount),
-                        TotalAmount = request.LineItems.Sum(item => item.Amount),
+                        locationId = resolvedInvoiceLoc,
+                        Amount = netAmount,
+                        FreightCharge = freightCharge,
+                        TotalAmount = Math.Round(netAmount + taxAmount + freightCharge, 2),
+                        PaidAmount = 0,
                         PaymentMethod = "",
                         CkNo = "",
                         Approved = false,
@@ -212,21 +263,21 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Auto-post vendor bill to GL so P&L receives expense activity.
-                    var payableAccountId = ResolveAccountsPayableGlAccountId(tenantId, invoice.vid);
+                    var payableAccountId = GlAccountResolutionService.ResolveAccountsPayable(_context, tenantId, invoice.vid);
                     if (!payableAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine Accounts Payable GL account. Configure vendor COA mapping or an active AP account in Chart of Accounts."
+                            error = "Unable to determine Accounts Payable GL account. Set Default Accounts Payable in Accounting Setup, configure vendor AP mapping, or add an active AP account in Chart of Accounts."
                         });
                     }
 
-                    var defaultExpenseAccountId = ResolveExpenseGlAccountId(tenantId);
+                    var defaultExpenseAccountId = GlAccountResolutionService.ResolveDefaultExpense(_context, tenantId, invoice.vid);
                     if (!defaultExpenseAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine an Expense GL account. Add at least one active Expense account in Chart of Accounts."
+                            error = "Unable to determine an Expense GL account. Set Default Expense in Accounting Setup or add an active Expense account in Chart of Accounts."
                         });
                     }
 
@@ -243,7 +294,8 @@ namespace CimmpleAPI.Controllers
                     }
 
                     var expenseLines = request.LineItems
-                        .GroupBy(item => ResolveLineExpenseAccountId(tenantId, item.AccountId, defaultExpenseAccountId.Value))
+                        .GroupBy(item => GlAccountResolutionService.ResolveLineExpenseAccountId(
+                            _context, tenantId, item.AccountId, defaultExpenseAccountId.Value))
                         .Select(g => new { AccountId = g.Key, Amount = g.Sum(x => x.Amount) })
                         .Where(x => x.Amount > 0)
                         .ToList();
@@ -277,11 +329,35 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = inputTaxAccountId!.Value,
+                            Amount = taxAmount,
+                            Description = $"{postingDesc} (input tax)"
+                        });
+                    }
+
+                    if (freightCharge > 0m)
+                    {
+                        var freightInAccountId = GlAccountResolutionService.ResolveFreightIn(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = invoiceHeader.Id,
+                            AccountId = freightInAccountId!.Value,
+                            Amount = freightCharge,
+                            Description = $"{postingDesc} (freight)"
+                        });
+                    }
+
                     _context.JournalEntryTo.Add(new JournalDetailsTo
                     {
                         JournalEntryId = invoiceHeader.Id,
                         AccountId = payableAccountId.Value,
-                        Amount = expenseLines.Sum(x => x.Amount),
+                        Amount = invoice.TotalAmount,
                         Description = postingDesc
                     });
 
@@ -452,16 +528,26 @@ namespace CimmpleAPI.Controllers
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
 
-                    if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
-                        return BadRequest(new { error = "Vendor invoice is already marked as paid." });
+                    if (invoice.isPaid == 2)
+                        return BadRequest(new { error = "Cannot record payment on a voided vendor invoice." });
+
+                    if (invoice.Approved != true)
+                        return BadRequest(new { error = "Vendor invoice must be approved before payment can be recorded." });
+
+                    var alreadyPaid = GetEffectiveVendorPaidAmount(invoice);
+                    var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);
+                    if (balanceDue <= 0.009m)
+                        return BadRequest(new { error = "Vendor invoice is already fully paid." });
 
                     var paymentDate = request.PaymentDate ?? DateTime.Now;
-                    var paymentAmount = invoice.TotalAmount;
+                    var paymentAmount = Math.Round(request.PaymentAmount ?? balanceDue, 2);
                     if (paymentAmount <= 0)
-                        return BadRequest(new { error = "Vendor invoice amount must be greater than 0." });
+                        return BadRequest(new { error = "Payment amount must be greater than 0." });
+                    if (paymentAmount > balanceDue + 0.009m)
+                        return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
-                    var bankAccountId = ResolveBankGlAccountId(tenantId, bankId);
+                    var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
                     if (!bankAccountId.HasValue)
                     {
                         return BadRequest(new
@@ -470,12 +556,12 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    var accountsPayableAccountId = ResolveAccountsPayableGlAccountId(tenantId, invoice.vid);
+                    var accountsPayableAccountId = GlAccountResolutionService.ResolveAccountsPayable(_context, tenantId, invoice.vid);
                     if (!accountsPayableAccountId.HasValue)
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine Accounts Payable GL account. Configure vendor COA mapping or an active AP account in COA."
+                            error = "Unable to determine Accounts Payable GL account. Set Default Accounts Payable in Accounting Setup, configure vendor AP mapping, or add an active AP account in COA."
                         });
                     }
 
@@ -491,17 +577,23 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    invoice.PaymentMethod = request.PaymentMethod ?? "";
-                    invoice.Paydate = paymentDate;
-                    invoice.CkNo = request.CheckNo ?? "";
-                    invoice.CkDate = request.CheckDate;
-                    invoice.PvrNo = request.PvrNo;
-                    invoice.Series = request.Series ?? "";
+                    var newPaidTotal = Math.Round(alreadyPaid + paymentAmount, 2);
+                    var isFullyPaid = newPaidTotal >= invoice.TotalAmount - 0.009m;
+
+                    invoice.PaymentMethod = request.PaymentMethod ?? invoice.PaymentMethod ?? "";
+                    invoice.CkNo = request.CheckNo ?? invoice.CkNo ?? "";
+                    invoice.CkDate = request.CheckDate ?? invoice.CkDate;
+                    invoice.PvrNo = request.PvrNo ?? invoice.PvrNo;
+                    invoice.Series = request.Series ?? invoice.Series ?? "";
                     invoice.Bankid = bankId;
-                    invoice.isPaid = 1;
+                    invoice.PaidAmount = isFullyPaid ? invoice.TotalAmount : newPaidTotal;
+                    invoice.isPaid = isFullyPaid ? 1 : 0;
+                    invoice.Paydate = isFullyPaid ? paymentDate : (DateTime?)null;
 
                     var referenceNo = BuildAutoPaymentReference("APPMT", invoice.prefixinvoiceno ?? invoice.InvoiceNo, invoice.Id);
-                    var description = $"Auto-posted vendor payment for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}";
+                    var description = isFullyPaid
+                        ? $"Auto-posted vendor payment for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}"
+                        : $"Auto-posted partial vendor payment ({paymentAmount:0.00}) for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}";
                     var locationId = invoice.locationId > 0 ? invoice.locationId : 1;
                     if (bankId.HasValue)
                     {
@@ -568,12 +660,18 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                     transaction.Commit();
 
+                    var remaining = Math.Round(invoice.TotalAmount - invoice.PaidAmount, 2);
                     return Ok(new
                     {
                         result = new
                         {
-                            message = "Vendor payment recorded and posted to GL successfully",
-                            journalEntryId = journalHeader.Id
+                            message = isFullyPaid
+                                ? "Vendor payment recorded and posted to GL successfully"
+                                : $"Partial payment of {paymentAmount:0.00} recorded. Remaining balance: {remaining:0.00}",
+                            journalEntryId = journalHeader.Id,
+                            paidAmount = invoice.PaidAmount,
+                            balanceDue = remaining,
+                            status = GetVendorInvoiceStatus(invoice)
                         }
                     });
                 }
@@ -583,121 +681,6 @@ namespace CimmpleAPI.Controllers
                     return StatusCode(500, new { error = ex.Message });
                 }
             }
-        }
-
-        private int? ResolveBankGlAccountId(int tenantId, int? bankId)
-        {
-            if (bankId.HasValue && bankId.Value > 0)
-            {
-                var mappedAccountId = _context.BankCOAMapping
-                    .Where(m => m.bankid == bankId.Value)
-                    .Select(m => (int?)m.accountid)
-                    .FirstOrDefault();
-
-                if (mappedAccountId.HasValue && IsActiveAccountForTenant(tenantId, mappedAccountId.Value))
-                    return mappedAccountId.Value;
-
-                var bank = _context.BankMaster
-                    .AsNoTracking()
-                    .FirstOrDefault(b => b.Id == bankId.Value && b.TenantId == tenantId);
-                if (bank != null && !string.IsNullOrWhiteSpace(bank.coa))
-                {
-                    if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
-                        IsActiveAccountForTenant(tenantId, parsedAccountId))
-                    {
-                        return parsedAccountId;
-                    }
-
-                    var byCode = _context.ChartofAccounts
-                        .AsNoTracking()
-                        .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == bank.coa.Trim())
-                        .Select(c => (int?)c.AccountID)
-                        .FirstOrDefault();
-                    if (byCode.HasValue)
-                        return byCode;
-                }
-            }
-
-            // Final fallback: allow posting to the first active cash/bank account for the tenant.
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("bank") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("cash") ? 1 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("bank") ? 2 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("cash") ? 3 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("bank") ? 4 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("cash") ? 5 : 6)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && (c.AccountType.ToLower().Contains("bank") || c.AccountType.ToLower().Contains("cash"))) ||
-                    (c.AccountName != null && (c.AccountName.ToLower().Contains("bank") || c.AccountName.ToLower().Contains("cash"))) ||
-                    (c.MainGroup != null && (c.MainGroup.ToLower().Contains("bank") || c.MainGroup.ToLower().Contains("cash"))))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveAccountsPayableGlAccountId(int tenantId, int vendorId)
-        {
-            var vendorMappedAccountId = _context.VendorCOAMapping
-                .AsNoTracking()
-                .Where(v => v.vendorid == vendorId)
-                .Select(v => (int?)v.accountid)
-                .FirstOrDefault();
-            if (vendorMappedAccountId.HasValue && IsActiveAccountForTenant(tenantId, vendorMappedAccountId.Value))
-                return vendorMappedAccountId.Value;
-
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountName != null && c.AccountName.ToLower().Contains("accounts payable") ? 0 :
-                    c.AccountType != null && c.AccountType.ToLower().Contains("payable") ? 1 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("payable") ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountName != null && c.AccountName.ToLower().Contains("payable")) ||
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("payable")) ||
-                    (c.MainGroup != null && c.MainGroup.ToLower().Contains("payable")))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int? ResolveExpenseGlAccountId(int tenantId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Where(c => c.Tenantid == tenantId && c.IsActive)
-                .OrderBy(c =>
-                    c.AccountType != null && c.AccountType.ToLower().Contains("expense") ? 0 :
-                    c.AccountName != null && c.AccountName.ToLower().Contains("expense") ? 1 :
-                    c.MainGroup != null && c.MainGroup.ToLower().Contains("expense") ? 2 : 3)
-                .ThenBy(c => c.AccountCode)
-                .Where(c =>
-                    (c.AccountType != null && c.AccountType.ToLower().Contains("expense")) ||
-                    (c.AccountName != null && c.AccountName.ToLower().Contains("expense")) ||
-                    (c.MainGroup != null && c.MainGroup.ToLower().Contains("expense")))
-                .Select(c => (int?)c.AccountID)
-                .FirstOrDefault();
-        }
-
-        private int ResolveLineExpenseAccountId(int tenantId, int? requestedAccountId, int defaultExpenseAccountId)
-        {
-            if (requestedAccountId.HasValue && requestedAccountId.Value > 0 &&
-                IsActiveAccountForTenant(tenantId, requestedAccountId.Value))
-            {
-                return requestedAccountId.Value;
-            }
-
-            return defaultExpenseAccountId;
-        }
-
-        private bool IsActiveAccountForTenant(int tenantId, int accountId)
-        {
-            return _context.ChartofAccounts
-                .AsNoTracking()
-                .Any(c => c.Tenantid == tenantId && c.AccountID == accountId && c.IsActive);
         }
 
         private static string BuildAutoPaymentReference(string prefix, string? invoiceNo, int invoiceId)
@@ -776,16 +759,45 @@ namespace CimmpleAPI.Controllers
             return (maxInvoiceNo + 1);
         }
 
+        private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
+        {
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
+            if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
+                return invoice.TotalAmount;
+            return 0m;
+        }
+
+        private static decimal GetVendorBalanceDue(VendorInvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectiveVendorPaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetVendorDaysOverdue(VendorInvoiceMaster invoice)
+        {
+            if (GetVendorBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= DateTime.Now)
+                return null;
+            return (int)(DateTime.Now - invoice.DueDate).TotalDays;
+        }
+
         private string GetVendorInvoiceStatus(VendorInvoiceMaster invoice)
         {
-            if (invoice.isPaid == 1)
+            if (invoice.isPaid == 2)
+                return "Void";
+
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
                 return "Paid";
-            else if (invoice.Approved == true)
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.Approved == true)
                 return "Approved";
-            else if (DateTime.Now > invoice.DueDate)
+            if (DateTime.Now > invoice.DueDate)
                 return "Overdue";
-            else
-                return "Pending Approval";
+            return "Pending Approval";
         }
     }
 
@@ -799,6 +811,9 @@ namespace CimmpleAPI.Controllers
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
         public string Notes { get; set; }
+        public decimal? TaxRate { get; set; }
+        public decimal? TaxAmount { get; set; }
+        public decimal? FreightCharge { get; set; }
         public List<VendorInvoiceRecordLineItem> LineItems { get; set; } = new List<VendorInvoiceRecordLineItem>();
     }
 
@@ -833,5 +848,6 @@ namespace CimmpleAPI.Controllers
         public int? PvrNo { get; set; }
         public string Series { get; set; }
         public int? BankId { get; set; }
+        public decimal? PaymentAmount { get; set; }
     }
 }

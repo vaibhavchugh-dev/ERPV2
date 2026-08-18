@@ -110,9 +110,45 @@ namespace CimmpleAPI.Data.Models
 
         public ICollection<JobTemplateOperation> Operations { get; set; } = new List<JobTemplateOperation>();
 
+        public ICollection<JobTemplateMaterial> Materials { get; set; } = new List<JobTemplateMaterial>();
+
         public ICollection<JobTemplateCategory> Categories { get; set; } = new List<JobTemplateCategory>();
 
         public ICollection<JobTemplateAttachment> Attachments { get; set; } = new List<JobTemplateAttachment>();
+    }
+
+    /// <summary>
+    /// Planned material for jobs created from this template. Copied onto the job as
+    /// JobMaterialRequirement (qty is copied as-is; the shop can edit on the job).
+    /// </summary>
+    public class JobTemplateMaterial
+    {
+        [Key]
+        public int Id { get; set; }
+
+        public int JobTemplateId { get; set; }
+
+        public int Tenantid { get; set; }
+
+        public int SequenceNumber { get; set; }
+
+        public int? ProductId { get; set; }
+
+        public int? RawMaterialId { get; set; }
+
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal Quantity { get; set; }
+
+        [MaxLength(200)]
+        public string? Notes { get; set; }
+
+        public JobTemplateMaster? JobTemplate { get; set; }
+
+        [ForeignKey("ProductId")]
+        public ProductMaster? Product { get; set; }
+
+        [ForeignKey("RawMaterialId")]
+        public RawMaterialMaster? RawMaterial { get; set; }
     }
 
     /// <summary>

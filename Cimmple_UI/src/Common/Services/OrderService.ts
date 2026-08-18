@@ -1,4 +1,5 @@
 import Instense from "./Axios-config";
+import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
 
 export interface OrderAttachment {
   id: number;
@@ -91,6 +92,7 @@ export interface OrderDetailReq {
   UnitPrice: number;
   JobPriority: number;
   Discount: number;
+  DiscountType?: "Percent" | "Amount";
   ProductId?: number;
   LeadTime: string;
   Notes: string;
@@ -102,7 +104,7 @@ export interface OrderDetailReq {
 
 export class OrderService {
   public static GetOrders = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<OrderMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -119,9 +121,11 @@ export class OrderService {
     }
 
     const url = `/Order/GetOrders`;
-    return Instense.get(url, {
-      params: { tenantid: tenantID },
-    }).then((response) => {
+    const params: Record<string, number> = { tenantid: tenantID };
+    if (request.locationId && request.locationId > 0) {
+      params.locationId = request.locationId;
+    }
+    return Instense.get(url, { params }).then((response) => {
       const result = response.data.result as OrderMaster[];
       return result;
     });
@@ -145,19 +149,9 @@ export class OrderService {
     }).then((response) => {
       const result = response.data.result as any;
       
-      // Format dates
-      const formatDate = (dateStr: string | null | undefined): string => {
-        if (!dateStr) return "";
-        try {
-          const date = new Date(dateStr);
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const year = String(date.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        } catch {
-          return "";
-        }
-      };
+      // Format dates (calendar parts only — no timezone shift)
+      const formatDate = (dateStr: string | null | undefined): string =>
+        formatDateOnlyFromApi(dateStr);
 
       return {
         OrderID: result.orderID,
@@ -226,6 +220,7 @@ export class OrderService {
           UnitPrice: d.unitPrice || 0,
           JobPriority: d.jobPriority || 0,
           Discount: d.discount || 0,
+          DiscountType: d.discountType === "Amount" ? "Amount" : "Percent",
           ProductId: d.productId,
           LeadTime: d.leadTime || "",
           Notes: d.notes || "",
@@ -240,7 +235,7 @@ export class OrderService {
 
   public static SaveOrder = async (
     request: OrderMasterReq
-  ): Promise<{ id: number; message: string }> => {
+  ): Promise<{ id: number; poNumber?: number; message: string }> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     
@@ -251,25 +246,8 @@ export class OrderService {
 
     request.Tenantid = tenantID;
 
-    // Convert date strings to ISO format
-    const convertDate = (dateStr: string): string => {
-      if (!dateStr) return new Date().toISOString();
-      try {
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1;
-          const day = parseInt(parts[1]);
-          const year = parseInt(parts[2]) + 2000;
-          return new Date(year, month, day).toISOString();
-        }
-        if (dateStr.includes('T') || dateStr.includes('Z')) {
-          return new Date(dateStr).toISOString();
-        }
-        return new Date(dateStr).toISOString();
-      } catch {
-        return new Date().toISOString();
-      }
-    };
+    // Convert date strings to date-only yyyy-MM-dd (no timezone shift)
+    const convertDate = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
     const payload: any = {
       OrderID: request.OrderID || 0,
@@ -297,7 +275,7 @@ export class OrderService {
         ItemNo: d.ItemNo || 0,
         PartName: d.PartName || "",
         PartNo: d.PartNo || "",
-        DueDate: convertDate(d.DueDate || d.LeadTime || new Date().toISOString()),
+        DueDate: convertDate(d.DueDate || d.LeadTime || ""),
         JobNumber: d.JobNumber || "",
         JobDesc: d.JobDesc || "",
         QtyOrdered: d.QtyOrdered || 0,
@@ -305,6 +283,7 @@ export class OrderService {
         UnitPrice: d.UnitPrice || 0,
         JobPriority: d.JobPriority || 0,
         Discount: d.Discount || 0,
+        DiscountType: d.DiscountType === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || null,
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",
@@ -338,7 +317,11 @@ export class OrderService {
     }).then((response) => {
       const result = response.data.result;
       if (result && result.id) {
-        return { id: result.id, message: result.message || "Order saved successfully" };
+        return {
+          id: result.id,
+          poNumber: result.poNumber,
+          message: result.message || "Order saved successfully",
+        };
       }
       return { id: request.OrderID || 0, message: "Order saved successfully" };
     });
@@ -360,6 +343,88 @@ export class OrderService {
       params: { orderId, tenantId: tenantID },
     }).then((response) => {
       return response.data;
+    });
+  };
+
+  public static DuplicateOrder = async (
+    orderId: number
+  ): Promise<{ id: number; message: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/DuplicateOrder`;
+    return Instense.post(url, null, {
+      params: { orderId, tenantId: tenantID },
+    }).then((response) => {
+      const result = response.data.result;
+      return {
+        id: result?.id || 0,
+        message: result?.message || "Order duplicated successfully",
+      };
+    });
+  };
+
+  public static GetLastOrderLinesByCustomer = async (
+    customerId: number
+  ): Promise<{
+    found: boolean;
+    orderId: number;
+    orderNumber: number;
+    orderDate: string;
+    lines: Array<{
+      itemNo: number;
+      partNo: string;
+      partName: string;
+      unit: string;
+      qtyOrdered: number;
+      unitPrice: number;
+      discount: number;
+      discountType: string;
+      productId?: number;
+      notes: string;
+      leadTime: string;
+      dueDate: string;
+    }>;
+  }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/GetLastOrderLinesByCustomer`;
+    return Instense.get(url, {
+      params: { tenantId: tenantID, customerId },
+    }).then((response) => {
+      const result = response.data?.result;
+      if (!result) {
+        return { found: false, orderId: 0, orderNumber: 0, orderDate: "", lines: [] };
+      }
+      return {
+        found: !!result.found,
+        orderId: result.orderId || 0,
+        orderNumber: result.orderNumber || 0,
+        orderDate: result.orderDate || "",
+        lines: Array.isArray(result.lines)
+          ? result.lines.map((l: any) => ({
+              itemNo: l.itemNo || 0,
+              partNo: l.partNo || "",
+              partName: l.partName || "",
+              unit: l.unit || "EA",
+              qtyOrdered: l.qtyOrdered || 0,
+              unitPrice: l.unitPrice || 0,
+              discount: l.discount || 0,
+              discountType: l.discountType === "Amount" ? "Amount" : "Percent",
+              productId: l.productId,
+              notes: l.notes || "",
+              leadTime: l.leadTime || "",
+              dueDate: l.dueDate || "",
+            }))
+          : [],
+      };
     });
   };
 

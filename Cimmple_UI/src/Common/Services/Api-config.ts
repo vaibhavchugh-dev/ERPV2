@@ -7,7 +7,7 @@ if (hostname.indexOf("localhost") > -1) {
   // Local development API endpoint (matches launchSettings.json applicationUrl)
   app_Root.backendHost = "http://localhost:5172/api";
 } else {
-  app_Root.backendHost = "https://dev-cimmple.azurewebsites.net/api";
+  app_Root.backendHost = "https://api.v2.cimmple.net/api";
 }
 
 export const API_ROOT = app_Root;

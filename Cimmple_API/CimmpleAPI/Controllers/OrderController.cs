@@ -1,14 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -18,22 +22,48 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
+        private readonly IConfiguration _configuration;
 
-        public OrderController(CimmpleDbContext context, InventoryService inventoryService)
+        public OrderController(CimmpleDbContext context, InventoryService inventoryService, IConfiguration configuration)
         {
             _context = context;
             _inventoryService = inventoryService;
+            _configuration = configuration;
         }
 
         [HttpGet("GetOrders")]
-        public IActionResult GetOrders([FromQuery] int tenantid)
+        public IActionResult GetOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                // Load all orders
-                var orders = _context.CustomerOrder
-                    .Where(o => o.Tenantid == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                // Shared multi-site: return all tenant orders unless an explicit location filter is passed.
+                var ordersQuery = _context.CustomerOrder.AsNoTracking()
+                    .Where(o => o.Tenantid == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    ordersQuery = ordersQuery.Where(o => o.locationId == filterLocationId.Value);
+                }
+
+                // Project only list fields — avoid materializing large JSON columns on headers.
+                var orders = ordersQuery
                     .OrderByDescending(o => o.OrderDate)
+                    .Select(o => new
+                    {
+                        o.OrderID,
+                        o.PONumber,
+                        o.CustomerID,
+                        o.customercode,
+                        o.CustomerName,
+                        o.OrderDate,
+                        o.TotalAmount,
+                        o.Status,
+                        o.quotationId,
+                        o.QuotationNo,
+                        o.locationId
+                    })
                     .ToList();
 
                 if (!orders.Any())
@@ -43,34 +73,42 @@ namespace CimmpleAPI.Controllers
 
                 var orderIds = orders.Select(o => o.OrderID).ToList();
 
-                // Load all order details for these orders
-                var allDetails = _context.CustomerOrderDetails
+                // Load only qty fields needed for status calculation
+                var allDetails = _context.CustomerOrderDetails.AsNoTracking()
                     .Where(d => orderIds.Contains(d.OrderID) && d.Tenantid == tenantid)
+                    .Select(d => new
+                    {
+                        d.ID,
+                        d.OrderID,
+                        d.QtyOrdered,
+                        d.ShippedQty,
+                        d.InvoicedQty
+                    })
                     .ToList();
 
                 // Get all order detail IDs
                 var allOrderDetailIds = allDetails.Select(d => d.ID).ToList();
 
                 // Get all shipping details in bulk
-                var shippingDetailsDict = _context.ShippingDetails
+                var shippingDetailsDict = _context.ShippingDetails.AsNoTracking()
                     .Where(sd => sd.OrderDetailID.HasValue && allOrderDetailIds.Contains(sd.OrderDetailID.Value))
-                    .Join(_context.Shipping,
+                    .Join(_context.Shipping.AsNoTracking(),
                         sd => sd.ShipmentId,
                         s => s.Id,
                         (sd, s) => new { sd.OrderDetailID, sd.ShippedQty, s.TenantId })
                     .Where(x => x.TenantId == tenantid)
-                    .GroupBy(x => x.OrderDetailID.Value)
+                    .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
 
                 // Get all invoice details in bulk
-                var invoiceDetailsDict = _context.InvoiceDetail
+                var invoiceDetailsDict = _context.InvoiceDetail.AsNoTracking()
                     .Where(id => id.OrderDetailID.HasValue && allOrderDetailIds.Contains(id.OrderDetailID.Value))
-                    .Join(_context.InvoiceMaster,
+                    .Join(_context.InvoiceMaster.AsNoTracking(),
                         id => id.InvoiceId,
                         im => im.Id,
                         (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
                     .Where(x => x.TenantId == tenantid)
-                    .GroupBy(x => x.OrderDetailID.Value)
+                    .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
                 // Group details by order ID
@@ -80,11 +118,11 @@ namespace CimmpleAPI.Controllers
                 // Calculate status for each order
                 var ordersWithStatus = orders.Select(o =>
                 {
-                    var detailsList = detailsByOrderId.ContainsKey(o.OrderID) ? detailsByOrderId[o.OrderID] : new List<CustomerOrderDetails>();
+                    detailsByOrderId.TryGetValue(o.OrderID, out var detailsList);
                     
-                    var totalOrdered = detailsList.Sum(d => d.QtyOrdered);
-                    var totalShipped = detailsList.Sum(d => shippingDetailsDict.ContainsKey(d.ID) ? shippingDetailsDict[d.ID] : d.ShippedQty);
-                    var totalInvoiced = detailsList.Sum(d => invoiceDetailsDict.ContainsKey(d.ID) ? invoiceDetailsDict[d.ID] : d.InvoicedQty);
+                    var totalOrdered = detailsList?.Sum(d => d.QtyOrdered) ?? 0;
+                    var totalShipped = detailsList?.Sum(d => shippingDetailsDict.ContainsKey(d.ID) ? shippingDetailsDict[d.ID] : d.ShippedQty) ?? 0;
+                    var totalInvoiced = detailsList?.Sum(d => invoiceDetailsDict.ContainsKey(d.ID) ? invoiceDetailsDict[d.ID] : d.InvoicedQty) ?? 0;
                     
                     string calculatedStatus = o.Status ?? "Draft";
                     
@@ -139,6 +177,86 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Returns line items from the customer's most recent customer order (for "Repeat last order").
+        /// </summary>
+        [HttpGet("GetLastOrderLinesByCustomer")]
+        public IActionResult GetLastOrderLinesByCustomer([FromQuery] int tenantId, [FromQuery] int customerId)
+        {
+            try
+            {
+                if (customerId <= 0)
+                {
+                    return BadRequest(new { error = "Customer is required" });
+                }
+
+                var lastOrder = _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
+                    .OrderByDescending(o => o.OrderDate)
+                    .ThenByDescending(o => o.OrderID)
+                    .Select(o => new
+                    {
+                        o.OrderID,
+                        o.PONumber,
+                        o.OrderDate
+                    })
+                    .FirstOrDefault();
+
+                if (lastOrder == null)
+                {
+                    return Ok(new
+                    {
+                        result = new
+                        {
+                            found = false,
+                            orderId = 0,
+                            orderNumber = 0,
+                            orderDate = "",
+                            lines = Array.Empty<object>()
+                        }
+                    });
+                }
+
+                var lines = _context.CustomerOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.OrderID == lastOrder.OrderID && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .Select(d => new
+                    {
+                        itemNo = d.ItemNo,
+                        partNo = d.PartNo ?? "",
+                        partName = d.partname ?? "",
+                        unit = d.Unit ?? "EA",
+                        qtyOrdered = d.QtyOrdered,
+                        unitPrice = d.UnitPrice,
+                        discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
+                        productId = d.productid,
+                        notes = d.notes ?? "",
+                        leadTime = d.leadTime ?? "",
+                        dueDate = d.DueDate
+                    })
+                    .ToList();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        found = true,
+                        orderId = lastOrder.OrderID,
+                        orderNumber = lastOrder.PONumber,
+                        orderDate = lastOrder.OrderDate.ToString("MM/dd/yyyy"),
+                        lines
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
         }
 
@@ -201,6 +319,7 @@ namespace CimmpleAPI.Controllers
                     unitPrice = d.UnitPrice,
                     jobPriority = d.JobPriority,
                     discount = d.Discount,
+                    discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                     productId = d.productid,
                     leadTime = d.leadTime ?? "",
                     notes = d.notes ?? "",
@@ -402,7 +521,7 @@ namespace CimmpleAPI.Controllers
                     order = new CustomerOrder
                     {
                         Tenantid = request.Tenantid,
-                        OrderDate = request.OrderDate,
+                        OrderDate = request.OrderDate.Date,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
                         PONumber = nextPONumber
@@ -411,6 +530,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Update fields
+                order.OrderDate = request.OrderDate.Date;
                 order.CustomerID = request.CustomerID;
                 order.customercode = request.CustomerCode ?? "";
                 order.CustomerName = request.CustomerName ?? "";
@@ -424,7 +544,9 @@ namespace CimmpleAPI.Controllers
                 order.BuyerName = request.BuyerName ?? "";
                 order.quotationId = request.QuotationId;
                 order.QuotationNo = request.QuotationNo ?? "";
-                order.locationId = request.LocationId ?? 0;
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLocationId, out var forbidLoc))
+                    return forbidLoc!;
+                order.locationId = resolvedLocationId;
 
                 // Save attachments as JSON
                 if (request.Attachments != null && request.Attachments.Count > 0)
@@ -509,6 +631,16 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Update or add details
+                    var updatedDetailIds = request.Details.Where(d => d.ID > 0).Select(d => d.ID).ToList();
+                    var linkedJobOrders = updatedDetailIds.Count > 0
+                        ? _context.JobOrderMaster
+                            .Where(j => j.Tenantid == request.Tenantid && updatedDetailIds.Contains(j.CustomerOrderDetailID))
+                            .ToList()
+                        : new List<JobOrderMaster>();
+                    var jobOrdersByDetailId = linkedJobOrders
+                        .GroupBy(j => j.CustomerOrderDetailID)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
                     foreach (var detail in request.Details)
                     {
                         if (detail.ID > 0 && existingDetails.Any(d => d.ID == detail.ID))
@@ -518,7 +650,7 @@ namespace CimmpleAPI.Controllers
                             existingDetail.ItemNo = detail.ItemNo;
                             existingDetail.partname = detail.PartName ?? "";
                             existingDetail.PartNo = detail.PartNo ?? "";
-                            existingDetail.DueDate = detail.DueDate;
+                            existingDetail.DueDate = detail.DueDate.Date;
                             existingDetail.JobNumber = detail.JobNumber ?? "";
                             existingDetail.JobDesc = detail.JobDesc ?? "";
                             existingDetail.QtyOrdered = detail.QtyOrdered;
@@ -526,11 +658,30 @@ namespace CimmpleAPI.Controllers
                             existingDetail.UnitPrice = detail.UnitPrice;
                             existingDetail.JobPriority = detail.JobPriority;
                             existingDetail.Discount = detail.Discount;
+                            existingDetail.DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType;
                             existingDetail.productid = detail.ProductId;
                             existingDetail.leadTime = detail.LeadTime ?? "";
                             existingDetail.notes = detail.Notes ?? "";
                             existingDetail.ShippedQty = detail.ShippedQty;
                             existingDetail.ShippingStatus = detail.ShippingStatus ?? "Not Started";
+
+                            // Keep linked Job Orders in sync (listing/detail read JO's own QtyOrdered snapshot).
+                            if (jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
+                            {
+                                foreach (var jobOrder in jobsForDetail)
+                                {
+                                    jobOrder.QtyOrdered = detail.QtyOrdered;
+                                    jobOrder.Unit = detail.Unit ?? "";
+                                    jobOrder.UnitPrice = detail.UnitPrice;
+                                    jobOrder.DueDate = detail.DueDate.Date;
+                                    jobOrder.PartNo = detail.PartNo ?? "";
+                                    jobOrder.PartName = detail.PartName ?? "";
+                                    jobOrder.JobNumber = detail.JobNumber ?? "";
+                                    jobOrder.JobDesc = detail.JobDesc ?? "";
+                                    jobOrder.JobPriority = detail.JobPriority;
+                                    jobOrder.ModifiedDate = DateTime.Now;
+                                }
+                            }
                         }
                         else
                         {
@@ -541,7 +692,7 @@ namespace CimmpleAPI.Controllers
                                 ItemNo = detail.ItemNo,
                                 partname = detail.PartName ?? "",
                                 PartNo = detail.PartNo ?? "",
-                                DueDate = detail.DueDate,
+                                DueDate = detail.DueDate.Date,
                                 JobNumber = detail.JobNumber ?? "",
                                 JobDesc = detail.JobDesc ?? "",
                                 QtyOrdered = detail.QtyOrdered,
@@ -549,6 +700,7 @@ namespace CimmpleAPI.Controllers
                                 UnitPrice = detail.UnitPrice,
                                 JobPriority = detail.JobPriority,
                                 Discount = detail.Discount,
+                                DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
                                 Tenantid = request.Tenantid,
                                 productid = detail.ProductId,
                                 leadTime = detail.LeadTime ?? "",
@@ -563,7 +715,7 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                 }
 
-                return Ok(new { result = new { id = order.OrderID, message = "Order saved successfully" } });
+                return Ok(new { result = new { id = order.OrderID, poNumber = order.PONumber, message = "Order saved successfully" } });
             }
             catch (Exception ex)
             {
@@ -759,6 +911,19 @@ namespace CimmpleAPI.Controllers
                     .ToList();
                 _context.CustomerOrderDetails.RemoveRange(details);
 
+                // Clear converted-order reference on source quotation (if any)
+                var linkedQuotations = _context.QuotationOrder
+                    .Where(q => q.Tenantid == tenantId &&
+                        (q.convertedOrderId == orderId ||
+                         (order.quotationId.HasValue && q.OrderID == order.quotationId.Value)))
+                    .ToList();
+                foreach (var quotation in linkedQuotations)
+                {
+                    quotation.convertedOrderId = null;
+                    quotation.isConverted = 0;
+                    quotation.Status = "Draft";
+                }
+
                 // Delete the order
                 _context.CustomerOrder.Remove(order);
                 _context.SaveChanges();
@@ -776,18 +941,220 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("DuplicateOrder")]
+        public async Task<IActionResult> DuplicateOrder([FromQuery] int orderId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var source = _context.CustomerOrder
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Order not found" });
+                }
+
+                var sourceDetails = _context.CustomerOrderDetails
+                    .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToList();
+
+                var existingOrders = _context.CustomerOrder.Where(o => o.Tenantid == tenantId).ToList();
+                int nextPONumber = existingOrders.Any()
+                    ? Math.Max(1000, existingOrders.Max(o => o.PONumber) + 1)
+                    : 1000;
+
+                var duplicate = new CustomerOrder
+                {
+                    Tenantid = source.Tenantid,
+                    CustomerID = source.CustomerID,
+                    customercode = source.customercode ?? "",
+                    CustomerName = source.CustomerName ?? "",
+                    address = source.address ?? "",
+                    CustomerPoNumber = source.CustomerPoNumber ?? "",
+                    OrderDate = DateTime.Now.Date,
+                    TotalAmount = source.TotalAmount,
+                    UserId = source.UserId,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    shippingInstructions = source.shippingInstructions ?? "",
+                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
+                    ExternalOrderDate = source.ExternalOrderDate,
+                    BuyerName = source.BuyerName ?? "",
+                    quotationId = null,
+                    QuotationNo = "",
+                    locationId = source.locationId,
+                    CommentsJson = null,
+                    AttachmentsJson = null,
+                    PONumber = nextPONumber
+                };
+                _context.CustomerOrder.Add(duplicate);
+                _context.SaveChanges();
+
+                foreach (var detail in sourceDetails)
+                {
+                    _context.CustomerOrderDetails.Add(new CustomerOrderDetails
+                    {
+                        OrderID = duplicate.OrderID,
+                        ItemNo = detail.ItemNo,
+                        partname = detail.partname ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = detail.DueDate,
+                        JobNumber = detail.JobNumber ?? "",
+                        JobDesc = detail.JobDesc ?? "",
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "",
+                        UnitPrice = detail.UnitPrice,
+                        JobPriority = detail.JobPriority,
+                        Discount = detail.Discount,
+                        DiscountType = detail.DiscountType,
+                        Tenantid = tenantId,
+                        productid = detail.productid,
+                        leadTime = detail.leadTime ?? "",
+                        notes = detail.notes ?? "",
+                        ShippedQty = 0,
+                        ShippingStatus = "Not Started",
+                        InvoicedQty = 0,
+                        InvoiceStatus = "Not Invoiced"
+                    });
+                }
+                _context.SaveChanges();
+
+                var sourceAttachments = _context.OrderAttachment
+                    .Where(a => a.orderid == orderId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToList();
+
+                // Fallback: metadata-only attachments in JSON (may point at Orders folder blobs)
+                if (sourceAttachments.Count == 0 && !string.IsNullOrEmpty(source.AttachmentsJson))
+                {
+                    try
+                    {
+                        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                        var jsonAtts = JsonSerializer.Deserialize<List<OrderAttachmentDto>>(source.AttachmentsJson, options)
+                                       ?? new List<OrderAttachmentDto>();
+                        foreach (var ja in jsonAtts)
+                        {
+                            if (string.IsNullOrEmpty(ja.FileUrl))
+                            {
+                                continue;
+                            }
+                            sourceAttachments.Add(new OrderAttachment
+                            {
+                                Name = ja.Name,
+                                size = ja.Size,
+                                UploadFile = ja.FileUrl,
+                                FileUniqueno = 0,
+                                Pageno = "0",
+                                createdby = 0
+                            });
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+
+                int createdBy = GetUserId() ?? source.UserId;
+                var copiedDtos = new List<object>();
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    if (string.IsNullOrEmpty(srcAtt.UploadFile))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = _context.OrderAttachment.Any()
+                        ? _context.OrderAttachment.Max(x => x.FileUniqueno) + 1
+                        : 1;
+                    var ext = Path.GetExtension(srcAtt.UploadFile) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.OrdersFolder, srcAtt.UploadFile, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.OrdersFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        // Try Quotations folder in case metadata still pointed at a CQ blob
+                        sourceInfo = ModuleFileStorage.CreateFileInfo(
+                            tenantId, ModuleFileStorage.QuotationsFolder, srcAtt.UploadFile, createdBy);
+                        copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    }
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    var orderAtt = new OrderAttachment
+                    {
+                        orderid = duplicate.OrderID,
+                        Name = srcAtt.Name,
+                        size = srcAtt.size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = srcAtt.Pageno ?? "0",
+                        createdby = createdBy
+                    };
+                    _context.OrderAttachment.Add(orderAtt);
+                    _context.SaveChanges();
+                    copiedDtos.Add(new
+                    {
+                        id = orderAtt.Id,
+                        name = orderAtt.Name,
+                        size = orderAtt.size,
+                        fileUrl = orderAtt.UploadFile,
+                        uploadFile = orderAtt.UploadFile
+                    });
+                }
+
+                if (copiedDtos.Count > 0)
+                {
+                    var attachmentOptions = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        WriteIndented = false
+                    };
+                    duplicate.AttachmentsJson = JsonSerializer.Serialize(copiedDtos, attachmentOptions);
+                    _context.SaveChanges();
+                }
+
+                return Ok(new { result = new { id = duplicate.OrderID, message = "Order duplicated successfully" } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
         // =============================================
         // VENDOR ORDER ENDPOINTS
         // =============================================
 
         [HttpGet("GetVendorOrders")]
-        public async Task<IActionResult> GetVendorOrders(int tenantId)
+        public async Task<IActionResult> GetVendorOrders([FromQuery] int tenantId, [FromQuery] int? locationId = null)
         {
             try
             {
-                var vendorOrders = await _context.VendorOrders
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var vendorOrdersQuery = _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId)
+                    .Where(o => o.Tenantid == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    vendorOrdersQuery = vendorOrdersQuery.Where(o => o.LocationId == filterLocationId.Value);
+                }
+
+                var vendorOrders = await vendorOrdersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .Select(o => new
                     {
@@ -834,6 +1201,7 @@ namespace CimmpleAPI.Controllers
                 var ordersWithRecalculatedStatus = vendorOrders.Select(o =>
                 {
                     var orderDetails = allDetails.Where(d => d.OrderID == o.orderID).ToList();
+                    var materialType = DeriveVendorOrderMaterialType(orderDetails, o.materialType);
 
                     // Only recalculate status for orders that could be received (Sent, Partially Received, Fully Received)
                     if (o.status == "Sent" || o.status == "Partially Received" || o.status == "Fully Received")
@@ -874,7 +1242,7 @@ namespace CimmpleAPI.Controllers
                             o.quotationId,
                             o.quotationNo,
                             o.locationId,
-                            o.materialType,
+                            materialType,
                             o.vendorPoNumber,
                             o.externalVendorPO,
                             o.externalOrderDate,
@@ -898,7 +1266,7 @@ namespace CimmpleAPI.Controllers
                             o.quotationId,
                             o.quotationNo,
                             o.locationId,
-                            o.materialType,
+                            materialType,
                             o.vendorPoNumber,
                             o.externalVendorPO,
                             o.externalOrderDate,
@@ -973,13 +1341,16 @@ namespace CimmpleAPI.Controllers
                     unitPrice = d.UnitPrice,
                     jobPriority = d.JobPriority,
                     discount = d.Discount,
+                    discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                     productId = d.ProductId,
+                    rawMaterialId = d.RawMaterialId,
                     leadTime = d.LeadTime ?? "",
                     notes = d.Notes ?? "",
                     shippedQty = d.ShippedQty,
                     shippingStatus = d.ShippingStatus ?? "",
                     invoicedQty = d.InvoicedQty,
-                    invoiceStatus = d.InvoiceStatus ?? ""
+                    invoiceStatus = d.InvoiceStatus ?? "",
+                    glcode = d.glcode ?? ""
                 }).ToList();
 
                 // Get attachments
@@ -1029,7 +1400,7 @@ namespace CimmpleAPI.Controllers
                     buyerName = order.BuyerName ?? "",
                     vendorRefNo = order.VendorRefNo ?? "",
                     orderType = order.OrderType ?? "Vendor",
-                    materialType = order.MaterialType ?? "Material",
+                    materialType = DeriveVendorOrderMaterialType(detailsList, order.MaterialType),
                     quotationId = order.QuotationId,
                     quotationNo = order.QuotationNo ?? "",
                     locationId = order.LocationId,
@@ -1154,6 +1525,11 @@ namespace CimmpleAPI.Controllers
                     ParentQuotationID = orderData.TryGetProperty("ParentQuotationID", out JsonElement parentQuotationIDElem) && parentQuotationIDElem.ValueKind == JsonValueKind.Number ? parentQuotationIDElem.GetInt32() : (int?)null,
                     AdditionalNotes = orderData.TryGetProperty("AdditionalNotes", out JsonElement additionalNotesElem) ? additionalNotesElem.GetString() ?? "" : ""
                 };
+
+                if (!TryResolveLocationId(order.LocationId, out var resolvedVendorLocationId, out var forbidVendorLoc))
+                    return forbidVendorLoc!;
+                if (resolvedVendorLocationId > 0)
+                    order.LocationId = resolvedVendorLocationId;
 
                 Console.WriteLine($"SaveVendorOrder: Assigned to order - QuotationId = {order.QuotationId}, QuotationNo = '{order.QuotationNo}', TenantId = {order.Tenantid}");
 
@@ -1451,8 +1827,20 @@ namespace CimmpleAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // Verify what was saved
+                await LinkFinishedProductsOnVendorOrderAsync(order.OrderID, tenantid);
+                await LinkRawMaterialsOnVendorOrderAsync(order.OrderID, tenantid, order.VendorID);
+
+                var linkedDetails = await _context.VendorOrderDetails
+                    .Where(d => d.OrderID == order.OrderID && d.Tenantid == tenantid)
+                    .ToListAsync();
                 var savedOrder = await _context.VendorOrders.FindAsync(order.OrderID);
+                if (savedOrder != null)
+                {
+                    savedOrder.MaterialType = DeriveVendorOrderMaterialType(linkedDetails, savedOrder.MaterialType);
+                    await _context.SaveChangesAsync();
+                }
+
+                // Verify what was saved
                 Console.WriteLine($"SaveVendorOrder: After save - OrderID = {savedOrder?.OrderID}, QuotationId = {savedOrder?.QuotationId}, QuotationNo = '{savedOrder?.QuotationNo}'");
                 
                 // Also verify by querying directly from database
@@ -1651,6 +2039,37 @@ namespace CimmpleAPI.Controllers
             return "Other";
         }
 
+        /// <summary>
+        /// Header Material/Service/Mixed from line types. Blank lines use stored header as fallback
+        /// so old Service POs without LineType still list as Service.
+        /// </summary>
+        private static string DeriveVendorOrderMaterialType(
+            IReadOnlyCollection<VendorOrderDetail> details,
+            string? storedMaterialType)
+        {
+            var types = details
+                .Select(d => NormalizeVendorOrderLineType(d.LineType, storedMaterialType))
+                .ToList();
+            if (types.Count == 0)
+                return string.Equals(storedMaterialType, "Service", StringComparison.OrdinalIgnoreCase)
+                    ? "Service"
+                    : "Material";
+
+            static bool ServiceLike(string t) =>
+                t.Equals("Service", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Subcontract", StringComparison.OrdinalIgnoreCase);
+            static bool GoodsLike(string t) =>
+                t.Equals("RawMaterial", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("FinishedProduct", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("Tool", StringComparison.OrdinalIgnoreCase);
+
+            var anyService = types.Any(ServiceLike);
+            var anyGoods = types.Any(GoodsLike);
+            if (anyService && anyGoods) return "Mixed";
+            if (anyService && !anyGoods) return "Service";
+            return "Material";
+        }
+
         private static string? ReadLineTypeFromVendorDetailJson(JsonElement detailElem)
         {
             if (detailElem.TryGetProperty("LineType", out JsonElement lt) && lt.ValueKind == JsonValueKind.String)
@@ -1689,7 +2108,13 @@ namespace CimmpleAPI.Controllers
             existingDetail.UnitPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement unitPriceElem) ? unitPriceElem.GetDecimal() : 0;
             existingDetail.JobPriority = detailElem.TryGetProperty("JobPriority", out JsonElement jobPriorityElem) ? jobPriorityElem.GetInt32() : 0;
             existingDetail.Discount = detailElem.TryGetProperty("Discount", out JsonElement discountElem) ? discountElem.GetDecimal() : 0;
+            existingDetail.DiscountType = detailElem.TryGetProperty("DiscountType", out JsonElement discountTypeElem) && discountTypeElem.ValueKind == JsonValueKind.String
+                ? (string.Equals(discountTypeElem.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                : (detailElem.TryGetProperty("discountType", out JsonElement discountTypeElemLower) && discountTypeElemLower.ValueKind == JsonValueKind.String
+                    ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                    : "Percent");
             existingDetail.ProductId = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (int?)null;
+            existingDetail.RawMaterialId = ReadNullableIntFromVendorDetailJson(detailElem, "RawMaterialId", "rawMaterialId");
             existingDetail.LeadTime = detailElem.TryGetProperty("LeadTime", out JsonElement leadTimeElem) ? leadTimeElem.GetString() ?? "" : "";
             existingDetail.Notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "";
             existingDetail.ShippedQty = detailElem.TryGetProperty("ShippedQty", out JsonElement shippedQtyElem) ? shippedQtyElem.GetInt32() : 0;
@@ -1699,6 +2124,7 @@ namespace CimmpleAPI.Controllers
             existingDetail.glcode = detailElem.TryGetProperty("glcode", out JsonElement glcodeElem) ? glcodeElem.GetString() ?? "" : "";
             existingDetail.Received = detailElem.TryGetProperty("Received", out JsonElement receivedElem) ? receivedElem.GetString() ?? "No" : "No";
             existingDetail.LineType = NormalizeVendorOrderLineType(ReadLineTypeFromVendorDetailJson(detailElem), orderMaterialType);
+            ApplyInventoryIdsForLineType(existingDetail);
         }
 
         private VendorOrderDetail CreateVendorOrderDetailFromJson(JsonElement detailElem, int orderId, int tenantid, int jobId, string? orderMaterialType)
@@ -1733,7 +2159,13 @@ namespace CimmpleAPI.Controllers
                 UnitPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement unitPriceElem) ? unitPriceElem.GetDecimal() : 0,
                 JobPriority = detailElem.TryGetProperty("JobPriority", out JsonElement jobPriorityElem) ? jobPriorityElem.GetInt32() : 0,
                 Discount = detailElem.TryGetProperty("Discount", out JsonElement discountElem) ? discountElem.GetDecimal() : 0,
+                DiscountType = detailElem.TryGetProperty("DiscountType", out JsonElement discountTypeElem) && discountTypeElem.ValueKind == JsonValueKind.String
+                    ? (string.Equals(discountTypeElem.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                    : (detailElem.TryGetProperty("discountType", out JsonElement discountTypeElemLower) && discountTypeElemLower.ValueKind == JsonValueKind.String
+                        ? (string.Equals(discountTypeElemLower.GetString(), "Amount", StringComparison.OrdinalIgnoreCase) ? "Amount" : "Percent")
+                        : "Percent"),
                 ProductId = detailElem.TryGetProperty("ProductId", out JsonElement productIdElem) && productIdElem.ValueKind == JsonValueKind.Number ? productIdElem.GetInt32() : (int?)null,
+                RawMaterialId = ReadNullableIntFromVendorDetailJson(detailElem, "RawMaterialId", "rawMaterialId"),
                 LeadTime = detailElem.TryGetProperty("LeadTime", out JsonElement leadTimeElem) ? leadTimeElem.GetString() ?? "" : "",
                 Notes = detailElem.TryGetProperty("Notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "",
                 ShippedQty = detailElem.TryGetProperty("ShippedQty", out JsonElement shippedQtyElem) ? shippedQtyElem.GetInt32() : 0,
@@ -1745,7 +2177,156 @@ namespace CimmpleAPI.Controllers
                 LineType = NormalizeVendorOrderLineType(ReadLineTypeFromVendorDetailJson(detailElem), orderMaterialType)
             };
 
+            ApplyInventoryIdsForLineType(detail);
             return detail;
+        }
+
+        private static int? ReadNullableIntFromVendorDetailJson(JsonElement detailElem, string pascalName, string camelName)
+        {
+            if (detailElem.TryGetProperty(pascalName, out JsonElement pascal) && pascal.ValueKind == JsonValueKind.Number)
+                return pascal.GetInt32();
+            if (detailElem.TryGetProperty(camelName, out JsonElement camel) && camel.ValueKind == JsonValueKind.Number)
+                return camel.GetInt32();
+            return null;
+        }
+
+        /// <summary>
+        /// Keep ProductId / RawMaterialId consistent with line type.
+        /// Legacy RawMaterial lines may still only have ProductId until re-picked from RM master.
+        /// </summary>
+        private static void ApplyInventoryIdsForLineType(VendorOrderDetail detail)
+        {
+            var lineType = (detail.LineType ?? "").Trim();
+            if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
+            {
+                if (detail.RawMaterialId.HasValue && detail.RawMaterialId.Value > 0)
+                    detail.ProductId = null;
+                return;
+            }
+            if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+            {
+                detail.RawMaterialId = null;
+                return;
+            }
+            // Tool / Service / Subcontract / Other: no inventory master link
+            detail.ProductId = null;
+            detail.RawMaterialId = null;
+        }
+
+        /// <summary>
+        /// Finished-product PO lines get a Product Master row (Buy, or Both if already Make)
+        /// and ProductId so receiving can book inventory.
+        /// </summary>
+        private async Task LinkFinishedProductsOnVendorOrderAsync(int orderId, int tenantId)
+        {
+            var details = await _context.VendorOrderDetails
+                .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                .ToListAsync();
+
+            foreach (var detail in details)
+            {
+                var lineType = NormalizeVendorOrderLineType(detail.LineType, null);
+                if (!string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var productId = await ProductSourcing.EnsureFinishedProductAsync(
+                    _context,
+                    tenantId,
+                    detail.PartNo,
+                    detail.PartName,
+                    detail.Unit,
+                    detail.UnitPrice,
+                    ProductSourcing.Buy);
+
+                if (productId.HasValue && productId.Value > 0)
+                    detail.ProductId = productId;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Raw-material PO lines get a Raw Material Master row and RawMaterialId
+        /// so receiving can book inventory without a prior master-screen visit.
+        /// </summary>
+        private async Task LinkRawMaterialsOnVendorOrderAsync(int orderId, int tenantId, int vendorId)
+        {
+            var details = await _context.VendorOrderDetails
+                .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                .ToListAsync();
+
+            foreach (var detail in details)
+            {
+                var lineType = NormalizeVendorOrderLineType(detail.LineType, null);
+                if (!string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var rawMaterialId = await RawMaterialCatalog.EnsureAsync(
+                    _context,
+                    tenantId,
+                    detail.PartNo,
+                    detail.PartName,
+                    detail.Unit,
+                    detail.UnitPrice,
+                    vendorId > 0 ? vendorId : (int?)null);
+
+                if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                {
+                    detail.RawMaterialId = rawMaterialId;
+                    detail.ProductId = null;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        /// <summary>True when this PO line is buy-to-job (not warehouse stock).</summary>
+        private static bool IsVendorOrderLineJobTied(VendorOrderDetail detail)
+        {
+            return detail.JobId > 0 || !string.IsNullOrWhiteSpace(detail.JobNumber);
+        }
+
+        private async Task<int?> ResolveJobOrderIdForInventoryAsync(int tenantId, VendorOrderDetail detail)
+        {
+            if (detail.JobId > 0)
+            {
+                var byPk = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == detail.JobId);
+                if (byPk != null)
+                    return byPk.JobOrderID;
+
+                var byNumber = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderNumber == detail.JobId);
+                if (byNumber != null)
+                    return byNumber.JobOrderID;
+            }
+
+            var jobNo = (detail.JobNumber ?? "").Trim();
+            if (string.IsNullOrEmpty(jobNo))
+                return detail.JobId > 0 ? detail.JobId : null;
+
+            var byName = await _context.JobOrderMaster
+                .AsNoTracking()
+                .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobNumber == jobNo);
+            if (byName != null)
+                return byName.JobOrderID;
+
+            var digits = new string(jobNo.Where(char.IsDigit).ToArray());
+            if (int.TryParse(digits, out var parsed) && parsed > 0)
+            {
+                var displayNumber = parsed >= 1000 ? parsed : parsed;
+                var byParsed = await _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId
+                        && (j.JobOrderNumber == parsed || j.JobOrderNumber == displayNumber
+                            || (parsed >= 1000 && j.JobOrderNumber == parsed - 999)));
+                if (byParsed != null)
+                    return byParsed.JobOrderID;
+            }
+
+            return detail.JobId > 0 ? detail.JobId : null;
         }
 
         [HttpGet("CheckVendorOrderDeletionImpact")]
@@ -2131,9 +2712,13 @@ namespace CimmpleAPI.Controllers
                         itemNo = d.ItemNo,
                         partName = d.PartName ?? "",
                         partNo = d.PartNo ?? "",
+                        lineType = NormalizeVendorOrderLineType(d.LineType, order.MaterialType),
                         dueDate = !string.IsNullOrEmpty(d.DueDate) ? d.DueDate : d.DueDateDateTime.ToString("yyyy-MM-dd"),
                         jobNumber = d.JobNumber ?? "",
                         jobDesc = d.JobDesc ?? "",
+                        jobId = d.JobId,
+                        productId = d.ProductId,
+                        rawMaterialId = d.RawMaterialId,
                         qtyOrdered = d.QtyOrdered,
                         receivedQty = receivedQty,
                         pendingQty = pendingQty,
@@ -2181,6 +2766,9 @@ namespace CimmpleAPI.Controllers
                     ? locElem.GetInt32()
                     : null;
                 string notes = receivingData.TryGetProperty("notes", out JsonElement notesElem) ? notesElem.GetString() ?? "" : "";
+                string? lotNumber = receivingData.TryGetProperty("lotNumber", out JsonElement lotElem) && lotElem.ValueKind == JsonValueKind.String
+                    ? lotElem.GetString()
+                    : null;
 
                 if (orderDetailId <= 0 || receivedQty <= 0)
                 {
@@ -2291,33 +2879,135 @@ namespace CimmpleAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // Inventory integration: when receiving for stock (JobId == 0), add to inventory.
-                // When receiving for live order (JobId > 0), material is consumed by job - do not add to inventory.
-                if (orderDetail.JobId == 0 && orderDetail.ProductId.HasValue)
+                // Inventory:
+                // - Stock buy (not job-tied): book RawMaterial or FinishedProduct onto the shelf.
+                // - Job-tied buy (Phase 3): receive then immediately issue to the job (never stays on-hand).
+                // - Service / Subcontract / Tool / Other: never touch inventory.
+                var lineType = NormalizeVendorOrderLineType(orderDetail.LineType, order?.MaterialType);
+                var isJobTied = IsVendorOrderLineJobTied(orderDetail);
+
+                int? bookProductId = null;
+                int? bookRawMaterialId = null;
+
+                if (string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (orderDetail.RawMaterialId.HasValue && orderDetail.RawMaterialId.Value > 0)
+                    {
+                        bookRawMaterialId = orderDetail.RawMaterialId;
+                    }
+                    else
+                    {
+                        var ensuredRmId = await RawMaterialCatalog.EnsureAsync(
+                            _context,
+                            tenantId,
+                            orderDetail.PartNo,
+                            orderDetail.PartName,
+                            orderDetail.Unit,
+                            orderDetail.UnitPrice,
+                            order?.VendorID > 0 ? order.VendorID : (int?)null);
+                        if (ensuredRmId.HasValue && ensuredRmId.Value > 0)
+                        {
+                            orderDetail.RawMaterialId = ensuredRmId;
+                            orderDetail.ProductId = null;
+                            bookRawMaterialId = ensuredRmId;
+                        }
+                    }
+                }
+                else if (string.Equals(lineType, "FinishedProduct", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (orderDetail.ProductId.HasValue && orderDetail.ProductId.Value > 0)
+                    {
+                        bookProductId = orderDetail.ProductId;
+                    }
+                    else
+                    {
+                        var ensuredId = await ProductSourcing.EnsureFinishedProductAsync(
+                            _context,
+                            tenantId,
+                            orderDetail.PartNo,
+                            orderDetail.PartName,
+                            orderDetail.Unit,
+                            orderDetail.UnitPrice,
+                            ProductSourcing.Buy);
+                        if (ensuredId.HasValue && ensuredId.Value > 0)
+                        {
+                            orderDetail.ProductId = ensuredId;
+                            bookProductId = ensuredId;
+                        }
+                    }
+                }
+                else if (orderDetail.ProductId.HasValue
+                         && orderDetail.ProductId.Value > 0
+                         && !orderDetail.RawMaterialId.HasValue
+                         && !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Tool", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(lineType, "Other", StringComparison.OrdinalIgnoreCase))
+                {
+                    bookProductId = orderDetail.ProductId;
+                }
+
+                if (bookProductId.HasValue || bookRawMaterialId.HasValue)
                 {
                     var effectiveLocationId = locationId ?? order?.LocationId;
-                    if (effectiveLocationId.HasValue && effectiveLocationId.Value > 0)
+                    if (!effectiveLocationId.HasValue || effectiveLocationId.Value <= 0)
                     {
-                        var (invSuccess, invError) = await _inventoryService.ReceiveStockInTransactionAsync(
+                        await transaction.RollbackAsync();
+                        return BadRequest(new
+                        {
+                            error = isJobTied
+                                ? "Location is required to record job material from this receive. Select a receiving location or set the PO location."
+                                : "Location is required to receive stock into inventory. Select a receiving location or set the PO location."
+                        });
+                    }
+
+                    var (invSuccess, invError) = await _inventoryService.ReceiveStockInTransactionAsync(
+                        tenantId,
+                        productId: bookProductId,
+                        rawMaterialId: bookRawMaterialId,
+                        effectiveLocationId.Value,
+                        receivedQty,
+                        "VendorReceiving",
+                        receiving.ID,
+                        lotId: null,
+                        userId > 0 ? userId : (int?)null,
+                        string.IsNullOrEmpty(notes) ? null : notes,
+                        lotNumber);
+
+                    if (!invSuccess)
+                    {
+                        await transaction.RollbackAsync();
+                        return BadRequest(new { error = $"Receiving saved but inventory update failed: {invError}" });
+                    }
+
+                    if (isJobTied)
+                    {
+                        var jobOrderId = await ResolveJobOrderIdForInventoryAsync(tenantId, orderDetail);
+                        var jobLabel = !string.IsNullOrWhiteSpace(orderDetail.JobNumber)
+                            ? orderDetail.JobNumber.Trim()
+                            : (jobOrderId.HasValue ? $"JO#{jobOrderId.Value}" : "job");
+                        var (issueOk, issueErr) = await _inventoryService.IssueStockInTransactionAsync(
                             tenantId,
-                            productId: orderDetail.ProductId,
-                            rawMaterialId: null,
+                            productId: bookProductId,
+                            rawMaterialId: bookRawMaterialId,
                             effectiveLocationId.Value,
                             receivedQty,
-                            "VendorReceiving",
-                            receiving.ID,
-                            lotId: null,
+                            "JobOrder",
+                            jobOrderId,
                             userId > 0 ? userId : (int?)null,
-                            string.IsNullOrEmpty(notes) ? null : notes);
+                            $"Used on {jobLabel} from vendor receive",
+                            allowShortage: false,
+                            lotId: null,
+                            lotNumber: lotNumber);
 
-                        if (!invSuccess)
+                        if (!issueOk)
                         {
                             await transaction.RollbackAsync();
-                            return BadRequest(new { error = $"Receiving saved but inventory update failed: {invError}" });
+                            return BadRequest(new { error = $"Receiving saved but job consumption failed: {issueErr}" });
                         }
-                        await _context.SaveChangesAsync();
                     }
-                    // If no location, still allow receiving - just skip inventory update
+
+                    await _context.SaveChangesAsync();
                 }
 
                 await transaction.CommitAsync();
@@ -2529,78 +3219,15 @@ namespace CimmpleAPI.Controllers
                     var dueDateValue = request.DueDate ?? invoiceDateValue.AddDays(30);
                     var accountingPeriod = $"{invoiceDateValue:yyyyMM}";
 
-                    bool IsActiveAccountForTenant(int accountId) =>
-                        _context.ChartofAccounts.AsNoTracking()
-                            .Any(c => c.Tenantid == tenantId && c.AccountID == accountId && c.IsActive);
-
-                    int? ResolveAccountsPayableAccountId()
-                    {
-                        var vendorMappedAccountId = _context.VendorCOAMapping
-                            .AsNoTracking()
-                            .Where(v => v.vendorid == vendorOrder.VendorID)
-                            .Select(v => (int?)v.accountid)
-                            .FirstOrDefault();
-                        if (vendorMappedAccountId.HasValue && IsActiveAccountForTenant(vendorMappedAccountId.Value))
-                            return vendorMappedAccountId.Value;
-
-                        return _context.ChartofAccounts
-                            .AsNoTracking()
-                            .Where(c => c.Tenantid == tenantId && c.IsActive)
-                            .OrderBy(c =>
-                                c.AccountName != null && c.AccountName.ToLower().Contains("accounts payable") ? 0 :
-                                c.AccountType != null && c.AccountType.ToLower().Contains("payable") ? 1 :
-                                c.MainGroup != null && c.MainGroup.ToLower().Contains("payable") ? 2 : 3)
-                            .ThenBy(c => c.AccountCode)
-                            .Where(c =>
-                                (c.AccountName != null && c.AccountName.ToLower().Contains("payable")) ||
-                                (c.AccountType != null && c.AccountType.ToLower().Contains("payable")) ||
-                                (c.MainGroup != null && c.MainGroup.ToLower().Contains("payable")))
-                            .Select(c => (int?)c.AccountID)
-                            .FirstOrDefault();
-                    }
-
-                    int? ResolveDefaultExpenseAccountId()
-                    {
-                        return _context.ChartofAccounts
-                            .AsNoTracking()
-                            .Where(c => c.Tenantid == tenantId && c.IsActive)
-                            .OrderBy(c =>
-                                c.AccountType != null && c.AccountType.ToLower().Contains("expense") ? 0 :
-                                c.AccountName != null && c.AccountName.ToLower().Contains("expense") ? 1 :
-                                c.MainGroup != null && c.MainGroup.ToLower().Contains("expense") ? 2 : 3)
-                            .ThenBy(c => c.AccountCode)
-                            .Where(c =>
-                                (c.AccountType != null && c.AccountType.ToLower().Contains("expense")) ||
-                                (c.AccountName != null && c.AccountName.ToLower().Contains("expense")) ||
-                                (c.MainGroup != null && c.MainGroup.ToLower().Contains("expense")))
-                            .Select(c => (int?)c.AccountID)
-                            .FirstOrDefault();
-                    }
-
-                    int ResolveExpenseAccountFromGlCode(string? glCode, int defaultExpenseAccountId)
-                    {
-                        var code = (glCode ?? "").Trim();
-                        if (string.IsNullOrWhiteSpace(code))
-                            return defaultExpenseAccountId;
-
-                        if (int.TryParse(code, out var parsedId) && IsActiveAccountForTenant(parsedId))
-                            return parsedId;
-
-                        var byAccountCode = _context.ChartofAccounts
-                            .AsNoTracking()
-                            .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == code)
-                            .Select(c => (int?)c.AccountID)
-                            .FirstOrDefault();
-                        return byAccountCode ?? defaultExpenseAccountId;
-                    }
-
-                    var accountsPayableAccountId = ResolveAccountsPayableAccountId();
+                    var accountsPayableAccountId = GlAccountResolutionService.ResolveAccountsPayable(
+                        _context, tenantId, vendorOrder.VendorID);
                     if (!accountsPayableAccountId.HasValue)
-                        return BadRequest(new { error = "Unable to determine Accounts Payable GL account. Configure vendor COA mapping or an active AP account." });
+                        return BadRequest(new { error = "Unable to determine Accounts Payable GL account. Set Default Accounts Payable in Accounting Setup, configure vendor AP mapping, or add an active AP account." });
 
-                    var defaultExpenseAccountId = ResolveDefaultExpenseAccountId();
+                    var defaultExpenseAccountId = GlAccountResolutionService.ResolveDefaultExpense(
+                        _context, tenantId, vendorOrder.VendorID);
                     if (!defaultExpenseAccountId.HasValue)
-                        return BadRequest(new { error = "Unable to determine an Expense GL account. Add at least one active Expense account in Chart of Accounts." });
+                        return BadRequest(new { error = "Unable to determine an Expense GL account. Set Default Expense in Accounting Setup or add an active Expense account in Chart of Accounts." });
 
                     var periodKey = GlWorkflowService.TryNormalizePeriodKey(accountingPeriod, out var normalizedPeriod, out _)
                         ? normalizedPeriod
@@ -2629,12 +3256,41 @@ namespace CimmpleAPI.Controllers
                             return BadRequest(new { error = $"Quantity to invoice must be greater than 0 for item {detail.ItemNo}" });
                     }
 
-                    // Calculate totals
+                    // Calculate totals (Amount = net, TotalAmount = gross including tax)
                     decimal subtotal = 0;
                     foreach (var item in request.LineItems)
                     {
                         var lineTotal = (item.UnitPrice * item.QtyToInvoice) * (1 - item.Discount / 100);
                         subtotal += lineTotal;
+                    }
+                    subtotal = Math.Round(subtotal, 2);
+
+                    var taxRate = request.TaxRate ?? 0m;
+                    if (taxRate < 0m || taxRate > 100m)
+                        return BadRequest(new { error = "Tax rate must be between 0 and 100." });
+
+                    var taxAmount = GlAccountResolutionService.ResolveTaxAmount(
+                        subtotal, taxRate, request.TaxAmount);
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        if (!inputTaxAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Input tax was entered but Input Tax Recoverable is not configured. Set Default Input Tax account in Accounting Setup → Default Accounts."
+                            });
+                        }
+                    }
+
+                    var freightCharge = GlAccountResolutionService.NormalizeChargeAmount(request.FreightCharge);
+                    if (freightCharge > 0m &&
+                        !GlAccountResolutionService.ResolveFreightIn(_context, tenantId).HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Freight was entered but Freight In is not configured. Set Default Freight In in Accounting Setup → Default Accounts."
+                        });
                     }
 
                     // Create vendor invoice header
@@ -2650,7 +3306,9 @@ namespace CimmpleAPI.Controllers
                         VendorName = vendorOrder.VendorName ?? "",
                         AccountingPeriod = accountingPeriod,
                         Amount = subtotal,
-                        TotalAmount = subtotal,
+                        FreightCharge = freightCharge,
+                        TotalAmount = Math.Round(subtotal + taxAmount + freightCharge, 2),
+                        PaidAmount = 0,
                         Approved = false,
                         CkNo = "",
                         Series = "",
@@ -2676,7 +3334,8 @@ namespace CimmpleAPI.Controllers
                             .FirstAsync(d => d.ID == item.OrderDetailId && d.Tenantid == tenantId);
 
                         var lineTotal = (item.UnitPrice * item.QtyToInvoice) * (1 - item.Discount / 100);
-                        var expenseAccountId = ResolveExpenseAccountFromGlCode(detail.glcode, defaultExpenseAccountId.Value);
+                        var expenseAccountId = GlAccountResolutionService.ResolveExpenseFromGlCode(
+                            _context, tenantId, detail.glcode, defaultExpenseAccountId.Value);
                         expensePostings.Add((expenseAccountId, lineTotal));
 
                         // Create VendorInvoiceDetail
@@ -2692,6 +3351,7 @@ namespace CimmpleAPI.Controllers
                             qty = item.QtyToInvoice,
                             price = item.UnitPrice,
                             qtyordered = detail.QtyOrdered,
+                            accountid = expenseAccountId,
                             ReconcileCL = ""
                         };
 
@@ -2755,11 +3415,36 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    // Dr Input Tax / Freight In when present; Cr AP for gross TotalAmount.
+                    if (taxAmount > 0m)
+                    {
+                        var inputTaxAccountId = GlAccountResolutionService.ResolveInputTax(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = journalHeader.Id,
+                            AccountId = inputTaxAccountId!.Value,
+                            Amount = taxAmount,
+                            Description = $"{postingDesc} (input tax)"
+                        });
+                    }
+
+                    if (freightCharge > 0m)
+                    {
+                        var freightInAccountId = GlAccountResolutionService.ResolveFreightIn(_context, tenantId);
+                        _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                        {
+                            JournalEntryId = journalHeader.Id,
+                            AccountId = freightInAccountId!.Value,
+                            Amount = freightCharge,
+                            Description = $"{postingDesc} (freight)"
+                        });
+                    }
+
                     _context.JournalEntryTo.Add(new JournalDetailsTo
                     {
                         JournalEntryId = journalHeader.Id,
                         AccountId = accountsPayableAccountId.Value,
-                        Amount = expensePostings.Sum(x => x.Amount),
+                        Amount = vendorInvoice.TotalAmount,
                         Description = postingDesc
                     });
 
@@ -2874,13 +3559,13 @@ namespace CimmpleAPI.Controllers
                         dueDate = invoice.Invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Invoice.Amount,
                         totalAmount = invoice.TotalAmount,
-                        status = invoice.Invoice.isPaid == 1 ? "Paid" :
-                                invoice.Invoice.isPaid == 2 ? "Void" :
-                                invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                        paidAmount = GetEffectiveVendorPaidAmount(invoice.Invoice),
+                        balanceDue = GetVendorBalanceDue(invoice.Invoice),
+                        status = ResolveVendorInvoiceListStatus(invoice.Invoice, now),
+                        isApproved = invoice.Invoice.Approved == true,
                         paymentMethod = invoice.Invoice.PaymentMethod ?? "",
                         orderId = invoice.OrderIds.Count == 1 ? (int?)orderId : null,
-                        daysOverdue = invoice.Invoice.DueDate < now && invoice.Invoice.isPaid != 1 ?
-                            (int)(now - invoice.Invoice.DueDate).TotalDays : (int?)null
+                        daysOverdue = GetVendorDaysOverdue(invoice.Invoice, now)
                     });
                 }
 
@@ -2939,9 +3624,10 @@ namespace CimmpleAPI.Controllers
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
                     totalAmount = invoice.TotalAmount,
-                    status = invoice.isPaid == 1 ? "Paid" :
-                            invoice.isPaid == 2 ? "Void" :
-                            invoice.DueDate < DateTime.Now && invoice.isPaid != 1 ? "Overdue" : "Unpaid",
+                    paidAmount = GetEffectiveVendorPaidAmount(invoice),
+                    balanceDue = GetVendorBalanceDue(invoice),
+                    status = ResolveVendorInvoiceListStatus(invoice, DateTime.Now),
+                    isApproved = invoice.Approved == true,
                     paymentMethod = invoice.PaymentMethod ?? "",
                     vendorName = invoice.VendorName ?? "",
                     vendorCode = invoice.VendorCode ?? "",
@@ -3088,17 +3774,58 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
+        {
+            if (invoice.PaidAmount > 0)
+                return invoice.PaidAmount;
+            if (invoice.isPaid == 1 || invoice.Paydate.HasValue)
+                return invoice.TotalAmount;
+            return 0m;
+        }
+
+        private static decimal GetVendorBalanceDue(VendorInvoiceMaster invoice)
+        {
+            var balance = invoice.TotalAmount - GetEffectiveVendorPaidAmount(invoice);
+            return balance < 0 ? 0m : Math.Round(balance, 2);
+        }
+
+        private static int? GetVendorDaysOverdue(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (GetVendorBalanceDue(invoice) <= 0.009m)
+                return null;
+            if (invoice.DueDate >= now)
+                return null;
+            return (int)(now - invoice.DueDate).TotalDays;
+        }
+
+        private static string ResolveVendorInvoiceListStatus(VendorInvoiceMaster invoice, DateTime now)
+        {
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
+                return "Paid";
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.DueDate < now)
+                return "Overdue";
+            return "Unpaid";
+        }
+
         private string GetVendorInvoiceStatus(VendorInvoiceMaster invoice)
         {
-            // Simple status logic - could be expanded
-            if (invoice.isPaid.HasValue && invoice.isPaid.Value == 1)
+            if (invoice.isPaid == 2)
+                return "Void";
+            var paid = GetEffectiveVendorPaidAmount(invoice);
+            if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
                 return "Paid";
-            else if (DateTime.Now > invoice.DueDate)
-                return "Overdue";
-            else if (invoice.Approved.HasValue && invoice.Approved.Value)
+            if (paid > 0.009m)
+                return "Partially Paid";
+            if (invoice.Approved == true)
                 return "Approved";
-            else
-                return "Pending";
+            if (DateTime.Now > invoice.DueDate)
+                return "Overdue";
+            return "Pending";
         }
 
         private static string BuildAutoPostingReference(string prefix, string? invoiceNo, int invoiceId)
@@ -3166,6 +3893,8 @@ namespace CimmpleAPI.Controllers
         public decimal UnitPrice { get; set; }
         public int JobPriority { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent (default) or Amount.</summary>
+        public string DiscountType { get; set; } = "Percent";
         public int? ProductId { get; set; }
         public string LeadTime { get; set; } = "";
         public string Notes { get; set; } = "";
@@ -3189,6 +3918,12 @@ namespace CimmpleAPI.Controllers
         public DateTime? DueDate { get; set; }
         public string PaymentMethod { get; set; }
         public string Notes { get; set; }
+        /// <summary>Optional input tax rate percent (0–100).</summary>
+        public decimal? TaxRate { get; set; }
+        /// <summary>Optional input tax amount. When omitted, computed from TaxRate × net subtotal.</summary>
+        public decimal? TaxAmount { get; set; }
+        /// <summary>Optional freight / shipping charged on the vendor bill.</summary>
+        public decimal? FreightCharge { get; set; }
         public List<VendorInvoiceLineItemDto> LineItems { get; set; } = new List<VendorInvoiceLineItemDto>();
     }
 }

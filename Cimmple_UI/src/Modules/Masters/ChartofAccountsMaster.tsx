@@ -83,9 +83,11 @@ const ChartofAccountsMaster: React.FC = () => {
     setShowSlideout(true);
   };
 
-  const handleCloseSlideout = () => {
+  const handleCloseSlideout = (refreshList = false) => {
     setShowSlideout(false);
-    loadAccounts();
+    if (refreshList) {
+      loadAccounts();
+    }
   };
 
   const columns: ColumnConfig<ChartofAccountMaster>[] = [

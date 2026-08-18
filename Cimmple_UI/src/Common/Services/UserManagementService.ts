@@ -8,6 +8,7 @@ export interface UserManagement {
   userName?: string;
   status?: string;
   role?: number;
+  roleName?: string;
   phone1?: string;
   employeeType?: string;
   dateOfHire?: string;
@@ -24,6 +25,7 @@ export interface UserDetail {
   password?: string;
   status?: string;
   role?: number;
+  roleName?: string;
   phone1?: string;
   phone2?: string;
   employeeType?: string;

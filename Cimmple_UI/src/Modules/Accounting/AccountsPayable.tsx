@@ -3,6 +3,8 @@ import { toast } from "react-toastify";
 import { faCheckCircle, faTimesCircle, faDollarSign, faBuilding, faCalendar, faFilter, faEye, faCreditCard, faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoiceSummary } from "../../Common/Services/VendorInvoiceService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
+import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 
 interface APFilterOptions {
   status: string;
@@ -13,6 +15,7 @@ interface APFilterOptions {
 }
 
 const AccountsPayable: React.FC = () => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<APFilterOptions>({
@@ -21,9 +24,9 @@ const AccountsPayable: React.FC = () => {
     amountRange: 'All',
     approvalStatus: 'All'
   });
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<VendorInvoiceSummary | null>(null);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState(0);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [openPaymentOnLoad, setOpenPaymentOnLoad] = useState(false);
 
   useEffect(() => {
     loadInvoices();
@@ -98,34 +101,30 @@ const AccountsPayable: React.FC = () => {
     toast.info('Invoice rejection functionality coming soon');
   };
 
+  const openInvoiceDetail = (invoice: VendorInvoiceSummary, showPayment = false) => {
+    setSelectedInvoiceId(invoice.id);
+    setOpenPaymentOnLoad(showPayment);
+    setShowDetailModal(true);
+  };
+
   const handlePayInvoice = (invoice: VendorInvoiceSummary) => {
-    setSelectedInvoice(invoice);
-    setShowPaymentModal(true);
+    openInvoiceDetail(invoice, true);
   };
 
   const handleViewInvoice = (invoice: VendorInvoiceSummary) => {
-    // Navigate to vendor invoice detail
-    toast.info(`Viewing invoice ${invoice.invoiceNo}`);
+    openInvoiceDetail(invoice, false);
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+  const handleCloseDetailModal = () => {
+    setShowDetailModal(false);
+    setSelectedInvoiceId(0);
+    setOpenPaymentOnLoad(false);
   };
 
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { color: string; bgColor: string; icon: any }> = {
       'Paid': { color: '#065f46', bgColor: '#dcfce7', icon: faCheckCircle },
+      'Partially Paid': { color: '#1d4ed8', bgColor: '#dbeafe', icon: faDollarSign },
       'Approved': { color: '#059669', bgColor: '#d1fae5', icon: faCheckCircle },
       'Pending Approval': { color: '#d97706', bgColor: '#fef3c7', icon: faExclamationTriangle },
       'Overdue': { color: '#dc2626', bgColor: '#fef2f2', icon: faTimesCircle },
@@ -308,6 +307,7 @@ const AccountsPayable: React.FC = () => {
             <option value="All">All Status</option>
             <option value="Pending Approval">Pending Approval</option>
             <option value="Approved">Approved</option>
+            <option value="Partially Paid">Partially Paid</option>
             <option value="Paid">Paid</option>
             <option value="Overdue">Overdue</option>
           </select>
@@ -476,7 +476,10 @@ const AccountsPayable: React.FC = () => {
                           <FontAwesomeIcon icon={faEye} />
                         </button>
 
-                        {invoice.status !== 'Paid' && invoice.status !== 'Void' && (
+                        {invoice.status !== 'Paid' &&
+                          invoice.status !== 'Void' &&
+                          invoice.status !== 'Approved' &&
+                          !invoice.isApproved && (
                           <>
                             <button
                               onClick={() => handleApproveInvoice(invoice)}
@@ -511,7 +514,11 @@ const AccountsPayable: React.FC = () => {
                           </>
                         )}
 
-                        {invoice.status === 'Paid' && (
+                        {(invoice.status === 'Approved' ||
+                          invoice.status === 'Partially Paid' ||
+                          invoice.isApproved) &&
+                          invoice.status !== 'Paid' &&
+                          invoice.status !== 'Void' && (
                           <button
                             onClick={() => handlePayInvoice(invoice)}
                             style={{
@@ -543,6 +550,14 @@ const AccountsPayable: React.FC = () => {
           </div>
         )}
       </div>
+
+      <VendorInvoiceDetailModal
+        isOpen={showDetailModal}
+        onClose={handleCloseDetailModal}
+        invoiceId={selectedInvoiceId}
+        initialShowPayment={openPaymentOnLoad}
+        onPaymentComplete={loadInvoices}
+      />
     </div>
   );
 };

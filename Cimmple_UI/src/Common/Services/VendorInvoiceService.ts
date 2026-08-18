@@ -29,6 +29,11 @@ export interface CreateVendorInvoiceRequest {
   dueDate?: string;
   paymentMethod?: string;
   notes?: string;
+  /** Input tax rate percent (0–100) */
+  taxRate?: number;
+  /** Input tax amount; when omitted server computes from taxRate × subtotal */
+  taxAmount?: number;
+  freightCharge?: number;
 }
 
 export interface VendorInvoice {
@@ -38,11 +43,14 @@ export interface VendorInvoice {
   dueDate: string;
   amount: number;
   totalAmount: number;
+  paidAmount?: number;
+  balanceDue?: number;
   status: string;
   vendorName?: string;
   vendorCode?: string;
   orderId?: number;
   paymentMethod?: string;
+  isApproved?: boolean;
   items: Array<{
     orderDetailId: number;
     qtyInvoiced: number;
@@ -61,10 +69,13 @@ export interface VendorInvoiceSummary {
   dueDate: string;
   amount: number;
   totalAmount: number;
-  status: 'Unpaid' | 'Paid' | 'Overdue' | 'Void';
+  paidAmount?: number;
+  balanceDue?: number;
+  status: string;
   paymentMethod?: string;
   daysOverdue?: number;
   orderId?: number;
+  isApproved?: boolean;
 }
 
 export interface RecordVendorPaymentRequest {
@@ -75,6 +86,7 @@ export interface RecordVendorPaymentRequest {
   PvrNo?: number;
   Series?: string;
   BankId?: number;
+  PaymentAmount?: number;
 }
 
 export class VendorInvoiceService {

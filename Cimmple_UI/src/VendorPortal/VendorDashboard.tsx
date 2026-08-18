@@ -111,10 +111,12 @@ const VendorDashboard: React.FC = () => {
     setShowResponseView(true);
   };
 
-  const handleCloseResponse = () => {
+  const handleCloseResponse = (refreshList = false) => {
     setShowResponseView(false);
     setSelectedQuotationId(0);
-    loadQuotations(); // Refresh list
+    if (refreshList) {
+      loadQuotations();
+    }
   };
 
   if (loading) {

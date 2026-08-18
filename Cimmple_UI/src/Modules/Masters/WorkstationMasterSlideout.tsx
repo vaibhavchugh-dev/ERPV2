@@ -11,7 +11,7 @@ import "./CustomerMasterSlideout.scss";
 
 interface WorkstationMasterSlideoutProps {
   workstationId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
 }
 
 const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
@@ -176,7 +176,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
       await WorkstationService.DeleteWorkstation(workstationId);
       toast.success("Workstation deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting workstation:", error);
       toast.error(`Error deleting workstation: ${error.message || "Unknown error"}`);
@@ -227,7 +227,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
 
       await WorkstationService.SaveWorkstation(request);
       toast.success("Workstation saved successfully");
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error saving workstation:", error);
       toast.error(`Error saving workstation: ${error.message || "Unknown error"}`);

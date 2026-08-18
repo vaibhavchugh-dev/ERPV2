@@ -3,6 +3,9 @@ import { toast } from "react-toastify";
 import { faCheckCircle, faEnvelope, faPhone, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { InvoiceService, InvoiceSummary } from "../../Common/Services/InvoiceService";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { isEmailNotificationsEnabled } from "../../Common/Utils/settingsRuntime";
+import CustomerInvoiceDetailModal from "../Orders/CustomerInvoiceDetailModal";
 
 interface ARFilterOptions {
   status: string;
@@ -13,6 +16,7 @@ interface ARFilterOptions {
 }
 
 const AccountsReceivable: React.FC = () => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ARFilterOptions>({
@@ -21,8 +25,9 @@ const AccountsReceivable: React.FC = () => {
     amountRange: 'All',
     overdueStatus: 'All'
   });
-  const [showCollectionModal, setShowCollectionModal] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceSummary | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState(0);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [openPaymentOnLoad, setOpenPaymentOnLoad] = useState(false);
 
   useEffect(() => {
     loadInvoices();
@@ -73,21 +78,39 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const handleSendReminder = (invoice: InvoiceSummary) => {
+    if (!isEmailNotificationsEnabled()) {
+      toast.error('Email notifications are disabled in System Settings (General).');
+      return;
+    }
     // In a real app, this would send an email reminder
     toast.success(`Payment reminder sent to ${invoice.customerName} for invoice ${invoice.invoiceNo}`);
   };
 
+  const openInvoiceDetail = (invoice: InvoiceSummary, showPayment = false) => {
+    setSelectedInvoiceId(invoice.id);
+    setOpenPaymentOnLoad(showPayment);
+    setShowDetailModal(true);
+  };
+
   const handleRecordPayment = (invoice: InvoiceSummary) => {
-    setSelectedInvoice(invoice);
-    setShowCollectionModal(true);
+    openInvoiceDetail(invoice, true);
   };
 
   const handleViewInvoice = (invoice: InvoiceSummary) => {
-    // Navigate to customer invoice detail
-    toast.info(`Viewing invoice ${invoice.invoiceNo}`);
+    openInvoiceDetail(invoice, false);
+  };
+
+  const handleCloseDetailModal = () => {
+    setShowDetailModal(false);
+    setSelectedInvoiceId(0);
+    setOpenPaymentOnLoad(false);
   };
 
   const handleBulkReminders = () => {
+    if (!isEmailNotificationsEnabled()) {
+      toast.error('Email notifications are disabled in System Settings (General).');
+      return;
+    }
     const overdueInvoices = invoices.filter(inv => inv.daysOverdue && inv.daysOverdue > 0);
     if (overdueInvoices.length === 0) {
       toast.info('No overdue invoices to send reminders for');
@@ -95,21 +118,6 @@ const AccountsReceivable: React.FC = () => {
     }
 
     toast.success(`Payment reminders sent to ${overdueInvoices.length} customers`);
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
   };
 
   const getStatusBadge = (status: string, daysOverdue?: number) => {
@@ -122,6 +130,13 @@ const AccountsReceivable: React.FC = () => {
       color = '#065f46';
       bgColor = '#dcfce7';
       icon = faCheckCircle;
+    } else if (status === 'Partially Paid') {
+      color = '#1d4ed8';
+      bgColor = '#dbeafe';
+      icon = faClock;
+      if (daysOverdue && daysOverdue > 0) {
+        displayStatus = `Partial (${daysOverdue}d overdue)`;
+      }
     } else if (daysOverdue && daysOverdue > 0) {
       displayStatus = `Overdue (${daysOverdue}d)`;
       color = '#dc2626';
@@ -157,11 +172,11 @@ const AccountsReceivable: React.FC = () => {
       .filter(invoice => invoice.status === 'Paid')
       .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
     const unpaidAmount = invoices
-      .filter(invoice => invoice.status === 'Unpaid')
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+      .filter(invoice => invoice.status !== 'Paid' && invoice.status !== 'Void')
+      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
     const overdueAmount = invoices
       .filter(invoice => invoice.daysOverdue && invoice.daysOverdue > 0)
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
 
     return { totalAmount, paidAmount, unpaidAmount, overdueAmount };
   };
@@ -326,6 +341,7 @@ const AccountsReceivable: React.FC = () => {
             <option value="All">All Status</option>
             <option value="Paid">Paid</option>
             <option value="Unpaid">Unpaid</option>
+            <option value="Partially Paid">Partially Paid</option>
             <option value="Overdue">Overdue</option>
           </select>
 
@@ -541,6 +557,14 @@ const AccountsReceivable: React.FC = () => {
           </div>
         )}
       </div>
+
+      <CustomerInvoiceDetailModal
+        isOpen={showDetailModal}
+        onClose={handleCloseDetailModal}
+        invoiceId={selectedInvoiceId}
+        initialShowPayment={openPaymentOnLoad}
+        onPaymentComplete={loadInvoices}
+      />
     </div>
   );
 };

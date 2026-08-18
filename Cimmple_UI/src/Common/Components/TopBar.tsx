@@ -1,22 +1,45 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useHistory, useLocation } from "react-router-dom";
-import { useDispatch, useSelector } from "react-redux";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faSearch, faUser, faSignOutAlt, faChevronDown, faMapMarkerAlt } from "@fortawesome/free-solid-svg-icons";
+import {
+  faSearch,
+  faUser,
+  faSignOutAlt,
+  faChevronDown,
+  faMapMarkerAlt,
+  faIdCard,
+  faKey,
+  faCog,
+  faKeyboard,
+  faInfoCircle,
+} from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
-import { LocationService, LocationMaster } from "../Services/LocationService";
+import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
+import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
+import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import "./TopBar.scss";
+
+/** Working locations for the switcher: sites and warehouses (not bins/shelves/zones). */
+const isWorkingLocation = (loc: { locType?: number | null }) => {
+  const t = loc.locType;
+  return (
+    t == null ||
+    t === 0 ||
+    t === LOCATION_KIND.BusinessSite ||
+    t === LOCATION_KIND.Warehouse
+  );
+};
 
 const TopBar: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
-  const dispatch = useDispatch();
-  const currentLocationId = useSelector((state: any) => state.LocationReducer?.locationId || 0);
+  const { locationId: currentLocationId, setLocationId } = useActiveLocation();
   
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
@@ -52,10 +75,32 @@ const TopBar: React.FC = () => {
   const locationMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-  const userName = storage?.userName || "User";
-  const userEmail = storage?.email || "";
-  const tenantId = storage?.tenantID || (process.env.NODE_ENV === 'development' ? 1 : 0);
+  const readStorageProfile = () => {
+    const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+    return {
+      userName: storageObj?.userName || "User",
+      userEmail: storageObj?.email || "",
+      userRole: storageObj?.role || "",
+      tenantId: storageObj?.tenantID || (process.env.NODE_ENV === "development" ? 1 : 0),
+    };
+  };
+  const [profile, setProfile] = useState(readStorageProfile);
+  const { userName, userEmail, userRole, tenantId } = profile;
+  const canOpenSettings = AuthService.hasPermissionForPath("/settings");
+
+  useEffect(() => {
+    const refreshProfile = () => setProfile(readStorageProfile());
+    refreshProfile();
+    void AuthService.syncCurrentUserProfile().then((user) => {
+      if (user) refreshProfile();
+    });
+    window.addEventListener("sessionProfileUpdated", refreshProfile);
+    window.addEventListener("storage", refreshProfile);
+    return () => {
+      window.removeEventListener("sessionProfileUpdated", refreshProfile);
+      window.removeEventListener("storage", refreshProfile);
+    };
+  }, []);
 
   // Debounced search
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -219,8 +264,16 @@ const TopBar: React.FC = () => {
       const canAccessAll = !!storageObj.canAccessAllLocations;
       const cached = AuthService.getAllowedLocations();
 
-      if (!canAccessAll && cached.length > 0) {
-        setLocations(cached.map(toLocationMaster));
+      // Login/refresh already embeds locations — prefer cache to avoid competing with list APIs.
+      if (cached.length > 0) {
+        setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
+        return;
+      }
+
+      // Restricted users with no assigned sites must not see the full tenant list
+      // (that would pick a site their JWT rejects with 403 on list APIs).
+      if (!canAccessAll) {
+        setLocations([]);
         return;
       }
 
@@ -228,18 +281,15 @@ const TopBar: React.FC = () => {
 
       const locationsData = await LocationService.GetLocations({ tenantid: tenantId });
       if (locationsData && Array.isArray(locationsData)) {
-        if (canAccessAll || cached.length === 0) {
-          setLocations(locationsData);
-        } else {
-          const allowedIds = new Set(cached.map((l) => l.locationId));
-          setLocations(locationsData.filter((l: LocationMaster) => allowedIds.has(l.locationId)));
-        }
+        setLocations(locationsData.filter(isWorkingLocation));
       }
     } catch (error) {
       console.error("Error loading locations:", error);
       const cached = AuthService.getAllowedLocations();
       if (cached.length > 0) {
-        setLocations(cached.map(toLocationMaster));
+        setLocations(cached.map(toLocationMaster).filter(isWorkingLocation));
+      } else {
+        setLocations([]);
       }
     } finally {
       setLoadingLocations(false);
@@ -256,74 +306,69 @@ const TopBar: React.FC = () => {
     const allowed = AuthService.getAllowedLocations();
     const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
     const canAccessAll = !!storageObj.canAccessAllLocations;
-    if (!canAccessAll && allowed.length > 0 && !allowed.some((l) => l.locationId === locationId)) {
+    if (!canAccessAll && (allowed.length === 0 || !allowed.some((l) => l.locationId === locationId))) {
       return;
     }
 
-    dispatch({ type: "SET_LOCATION", payload: locationId });
-    localStorage.setItem("locationId", locationId.toString());
-
-    window.dispatchEvent(
-      new CustomEvent("locationChanged", {
-        detail: { locationId },
-      })
-    );
-
+    setLocationId(locationId);
     setLocationMenuOpen(false);
-  }, [currentLocationId, dispatch]);
+  }, [currentLocationId, setLocationId]);
 
   // Load locations on mount
   useEffect(() => {
     loadLocations();
   }, [loadLocations]);
 
-  // Initialize location from defaultLocationId if no current location
+  // Ensure working site is selected after login (Redux can lag behind localStorage).
   useEffect(() => {
-    const storedLocationId = localStorage.getItem('locationId');
-    const locationIdFromStorage = storedLocationId ? parseInt(storedLocationId, 10) : 0;
-    
-    if ((!locationIdFromStorage || locationIdFromStorage === 0) && locations.length > 0) {
-      const defaultLocationId = localStorage.getItem('defaultLocationId');
-      if (defaultLocationId) {
-        const locationId = parseInt(defaultLocationId, 10);
-        if (!isNaN(locationId) && locationId > 0) {
-          // Check if the default location exists in the loaded locations
-          const locationExists = locations.some(loc => loc.locationId === locationId);
-          if (locationExists) {
-            handleLocationChange(locationId);
-          }
+    if (locations.length === 0) {
+      // Restricted / unassigned: clear any stale working site so list APIs don't 403.
+      if (currentLocationId > 0) {
+        const storageObj = JSON.parse(localStorage.getItem("storage") || "{}");
+        const canAccessAll = !!storageObj.canAccessAllLocations;
+        const allowed = AuthService.getAllowedLocations();
+        if (!canAccessAll && allowed.length === 0) {
+          setLocationId(0);
         }
-      } else if (locations.length > 0) {
-        // If no default location is set, use the first location
-        handleLocationChange(locations[0].locationId);
       }
+      return;
     }
-  }, [locations, handleLocationChange]); // Run when locations are loaded
 
-  // Update current location when locationId changes or locations are loaded
+    const storedLocationId = Number(localStorage.getItem("locationId") || 0);
+    const defaultLocationId = Number(localStorage.getItem("defaultLocationId") || 0);
+
+    let targetId =
+      currentLocationId > 0
+        ? currentLocationId
+        : storedLocationId > 0
+          ? storedLocationId
+          : defaultLocationId > 0
+            ? defaultLocationId
+            : locations[0].locationId;
+
+    const exists = locations.some((loc) => loc.locationId === targetId);
+    if (!exists) {
+      targetId = locations[0].locationId;
+    }
+
+    if (targetId > 0 && targetId !== currentLocationId) {
+      handleLocationChange(targetId);
+    }
+  }, [locations, currentLocationId, handleLocationChange, setLocationId]);
+
+  // Update current location label when locationId changes or locations are loaded
   useEffect(() => {
     if (currentLocationId > 0 && locations.length > 0) {
       const location = locations.find(loc => loc.locationId === currentLocationId);
       setCurrentLocation(location || null);
+      // If the stored location is a bin/zone (not in working list), move to first working location
+      if (!location) {
+        handleLocationChange(locations[0].locationId);
+      }
     } else {
       setCurrentLocation(null);
     }
-  }, [currentLocationId, locations]);
-
-  // Listen for location changes from other components
-  useEffect(() => {
-    const handleLocationChanged = (event: CustomEvent) => {
-      const newLocationId = event.detail?.locationId;
-      if (newLocationId && newLocationId !== currentLocationId) {
-        dispatch({ type: 'SET_LOCATION', payload: newLocationId });
-      }
-    };
-
-    window.addEventListener('locationChanged', handleLocationChanged as EventListener);
-    return () => {
-      window.removeEventListener('locationChanged', handleLocationChanged as EventListener);
-    };
-  }, [currentLocationId, dispatch]);
+  }, [currentLocationId, locations, handleLocationChange]);
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -389,6 +434,18 @@ const TopBar: React.FC = () => {
     history.push("/login");
   };
 
+  const closeUserMenu = () => setUserMenuOpen(false);
+
+  const openAccountModal = (kind: Exclude<UserAccountModalKind, null>) => {
+    closeUserMenu();
+    setAccountModal(kind);
+  };
+
+  const navigateFromMenu = (path: string) => {
+    closeUserMenu();
+    history.push(path);
+  };
+
   const totalResults = 
     searchResults.customers.length +
     searchResults.vendors.length +
@@ -428,11 +485,11 @@ const TopBar: React.FC = () => {
             <button
               className="location-menu-btn"
               onClick={() => setLocationMenuOpen(!locationMenuOpen)}
-              title={currentLocation ? `Current location: ${currentLocation.name}` : 'Select location'}
+              title={currentLocation ? `Working site: ${currentLocation.name}` : 'Select working site'}
             >
               <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
               <span className="location-name">
-                {currentLocation ? currentLocation.name : 'Select Location'}
+                {currentLocation ? currentLocation.name : 'Select Site'}
               </span>
               <FontAwesomeIcon icon={faChevronDown} size="xs" />
             </button>
@@ -441,8 +498,8 @@ const TopBar: React.FC = () => {
                 <div className="dropdown-header">
                   <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
                   <div>
-                    <div className="dropdown-name">Switch Location</div>
-                    <div className="dropdown-email">Select your working location</div>
+                    <div className="dropdown-name">Working site</div>
+                    <div className="dropdown-email">Lists follow this site; choose All sites on a page for tenant-wide view</div>
                   </div>
                 </div>
                 <div className="dropdown-divider"></div>
@@ -501,13 +558,58 @@ const TopBar: React.FC = () => {
                 <div className="user-avatar-small">
                   <FontAwesomeIcon icon={faUser} size="sm" />
                 </div>
-                <div>
+                <div className="dropdown-user-meta">
                   <div className="dropdown-name">{userName}</div>
                   {userEmail && <div className="dropdown-email">{userEmail}</div>}
+                  {userRole && <div className="dropdown-role">Role: {userRole}</div>}
                 </div>
               </div>
               <div className="dropdown-divider"></div>
-              <button className="dropdown-item" onClick={handleLogout}>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("profile")}
+              >
+                <FontAwesomeIcon icon={faIdCard} size="sm" />
+                <span>My Profile</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => navigateFromMenu("/change-password")}
+              >
+                <FontAwesomeIcon icon={faKey} size="sm" />
+                <span>Change Password</span>
+              </button>
+              {canOpenSettings && (
+                <button
+                  type="button"
+                  className="dropdown-item"
+                  onClick={() => navigateFromMenu("/settings")}
+                >
+                  <FontAwesomeIcon icon={faCog} size="sm" />
+                  <span>System Settings</span>
+                </button>
+              )}
+              <div className="dropdown-divider"></div>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("help")}
+              >
+                <FontAwesomeIcon icon={faKeyboard} size="sm" />
+                <span>Help &amp; Shortcuts</span>
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => openAccountModal("about")}
+              >
+                <FontAwesomeIcon icon={faInfoCircle} size="sm" />
+                <span>About</span>
+              </button>
+              <div className="dropdown-divider"></div>
+              <button type="button" className="dropdown-item dropdown-item-danger" onClick={handleLogout}>
                 <FontAwesomeIcon icon={faSignOutAlt} size="sm" />
                 <span>Logout</span>
               </button>
@@ -515,6 +617,15 @@ const TopBar: React.FC = () => {
           )}
         </div>
       </div>
+
+      <UserAccountModals
+        kind={accountModal}
+        onClose={() => setAccountModal(null)}
+        onChangePassword={() => {
+          setAccountModal(null);
+          history.push("/change-password");
+        }}
+      />
     </header>
   );
 };

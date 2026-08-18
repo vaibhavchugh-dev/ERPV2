@@ -102,18 +102,23 @@ export interface VendorOrderDetailReq {
   UnitPrice: number;
   JobPriority: number;
   Discount: number;
+  DiscountType?: "Percent" | "Amount";
   ProductId?: number;
+  /** Set when LineType is RawMaterial — books into inventory on stock receive. */
+  RawMaterialId?: number;
   LeadTime: string;
   Notes: string;
   ShippedQty: number;
   ShippingStatus: string;
   InvoicedQty: number;
   InvoiceStatus: string;
+  /** Expense GL account id (as string) or account code for invoice posting */
+  glcode?: string;
 }
 
 export class VendorOrderService {
   public static GetVendorOrders = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<VendorOrderMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -131,9 +136,11 @@ export class VendorOrderService {
 
     // Use vendor-specific endpoint (backend has separate VendorOrders table)
     const url = `/Order/GetVendorOrders`;
-    const response = await Instense.get(url, {
-      params: { tenantid: tenantID },
-    });
+    const params: Record<string, number> = { tenantId: tenantID };
+    if (request.locationId && request.locationId > 0) {
+      params.locationId = request.locationId;
+    }
+    const response = await Instense.get(url, { params });
 
     const result = response.data.result as VendorOrderMaster[];
     return result;
@@ -230,13 +237,16 @@ export class VendorOrderService {
         UnitPrice: d.UnitPrice || d.unitPrice || 0,
         JobPriority: d.JobPriority || d.jobPriority || 0,
         Discount: d.Discount || d.discount || 0,
+        DiscountType: (d.DiscountType || d.discountType) === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || d.productId,
+        RawMaterialId: d.RawMaterialId || d.rawMaterialId,
         LeadTime: d.LeadTime || d.leadTime || "",
         Notes: d.Notes || d.notes || "",
         ShippedQty: d.ShippedQty || d.shippedQty || 0,
         ShippingStatus: d.ShippingStatus || d.shippingStatus || "",
         InvoicedQty: d.InvoicedQty || d.invoicedQty || 0,
         InvoiceStatus: d.InvoiceStatus || d.invoiceStatus || "",
+        glcode: d.glcode || d.Glcode || "",
       })),
       Attachments: result.Attachments || result.attachments || [],
       Comments: result.Comments || result.comments || [],
@@ -341,7 +351,9 @@ export class VendorOrderService {
         UnitPrice: d.UnitPrice || 0,
         JobPriority: d.JobPriority || 0,
         Discount: d.Discount || 0,
+        DiscountType: d.DiscountType === "Amount" ? "Amount" : "Percent",
         ProductId: d.ProductId || null,
+        RawMaterialId: d.RawMaterialId || null,
         LineType: d.LineType || undefined,
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",
@@ -349,7 +361,7 @@ export class VendorOrderService {
         ShippingStatus: d.ShippingStatus || "Not Started",
         InvoicedQty: d.InvoicedQty || 0,
         InvoiceStatus: d.InvoiceStatus || "Not Invoiced",
-        glcode: "", // Required field
+        glcode: (d.glcode || "").trim(),
         Received: "No", // Required field
         JobId: 0, // Required field
       })),

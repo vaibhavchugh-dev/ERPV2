@@ -117,6 +117,19 @@ namespace CimmpleAPI.Services.Pdf
             document.GeneratePdf(stream);
             return stream.ToArray();
         }
+
+        public byte[] GenerateNcrPdf(PdfDocumentData data, NcrPdfContent ncr)
+        {
+            QuestPDF.Settings.License = LicenseType.Community;
+            QuestPDF.Settings.EnableDebugging = true;
+
+            var template = new NcrTemplate(data, ncr);
+            var document = template.Compose();
+
+            using var stream = new MemoryStream();
+            document.GeneratePdf(stream);
+            return stream.ToArray();
+        }
     }
 }
 

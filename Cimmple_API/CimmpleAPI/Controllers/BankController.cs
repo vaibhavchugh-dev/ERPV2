@@ -21,12 +21,20 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetBanklist")]
-        public IActionResult GetBanklist([FromQuery] int tenantid)
+        public IActionResult GetBanklist([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                var banks = _context.BankMaster
-                    .Where(b => b.TenantId == tenantid)
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var query = _context.BankMaster.Where(b => b.TenantId == tenantid);
+                if (filterLocationId.HasValue)
+                {
+                    query = query.Where(b => b.locationId == filterLocationId.Value);
+                }
+
+                var banks = query
                     .Select(b => new
                     {
                         id = b.Id,
@@ -106,6 +114,10 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (!TryResolveLocationId(request.locationId > 0 ? request.locationId : null, out var resolvedLocationId, out var forbid))
+                    return forbid!;
+                request.locationId = resolvedLocationId;
+
                 // Validate required fields
                 if (string.IsNullOrWhiteSpace(request.BankName))
                 {

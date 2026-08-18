@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -9,23 +9,34 @@ import {
 import { PdfService } from "../../Common/Services/PdfService";
 import { JobOrderService } from "../../Common/Services/JobOrderService";
 import { CustomerService } from "../../Common/Services/CustomerService";
+import { CustomerPartOption } from "../../Common/Services/ProductMasterService";
 import { ShippingService, ShippableItem, Shipment } from "../../Common/Services/ShippingService";
 import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/InvoiceService";
-import JobOrderSlideout from "../JobOrders/JobOrderSlideout";
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
+import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
+import {
+  todayDateOnlyDisplay,
+  toHtmlDateInputValue,
+  fromHtmlDateInputValue,
+} from "../../Common/Utils/Formatting";
 import "./CustomerOrderSlideout.scss";
+
+const JobOrderSlideout = lazy(() => import("../JobOrders/JobOrderSlideout"));
 
 interface CustomerOrderSlideoutProps {
   orderId: number;
-  onClose: () => void;
+  onClose: (refreshList?: boolean) => void;
+  onSaved?: (orderId: number) => void;
 }
 
 const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   orderId,
   onClose,
+  onSaved,
 }) => {
   const [formData, setFormData] = useState<OrderMasterReq>({
     OrderID: 0,
@@ -67,9 +78,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
+  const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
+  const [repeatingLastOrder, setRepeatingLastOrder] = useState(false);
   const [showJobOrderSlideout, setShowJobOrderSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
   const [jobOrderDetailIds, setJobOrderDetailIds] = useState<Map<number, number>>(new Map()); // Map of detail ID to job order ID
+  const listNeedsRefreshRef = useRef(false);
 
   // Shipping related state
   const [showShippingModal, setShowShippingModal] = useState(false);
@@ -176,7 +190,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-    const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+    const today = todayDateOnlyDisplay();
     
     setFormData((prev) => {
       // If it's a new order (orderId === 0) and no details exist, add one default line item
@@ -193,6 +207,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -207,18 +222,25 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         Tenantid: storage?.tenantID || 0,
         UserId: storage?.userId || 0,
         UserToken: storage?.userToken || 0,
-        OrderDate: today,
-        // Add default line item only for new orders
-        Details: orderId === 0 && prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+        ...(orderId === 0
+          ? {
+              OrderDate: prev.OrderDate || today,
+              Details: prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+            }
+          : {}),
       };
     });
 
     loadCustomers();
 
     if (orderId > 0) {
-      loadOrder();
+      loadOrder(orderId);
     }
   }, [orderId]);
+
+  useEffect(() => {
+    setPartHistoryByRow(new Map());
+  }, [formData.CustomerID]);
 
   const loadCustomers = async () => {
     try {
@@ -237,164 +259,119 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
-  const loadOrder = async () => {
+  const loadOrder = async (targetOrderId?: number) => {
+    const idToLoad = targetOrderId ?? orderId;
+    if (!idToLoad || idToLoad <= 0) return;
     setLoading(true);
     try {
-      const order = await OrderService.GetOrderById(orderId);
-      if (order) {
-        setFormData(order);
-        
-        // Load attachments and comments if available
-        console.log("Loading order attachments:", order.Attachments);
-        console.log("Attachments type:", typeof order.Attachments, "Is array:", Array.isArray(order.Attachments));
-        if (order.Attachments && Array.isArray(order.Attachments) && order.Attachments.length > 0) {
-          // Ensure all IDs are integers within int32 range (max: 2,147,483,647)
-          const cleanedAttachments = order.Attachments.map(a => {
-            let id = Math.floor(a.id || 0);
-            // Ensure ID is within int32 range (max: 2,147,483,647)
-            const MAX_INT32 = 2147483647;
-            if (id > MAX_INT32) {
-              id = id % MAX_INT32; // Use modulo to bring it within range
+      const order = await OrderService.GetOrderById(idToLoad);
+      if (!order) {
+        return;
+      }
+
+      setFormData(order);
+
+      if (order.Attachments && Array.isArray(order.Attachments) && order.Attachments.length > 0) {
+        const cleanedAttachments = order.Attachments.map((a) => {
+          let id = Math.floor(a.id || 0);
+          const MAX_INT32 = 2147483647;
+          if (id > MAX_INT32) {
+            id = id % MAX_INT32;
+          }
+          return {
+            id,
+            name: a.name || "",
+            size: a.size || 0,
+            fileUrl: a.fileUrl || "",
+          };
+        });
+        setAttachments(cleanedAttachments);
+        setAttachmentIdCounter(Math.max(...cleanedAttachments.map((a) => a.id), 0) + 1);
+      } else {
+        setAttachments([]);
+        setAttachmentIdCounter(1);
+      }
+
+      if (order.Comments && Array.isArray(order.Comments) && order.Comments.length > 0) {
+        const cleanedComments = order.Comments.map((c) => {
+          let id = Math.floor(c.id || 0);
+          const MAX_INT32 = 2147483647;
+          if (id > MAX_INT32) {
+            id = id % MAX_INT32;
+          }
+          return {
+            id,
+            text: c.text || "",
+            createdAt: c.createdAt || new Date().toISOString(),
+            createdBy: c.createdBy || "User",
+          };
+        });
+        setComments(cleanedComments);
+        setCommentIdCounter(Math.max(...cleanedComments.map((c) => c.id), 0) + 1);
+      } else {
+        setComments([]);
+        setCommentIdCounter(1);
+      }
+
+      setIsStateChanged(false);
+      // Show header/lines immediately; related data loads in parallel below
+      setLoading(false);
+
+      if (order.Details && order.Details.length > 0) {
+        const [jobOrders, shippable, shipmentsData, invoiceable, invoicesData] =
+          await Promise.all([
+            JobOrderService.GetJobOrdersByCustomerOrder(order.OrderID).catch((err) => {
+              console.error("Error loading job orders:", err);
+              return null;
+            }),
+            ShippingService.GetShippableItems(order.OrderID).catch((err) => {
+              console.error("Error loading shippable items:", err);
+              return null;
+            }),
+            ShippingService.GetShipments(order.OrderID).catch((err) => {
+              console.error("Error loading shipments:", err);
+              return null;
+            }),
+            InvoiceService.GetInvoiceableItems(order.OrderID).catch((err) => {
+              console.error("Error loading invoiceable items:", err);
+              return null;
+            }),
+            InvoiceService.GetInvoices(order.OrderID).catch((err) => {
+              console.error("Error loading invoices:", err);
+              return null;
+            }),
+          ]);
+
+        if (jobOrders) {
+          const detailIdMap = new Map<number, number>();
+          jobOrders.forEach((jo) => {
+            if (jo.customerOrderDetailID > 0 && jo.jobOrderID > 0) {
+              detailIdMap.set(jo.customerOrderDetailID, jo.jobOrderID);
             }
-            return {
-              id: id,
-              name: a.name || "",
-              size: a.size || 0,
-              fileUrl: a.fileUrl || ""
-            };
           });
-          console.log("Cleaned attachments:", cleanedAttachments);
-          setAttachments(cleanedAttachments);
-          // Set counter to max ID + 1 to avoid conflicts
-          const maxId = Math.max(...cleanedAttachments.map(a => a.id), 0);
-          setAttachmentIdCounter(maxId + 1);
-        } else {
-          console.log("No attachments found or empty array");
-          setAttachments([]);
-          setAttachmentIdCounter(1);
+          setJobOrderDetailIds(detailIdMap);
         }
-        console.log("Loading order comments:", order.Comments);
-        if (order.Comments && Array.isArray(order.Comments) && order.Comments.length > 0) {
-          // Ensure all IDs are integers within int32 range
-          const cleanedComments = order.Comments.map(c => {
-            let id = Math.floor(c.id || 0);
-            // Ensure ID is within int32 range (max: 2,147,483,647)
-            const MAX_INT32 = 2147483647;
-            if (id > MAX_INT32) {
-              id = id % MAX_INT32; // Use modulo to bring it within range
-            }
-            return {
-              id: id,
-              text: c.text || "",
-              createdAt: c.createdAt || new Date().toISOString(),
-              createdBy: c.createdBy || "User"
-            };
-          });
-          console.log("Cleaned comments:", cleanedComments);
-          setComments(cleanedComments);
-          // Set counter to max ID + 1 to avoid conflicts
-          const maxId = Math.max(...cleanedComments.map(c => c.id), 0);
-          setCommentIdCounter(maxId + 1);
-        } else {
-          console.log("No comments found or empty array");
-          setComments([]);
-          setCommentIdCounter(1);
+
+        if (shippable) {
+          setShippableItems(shippable);
         }
-        
-        setIsStateChanged(false);
-        
-        // Load existing job orders for this order's line items
-        if (order.Details && order.Details.length > 0) {
-          try {
-            const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-            const tenantID = storage?.tenantID || 0;
-            const jobOrders = await JobOrderService.GetJobOrders({ tenantid: tenantID });
-            if (jobOrders) {
-              const detailIdMap = new Map<number, number>();
-              jobOrders.forEach(jo => {
-                if (jo.customerOrderID === order.OrderID) {
-                  detailIdMap.set(jo.customerOrderDetailID, jo.jobOrderID);
-                }
-              });
-              setJobOrderDetailIds(detailIdMap);
-            }
-          } catch (err) {
-            console.error("Error loading job orders:", err);
-          }
-
-          // Load shippable items
-          try {
-            const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-            const tenantID = storage?.tenantID || 0;
-            console.log('[Ship Debug] Loading shippable items for order:', order.OrderID, 'tenantID:', tenantID);
-            const shippable = await ShippingService.GetShippableItems(order.OrderID);
-            console.log('[Ship Debug] Shippable items loaded:', shippable);
-            if (shippable) {
-              setShippableItems(shippable);
-              // Log each item for debugging
-              shippable.forEach(item => {
-                console.log(`[Ship Debug] Item ID ${item.id}:`, {
-                  partNo: item.partNo,
-                  availableQty: item.availableQty,
-                  hasJobOrder: item.hasJobOrder,
-                  jobOrderStatus: item.jobOrderStatus,
-                  qtyOrdered: item.qtyOrdered,
-                  shippedQty: item.shippedQty
-                });
-              });
-            }
-          } catch (err) {
-            console.error("Error loading shippable items:", err);
-          }
-
-          // Load shipments history
-          try {
-            const shipmentsData = await ShippingService.GetShipments(order.OrderID);
-            if (shipmentsData) {
-              setShipments(shipmentsData);
-            }
-          } catch (err) {
-            console.error("Error loading shipments:", err);
-          }
-
-          // Load invoiceable items
-          try {
-            console.log('Loading invoiceable items for order:', order.OrderID);
-            const invoiceable = await InvoiceService.GetInvoiceableItems(order.OrderID);
-            console.log('Invoiceable items received:', invoiceable);
-            if (invoiceable) {
-              const itemsWithQty = invoiceable.filter(item => item.availableQty > 0);
-              console.log(`Found ${itemsWithQty.length} items with available quantity out of ${invoiceable.length} total items`);
-              setInvoiceableItems(invoiceable);
-            } else {
-              console.log('No invoiceable items received');
-              setInvoiceableItems([]);
-            }
-          } catch (err) {
-            console.error("Error loading invoiceable items:", err);
-          }
-
-          // Load invoices history
-          try {
-            console.log('Loading invoices for order:', order.OrderID);
-            const invoicesData = await InvoiceService.GetInvoices(order.OrderID);
-            console.log('Initial invoices data:', invoicesData);
-            if (invoicesData) {
-              console.log(`Loaded ${invoicesData.length} invoices initially`);
-              setInvoices(invoicesData);
-            } else {
-              console.log('No invoices loaded initially');
-              setInvoices([]);
-            }
-          } catch (err) {
-            console.error("Error loading invoices:", err);
-          }
+        if (shipmentsData) {
+          setShipments(shipmentsData);
+        }
+        if (invoiceable) {
+          setInvoiceableItems(invoiceable);
+        } else {
+          setInvoiceableItems([]);
+        }
+        if (invoicesData) {
+          setInvoices(invoicesData);
+        } else {
+          setInvoices([]);
         }
       }
     } catch (error: any) {
       console.error("Error loading order:", error);
       toast.error(`Error loading order: ${error.message || "Unknown error"}`);
-    } finally {
       setLoading(false);
     }
   };
@@ -459,21 +436,153 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
+  const applyCustomerPart = (index: number, part: CustomerPartOption) => {
+    setFormData((prev) => {
+      const newDetails = [...prev.Details];
+      const current = newDetails[index];
+      if (!current) return prev;
+      newDetails[index] = {
+        ...current,
+        PartNo: part.partNo,
+        PartName: part.partName || current.PartName,
+        Unit: part.unit || current.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
+        ProductId: part.productId ?? current.ProductId,
+        QtyOrdered:
+          part.suggestedQty && part.suggestedQty > 0
+            ? part.suggestedQty
+            : current.QtyOrdered || 1,
+      };
+      const total = newDetails.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details: newDetails, TotalAmount: total };
+    });
+    setLineItemErrors((prev) => {
+      const newMap = new Map(prev);
+      const itemErrors = newMap.get(index);
+      if (itemErrors) {
+        delete itemErrors.PartNo;
+        delete itemErrors.PartName;
+        if (Object.keys(itemErrors).length === 0) newMap.delete(index);
+        else newMap.set(index, itemErrors);
+      }
+      return newMap;
+    });
+    setPartHistoryByRow((prev) => {
+      const next = new Map(prev);
+      const itemNo = formData.Details[index]?.ItemNo;
+      if (itemNo != null) next.set(itemNo, part);
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
+  const handleRepeatLastOrder = async () => {
+    if (!formData.CustomerID || formData.CustomerID <= 0) {
+      toast.error("Select a customer first");
+      return;
+    }
+    setRepeatingLastOrder(true);
+    try {
+      const result = await OrderService.GetLastOrderLinesByCustomer(formData.CustomerID);
+      if (!result.found || result.lines.length === 0) {
+        toast.info("No previous order found for this customer");
+        return;
+      }
+
+      const today = new Date().toLocaleDateString("en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        year: "2-digit",
+      });
+
+      const formatDue = (raw: string) => {
+        if (!raw) return today;
+        try {
+          const d = new Date(raw);
+          if (isNaN(d.getTime())) return today;
+          return d.toLocaleDateString("en-US", {
+            month: "2-digit",
+            day: "2-digit",
+            year: "2-digit",
+          });
+        } catch {
+          return today;
+        }
+      };
+
+      const blankOnly =
+        formData.Details.length === 0 ||
+        (formData.Details.length === 1 &&
+          !formData.Details[0].PartNo?.trim() &&
+          !formData.Details[0].PartName?.trim());
+
+      const newLines: OrderDetailReq[] = result.lines.map((l, i) => ({
+        ID: 0,
+        ItemNo: i + 1,
+        PartName: l.partName,
+        PartNo: l.partNo,
+        DueDate: formatDue(l.dueDate),
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: l.qtyOrdered || 1,
+        Unit: l.unit || "EA",
+        UnitPrice: l.unitPrice || 0,
+        JobPriority: 0,
+        Discount: l.discount || 0,
+        DiscountType: l.discountType === "Amount" ? "Amount" : "Percent",
+        ProductId: l.productId,
+        LeadTime: formatDue(l.leadTime) || today,
+        Notes: l.notes || "",
+        ShippedQty: 0,
+        ShippingStatus: "Not Started",
+        InvoicedQty: 0,
+        InvoiceStatus: "Not Invoiced",
+      }));
+
+      setFormData((prev) => {
+        const Details = blankOnly
+          ? newLines
+          : [
+              ...prev.Details,
+              ...newLines.map((l, i) => ({
+                ...l,
+                ItemNo:
+                  (prev.Details.length > 0
+                    ? Math.max(...prev.Details.map((d) => d.ItemNo))
+                    : 0) +
+                  i +
+                  1,
+              })),
+            ];
+        const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+        return { ...prev, Details, TotalAmount };
+      });
+      setPartHistoryByRow(new Map());
+      setIsStateChanged(true);
+
+      const orderLabel =
+        result.orderNumber < 1000
+          ? `CO#${result.orderNumber + 999}`
+          : `CO#${result.orderNumber}`;
+      toast.success(
+        `Added ${result.lines.length} line(s) from ${orderLabel}${
+          result.orderDate ? ` (${result.orderDate})` : ""
+        }`
+      );
+    } catch (error: any) {
+      console.error("Error repeating last order:", error);
+      toast.error(error?.message || "Failed to load last order");
+    } finally {
+      setRepeatingLastOrder(false);
+    }
+  };
+
   const handleDetailChange = (index: number, field: keyof OrderDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...prev.Details];
       newDetails[index] = { ...newDetails[index], [field]: value };
-      
-      // Calculate line total
-      if (field === "QtyOrdered" || field === "UnitPrice" || field === "Discount") {
-        const qty = field === "QtyOrdered" ? value : newDetails[index].QtyOrdered;
-        const price = field === "UnitPrice" ? value : newDetails[index].UnitPrice;
-        const discount = field === "Discount" ? value : newDetails[index].Discount;
-        const lineTotal = (qty * price) - discount;
-        // Note: We don't store lineTotal, but we can calculate it for display
-      }
 
-      // Recalculate total using effective prices from tiers
+      // Recalculate total using Percent/Amount-aware line totals
       const total = newDetails.reduce((sum, detail) => {
         return sum + calculateLineTotal(detail);
       }, 0);
@@ -533,6 +642,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         UnitPrice: 0,
         JobPriority: 0,
         Discount: 0,
+        DiscountType: "Percent",
         ProductId: undefined,
         LeadTime: today,
         Notes: "",
@@ -570,6 +680,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
     if (!confirmed) return;
 
+    const removed = formData.Details[index];
     setFormData((prev) => {
       const newDetails = prev.Details.filter((_, i) => i !== index);
 
@@ -584,6 +695,24 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         TotalAmount: total,
       };
     });
+    if (removed) {
+      setPartHistoryByRow((prev) => {
+        const next = new Map(prev);
+        next.delete(removed.ItemNo);
+        return next;
+      });
+      setLineItemErrors((prev) => {
+        const next = new Map<number, { [field: string]: string }>();
+        formData.Details.forEach((_, i) => {
+          if (i === index) return;
+          const errs = prev.get(i);
+          if (!errs) return;
+          const newIndex = i > index ? i - 1 : i;
+          next.set(newIndex, errs);
+        });
+        return next;
+      });
+    }
     setIsStateChanged(true);
   };
 
@@ -612,6 +741,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       const result = await JobOrderService.CreateJobOrderFromOrderDetail(formData.OrderID, detail.ID);
       if (result && result.id > 0) {
         toast.success(`Job order created successfully! Job Order #: JO#${result.id < 1000 ? result.id + 999 : result.id}`);
+        listNeedsRefreshRef.current = true;
         // Update the map to track this job order
         setJobOrderDetailIds(prev => {
           const newMap = new Map(prev);
@@ -635,15 +765,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   // Helper function to check if job order is completed (case-insensitive)
   const isJobOrderCompleted = (status: string | undefined | null): boolean => {
     if (!status) {
-      console.log('[Ship Debug] isJobOrderCompleted: status is null/undefined');
       return false;
     }
-    const normalized = status.trim().toLowerCase();
-    const result = normalized === "completed";
-    if (normalized !== "completed" && normalized !== "no job order") {
-      console.log(`[Ship Debug] isJobOrderCompleted: "${status}" -> normalized: "${normalized}" -> result: ${result}`);
-    }
-    return result;
+    return status.trim().toLowerCase() === "completed";
   };
 
   // Shipping functions
@@ -673,27 +797,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleShipmentCreated = async () => {
-    console.log('handleShipmentCreated called - refreshing data after shipment creation');
-    // Refresh shippable items, shipments, and reload order data
     try {
-      console.log('Fetching updated shippable items...');
-      const shippable = await ShippingService.GetShippableItems(orderId);
-      if (shippable) {
-        console.log(`Updated shippable items: ${shippable.length} items`);
-        setShippableItems(shippable);
-      }
-
-      console.log('Fetching updated shipments...');
-      const shipmentsData = await ShippingService.GetShipments(orderId);
-      if (shipmentsData) {
-        console.log(`Updated shipments: ${shipmentsData.length} shipments`);
-        setShipments(shipmentsData);
-      }
-
-      console.log('Reloading order data...');
-      // Reload the order to get updated shipping quantities
-      await loadOrder();
-      console.log('All data refreshed successfully');
+      const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+      listNeedsRefreshRef.current = true;
+      await loadOrder(id);
       toast.success("Order updated with new shipping information");
     } catch (error) {
       console.error("Error refreshing data after shipment:", error);
@@ -729,15 +836,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleBatchInvoice = () => {
-    console.log('handleBatchInvoice called');
-    console.log('Invoiceable items:', invoiceableItems);
     const readyItems = invoiceableItems.filter(item =>
       item.availableQty > 0 && (!item.hasJobOrder || isJobOrderCompleted(item.jobOrderStatus))
     );
-    console.log(`Ready items: ${readyItems.length} out of ${invoiceableItems.length} invoiceable items`);
     if (readyItems.length === 0) {
       const itemsWithQty = invoiceableItems.filter(item => item.availableQty > 0);
-      console.log(`Items with available quantity: ${itemsWithQty.length}`);
       if (itemsWithQty.length > 0) {
         toast.warning(`No items are ready to invoice. ${itemsWithQty.length} item(s) have available quantity but job orders are not completed.`);
       } else {
@@ -745,38 +848,15 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       }
       return;
     }
-    console.log('Setting selected invoice items:', readyItems);
     setSelectedInvoiceItems(readyItems);
     setShowInvoiceModal(true);
   };
 
   const handleInvoiceCreated = async () => {
-    console.log('handleInvoiceCreated called - refreshing data after invoice creation');
-    // Refresh invoiceable items, invoices, and reload order data
     try {
-      console.log('Fetching updated invoiceable items...');
-      const invoiceable = await InvoiceService.GetInvoiceableItems(orderId);
-      if (invoiceable) {
-        console.log(`Updated invoiceable items: ${invoiceable.length} items`);
-        setInvoiceableItems(invoiceable);
-      }
-
-      console.log('Fetching updated invoices...');
-      const invoicesData = await InvoiceService.GetInvoices(orderId);
-      console.log('Invoices data received:', invoicesData);
-      if (invoicesData) {
-        console.log(`Updated invoices: ${invoicesData.length} invoices`);
-        console.log('Invoice details:', invoicesData);
-        setInvoices(invoicesData);
-      } else {
-        console.log('No invoices data received');
-        setInvoices([]);
-      }
-
-      console.log('Reloading order data...');
-      // Reload the order to get updated invoiced quantities
-      await loadOrder();
-      console.log('All data refreshed successfully');
+      const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+      listNeedsRefreshRef.current = true;
+      await loadOrder(id);
       toast.success("Order updated with new invoice information");
     } catch (error) {
       console.error("Error refreshing data after invoice:", error);
@@ -814,11 +894,13 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       newErrors.OrderDate = "Order date is required";
     }
 
-    // Validate line items
-    if (formData.Details.length === 0) {
+    // Validate line items (ignore the empty starter row)
+    const filledDetails = formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d));
+    if (filledDetails.length === 0) {
       newErrors.Details = "At least one line item is required";
     } else {
       formData.Details.forEach((detail, index) => {
+        if (isBlankQuoteOrOrderLine(detail)) return;
         const itemErrors: { [field: string]: string } = {};
 
         // PartNo OR PartName must be filled (at least one)
@@ -848,7 +930,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         const estDate = detail.LeadTime || detail.DueDate;
         if (estDate) {
           // Only validate date for new orders or new line items
-          const isNewOrder = orderId === 0;
+          const isNewOrder = (formData.OrderID > 0 ? formData.OrderID : orderId) === 0;
           const isNewLineItem = detail.ID === 0;
           
           if (isNewOrder || isNewLineItem) {
@@ -903,13 +985,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Include attachments and comments before saving
-      console.log("Saving order with attachments:", attachments);
-      console.log("Saving order with comments:", comments);
-      console.log("Form data before save:", formData);
-      
       const formDataToSave: OrderMasterReq = {
         ...formData,
+        Details: formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d)),
         Attachments: attachments || [],
         Comments: comments || [],
       };
@@ -927,18 +1005,26 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         return;
       }
       
-      console.log("Sending order data:", formDataToSave);
       const result = await OrderService.SaveOrder(formDataToSave);
       toast.success("Order saved successfully");
-      
-      // Update the OrderID in formData if it was a new order
-      if (formData.OrderID === 0 && result.id > 0) {
-        setFormData(prev => ({
+
+      const savedId = result.id > 0 ? result.id : formDataToSave.OrderID;
+      if (savedId > 0) {
+        const wasNew = orderId === 0;
+        listNeedsRefreshRef.current = true;
+        setFormData((prev) => ({
           ...prev,
-          OrderID: result.id
+          OrderID: savedId,
+          ...(result.poNumber ? { PONumber: result.poNumber } : {}),
         }));
+        if (wasNew) {
+          // Parent updates orderId → useEffect loads once (avoid double full reload)
+          onSaved?.(savedId);
+        } else {
+          await loadOrder(savedId);
+        }
       }
-      
+
       setIsStateChanged(false);
       // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
@@ -952,10 +1038,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
-        onClose();
+        onClose(listNeedsRefreshRef.current);
       }
     } else {
-      onClose();
+      onClose(listNeedsRefreshRef.current);
     }
   };
 
@@ -971,7 +1057,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         : `CO#${formData.PONumber}`;
 
       // Generate PDF using API
-      const blob = await PdfService.GenerateOrder(orderId);
+      const blob = await PdfService.GenerateOrder(formData.OrderID > 0 ? formData.OrderID : orderId);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -1089,7 +1175,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         await OrderService.DeleteOrder(orderId);
         toast.success("All dependencies and order deleted successfully");
         setShowDeletionDialog(false);
-        onClose();
+        onClose(true);
       } else {
         // Still have blocking dependencies (shouldn't happen, but handle it)
         setDeletionImpact(updatedImpact);
@@ -1109,7 +1195,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       await OrderService.DeleteOrder(orderId);
       toast.success("Order deleted successfully");
       setShowDeletionDialog(false);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting order:", error);
       toast.error(`Error deleting order: ${error.message || "Unknown error"}`);
@@ -1119,24 +1205,13 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
-    if (orderId > 0) {
+    const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+    if (id > 0) {
       setLoading(true);
       try {
-        const order = await OrderService.GetOrderById(orderId);
-        if (order) {
-          // Create a new order with copied data
-          const duplicatedOrder: OrderMasterReq = {
-            ...order,
-            OrderID: 0,
-            PONumber: 0,
-            Status: "Draft",
-          };
-          
-          // Save as new order
-          await OrderService.SaveOrder(duplicatedOrder);
-          toast.success("Order duplicated successfully");
-          onClose();
-        }
+        await OrderService.DuplicateOrder(id);
+        toast.success("Order duplicated successfully (including file copies)");
+        onClose(true);
       } catch (error: any) {
         console.error("Error duplicating order:", error);
         toast.error(`Error duplicating order: ${error.message || "Unknown error"}`);
@@ -1146,34 +1221,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
-  const convertToDateInputFormat = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const parts = dateStr.split("/");
-      if (parts.length === 3) {
-        const month = parts[0].padStart(2, "0");
-        const day = parts[1].padStart(2, "0");
-        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-        return `${year}-${month}-${day}`;
-      }
-      return dateStr;
-    } catch {
-      return "";
-    }
-  };
+  const convertToDateInputFormat = (dateStr: string): string =>
+    toHtmlDateInputValue(dateStr);
 
-  const convertFromDateInputFormat = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear()).slice(-2);
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
-    }
-  };
+  const convertFromDateInputFormat = (dateStr: string): string =>
+    fromHtmlDateInputValue(dateStr);
 
   const getFirstLine = (text: string): string => {
     if (!text) return "";
@@ -1182,27 +1234,38 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     return firstLine;
   };
 
-  // Calculate line total (simple calculation without price breakdown)
+  // Calculate line total (supports Percent or Amount discount)
   const calculateLineTotal = (detail: OrderDetailReq): number => {
-    const subtotal = detail.QtyOrdered * detail.UnitPrice;
-    const discountAmount = (subtotal * detail.Discount) / 100;
-    return subtotal - discountAmount;
+    const qty = Number(detail.QtyOrdered) || 0;
+    const unitPrice = Number(detail.UnitPrice) || 0;
+    const discount = Number(detail.Discount) || 0;
+    const subtotal = qty * unitPrice;
+    if (subtotal <= 0) {
+      return 0;
+    }
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(Math.max(discount, 0), subtotal)
+        : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
   };
+
+  const effectiveOrderId = formData.OrderID > 0 ? formData.OrderID : orderId;
 
   return (
     <div className="customer-order-slideout-overlay" onClick={handleCancel}>
       <div className="customer-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="customer-order-slideout-header">
           <div>
-            <h2>{orderId > 0 ? "Edit Order" : "New Order"}</h2>
-            {orderId > 0 && formData.PONumber > 0 && (
+            <h2>{effectiveOrderId > 0 ? "Edit Order" : "New Order"}</h2>
+            {effectiveOrderId > 0 && formData.PONumber > 0 && (
               <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
                 Order Number: {formData.PONumber < 1000 ? `CO#${formData.PONumber + 999}` : `CO#${formData.PONumber}`}
               </div>
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-            {orderId > 0 && (
+            {effectiveOrderId > 0 && (
               <>
                 <button
                   type="button"
@@ -1363,32 +1426,67 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
             <div style={{ marginTop: "2rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3>Line Items</h3>
-                <button
-                  type="button"
-                  onClick={handleAddDetail}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#6366f1",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = "#4f46e5";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = "#6366f1";
-                  }}
-                >
-                  + Add Item
-                </button>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={handleRepeatLastOrder}
+                    disabled={
+                      repeatingLastOrder ||
+                      !formData.CustomerID ||
+                      formData.CustomerID <= 0
+                    }
+                    title={
+                      formData.CustomerID
+                        ? "Add lines from this customer's most recent order"
+                        : "Select a customer first"
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#ffffff",
+                      color: "#374151",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor:
+                        repeatingLastOrder || !formData.CustomerID
+                          ? "not-allowed"
+                          : "pointer",
+                      opacity: repeatingLastOrder || !formData.CustomerID ? 0.6 : 1,
+                    }}
+                  >
+                    {repeatingLastOrder ? "Loading…" : "Repeat last order"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddDetail}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#6366f1",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "#4f46e5";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "#6366f1";
+                    }}
+                  >
+                    + Add Item
+                  </button>
+                </div>
               </div>
               {errors.Details && <span className="error-message">{errors.Details}</span>}
               
@@ -1404,7 +1502,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount % / $</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Job Order</th>
@@ -1418,22 +1516,40 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         const lineTotal = calculateLineTotal(detail);
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
+                        const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
                         return (
-                          <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                            <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
-                            <td style={{ padding: "0.75rem", position: "relative" }}>
-                              <input
-                                type="text"
-                                className="form-input"
-                                style={{ 
-                                  width: "100%", 
-                                  minWidth: "100px",
-                                  borderColor: hasPartError ? "#ef4444" : undefined,
-                                  borderWidth: hasPartError ? "2px" : "1px"
+                          <React.Fragment key={detail.ItemNo}>
+                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
+                            <td style={{ padding: "0.75rem" }}>
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  minHeight: "2.5rem",
+                                  fontSize: "0.875rem",
+                                  lineHeight: 1.25,
                                 }}
+                              >
+                                {detail.ItemNo}
+                              </div>
+                            </td>
+                            <td style={{ padding: "0.75rem", position: "relative" }}>
+                              <CustomerPartCombobox
                                 value={detail.PartNo}
-                                onChange={(e) => handleDetailChange(index, "PartNo", e.target.value)}
-                                placeholder="Part number"
+                                customerId={formData.CustomerID}
+                                customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
+                                hasError={hasPartError}
+                                scrollContainerSelector=".customer-order-slideout-content"
+                                onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
+                                onSelectPart={(part) => applyCustomerPart(index, part)}
+                                onHistoryMatch={(part) => {
+                                  setPartHistoryByRow((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(detail.ItemNo, part);
+                                    return next;
+                                  });
+                                }}
                               />
                               {itemErrors.PartNo && (
                                 <div style={{ 
@@ -1813,46 +1929,74 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               )}
                             </td>
                             <td style={{ padding: "0.75rem" }}>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "100px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  // Update display value immediately
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      e.target.value === "Amount" ? "Amount" : "Percent"
+                                    )
+                                  }
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
                                       newMap.set(`discount-${index}`, inputVal);
+                                      return newMap;
+                                    });
+                                    if (inputVal === "" || inputVal === ".") {
                                       handleDetailChange(index, "Discount", 0);
                                     } else {
-                                      newMap.set(`discount-${index}`, inputVal);
                                       const val = parseFloat(inputVal);
                                       if (!isNaN(val) && val >= 0) {
                                         handleDetailChange(index, "Discount", val);
                                       }
                                     }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  // Convert empty to 0 only on blur and clear display value
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                              />
+                                  }}
+                                  onBlur={(e) => {
+                                    // Convert empty to 0 only on blur and clear display value
+                                    const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                              ${lineTotal.toFixed(2)}
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  minHeight: "2.5rem",
+                                  fontSize: "0.875rem",
+                                  lineHeight: 1.25,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                ${lineTotal.toFixed(2)}
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <input
@@ -1877,6 +2021,15 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  minHeight: "2.5rem",
+                                }}
+                              >
                               {detail.ID > 0 && jobOrderDetailIds.has(detail.ID) ? (
                                 <button
                                   type="button"
@@ -1921,29 +2074,50 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   Create JO
                                 </button>
                               )}
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem" }}>
-                              {detail.ShippedQty || 0}
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  minHeight: "2.5rem",
+                                  lineHeight: 1.25,
+                                }}
+                              >
+                                {detail.ShippedQty || 0}
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem" }}>
-                              {detail.InvoicedQty || 0}
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  minHeight: "2.5rem",
+                                  lineHeight: 1.25,
+                                }}
+                              >
+                                {detail.InvoicedQty || 0}
+                              </div>
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              <div style={{ display: "flex", gap: "0.25rem", justifyContent: "center", alignItems: "center" }}>
+                              <div
+                                className="line-cell-value"
+                                style={{
+                                  display: "flex",
+                                  gap: "0.25rem",
+                                  justifyContent: "center",
+                                  alignItems: "center",
+                                  minHeight: "2.5rem",
+                                }}
+                              >
                                 {/* Ship Button */}
                                 {(() => {
                                   const shippableItem = shippableItems.find(item => item.id === detail.ID);
-                                  // Debug logging for shipment button
-                                  if (detail.ID && shippableItem) {
-                                    console.log(`[Ship Debug] Detail ID: ${detail.ID}, PartNo: ${detail.PartNo}`, {
-                                      availableQty: shippableItem.availableQty,
-                                      hasJobOrder: shippableItem.hasJobOrder,
-                                      jobOrderStatus: shippableItem.jobOrderStatus,
-                                      isCompleted: isJobOrderCompleted(shippableItem.jobOrderStatus),
-                                      qtyOrdered: shippableItem.qtyOrdered,
-                                      shippedQty: shippableItem.shippedQty
-                                    });
-                                  }
                                   const canShip = shippableItem && shippableItem.availableQty > 0 &&
                                     (!shippableItem.hasJobOrder || isJobOrderCompleted(shippableItem.jobOrderStatus));
 
@@ -2006,6 +2180,24 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               </div>
                             </td>
                           </tr>
+                          {historyHint ? (
+                            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ padding: 0, border: "none" }} />
+                              <td
+                                colSpan={13}
+                                style={{
+                                  padding: "0 0.75rem 0.5rem",
+                                  fontSize: "0.6875rem",
+                                  color: "#6b7280",
+                                  lineHeight: 1.3,
+                                }}
+                                title={historyHint}
+                              >
+                                {historyHint}
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
@@ -2507,28 +2699,25 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
       {/* Job Order Slideout */}
       {showJobOrderSlideout && (
-        <JobOrderSlideout
-          jobOrderId={selectedJobOrderId}
-          onClose={async () => {
-            setShowJobOrderSlideout(false);
-            setSelectedJobOrderId(0);
-            // Reload job orders to refresh the map and shippable items
-            if (orderId > 0) {
-              // Refresh shippable items immediately to get updated job order status
-              try {
-                const shippable = await ShippingService.GetShippableItems(orderId);
-                console.log('[Ship Debug] Refreshed shippable items after job order close:', shippable);
-                if (shippable) {
-                  setShippableItems(shippable);
-                }
-              } catch (err) {
-                console.error("Error refreshing shippable items:", err);
+        <Suspense fallback={null}>
+          <JobOrderSlideout
+            jobOrderId={selectedJobOrderId}
+            onClose={async () => {
+              setShowJobOrderSlideout(false);
+              setSelectedJobOrderId(0);
+              const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+              if (id > 0) {
+                await loadOrder(id);
               }
-              // Also reload the full order to refresh everything
-              loadOrder();
-            }
-          }}
-        />
+            }}
+            onSaved={async () => {
+              const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+              if (id > 0) {
+                await loadOrder(id);
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Shipping Modal */}

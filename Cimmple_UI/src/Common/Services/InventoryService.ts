@@ -16,6 +16,12 @@ export interface InventoryBalance {
   reorderPoint?: number;
   reorderQuantity?: number;
   unitCost?: number;
+  isRemnant?: boolean;
+  parentRawMaterialId?: number;
+  parentPartNo?: string;
+  thicknessMm?: number;
+  widthMm?: number;
+  lengthMm?: number;
 }
 
 export interface InventoryTransaction {
@@ -24,14 +30,62 @@ export interface InventoryTransaction {
   rawMaterialId?: number;
   productPartNo?: string;
   rawMaterialPartNo?: string;
+  productName?: string;
+  rawMaterialName?: string;
   locationId: number;
   locationName?: string;
   transactionType: string;
+  transactionTypeName?: string;
   quantity: number;
   referenceType?: string;
   referenceId?: number;
+  referenceLabel?: string;
   transactionDate: string;
   notes?: string;
+  lotId?: number;
+  lotNumber?: string;
+}
+
+export interface MovementDocumentOption {
+  id: number;
+  label: string;
+  detail?: string;
+}
+
+export interface JobMaterialUsage {
+  id: number;
+  productId?: number;
+  rawMaterialId?: number;
+  partNo?: string;
+  partName?: string;
+  locationName?: string;
+  transactionType?: string;
+  transactionTypeName?: string;
+  quantity: number;
+  transactionDate: string;
+  notes?: string;
+  lotNumber?: string;
+}
+
+export interface InventoryReservation {
+  id: number;
+  productId?: number;
+  rawMaterialId?: number;
+  partNo?: string;
+  partName?: string;
+  locationId: number;
+  locationName?: string;
+  quantity: number;
+  jobOrderId?: number;
+  jobLabel?: string;
+  notes?: string;
+  createdDate: string;
+}
+
+export interface MovementDocuments {
+  jobs: MovementDocumentOption[];
+  vendorReceivings: MovementDocumentOption[];
+  shipments: MovementDocumentOption[];
 }
 
 export interface RawMaterial {
@@ -61,6 +115,14 @@ export interface RawMaterial {
   parentPartNo?: string;
   defaultLocationId?: number;
   defaultLocationName?: string;
+}
+
+export interface InventoryLotOption {
+  id: number;
+  lotNumber: string;
+  locationId: number;
+  quantityOnHand: number;
+  receivedDate?: string;
 }
 
 export interface LowStockAlert {
@@ -129,6 +191,7 @@ export class InventoryService {
     referenceType?: string;
     referenceId?: number;
     lotId?: number;
+    lotNumber?: string;
     notes?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     const tenantId = getTenantId();
@@ -154,6 +217,11 @@ export class InventoryService {
     referenceType?: string;
     referenceId?: number;
     notes?: string;
+    leftoverLengthMm?: number;
+    leftoverWidthMm?: number;
+    leftoverThicknessMm?: number;
+    lotId?: number;
+    lotNumber?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     const tenantId = getTenantId();
     try {
@@ -170,12 +238,70 @@ export class InventoryService {
     }
   };
 
+  public static ReserveStock = async (request: {
+    productId?: number;
+    rawMaterialId?: number;
+    locationId: number;
+    quantity: number;
+    referenceType?: string;
+    referenceId?: number;
+    notes?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    const tenantId = getTenantId();
+    try {
+      const response = await Instense.post("/Inventory/ReserveStock", {
+        tenantId,
+        ...request,
+      });
+      return { success: response.data.success !== false };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.response?.data?.error || err.message || "Unknown error",
+      };
+    }
+  };
+
+  public static ReleaseReservation = async (
+    reservationId: number
+  ): Promise<{ success: boolean; error?: string }> => {
+    const tenantId = getTenantId();
+    try {
+      const response = await Instense.post("/Inventory/ReleaseReservation", {
+        tenantId,
+        reservationId,
+      });
+      return { success: response.data.success !== false };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.response?.data?.error || err.message || "Unknown error",
+      };
+    }
+  };
+
+  public static GetReservations = async (params?: {
+    locationId?: number;
+    productId?: number;
+    rawMaterialId?: number;
+    jobOrderId?: number;
+  }): Promise<InventoryReservation[] | null> => {
+    const tenantId = getTenantId();
+    const response = await Instense.get("/Inventory/GetReservations", {
+      params: { tenantId, ...params },
+    });
+    const result = response.data?.result;
+    return Array.isArray(result) ? (result as InventoryReservation[]) : [];
+  };
+
   public static TransferStock = async (request: {
     productId?: number;
     rawMaterialId?: number;
     fromLocationId: number;
     toLocationId: number;
     quantity: number;
+    referenceType?: string;
+    referenceId?: number;
     notes?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     const tenantId = getTenantId();
@@ -198,6 +324,8 @@ export class InventoryService {
     rawMaterialId?: number;
     locationId: number;
     quantity: number;
+    referenceType?: string;
+    referenceId?: number;
     notes?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     const tenantId = getTenantId();
@@ -213,6 +341,19 @@ export class InventoryService {
         error: err.response?.data?.error || err.message || "Unknown error",
       };
     }
+  };
+
+  public static GetLots = async (params: {
+    productId?: number;
+    rawMaterialId?: number;
+    locationId?: number;
+  }): Promise<InventoryLotOption[]> => {
+    const tenantId = getTenantId();
+    const response = await Instense.get("/Inventory/GetLots", {
+      params: { tenantId, ...params },
+    });
+    const result = response.data?.result;
+    return Array.isArray(result) ? (result as InventoryLotOption[]) : [];
   };
 
   public static GetLowStockAlerts = async (): Promise<LowStockAlert[] | null> => {
@@ -240,6 +381,25 @@ export class InventoryService {
       params: { tenantId, ...params },
     });
     return response.data.result as RawMaterial[];
+  };
+
+  public static GetMovementDocuments = async (): Promise<MovementDocuments | null> => {
+    const tenantId = getTenantId();
+    const response = await Instense.get("/Inventory/GetMovementDocuments", {
+      params: { tenantId },
+    });
+    return (response.data.result as MovementDocuments) || null;
+  };
+
+  public static GetJobMaterialUsage = async (
+    jobOrderId: number
+  ): Promise<JobMaterialUsage[] | null> => {
+    const tenantId = getTenantId();
+    const response = await Instense.get("/Inventory/GetJobMaterialUsage", {
+      params: { tenantId, jobOrderId },
+    });
+    const result = response.data?.result;
+    return Array.isArray(result) ? (result as JobMaterialUsage[]) : [];
   };
 
   public static SaveRawMaterial = async (request: {
