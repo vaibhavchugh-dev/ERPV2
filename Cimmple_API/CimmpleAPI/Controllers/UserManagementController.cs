@@ -533,6 +533,7 @@ namespace CimmpleAPI.Controllers
                     
                     // Administration - System
                     new PermissionMaster { PermissionName = "User Management", DisplayPermissionName = "User Management", LevelInfo = 1, OrderNo = 90, Url = "/user-management", ReportGroup = "Administration", ReportDescription = "Manage users, roles, and permissions" },
+                    new PermissionMaster { PermissionName = "Attendance Register", DisplayPermissionName = "Attendance Register", LevelInfo = 1, OrderNo = 89, Url = "/attendance", ReportGroup = "Administration", ReportDescription = "View Time Clock attendance by day" },
                     new PermissionMaster { PermissionName = "System Settings", DisplayPermissionName = "System Settings", LevelInfo = 1, OrderNo = 91, Url = "/settings", ReportGroup = "Administration", ReportDescription = "Configure system settings" }
                 };
 

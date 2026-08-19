@@ -137,6 +137,265 @@ namespace CimmpleAPI.Controllers
             return Ok(new { result = new { users, lastUpdated = DateTime.UtcNow } });
         }
 
+        [HttpGet("GetRegister")]
+        public async Task<IActionResult> GetRegister(
+            [FromQuery] string? from,
+            [FromQuery] string? to,
+            [FromQuery] int? employeeId,
+            [FromQuery] bool includeNoPunch = false)
+        {
+            var tenantId = GetTenantId();
+            if (tenantId <= 0)
+            {
+                return BadRequest(new { message = "Tenant is required" });
+            }
+
+            var todayLocal = GetTenantLocalNow(tenantId).Date;
+            var fromLocal = ParseDay(from, todayLocal);
+            var toLocal = ParseDay(to, todayLocal);
+            if (toLocal < fromLocal)
+            {
+                return BadRequest(new { message = "End date must be on or after start date" });
+            }
+
+            if ((toLocal - fromLocal).TotalDays > 62)
+            {
+                return BadRequest(new { message = "Date range cannot exceed 62 days" });
+            }
+
+            var startUtc = ToUtc(tenantId, fromLocal);
+            var endUtc = ToUtc(tenantId, toLocal.AddDays(1));
+
+            var employeesQuery = _db.UserDetails.AsNoTracking()
+                .Where(u => u.TenantID == tenantId
+                    && (u.VendorId == null || u.VendorId == 0));
+
+            if (employeeId.HasValue && employeeId.Value > 0)
+            {
+                employeesQuery = employeesQuery.Where(u => u.User_UniqueID == employeeId.Value);
+            }
+
+            var employees = await employeesQuery
+                .Select(u => new
+                {
+                    u.User_UniqueID,
+                    u.FirstName,
+                    u.LastName,
+                    u.EmpCode,
+                    u.UserName,
+                    u.Status,
+                    u.DefaultLocationId
+                })
+                .ToListAsync();
+
+            var userIds = employees.Select(e => e.User_UniqueID).ToList();
+
+            var punches = await _db.FaceAttendanceLog.AsNoTracking()
+                .Where(p => p.TenantId == tenantId
+                    && p.IsSuccess
+                    && p.PunchTime >= startUtc
+                    && p.PunchTime < endUtc
+                    && userIds.Contains(p.UserUniqueId))
+                .OrderBy(p => p.PunchTime)
+                .ToListAsync();
+
+            var punchesByUser = punches
+                .GroupBy(p => p.UserUniqueId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var locationIds = punches.Select(p => p.LocationId)
+                .Concat(employees.Where(e => e.DefaultLocationId.HasValue).Select(e => e.DefaultLocationId!.Value))
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            var locationNames = await _db.Locations.AsNoTracking()
+                .Where(l => l.TenantId == tenantId && locationIds.Contains(l.LocationId))
+                .ToDictionaryAsync(l => l.LocationId, l => l.Name ?? l.Code ?? ("#" + l.LocationId));
+
+            var rows = new List<object>();
+            var nowLocal = GetTenantLocalNow(tenantId);
+
+            foreach (var employee in employees)
+            {
+                punchesByUser.TryGetValue(employee.User_UniqueID, out var userPunches);
+                userPunches ??= new List<FaceAttendanceLog>();
+
+                for (var day = fromLocal; day <= toLocal; day = day.AddDays(1))
+                {
+                    var dayStartUtc = ToUtc(tenantId, day);
+                    var dayEndUtc = ToUtc(tenantId, day.AddDays(1));
+                    var dayLogs = userPunches
+                        .Where(p => p.PunchTime >= dayStartUtc && p.PunchTime < dayEndUtc)
+                        .OrderBy(p => p.PunchTime)
+                        .ToList();
+
+                    if (dayLogs.Count == 0 && !includeNoPunch)
+                    {
+                        continue;
+                    }
+
+                    if (dayLogs.Count == 0 && includeNoPunch
+                        && !string.Equals(employee.Status, "Active", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrEmpty(employee.Status))
+                    {
+                        continue;
+                    }
+
+                    var firstIn = dayLogs.FirstOrDefault(p => string.Equals(p.Direction, "IN", StringComparison.OrdinalIgnoreCase));
+                    var lastOut = dayLogs.LastOrDefault(p => string.Equals(p.Direction, "OUT", StringComparison.OrdinalIgnoreCase));
+                    var last = dayLogs.LastOrDefault();
+                    var lastInOnly = last != null && string.Equals(last.Direction, "IN", StringComparison.OrdinalIgnoreCase);
+                    string status;
+                    if (dayLogs.Count == 0)
+                    {
+                        status = "noPunch";
+                    }
+                    else if (last != null && string.Equals(last.Direction, "OUT", StringComparison.OrdinalIgnoreCase))
+                    {
+                        status = "completed";
+                    }
+                    else if (lastInOnly && day < todayLocal)
+                    {
+                        status = "missingOut";
+                    }
+                    else
+                    {
+                        status = "in";
+                    }
+
+                    var hours = SumWorkedHours(dayLogs, nowLocal, day == todayLocal, tenantId);
+                    var locationId = last?.LocationId ?? employee.DefaultLocationId ?? 0;
+                    locationNames.TryGetValue(locationId, out var locationName);
+
+                    rows.Add(new
+                    {
+                        workDate = day.ToString("yyyy-MM-dd"),
+                        userUniqueId = employee.User_UniqueID,
+                        empCode = employee.EmpCode ?? "",
+                        firstName = employee.FirstName ?? "",
+                        lastName = employee.LastName ?? "",
+                        userName = employee.UserName ?? "",
+                        punchIn = firstIn?.PunchTime,
+                        punchOut = lastOut?.PunchTime,
+                        hours,
+                        status,
+                        lastMethod = last?.VerificationType ?? "",
+                        locationName = locationName ?? "",
+                        punchCount = dayLogs.Count
+                    });
+                }
+            }
+
+            return Ok(new { result = rows });
+        }
+
+        [HttpGet("GetPunchLog")]
+        public async Task<IActionResult> GetPunchLog(
+            [FromQuery] string? from,
+            [FromQuery] string? to,
+            [FromQuery] int? employeeId,
+            [FromQuery] bool includeFailed = false)
+        {
+            var tenantId = GetTenantId();
+            if (tenantId <= 0)
+            {
+                return BadRequest(new { message = "Tenant is required" });
+            }
+
+            var todayLocal = GetTenantLocalNow(tenantId).Date;
+            var fromLocal = ParseDay(from, todayLocal);
+            var toLocal = ParseDay(to, todayLocal);
+            if (toLocal < fromLocal)
+            {
+                return BadRequest(new { message = "End date must be on or after start date" });
+            }
+
+            var startUtc = ToUtc(tenantId, fromLocal);
+            var endUtc = ToUtc(tenantId, toLocal.AddDays(1));
+
+            var query = _db.FaceAttendanceLog.AsNoTracking()
+                .Where(p => p.TenantId == tenantId
+                    && p.PunchTime >= startUtc
+                    && p.PunchTime < endUtc);
+
+            if (!includeFailed)
+            {
+                query = query.Where(p => p.IsSuccess);
+            }
+
+            if (employeeId.HasValue && employeeId.Value > 0)
+            {
+                query = query.Where(p => p.UserUniqueId == employeeId.Value);
+            }
+
+            var logs = await query.OrderBy(p => p.PunchTime).ToListAsync();
+            var userIds = logs.Select(p => p.UserUniqueId).Distinct().ToList();
+            var people = await _db.UserDetails.AsNoTracking()
+                .Where(u => u.TenantID == tenantId && userIds.Contains(u.User_UniqueID))
+                .ToDictionaryAsync(u => u.User_UniqueID);
+
+            var rows = logs.Select(p =>
+            {
+                people.TryGetValue(p.UserUniqueId, out var user);
+                return new
+                {
+                    id = p.Id,
+                    punchTime = p.PunchTime,
+                    userUniqueId = p.UserUniqueId,
+                    empCode = user?.EmpCode ?? "",
+                    firstName = user?.FirstName ?? "",
+                    lastName = user?.LastName ?? "",
+                    direction = p.Direction ?? "",
+                    verificationType = p.VerificationType ?? "",
+                    isSuccess = p.IsSuccess,
+                    failureReason = p.FailureReason ?? "",
+                    confidence = p.Confidence
+                };
+            }).ToList();
+
+            return Ok(new { result = rows });
+        }
+
+        private double? SumWorkedHours(
+            List<FaceAttendanceLog> dayLogs,
+            DateTime nowLocal,
+            bool isToday,
+            int tenantId)
+        {
+            DateTime? openIn = null;
+            var total = TimeSpan.Zero;
+
+            foreach (var punch in dayLogs)
+            {
+                var local = ToLocal(tenantId, punch.PunchTime);
+                if (string.Equals(punch.Direction, "IN", StringComparison.OrdinalIgnoreCase))
+                {
+                    openIn = local;
+                }
+                else if (string.Equals(punch.Direction, "OUT", StringComparison.OrdinalIgnoreCase) && openIn.HasValue)
+                {
+                    if (local > openIn.Value)
+                    {
+                        total += local - openIn.Value;
+                    }
+                    openIn = null;
+                }
+            }
+
+            if (openIn.HasValue && isToday && nowLocal > openIn.Value)
+            {
+                total += nowLocal - openIn.Value;
+            }
+
+            if (total <= TimeSpan.Zero)
+            {
+                return null;
+            }
+
+            return Math.Round(total.TotalHours, 2);
+        }
+
         [HttpPost("PunchPasswordVerify")]
         public async Task<IActionResult> PunchPasswordVerify([FromBody] PunchPasswordRequest request)
         {
@@ -441,6 +700,26 @@ namespace CimmpleAPI.Controllers
         {
             var tz = GetTenantTimeZone(tenantId);
             return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
+        }
+
+        private static DateTime ParseDay(string? value, DateTime fallback)
+        {
+            if (!string.IsNullOrWhiteSpace(value)
+                && DateTime.TryParse(value, out var parsed))
+            {
+                return parsed.Date;
+            }
+
+            return fallback.Date;
+        }
+
+        private DateTime ToLocal(int tenantId, DateTime utc)
+        {
+            var tz = GetTenantTimeZone(tenantId);
+            var asUtc = utc.Kind == DateTimeKind.Utc
+                ? utc
+                : DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+            return TimeZoneInfo.ConvertTimeFromUtc(asUtc, tz);
         }
 
         private DateTime ToUtc(int tenantId, DateTime localUnspecified)
