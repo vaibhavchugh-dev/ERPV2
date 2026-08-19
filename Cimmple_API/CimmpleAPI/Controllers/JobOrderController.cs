@@ -319,30 +319,13 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
-                    // Get next Job Order Number
-                    var existingJobOrders = _context.JobOrderMaster
-                        .Where(j => j.Tenantid == request.Tenantid)
-                        .ToList();
-
-                    int nextJobOrderNumber;
-                    if (existingJobOrders.Any())
-                    {
-                        var maxJobOrderNumber = existingJobOrders.Max(j => j.JobOrderNumber);
-                        nextJobOrderNumber = Math.Max(1000, maxJobOrderNumber + 1);
-                    }
-                    else
-                    {
-                        nextJobOrderNumber = 1000;
-                    }
-
-                    // Create new job order
                     jobOrder = new JobOrderMaster
                     {
                         Tenantid = request.Tenantid,
                         OrderDate = ParseDate(request.OrderDate) ?? DateTime.Now,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
-                        JobOrderNumber = nextJobOrderNumber,
+                        JobOrderNumber = AllocateNextJobOrderNumber(request.Tenantid),
                         CreatedDate = DateTime.Now
                     };
                     _context.JobOrderMaster.Add(jobOrder);
@@ -537,26 +520,9 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Job order already exists for this order detail" });
                 }
 
-                // Get next Job Order Number
-                var existingJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == request.Tenantid)
-                    .ToList();
-
-                int nextJobOrderNumber;
-                if (existingJobOrders.Any())
-                {
-                    var maxJobOrderNumber = existingJobOrders.Max(j => j.JobOrderNumber);
-                    nextJobOrderNumber = Math.Max(1000, maxJobOrderNumber + 1);
-                }
-                else
-                {
-                    nextJobOrderNumber = 1000;
-                }
-
-                // Create new job order from order detail
                 var jobOrder = new JobOrderMaster
                 {
-                    JobOrderNumber = nextJobOrderNumber,
+                    JobOrderNumber = AllocateNextJobOrderNumber(request.Tenantid),
                     CustomerOrderID = request.OrderID,
                     CustomerOrderDetailID = request.OrderDetailID,
                     CustomerID = order.CustomerID,
@@ -597,7 +563,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("CheckJobOrderDeletionImpact")]
-        public IActionResult CheckJobOrderDeletionImpact([FromQuery] int jobOrderId, [FromQuery] int tenantId)
+        public async Task<IActionResult> CheckJobOrderDeletionImpact([FromQuery] int jobOrderId, [FromQuery] int tenantId)
         {
             try
             {
@@ -618,13 +584,21 @@ namespace CimmpleAPI.Controllers
                     Warnings = new List<string>()
                 };
 
+                var fgOnHand = await NetFinishedGoodsQtyAsync(tenantId, jobOrderId);
+                if (fgOnHand > 0)
+                {
+                    impact.CanDelete = false;
+                    impact.BlockingReasons.Add(
+                        $"This job still has {fgOnHand:0.##} finished goods in inventory. Reopen the job to reverse stock, or ship/issue the goods before deleting.");
+                }
+
                 // Check if job order is in progress or completed
                 if (!string.IsNullOrEmpty(jobOrder.Status) && 
                     (jobOrder.Status.Equals("In Progress", StringComparison.OrdinalIgnoreCase) ||
                      jobOrder.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)))
                 {
                     impact.Warnings.Add(
-                        $"Job order status is '{jobOrder.Status}'. Deleting may affect production tracking."
+                        $"Job order status is '{jobOrder.Status}'. Deleting will not reuse this job's unique ID."
                     );
                 }
 
@@ -673,6 +647,15 @@ namespace CimmpleAPI.Controllers
                 if (jobOrder == null)
                 {
                     return NotFound(new { error = "Job order not found" });
+                }
+
+                var fgOnHand = await NetFinishedGoodsQtyAsync(tenantId, jobOrderId);
+                if (fgOnHand > 0)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot delete job order while {fgOnHand:0.##} finished goods remain in inventory. Reopen the job to reverse stock first."
+                    });
                 }
 
                 await _inventoryService.ReleaseOpenReservationsForJobInTransactionAsync(tenantId, jobOrderId);
@@ -974,14 +957,47 @@ namespace CimmpleAPI.Controllers
 
         private static HashSet<int> JobMaterialRefIds(int jobOrderId, int jobOrderNumber)
         {
-            var ids = new HashSet<int> { jobOrderId };
-            if (jobOrderNumber > 0)
-            {
-                ids.Add(jobOrderNumber);
-                if (jobOrderNumber < 1000)
-                    ids.Add(jobOrderNumber + 999);
-            }
-            return ids;
+            _ = jobOrderNumber;
+            // Always key inventory to JobOrderID. Including JobOrderNumber reused IDs after delete
+            // and attached previous finished-goods / reservations to a new job.
+            return new HashSet<int> { jobOrderId };
+        }
+
+        private int AllocateNextJobOrderNumber(int tenantId)
+        {
+            var maxLive = _context.JobOrderMaster.AsNoTracking()
+                .Where(j => j.Tenantid == tenantId)
+                .Select(j => (int?)j.JobOrderNumber)
+                .Max() ?? 0;
+            var maxId = _context.JobOrderMaster.AsNoTracking()
+                .Where(j => j.Tenantid == tenantId)
+                .Select(j => (int?)j.JobOrderID)
+                .Max() ?? 0;
+            var maxInv = _context.InventoryTransaction.AsNoTracking()
+                .Where(t => t.Tenantid == tenantId && t.ReferenceType == "JobOrder" && t.ReferenceId.HasValue)
+                .Select(t => t.ReferenceId)
+                .Max() ?? 0;
+            var maxRes = _context.InventoryReservation.AsNoTracking()
+                .Where(r => r.Tenantid == tenantId && r.ReferenceType == "JobOrder")
+                .Select(r => (int?)r.ReferenceId)
+                .Max() ?? 0;
+            return Math.Max(1000, Math.Max(Math.Max(maxLive, maxId), Math.Max(maxInv, maxRes)) + 1);
+        }
+
+        private async Task<decimal> NetFinishedGoodsQtyAsync(int tenantId, int jobOrderId)
+        {
+            var received = await FinishedGoodsReceiptsQuery(tenantId, jobOrderId)
+                .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+            var issued = await _context.InventoryTransaction
+                .Where(t => t.Tenantid == tenantId
+                    && t.ReferenceType == "JobOrder"
+                    && t.ReferenceId == jobOrderId
+                    && t.TransactionTypeId == 2
+                    && t.ProductId != null
+                    && t.RawMaterialId == null)
+                .SumAsync(t => (decimal?)(t.Quantity < 0 ? -t.Quantity : t.Quantity)) ?? 0;
+            var net = received - issued;
+            return net > 0 ? net : 0;
         }
 
         private static decimal MaterialShortageQty(

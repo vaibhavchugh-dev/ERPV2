@@ -1983,6 +1983,9 @@ namespace CimmpleAPI.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("IsVoided")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime>("InvoiceDate")
                         .HasColumnType("datetime2");
 
@@ -3736,6 +3739,9 @@ namespace CimmpleAPI.Data.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<string>("ShipmentNo")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Notes")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("TenantId")

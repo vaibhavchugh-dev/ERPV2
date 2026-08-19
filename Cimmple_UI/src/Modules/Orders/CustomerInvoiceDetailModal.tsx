@@ -518,8 +518,19 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
     }
   };
 
-  const handleVoidInvoice = () => {
-    toast.info('Void functionality coming soon...');
+  const handleVoidInvoice = async () => {
+    if (!invoice?.id) return;
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await InvoiceService.VoidInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoiceDetails();
+      onPaymentComplete?.();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to void invoice');
+    }
   };
 
   const refreshDeletionImpact = async () => {

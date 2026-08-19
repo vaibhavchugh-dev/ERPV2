@@ -168,7 +168,7 @@ const VendorQuotations: React.FC = () => {
     },
     {
       key: "quotationType",
-      label: "Type",
+      label: "Category",
       sortable: true,
       align: "center" as const,
       render: (value: any) => getQuotationTypeBadge(value),

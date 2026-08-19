@@ -109,10 +109,10 @@ const VendorOrders: React.FC = () => {
       return <span className="badge badge-warning">Draft</span>;
     } else if (statusLower === "sent") {
       return <span className="badge badge-primary">Sent</span>;
-    } else if (statusLower === "receiving") {
-      return <span className="badge badge-info">Receiving</span>;
-    } else if (statusLower === "completed") {
-      return <span className="badge badge-success">Completed</span>;
+    } else if (statusLower === "receiving" || statusLower === "partially received") {
+      return <span className="badge badge-info">Partially Received</span>;
+    } else if (statusLower === "fully received" || statusLower === "completed") {
+      return <span className="badge badge-success">Fully Received</span>;
     } else if (statusLower === "cancelled") {
       return <span className="badge badge-danger">Cancelled</span>;
     }
@@ -200,7 +200,7 @@ const VendorOrders: React.FC = () => {
     },
     {
       key: "materialType",
-      label: "Order Type",
+      label: "Category",
       sortable: true,
       align: "center" as const,
       render: (value: any, row: any) => {
@@ -233,10 +233,16 @@ const VendorOrders: React.FC = () => {
   ];
 
   const filteredOrders = orders.filter((order) => {
-    if (statusFilter !== "all" && order.status !== statusFilter) {
-      return false;
+    if (statusFilter === "all") return true;
+    const status = (order.status || "").toLowerCase().trim();
+    const selected = statusFilter.toLowerCase().trim();
+    if (selected === "partially received") {
+      return status === "partially received" || status === "receiving";
     }
-    return true;
+    if (selected === "fully received") {
+      return status === "fully received" || status === "completed";
+    }
+    return status === selected;
   });
 
   return (
@@ -257,8 +263,8 @@ const VendorOrders: React.FC = () => {
               { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
-              { value: "Receiving", label: "Receiving" },
-              { value: "Completed", label: "Completed" },
+              { value: "Partially Received", label: "Partially Received" },
+              { value: "Fully Received", label: "Fully Received" },
               { value: "Cancelled", label: "Cancelled" },
             ],
             value: statusFilter,

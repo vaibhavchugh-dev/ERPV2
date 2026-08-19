@@ -1204,30 +1204,12 @@ namespace CimmpleAPI.Controllers
                     var materialType = DeriveVendorOrderMaterialType(orderDetails, o.materialType);
 
                     // Only recalculate status for orders that could be received (Sent, Partially Received, Fully Received)
-                    if (o.status == "Sent" || o.status == "Partially Received" || o.status == "Fully Received")
+                    if (o.status == "Sent" || o.status == "Partially Received" || o.status == "Fully Received"
+                        || o.status == "Receiving" || o.status == "Completed")
                     {
-                        bool allComplete = true;
-                        bool anyReceived = false;
-                        foreach (var detail in orderDetails)
-                        {
-                            var detailReceived = receivingStats.ContainsKey(detail.ID) ? receivingStats[detail.ID] : 0;
-                            if (detailReceived > 0) anyReceived = true;
-                            if (detailReceived < detail.QtyOrdered) allComplete = false;
-                        }
-
-                        string recalculatedStatus = o.status;
-                        if (allComplete && anyReceived)
-                        {
-                            recalculatedStatus = "Fully Received";
-                        }
-                        else if (anyReceived)
-                        {
-                            recalculatedStatus = "Partially Received";
-                        }
-                        else
-                        {
-                            recalculatedStatus = "Sent";
-                        }
+                        var receivedLookup = receivingStats.ToDictionary(x => x.Key, x => x.Value);
+                        var recalculatedStatus = DeriveVendorReceiveStatus(
+                            orderDetails, receivedLookup, materialType, o.status);
 
                         return new
                         {
@@ -1379,6 +1361,17 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToListAsync();
 
+                var receivedByDetail = await _context.VendorReceiving
+                    .AsNoTracking()
+                    .Where(r => detailsList.Select(d => d.ID).Contains(r.VendorOrderDetailID) && r.Tenantid == tenantId)
+                    .GroupBy(r => r.VendorOrderDetailID)
+                    .Select(g => new { detailID = g.Key, qty = g.Sum(r => r.ReceivedQty) })
+                    .ToDictionaryAsync(x => x.detailID, x => x.qty);
+
+                var materialType = DeriveVendorOrderMaterialType(detailsList, order.MaterialType);
+                var receiveStatus = DeriveVendorReceiveStatus(
+                    detailsList, receivedByDetail, materialType, order.Status ?? "Draft");
+
                 var result = new
                 {
                     orderID = order.OrderID,
@@ -1392,7 +1385,7 @@ namespace CimmpleAPI.Controllers
                     totalAmount = order.TotalAmount,
                     userId = order.UserId,
                     userToken = order.UserToken,
-                    status = order.Status ?? "Draft",
+                    status = receiveStatus,
                     tenantid = order.Tenantid,
                     shippingInstructions = order.ShippingInstructions ?? "",
                     externalVendorPO = order.ExternalVendorPO ?? "",
@@ -1400,7 +1393,7 @@ namespace CimmpleAPI.Controllers
                     buyerName = order.BuyerName ?? "",
                     vendorRefNo = order.VendorRefNo ?? "",
                     orderType = order.OrderType ?? "Vendor",
-                    materialType = DeriveVendorOrderMaterialType(detailsList, order.MaterialType),
+                    materialType = materialType,
                     quotationId = order.QuotationId,
                     quotationNo = order.QuotationNo ?? "",
                     locationId = order.LocationId,
@@ -2039,6 +2032,47 @@ namespace CimmpleAPI.Controllers
             return "Other";
         }
 
+        /// <summary>Service/subcontract and zero-qty lines are not expected to be physically received.</summary>
+        private static bool VendorLineCountsTowardReceive(VendorOrderDetail detail, string? orderMaterialType)
+        {
+            if (detail.QtyOrdered <= 0)
+                return false;
+            var lineType = NormalizeVendorOrderLineType(detail.LineType, orderMaterialType);
+            return !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string DeriveVendorReceiveStatus(
+            IReadOnlyCollection<VendorOrderDetail> details,
+            IReadOnlyDictionary<int, int> receivedByDetail,
+            string? materialType,
+            string currentStatus)
+        {
+            var receivable = details.Where(d => VendorLineCountsTowardReceive(d, materialType)).ToList();
+            if (receivable.Count == 0)
+                return currentStatus;
+
+            var allComplete = true;
+            var anyReceived = false;
+            foreach (var detail in receivable)
+            {
+                var rec = receivedByDetail.TryGetValue(detail.ID, out var qty) ? qty : 0;
+                if (rec > 0) anyReceived = true;
+                if (rec < detail.QtyOrdered) allComplete = false;
+            }
+
+            if (allComplete && anyReceived)
+                return "Fully Received";
+            if (anyReceived)
+                return "Partially Received";
+            if (string.Equals(currentStatus, "Fully Received", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(currentStatus, "Partially Received", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(currentStatus, "Receiving", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(currentStatus, "Completed", StringComparison.OrdinalIgnoreCase))
+                return "Sent";
+            return currentStatus;
+        }
+
         /// <summary>
         /// Header Material/Service/Mixed from line types. Blank lines use stored header as fallback
         /// so old Service POs without LineType still list as Service.
@@ -2635,7 +2669,8 @@ namespace CimmpleAPI.Controllers
                         vendorName = o.VendorName ?? "",
                         orderDate = o.OrderDate,
                         status = o.Status ?? "Draft",
-                        locationId = o.LocationId
+                        locationId = o.LocationId,
+                        materialType = o.MaterialType
                     })
                     .ToListAsync();
 
@@ -2647,7 +2682,6 @@ namespace CimmpleAPI.Controllers
                 var allDetails = await _context.VendorOrderDetails
                     .AsNoTracking()
                     .Where(d => orderIds.Contains(d.OrderID) && d.Tenantid == tenantId)
-                    .Select(d => new { d.ID, d.OrderID, d.QtyOrdered })
                     .ToListAsync();
 
                 var receivingStats = allDetails.Count == 0
@@ -2666,8 +2700,6 @@ namespace CimmpleAPI.Controllers
                     var totalOrdered = 0;
                     var totalReceived = 0;
                     var totalItems = 0;
-                    bool allComplete = true;
-                    bool anyReceived = false;
 
                     foreach (var detail in detailsByOrder[o.orderID])
                     {
@@ -2675,17 +2707,10 @@ namespace CimmpleAPI.Controllers
                         totalItems++;
                         totalOrdered += detail.QtyOrdered;
                         totalReceived += detailReceived;
-                        if (detailReceived > 0) anyReceived = true;
-                        if (detailReceived < detail.QtyOrdered) allComplete = false;
                     }
 
-                    string recalculatedStatus;
-                    if (allComplete && anyReceived)
-                        recalculatedStatus = "Fully Received";
-                    else if (anyReceived)
-                        recalculatedStatus = "Partially Received";
-                    else
-                        recalculatedStatus = "Sent";
+                    var recalculatedStatus = DeriveVendorReceiveStatus(
+                        detailsByOrder[o.orderID].ToList(), receivingStats, o.materialType, "Sent");
 
                     return new
                     {
@@ -2921,27 +2946,8 @@ namespace CimmpleAPI.Controllers
                         .GroupBy(r => r.VendorOrderDetailID)
                         .ToDictionaryAsync(g => g.Key, g => g.Sum(r => r.ReceivedQty));
 
-                    bool allComplete = true;
-                    bool anyReceived = false;
-
-                    foreach (var detail in allDetails)
-                    {
-                        // Use only VendorReceiving transactions as source of truth, not the legacy ReceivedQty field
-                        var detailReceived = allReceivedTotals.ContainsKey(detail.ID) ? allReceivedTotals[detail.ID] : 0;
-                        if (detailReceived > 0) anyReceived = true;
-                        if (detailReceived < detail.QtyOrdered) allComplete = false;
-                    }
-
-                    if (allComplete && anyReceived)
-                    {
-                        order.Status = "Fully Received";
-                    }
-                    else if (anyReceived)
-                    {
-                        order.Status = "Partially Received";
-                    }
-                    // Keep existing status if no items received yet
-                    // Note: No need to call Update() - entity is already tracked, EF Core change tracking will detect Status change
+                    order.Status = DeriveVendorReceiveStatus(
+                        allDetails, allReceivedTotals, order.MaterialType, order.Status ?? "Sent");
                 }
 
                 await _context.SaveChangesAsync();
@@ -3105,7 +3111,8 @@ namespace CimmpleAPI.Controllers
                 // Get all vendor orders that might need status updates
                 var orders = await _context.VendorOrders
                     .Where(o => o.Tenantid == tenantId &&
-                               (o.Status == "Sent" || o.Status == "Partially Received" || o.Status == "Fully Received"))
+                               (o.Status == "Sent" || o.Status == "Partially Received" || o.Status == "Fully Received"
+                                || o.Status == "Receiving" || o.Status == "Completed"))
                     .ToListAsync();
 
                 int updatedCount = 0;
@@ -3123,29 +3130,8 @@ namespace CimmpleAPI.Controllers
                         .GroupBy(r => r.VendorOrderDetailID)
                         .ToDictionaryAsync(g => g.Key, g => g.Sum(r => r.ReceivedQty));
 
-                    bool allComplete = true;
-                    bool anyReceived = false;
-
-                    foreach (var detail in orderDetails)
-                    {
-                        var detailReceived = receivedTotals.ContainsKey(detail.ID) ? receivedTotals[detail.ID] : 0;
-                        if (detailReceived > 0) anyReceived = true;
-                        if (detailReceived < detail.QtyOrdered) allComplete = false;
-                    }
-
-                    string newStatus;
-                    if (allComplete && anyReceived)
-                    {
-                        newStatus = "Fully Received";
-                    }
-                    else if (anyReceived)
-                    {
-                        newStatus = "Partially Received";
-                    }
-                    else
-                    {
-                        newStatus = "Sent"; // Keep as Sent if nothing received
-                    }
+                    var newStatus = DeriveVendorReceiveStatus(
+                        orderDetails, receivedTotals, order.MaterialType, order.Status ?? "Sent");
 
                     if (order.Status != newStatus)
                     {
@@ -3554,7 +3540,7 @@ namespace CimmpleAPI.Controllers
                     .Select(g => new
                     {
                         Invoice = g.Key,
-                        TotalAmount = g.Sum(x => x.Detail.Amount),
+                        LineTotal = g.Sum(x => x.Detail.Amount),
                         OrderIds = g.Select(x => x.Detail.OrderId).Distinct().ToList()
                     })
                     .ToListAsync();
@@ -3615,6 +3601,7 @@ namespace CimmpleAPI.Controllers
 
                     Console.WriteLine($"Invoice {invoice.Invoice.InvoiceNo}: orderId={orderId}, hasMapping={hasMapping}, mappedPONumber={mappedPONumber}, actualOrderNumber={actualOrderNumber}, orderNumber='{orderNumber}'");
 
+                    var taxFreight = VendorInvoiceTaxBreakdown(invoice.Invoice);
                     invoiceSummaries.Add(new
                     {
                         id = invoice.Invoice.Id,
@@ -3625,7 +3612,9 @@ namespace CimmpleAPI.Controllers
                         invoiceDate = invoice.Invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                         dueDate = invoice.Invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Invoice.Amount,
-                        totalAmount = invoice.TotalAmount,
+                        freightCharge = taxFreight.freightCharge,
+                        taxAmount = taxFreight.taxAmount,
+                        totalAmount = invoice.Invoice.TotalAmount,
                         paidAmount = GetEffectiveVendorPaidAmount(invoice.Invoice),
                         balanceDue = GetVendorBalanceDue(invoice.Invoice),
                         status = ResolveVendorInvoiceListStatus(invoice.Invoice, now),
@@ -3638,7 +3627,6 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"GetAllVendorInvoices - Returning {invoiceSummaries.Count} invoice summaries");
 
-                // Apply search filter (client-side for simplicity)
                 if (!string.IsNullOrEmpty(searchTerm))
                 {
                     var searchLower = searchTerm.ToLower();
@@ -3649,6 +3637,8 @@ namespace CimmpleAPI.Controllers
                         x.orderNumber.ToLower().Contains(searchLower)
                     ).ToList();
                 }
+
+                invoiceSummaries = ApplyVendorInvoiceListFilters(invoiceSummaries, status, dateRange, vendorId).ToList();
 
                 return Ok(new { result = invoiceSummaries });
             }
@@ -3690,6 +3680,8 @@ namespace CimmpleAPI.Controllers
                     invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
+                    freightCharge = VendorInvoiceTaxBreakdown(invoice).freightCharge,
+                    taxAmount = VendorInvoiceTaxBreakdown(invoice).taxAmount,
                     totalAmount = invoice.TotalAmount,
                     paidAmount = GetEffectiveVendorPaidAmount(invoice),
                     balanceDue = GetVendorBalanceDue(invoice),
@@ -3752,6 +3744,8 @@ namespace CimmpleAPI.Controllers
                     invoiceDate = im.InvoiceDate,
                     dueDate = im.DueDate,
                     amount = im.Amount,
+                    freightCharge = VendorInvoiceTaxBreakdown(im).freightCharge,
+                    taxAmount = VendorInvoiceTaxBreakdown(im).taxAmount,
                     totalAmount = im.TotalAmount,
                     status = GetVendorInvoiceStatus(im),
                     items = invoiceDetails
@@ -3841,8 +3835,63 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private static (decimal taxAmount, decimal freightCharge) VendorInvoiceTaxBreakdown(VendorInvoiceMaster invoice)
+        {
+            var freight = invoice.FreightCharge;
+            var tax = Math.Round(invoice.TotalAmount - invoice.Amount - freight, 2);
+            if (tax < 0) tax = 0;
+            return (tax, freight);
+        }
+
+        private static List<dynamic> ApplyVendorInvoiceListFilters(
+            List<dynamic> invoices, string status, string dateRange, int? _vendorId)
+        {
+            var now = DateTime.Now;
+            DateTime? start = null;
+            DateTime? end = null;
+            switch ((dateRange ?? "").Trim().ToLowerInvariant())
+            {
+                case "last 7 days":
+                    start = now.Date.AddDays(-7);
+                    break;
+                case "last 30 days":
+                    start = now.Date.AddDays(-30);
+                    break;
+                case "this month":
+                    start = new DateTime(now.Year, now.Month, 1);
+                    break;
+                case "last month":
+                    start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                    end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                    break;
+                case "all":
+                case "":
+                    break;
+            }
+
+            IEnumerable<dynamic> result = invoices;
+            if (!string.IsNullOrWhiteSpace(status) && !status.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                result = result.Where(x => string.Equals((string)x.status, status, StringComparison.OrdinalIgnoreCase));
+            }
+            if (start.HasValue)
+            {
+                result = result.Where(x =>
+                {
+                    if (!DateTime.TryParse((string)x.invoiceDate, out DateTime d))
+                        return false;
+                    if (d.Date < start.Value.Date) return false;
+                    if (end.HasValue && d.Date > end.Value.Date) return false;
+                    return true;
+                });
+            }
+            return result.ToList();
+        }
+
         private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
         {
+            if (invoice.isPaid == 2)
+                return 0m;
             if (invoice.PaidAmount > 0)
                 return invoice.PaidAmount;
             if (invoice.isPaid == 1 || invoice.Paydate.HasValue)

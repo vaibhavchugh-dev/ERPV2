@@ -709,6 +709,89 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("VoidInvoice/{invoiceId}")]
+        public IActionResult VoidInvoice(int invoiceId)
+        {
+            return VoidInvoiceCore(invoiceId);
+        }
+
+        [HttpPut("VoidInvoice")]
+        public IActionResult VoidInvoiceByBody([FromBody] VoidInvoiceRequest? body)
+        {
+            return VoidInvoiceCore(body?.invoiceId > 0 ? body.invoiceId : body?.InvoiceId ?? 0);
+        }
+
+        private IActionResult VoidInvoiceCore(int invoiceId)
+        {
+            if (invoiceId <= 0)
+                return BadRequest(new { error = "Invoice id is required." });
+
+            using (var transaction = _context.Database.BeginTransaction())
+            {
+                try
+                {
+                    var tenantId = GetTenantId();
+                    var invoice = _context.InvoiceMaster
+                        .FirstOrDefault(im => im.Id == invoiceId && im.TenantId == tenantId);
+
+                    if (invoice == null)
+                        return NotFound(new { error = "Invoice not found" });
+
+                    if (invoice.IsVoided)
+                        return BadRequest(new { error = "Invoice is already voided." });
+
+                    var paid = GetEffectivePaidAmount(invoice);
+                    if (paid > 0.009m)
+                        return BadRequest(new { error = "Cannot void a paid or partially paid invoice. Reverse payments first." });
+
+                    var invoicePostingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
+                    if (!GlWorkflowService.TryReverseJournalByReference(
+                        _context, tenantId, invoicePostingRef, GetUserId(), "CustomerInvoiceVoid", out var reverseError))
+                    {
+                        return BadRequest(new { error = reverseError });
+                    }
+
+                    var invoiceDetails = _context.InvoiceDetail
+                        .Where(id => id.InvoiceId == invoiceId)
+                        .ToList();
+
+                    foreach (var detail in invoiceDetails)
+                    {
+                        if (!detail.OrderDetailID.HasValue)
+                            continue;
+                        var orderDetail = _context.CustomerOrderDetails
+                            .FirstOrDefault(od => od.ID == detail.OrderDetailID.Value && od.Tenantid == tenantId);
+                        if (orderDetail == null)
+                            continue;
+                        orderDetail.InvoicedQty = Math.Max(0, orderDetail.InvoicedQty - detail.QtyInvoiced);
+                        if (orderDetail.InvoicedQty == 0)
+                            orderDetail.InvoiceStatus = "Not Invoiced";
+                        else if (orderDetail.InvoicedQty < orderDetail.QtyOrdered)
+                            orderDetail.InvoiceStatus = "Partially Invoiced";
+                        else
+                            orderDetail.InvoiceStatus = "Fully Invoiced";
+                    }
+
+                    invoice.IsVoided = true;
+                    invoice.PaidAmount = 0;
+
+                    var orderId = invoiceDetails.FirstOrDefault()?.OrderId ?? 0;
+                    if (orderId > 0)
+                        UpdateOrderInvoiceStatus(orderId, tenantId);
+
+                    _context.SaveChanges();
+                    transaction.Commit();
+
+                    return Ok(new { result = new { message = "Invoice voided successfully" }, success = true });
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    return StatusCode(500, new { error = ex.Message });
+                }
+            }
+        }
+
         [HttpDelete("DeleteInvoice")]
         public IActionResult DeleteInvoice([FromQuery] int invoiceId, [FromQuery] int tenantId)
         {
@@ -1055,6 +1138,8 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         private static decimal GetEffectivePaidAmount(InvoiceMaster invoice)
         {
+            if (invoice.IsVoided)
+                return 0m;
             if (invoice.PaidAmount > 0)
                 return invoice.PaidAmount;
             if (invoice.PaymentDate.HasValue)
@@ -1079,10 +1164,13 @@ namespace CimmpleAPI.Controllers
 
         private static string ResolveCustomerInvoiceStatus(InvoiceMaster invoice)
         {
+            if (invoice.IsVoided)
+                return "Void";
+
             var paid = GetEffectivePaidAmount(invoice);
             var total = invoice.TotalAmount;
 
-                        if (paid >= total - 0.009m && total > 0)
+            if (paid >= total - 0.009m && total > 0)
                 return "Paid";
             if (paid > 0.009m)
                 return "Partially Paid";
@@ -1128,5 +1216,11 @@ namespace CimmpleAPI.Controllers
         public int? BankId { get; set; }
         public decimal? PaymentAmount { get; set; }
         public string Notes { get; set; }
+    }
+
+    public class VoidInvoiceRequest
+    {
+        public int invoiceId { get; set; }
+        public int InvoiceId { get; set; }
     }
 }

@@ -14,6 +14,7 @@ export interface CustomerShipmentSummary {
   itemCount: number;
   boxes: number;
   packingType: string;
+  notes?: string;
   status: string;
 }
 

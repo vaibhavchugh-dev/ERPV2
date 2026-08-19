@@ -133,13 +133,13 @@ export class CustomerInvoicesService {
   };
 
   public static VoidInvoice = async (invoiceId: number): Promise<boolean> => {
-    const url = `/Invoice/VoidInvoice`;
+    const url = `/Invoice/VoidInvoice/${invoiceId}`;
     try {
-      const response = await Instense.put(url, { invoiceId });
-      return response.data.success || true;
-    } catch (error) {
+      await Instense.post(url);
+      return true;
+    } catch (error: any) {
       console.error("Error voiding invoice:", error);
-      return false;
+      throw new Error(error.response?.data?.error || error.message || "Failed to void invoice");
     }
   };
 }

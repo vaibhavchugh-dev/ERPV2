@@ -42,6 +42,8 @@ export interface VendorInvoice {
   invoiceDate: string;
   dueDate: string;
   amount: number;
+  taxAmount?: number;
+  freightCharge?: number;
   totalAmount: number;
   paidAmount?: number;
   balanceDue?: number;
@@ -68,6 +70,8 @@ export interface VendorInvoiceSummary {
   invoiceDate: string;
   dueDate: string;
   amount: number;
+  taxAmount?: number;
+  freightCharge?: number;
   totalAmount: number;
   paidAmount?: number;
   balanceDue?: number;
@@ -221,6 +225,19 @@ export class VendorInvoiceService {
     } catch (error: any) {
       console.error("Error deleting vendor invoice:", error);
       throw new Error(error.response?.data?.error || error.message || "Failed to delete vendor invoice");
+    }
+  };
+
+  public static VoidVendorInvoice = async (
+    invoiceId: number
+  ): Promise<{ message: string } | null> => {
+    const url = `/VendorInvoice/VoidVendorInvoice/${invoiceId}`;
+    try {
+      const response = await Instense.post(url);
+      return response.data.result;
+    } catch (error: any) {
+      console.error("Error voiding vendor invoice:", error);
+      throw new Error(error.response?.data?.error || error.message || "Failed to void vendor invoice");
     }
   };
 

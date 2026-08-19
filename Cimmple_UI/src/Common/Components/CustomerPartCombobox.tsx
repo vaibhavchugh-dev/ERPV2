@@ -157,7 +157,9 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     const cached = unfilteredPartsRef.current;
     if (cached.length > 0) {
       applyParts(cached);
+      return true;
     }
+    return false;
   };
 
   /** Open list with unfiltered history; input still shows current value until user types. */
@@ -165,9 +167,12 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     updatePosition();
     setOpen(true);
     setSearchTerm("");
-    restoreUnfiltered();
-    // Prevent a late filtered response from collapsing the list after open/clear.
-    requestIdRef.current += 1;
+    const restored = restoreUnfiltered();
+    // If history is not cached yet, keep the in-flight unfiltered fetch so opening
+    // the dropdown does not cancel it and leave "Searching…" stuck forever.
+    if (!restored && (!partySelected || partyId <= 0)) {
+      applyParts([]);
+    }
   };
 
   useEffect(() => {
@@ -175,6 +180,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
       applyParts([]);
       unfilteredPartsRef.current = [];
       onHistoryMatchRef.current?.(null);
+      setLoading(false);
       return;
     }
     fetchParts("");
@@ -188,10 +194,10 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
     // Clearing the filter must restore the full list immediately (not wait on debounce/network).
     if (!trimmed) {
       restoreUnfiltered();
-      // Drop any in-flight filtered response so it cannot overwrite the restored list.
-      requestIdRef.current += 1;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       // Refresh unfiltered cache in the background; show cached list right away.
+      // Do not bump requestId here — that cancelled the customer/vendor history load
+      // when the user opened Part No immediately after selecting a party.
       debounceRef.current = setTimeout(() => {
         fetchParts("");
       }, 0);
