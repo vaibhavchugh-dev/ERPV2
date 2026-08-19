@@ -63,7 +63,7 @@ export class AttendanceService {
         from: params.from,
         to: params.to,
         employeeId: params.employeeId || undefined,
-        includeFailed: params.includeFailed || undefined,
+        includeFailed: params.includeFailed === true,
       },
     });
     return (response.data.result || []) as AttendancePunchLogRow[];

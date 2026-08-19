@@ -11,6 +11,7 @@ import {
 import { EmployeeMaster, EmployeeService } from "../../Common/Services/EmployeeService";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import "../Masters/CustomerMaster.scss";
+import "../Masters/CustomerMasterSlideout.scss";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "workDate", label: "Date", sortKey: "workDate", locked: true },
@@ -241,6 +242,7 @@ const AttendanceRegister: React.FC = () => {
 
   const openLog = async (row: AttendanceRegisterRow) => {
     setSelectedRow(row);
+    setPunchLog([]);
     setLogLoading(true);
     try {
       const log = await AttendanceService.GetPunchLog({
