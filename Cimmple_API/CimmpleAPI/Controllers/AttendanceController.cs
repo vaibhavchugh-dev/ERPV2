@@ -1,10 +1,12 @@
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Models.Punch;
+using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace CimmpleAPI.Controllers
 {
@@ -14,10 +16,12 @@ namespace CimmpleAPI.Controllers
     public class AttendanceController : ApiBaseController
     {
         private readonly CimmpleDbContext _db;
+        private readonly FaceRecognitionService _faceRecognition;
 
-        public AttendanceController(CimmpleDbContext db)
+        public AttendanceController(CimmpleDbContext db, FaceRecognitionService faceRecognition)
         {
             _db = db;
+            _faceRecognition = faceRecognition;
         }
 
         [HttpGet("GetPunchBoard")]
@@ -228,16 +232,178 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("Punch")]
-        public IActionResult Punch()
+        [RequestSizeLimit(10_000_000)]
+        public async Task<IActionResult> Punch([FromForm] IFormFile? image, [FromForm] string? formField)
         {
+            var tenantId = GetTenantId();
+            var operatorId = GetUserId() ?? 0;
+            if (tenantId <= 0)
+            {
+                return BadRequest(new { message = "Tenant is required" });
+            }
+
+            if (image == null || image.Length == 0)
+            {
+                return Ok(new { result = new { success = false, message = "A face photo is required to punch." } });
+            }
+
+            if (string.IsNullOrWhiteSpace(formField))
+            {
+                return Ok(new { result = new { success = false, message = "Punch details are required." } });
+            }
+
+            PunchImageRequest? request;
+            try
+            {
+                request = JsonSerializer.Deserialize<PunchImageRequest>(formField, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch
+            {
+                return Ok(new { result = new { success = false, message = "Invalid punch payload." } });
+            }
+
+            if (request == null || request.UserUniqueId <= 0)
+            {
+                return Ok(new { result = new { success = false, message = "Select an employee before punching." } });
+            }
+
+            var employee = await _db.UserDetails
+                .FirstOrDefaultAsync(u => u.User_UniqueID == request.UserUniqueId && u.TenantID == tenantId);
+            if (employee == null)
+            {
+                return Ok(new { result = new { success = false, message = "Employee not found" } });
+            }
+
+            if (!_faceRecognition.IsConfigured)
+            {
+                return Ok(new
+                {
+                    result = new
+                    {
+                        success = false,
+                        message = "Face punch is not configured. Enter your password on the kiosk to punch."
+                    }
+                });
+            }
+
+            var enrollment = await _db.EmployeeFace
+                .FirstOrDefaultAsync(f => f.TenantId == tenantId
+                    && f.UserUniqueId == employee.User_UniqueID
+                    && f.AzureFaceRegistered
+                    && !string.IsNullOrEmpty(f.AzurePersonId));
+
+            if (enrollment == null)
+            {
+                return Ok(new
+                {
+                    result = new
+                    {
+                        success = false,
+                        message = "This employee is not enrolled for face punch. Add a photo in Employee Master, or punch with password."
+                    }
+                });
+            }
+
+            byte[] imageBytes;
+            await using (var buffer = new MemoryStream())
+            {
+                await image.CopyToAsync(buffer);
+                imageBytes = buffer.ToArray();
+            }
+
+            var detect = await _faceRecognition.DetectAsync(imageBytes);
+            if (!detect.ok)
+            {
+                await WriteFailedPunchAsync(tenantId, employee, request, operatorId, detect.message, enrollment.AzurePersonId);
+                return Ok(new { result = new { success = false, message = detect.message } });
+            }
+
+            var verify = await _faceRecognition.VerifyAsync(detect.faceId, tenantId, enrollment.AzurePersonId!);
+            var matched = verify.isIdentical && verify.confidence >= FaceRecognitionService.MatchThreshold;
+            if (!matched)
+            {
+                await WriteFailedPunchAsync(
+                    tenantId,
+                    employee,
+                    request,
+                    operatorId,
+                    "Face did not match this employee",
+                    enrollment.AzurePersonId);
+                return Ok(new
+                {
+                    result = new
+                    {
+                        success = false,
+                        message = "Face did not match this employee. Try again or punch with password.",
+                        faceMatchConfidence = verify.confidence,
+                        confidence = verify.confidence * 100
+                    }
+                });
+            }
+
+            var locationId = request.LocationId ?? employee.DefaultLocationId ?? 0;
+            var direction = string.IsNullOrWhiteSpace(request.Direction)
+                ? await GetNextDirectionAsync(tenantId, employee.User_UniqueID)
+                : request.Direction.Trim().ToUpperInvariant();
+
+            _db.FaceAttendanceLog.Add(new FaceAttendanceLog
+            {
+                TenantId = tenantId,
+                UserUniqueId = employee.User_UniqueID,
+                UserName = employee.UserName,
+                LocationId = locationId,
+                Direction = direction,
+                PunchTime = DateTime.UtcNow,
+                Confidence = verify.confidence * 100,
+                IsSuccess = true,
+                FailureReason = "",
+                AzurePersonId = enrollment.AzurePersonId,
+                ImageUrl = "",
+                VerificationType = "FACE",
+                CreatedBy = operatorId
+            });
+            await _db.SaveChangesAsync();
+
             return Ok(new
             {
                 result = new
                 {
-                    success = false,
-                    message = "Face punch is not enabled yet. Enter your password on the kiosk to punch."
+                    success = true,
+                    message = direction == "OUT" ? "Punch Out Successful" : "Punch In Successful",
+                    faceMatchConfidence = verify.confidence,
+                    confidence = verify.confidence * 100
                 }
             });
+        }
+
+        private async Task WriteFailedPunchAsync(
+            int tenantId,
+            UserDetail employee,
+            PunchImageRequest request,
+            int operatorId,
+            string reason,
+            string? azurePersonId)
+        {
+            _db.FaceAttendanceLog.Add(new FaceAttendanceLog
+            {
+                TenantId = tenantId,
+                UserUniqueId = employee.User_UniqueID,
+                UserName = employee.UserName,
+                LocationId = request.LocationId ?? employee.DefaultLocationId ?? 0,
+                Direction = request.Direction,
+                PunchTime = DateTime.UtcNow,
+                Confidence = 0,
+                IsSuccess = false,
+                FailureReason = reason,
+                AzurePersonId = azurePersonId ?? "",
+                ImageUrl = "",
+                VerificationType = "FACE",
+                CreatedBy = operatorId
+            });
+            await _db.SaveChangesAsync();
         }
 
         private async Task _authUpgrade(UserDetail employee, string password)
@@ -322,5 +488,14 @@ namespace CimmpleAPI.Controllers
         public string? UserName { get; set; }
         public int UserUniqueId { get; set; }
         public int? LocationId { get; set; }
+    }
+
+    public class PunchImageRequest
+    {
+        public int UserUniqueId { get; set; }
+        public int? TenantId { get; set; }
+        public int? LocationId { get; set; }
+        public string? Direction { get; set; }
+        public string? UserName { get; set; }
     }
 }

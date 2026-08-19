@@ -113,12 +113,22 @@ export class PunchInOutService {
   };
 
   public static PunchByCapturedImage = async (
-    _image: Blob,
-    _userId?: number,
-    _tenantId?: number,
-    _direction?: PunchDirection
+    image: Blob,
+    userId?: number,
+    tenantId?: number,
+    direction?: PunchDirection
   ): Promise<PunchResult> => {
-    const response = await api.post("/Attendance/Punch");
+    const formData = new FormData();
+    formData.append("image", image, "punch-face.jpg");
+    formData.append(
+      "formField",
+      JSON.stringify({
+        userUniqueId: userId,
+        tenantId,
+        direction,
+      })
+    );
+    const response = await api.post("/Attendance/Punch", formData);
     return readApiResult(response.data) as PunchResult;
   };
 

@@ -16,6 +16,7 @@ const COLUMNS: ColumnDefinition[] = [
   { key: "locationName", label: "Location", sortKey: "locationName" },
   { key: "userName", label: "User Name", sortKey: "userName" },
   { key: "hasLoginAccess", label: "Login Access", sortKey: "hasLoginAccess" },
+  { key: "faceEnrolled", label: "Face Enrolled", sortKey: "faceEnrolled" },
   { key: "email", label: "Email", sortKey: "email" },
   { key: "status", label: "Status", sortKey: "status" },
 ];
@@ -76,6 +77,7 @@ const EmployeeMasterComponent: React.FC = () => {
               ...employee,
               hasPassword,
               hasLoginAccess,
+              faceEnrolled: !!(employee.faceEnrolled ?? employee.FaceEnrolled),
               locationName:
                 employee.locationName ?? employee.LocationName ?? "",
             } as EmployeeMaster;
@@ -201,6 +203,16 @@ const EmployeeMasterComponent: React.FC = () => {
             }`}
           >
             {employee.hasLoginAccess ? "Yes" : "No"}
+          </span>
+        );
+      case "faceEnrolled":
+        return (
+          <span
+            className={`badge ${
+              employee.faceEnrolled ? "badge-success" : "badge-secondary"
+            }`}
+          >
+            {employee.faceEnrolled ? "Yes" : "No"}
           </span>
         );
       case "email":
