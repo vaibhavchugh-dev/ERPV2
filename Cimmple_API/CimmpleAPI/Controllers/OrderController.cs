@@ -1563,7 +1563,7 @@ namespace CimmpleAPI.Controllers
                                                    ISNULL(OrderType, 'Vendor') as OrderType, ISNULL(MaterialType, 'Material') as MaterialType,
                                                    LocationId, convertedOrderId, ParentQuotationID, QuotationId,
                                                    ISNULL(QuotationNo, '') as QuotationNo, ISNULL(AdditionalNotes, '') as AdditionalNotes
-                                            FROM VendorOrders WHERE Tenantid = {0} ORDER BY PONumber DESC";
+                                            FROM CimmpleFlow.VendorOrders WHERE Tenantid = {0} ORDER BY PONumber DESC";
                                 var orders = await _context.VendorOrders.FromSqlRaw(sql, order.Tenantid).ToListAsync();
                                 maxOrder = orders.FirstOrDefault();
                             }
@@ -1930,7 +1930,7 @@ namespace CimmpleAPI.Controllers
                                         // Try to fix it one more time using direct SQL to bypass any EF tracking issues
                                         try
                                         {
-                                            var sql = "UPDATE VendorQuotations SET convertedOrderId = {0} WHERE OrderID = {1}";
+                                            var sql = "UPDATE CimmpleFlow.VendorQuotations SET convertedOrderId = {0} WHERE OrderID = {1}";
                                             var rowsAffected = await _context.Database.ExecuteSqlRawAsync(sql, poNumberToStore, order.QuotationId.Value);
                                             Console.WriteLine($"SaveVendorOrder: Direct SQL update affected {rowsAffected} row(s)");
                                             

@@ -1092,7 +1092,7 @@ namespace CimmpleAPI.Controllers
                                        locationid, sentDate, ISNULL(ship_via, '') as ship_via,
                                        ISNULL(shippingInstructions, '') as shippingInstructions, ISNULL(vendorcode, '') as vendorcode,
                                        ParentQuotationID, AdditionalNotes, AttachmentsJson, CommentsJson
-                                FROM VendorQuotations WHERE OrderID = {0} AND Tenantid = {1}"
+                                FROM CimmpleFlow.VendorQuotations WHERE OrderID = {0} AND Tenantid = {1}"
                             : @"SELECT OrderID, DueDate, OrderDate, POInitiated, PONumber, 
                                        ISNULL(Status, '') as Status, Tenantid, TotalAmount, UserId, UserToken, VendorID,
                                        ISNULL(VendorName, '') as VendorName, ISNULL(VendorOrderType, '') as VendorOrderType,
@@ -1101,7 +1101,7 @@ namespace CimmpleAPI.Controllers
                                        locationid, sentDate, ISNULL(ship_via, '') as ship_via,
                                        ISNULL(shippingInstructions, '') as shippingInstructions, ISNULL(vendorcode, '') as vendorcode,
                                        ParentQuotationID, AdditionalNotes, AttachmentsJson, CommentsJson
-                                FROM VendorQuotations WHERE OrderID = {0}";
+                                FROM CimmpleFlow.VendorQuotations WHERE OrderID = {0}";
                         
                         var quotations = tenantId > 0
                             ? _context.VendorQuotations.FromSqlRaw(sql, quotationId, tenantId).ToList()
@@ -1381,7 +1381,7 @@ namespace CimmpleAPI.Controllers
                                            locationid, sentDate, ISNULL(ship_via, '') as ship_via,
                                            ISNULL(shippingInstructions, '') as shippingInstructions, ISNULL(vendorcode, '') as vendorcode,
                                            ParentQuotationID, AdditionalNotes, AttachmentsJson, CommentsJson
-                                    FROM VendorQuotations WHERE OrderID = {0} AND Tenantid = {1}"
+                                    FROM CimmpleFlow.VendorQuotations WHERE OrderID = {0} AND Tenantid = {1}"
                                 : @"SELECT OrderID, DueDate, OrderDate, POInitiated, PONumber, 
                                            ISNULL(Status, '') as Status, Tenantid, TotalAmount, UserId, UserToken, VendorID,
                                            ISNULL(VendorName, '') as VendorName, ISNULL(VendorOrderType, '') as VendorOrderType,
@@ -1390,7 +1390,7 @@ namespace CimmpleAPI.Controllers
                                            locationid, sentDate, ISNULL(ship_via, '') as ship_via,
                                            ISNULL(shippingInstructions, '') as shippingInstructions, ISNULL(vendorcode, '') as vendorcode,
                                            ParentQuotationID, AdditionalNotes, AttachmentsJson, CommentsJson
-                                    FROM VendorQuotations WHERE OrderID = {0}";
+                                    FROM CimmpleFlow.VendorQuotations WHERE OrderID = {0}";
                             
                             var quotations = tenantid > 0
                                 ? _context.VendorQuotations.FromSqlRaw(sql, orderID, tenantid).ToList()
@@ -1444,7 +1444,7 @@ namespace CimmpleAPI.Controllers
                                                locationid, sentDate, ISNULL(ship_via, '') as ship_via,
                                                ISNULL(shippingInstructions, '') as shippingInstructions, ISNULL(vendorcode, '') as vendorcode,
                                                ParentQuotationID, AdditionalNotes, AttachmentsJson, CommentsJson
-                                        FROM VendorQuotations WHERE Tenantid = {0}";
+                                        FROM CimmpleFlow.VendorQuotations WHERE Tenantid = {0}";
                             existingQuotations = _context.VendorQuotations.FromSqlRaw(sql, tenantid).ToList();
                         }
                         catch (Exception sqlEx)
@@ -1634,14 +1634,14 @@ namespace CimmpleAPI.Controllers
                                           ISNULL(glcode, '') as glcode, JobId, ISNULL(Received, '') as Received,
                                           ReceivedQty, Tenantid, jobdetailId, productid, Groupid, IsAdditionItem,
                                           ISNULL(notes, '') as notes, AttachmentsJson
-                                   FROM VendorQuotationsDetails WHERE OrderID = {0} AND Tenantid = {1}"
+                                   FROM CimmpleFlow.VendorQuotationsDetails WHERE OrderID = {0} AND Tenantid = {1}"
                                 : @"SELECT ID, OrderID, ItemNo, ISNULL(itemname, '') as itemname, ISNULL(PartNo, '') as PartNo,
                                           DueDate, ISNULL(JobNumber, '') as JobNumber, ISNULL(JobDesc, '') as JobDesc,
                                           QtyOrdered, ISNULL(Unit, '') as Unit, UnitPrice, JobPriority, Discount,
                                           ISNULL(glcode, '') as glcode, JobId, ISNULL(Received, '') as Received,
                                           ReceivedQty, Tenantid, jobdetailId, productid, Groupid, IsAdditionItem,
                                           ISNULL(notes, '') as notes, AttachmentsJson
-                                   FROM VendorQuotationsDetails WHERE OrderID = {0}";
+                                   FROM CimmpleFlow.VendorQuotationsDetails WHERE OrderID = {0}";
                             
                             existingDetails = tenantid > 0
                                 ? _context.VendorQuotationsDetails.FromSqlRaw(sql, quotation.OrderID, tenantid).ToList()

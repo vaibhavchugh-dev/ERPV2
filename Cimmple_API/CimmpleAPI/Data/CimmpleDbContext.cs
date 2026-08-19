@@ -150,9 +150,8 @@ namespace CimmpleAPI.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            // All application tables live in this schema. Without it, EF queries dbo.UserDetails
-            // and login fails with 500 when the SQL login default schema is dbo.
-            modelBuilder.HasDefaultSchema("cimmpleflow");
+            // ERP tables live in CimmpleFlow (CimmpleERPDB also has CimmplePay / CimmplePunch).
+            modelBuilder.HasDefaultSchema(DbSchema.Flow);
             
             // Configure PriceBreakdownMaster table name
             modelBuilder.Entity<PriceBreakdownMaster>()

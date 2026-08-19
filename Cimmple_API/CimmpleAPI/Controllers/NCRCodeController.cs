@@ -222,7 +222,7 @@ namespace CimmpleAPI.Controllers
                 await EnsureNcrCodeColumnsAsync();
                 await using (var command = _context.Database.GetDbConnection().CreateCommand())
                 {
-                    command.CommandText = "SELECT COUNT(*) FROM NonConformanceReports WHERE TenantId = @tenantId AND NcrCodeId = @ncrCodeId";
+                    command.CommandText = "SELECT COUNT(*) FROM CimmpleFlow.NonConformanceReports WHERE TenantId = @tenantId AND NcrCodeId = @ncrCodeId";
                     var tenantParam = command.CreateParameter();
                     tenantParam.ParameterName = "@tenantId";
                     tenantParam.Value = tenantId;
@@ -283,7 +283,7 @@ namespace CimmpleAPI.Controllers
                 var usageCount = 0;
                 await using (var command = _context.Database.GetDbConnection().CreateCommand())
                 {
-                    command.CommandText = "SELECT COUNT(*) FROM NonConformanceReports WHERE TenantId = @tenantId AND NcrCodeId = @ncrCodeId";
+                    command.CommandText = "SELECT COUNT(*) FROM CimmpleFlow.NonConformanceReports WHERE TenantId = @tenantId AND NcrCodeId = @ncrCodeId";
                     var tenantParam = command.CreateParameter();
                     tenantParam.ParameterName = "@tenantId";
                     tenantParam.Value = tenantId;
@@ -324,9 +324,9 @@ namespace CimmpleAPI.Controllers
             try
             {
                 await _context.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+IF COL_LENGTH('CimmpleFlow.NonConformanceReports', 'NcrCodeId') IS NULL
 BEGIN
-    ALTER TABLE dbo.NonConformanceReports ADD
+    ALTER TABLE CimmpleFlow.NonConformanceReports ADD
         NcrCodeId int NULL,
         NcrCode nvarchar(50) NULL;
 END");

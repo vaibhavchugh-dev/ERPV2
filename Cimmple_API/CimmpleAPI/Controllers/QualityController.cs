@@ -45,17 +45,17 @@ namespace CimmpleAPI.Controllers
             try
             {
                 await _context.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH('dbo.NonConformanceReports', 'VendorId') IS NULL
+IF COL_LENGTH('CimmpleFlow.NonConformanceReports', 'VendorId') IS NULL
 BEGIN
-    ALTER TABLE dbo.NonConformanceReports ADD
+    ALTER TABLE CimmpleFlow.NonConformanceReports ADD
         VendorId int NULL,
         VendorName nvarchar(200) NULL,
         VendorOrderId int NULL,
         PoNumber nvarchar(50) NULL;
 END
-IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+IF COL_LENGTH('CimmpleFlow.NonConformanceReports', 'NcrCodeId') IS NULL
 BEGIN
-    ALTER TABLE dbo.NonConformanceReports ADD
+    ALTER TABLE CimmpleFlow.NonConformanceReports ADD
         NcrCodeId int NULL,
         NcrCode nvarchar(50) NULL;
 END");
@@ -95,32 +95,32 @@ END");
                         var sqlCommands = new[]
                         {
                             // Fix critical required fields that might be null
-                            "UPDATE NonConformanceReports SET NcrNumber = 'NCR-UNKNOWN-' + CAST(NcrId AS VARCHAR(10)) WHERE NcrNumber IS NULL OR NcrNumber = ''",
-                            "UPDATE NonConformanceReports SET Title = 'Untitled NCR' WHERE Title IS NULL OR Title = ''",
-                            "UPDATE NonConformanceReports SET Category = 'Other' WHERE Category IS NULL OR Category = ''",
-                            "UPDATE NonConformanceReports SET Severity = 'Minor' WHERE Severity IS NULL OR Severity = ''",
-                            "UPDATE NonConformanceReports SET Status = 'Open' WHERE Status IS NULL OR Status = ''",
-                            "UPDATE NonConformanceReports SET Source = 'Internal' WHERE Source IS NULL OR Source = ''",
-                            "UPDATE NonConformanceReports SET ReportedBy = 1 WHERE ReportedBy IS NULL OR ReportedBy = 0",
-                            "UPDATE NonConformanceReports SET ReportedDate = GETUTCDATE() WHERE ReportedDate IS NULL",
-                            "UPDATE NonConformanceReports SET TenantId = 1 WHERE TenantId IS NULL OR TenantId = 0",
-                            "UPDATE NonConformanceReports SET CreatedBy = ISNULL(ReportedBy, 1) WHERE CreatedBy IS NULL OR CreatedBy = 0",
-                            "UPDATE NonConformanceReports SET CreatedDate = GETUTCDATE() WHERE CreatedDate IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET NcrNumber = 'NCR-UNKNOWN-' + CAST(NcrId AS VARCHAR(10)) WHERE NcrNumber IS NULL OR NcrNumber = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Title = 'Untitled NCR' WHERE Title IS NULL OR Title = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Category = 'Other' WHERE Category IS NULL OR Category = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Severity = 'Minor' WHERE Severity IS NULL OR Severity = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Status = 'Open' WHERE Status IS NULL OR Status = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Source = 'Internal' WHERE Source IS NULL OR Source = ''",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET ReportedBy = 1 WHERE ReportedBy IS NULL OR ReportedBy = 0",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET ReportedDate = GETUTCDATE() WHERE ReportedDate IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET TenantId = 1 WHERE TenantId IS NULL OR TenantId = 0",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET CreatedBy = ISNULL(ReportedBy, 1) WHERE CreatedBy IS NULL OR CreatedBy = 0",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET CreatedDate = GETUTCDATE() WHERE CreatedDate IS NULL",
 
                             // Fix nullable string fields
-                            "UPDATE NonConformanceReports SET Description = '' WHERE Description IS NULL",
-                            "UPDATE NonConformanceReports SET DefectLocation = '' WHERE DefectLocation IS NULL",
-                            "UPDATE NonConformanceReports SET PartNo = '' WHERE PartNo IS NULL",
-                            "UPDATE NonConformanceReports SET PartName = '' WHERE PartName IS NULL",
-                            "UPDATE NonConformanceReports SET RootCause = '' WHERE RootCause IS NULL",
-                            "UPDATE NonConformanceReports SET ImmediateAction = '' WHERE ImmediateAction IS NULL",
-                            "UPDATE NonConformanceReports SET CorrectiveAction = '' WHERE CorrectiveAction IS NULL",
-                            "UPDATE NonConformanceReports SET PreventiveAction = '' WHERE PreventiveAction IS NULL",
-                            "UPDATE NonConformanceReports SET Notes = '' WHERE Notes IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Description = '' WHERE Description IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET DefectLocation = '' WHERE DefectLocation IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET PartNo = '' WHERE PartNo IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET PartName = '' WHERE PartName IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET RootCause = '' WHERE RootCause IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET ImmediateAction = '' WHERE ImmediateAction IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET CorrectiveAction = '' WHERE CorrectiveAction IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET PreventiveAction = '' WHERE PreventiveAction IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET Notes = '' WHERE Notes IS NULL",
 
                             // Fix nullable int fields
-                            "UPDATE NonConformanceReports SET DefectQuantity = 0 WHERE DefectQuantity IS NULL",
-                            "UPDATE NonConformanceReports SET TotalQuantity = 0 WHERE TotalQuantity IS NULL"
+                            "UPDATE CimmpleFlow.NonConformanceReports SET DefectQuantity = 0 WHERE DefectQuantity IS NULL",
+                            "UPDATE CimmpleFlow.NonConformanceReports SET TotalQuantity = 0 WHERE TotalQuantity IS NULL"
                         };
 
                         foreach (var sql in sqlCommands)
@@ -157,7 +157,7 @@ END");
                         SELECT TOP 5
                             NcrId, NcrNumber, Title, Category, Severity, Status, Source,
                             ReportedBy, TenantId, CreatedBy
-                        FROM NonConformanceReports
+                        FROM CimmpleFlow.NonConformanceReports
                         WHERE TenantId = 1
                     ")
                     .Select(n => new {
@@ -237,7 +237,7 @@ END");
 
                 // Use raw SQL to avoid null reference issues
                 var deletedCount = await _context.Database.ExecuteSqlRawAsync(
-                    "DELETE FROM NonConformanceReports WHERE TenantId = {0}", tenantId);
+                    "DELETE FROM CimmpleFlow.NonConformanceReports WHERE TenantId = {0}", tenantId);
 
                 Console.WriteLine($"Successfully deleted {deletedCount} NCRs");
 
@@ -374,7 +374,7 @@ END");
                         ReportedDate,
                         DueDate,
                         CreatedDate
-                    FROM NonConformanceReports
+                    FROM CimmpleFlow.NonConformanceReports
                     WHERE TenantId = @tenantId";
 
                 var parameters = new List<(string Name, object Value)>
@@ -631,7 +631,7 @@ END");
                                 CostImpact,
                                 ISNULL(Notes, '') as Notes,
                                 TenantId
-                            FROM NonConformanceReports
+                            FROM CimmpleFlow.NonConformanceReports
                             WHERE NcrId = @id";
 
                         if (tenantId > 0)
@@ -1038,7 +1038,7 @@ END");
                     // Update the NCR number using raw SQL to ensure it persists
                     using (var updateCommand = _context.Database.GetDbConnection().CreateCommand())
                     {
-                        updateCommand.CommandText = "UPDATE NonConformanceReports SET NcrNumber = @NcrNumber WHERE NcrId = @NcrId";
+                        updateCommand.CommandText = "UPDATE CimmpleFlow.NonConformanceReports SET NcrNumber = @NcrNumber WHERE NcrId = @NcrId";
                         AddParameter(updateCommand, "@NcrNumber", correctNcrNumber);
                         AddParameter(updateCommand, "@NcrId", ncr.NcrId);
 
@@ -1050,7 +1050,7 @@ END");
                         // Verify the update worked by reading back from database
                         using (var verifyCommand = _context.Database.GetDbConnection().CreateCommand())
                         {
-                            verifyCommand.CommandText = "SELECT NcrNumber FROM NonConformanceReports WHERE NcrId = @NcrId";
+                            verifyCommand.CommandText = "SELECT NcrNumber FROM CimmpleFlow.NonConformanceReports WHERE NcrId = @NcrId";
                             AddParameter(verifyCommand, "@NcrId", ncr.NcrId);
 
                             var verifiedValue = await verifyCommand.ExecuteScalarAsync();
@@ -1079,7 +1079,7 @@ END");
                 string actualNcrNumber;
                 using (var checkCommand = _context.Database.GetDbConnection().CreateCommand())
                 {
-                    checkCommand.CommandText = "SELECT NcrNumber FROM NonConformanceReports WHERE NcrId = @NcrId";
+                    checkCommand.CommandText = "SELECT NcrNumber FROM CimmpleFlow.NonConformanceReports WHERE NcrId = @NcrId";
                     AddParameter(checkCommand, "@NcrId", ncr.NcrId);
 
                     await _context.Database.OpenConnectionAsync();
@@ -1168,7 +1168,7 @@ END");
                 using (var command = _context.Database.GetDbConnection().CreateCommand())
                 {
                     command.CommandText = @"
-                        UPDATE NonConformanceReports SET
+                        UPDATE CimmpleFlow.NonConformanceReports SET
                             Title = @Title,
                             Description = @Description,
                             Category = @Category,
@@ -1424,7 +1424,7 @@ END");
 
                 // Use raw SQL count to avoid null reference issues
                 var totalCount = await _context.NonConformanceReports
-                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0}", tenantId)
+                    .FromSqlRaw("SELECT * FROM CimmpleFlow.NonConformanceReports WHERE TenantId = {0}", tenantId)
                     .AsNoTracking()
                     .CountAsync();
 
@@ -1432,17 +1432,17 @@ END");
 
                 // Calculate stats using raw SQL to avoid null reference issues
                 var openCount = await _context.NonConformanceReports
-                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND (Status = 'Open' OR Status = 'Under_Investigation')", tenantId)
+                    .FromSqlRaw("SELECT * FROM CimmpleFlow.NonConformanceReports WHERE TenantId = {0} AND (Status = 'Open' OR Status = 'Under_Investigation')", tenantId)
                     .AsNoTracking()
                     .CountAsync();
 
                 var criticalCount = await _context.NonConformanceReports
-                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND Severity = 'Critical'", tenantId)
+                    .FromSqlRaw("SELECT * FROM CimmpleFlow.NonConformanceReports WHERE TenantId = {0} AND Severity = 'Critical'", tenantId)
                     .AsNoTracking()
                     .CountAsync();
 
                 var overdueCount = await _context.NonConformanceReports
-                    .FromSqlRaw("SELECT * FROM NonConformanceReports WHERE TenantId = {0} AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status != 'Closed'", tenantId)
+                    .FromSqlRaw("SELECT * FROM CimmpleFlow.NonConformanceReports WHERE TenantId = {0} AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status != 'Closed'", tenantId)
                     .AsNoTracking()
                     .CountAsync();
 

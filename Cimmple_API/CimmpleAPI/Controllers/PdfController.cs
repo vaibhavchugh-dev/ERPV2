@@ -887,17 +887,17 @@ namespace CimmpleAPI.Controllers
             try
             {
                 await _context.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH('dbo.NonConformanceReports', 'VendorId') IS NULL
+IF COL_LENGTH('CimmpleFlow.NonConformanceReports', 'VendorId') IS NULL
 BEGIN
-    ALTER TABLE dbo.NonConformanceReports ADD
+    ALTER TABLE CimmpleFlow.NonConformanceReports ADD
         VendorId int NULL,
         VendorName nvarchar(200) NULL,
         VendorOrderId int NULL,
         PoNumber nvarchar(50) NULL;
 END
-IF COL_LENGTH('dbo.NonConformanceReports', 'NcrCodeId') IS NULL
+IF COL_LENGTH('CimmpleFlow.NonConformanceReports', 'NcrCodeId') IS NULL
 BEGIN
-    ALTER TABLE dbo.NonConformanceReports ADD
+    ALTER TABLE CimmpleFlow.NonConformanceReports ADD
         NcrCodeId int NULL,
         NcrCode nvarchar(50) NULL;
 END");
@@ -979,7 +979,7 @@ END");
                     DueDate,
                     CostImpact,
                     ISNULL(Notes, '') as Notes
-                FROM NonConformanceReports
+                FROM CimmpleFlow.NonConformanceReports
                 WHERE NcrId = @ncrId";
 
             if (tenantId > 0)
