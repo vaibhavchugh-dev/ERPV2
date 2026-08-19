@@ -848,13 +848,27 @@ namespace CimmpleAPI.Controllers
             var productIds = rows.Where(r => r.ProductId.HasValue).Select(r => r.ProductId!.Value).Distinct().ToList();
             var rawIds = rows.Where(r => r.RawMaterialId.HasValue).Select(r => r.RawMaterialId!.Value).Distinct().ToList();
 
+            var remnantChildren = rawIds.Count == 0
+                ? new List<(int Id, int ParentId)>()
+                : (await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .Where(r => r.Tenantid == job.Tenantid
+                        && r.IsRemnant
+                        && r.ParentRawMaterialId.HasValue
+                        && rawIds.Contains(r.ParentRawMaterialId.Value))
+                    .Select(r => new { r.Id, ParentId = r.ParentRawMaterialId!.Value })
+                    .ToListAsync())
+                    .Select(r => (r.Id, r.ParentId))
+                    .ToList();
+            var familyRawIds = rawIds.Concat(remnantChildren.Select(r => r.Id)).Distinct().ToList();
+
             var balances = await _context.InventoryBalance
                 .AsNoTracking()
                 .Where(b => b.Tenantid == job.Tenantid
                     && (!locationId.HasValue || b.LocationId == locationId.Value)
                     && (
                         (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
-                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                        || (b.RawMaterialId.HasValue && familyRawIds.Contains(b.RawMaterialId.Value))
                     ))
                 .ToListAsync();
 
@@ -875,26 +889,45 @@ namespace CimmpleAPI.Controllers
                     && t.TransactionTypeId == 2)
                 .ToListAsync();
 
-            decimal MatchBalance(int? productId, int? rawMaterialId, Func<InventoryBalance, decimal> pick) =>
-                balances
+            HashSet<int> FamilyRawIds(int? rawMaterialId)
+            {
+                var ids = new HashSet<int>();
+                if (!rawMaterialId.HasValue) return ids;
+                ids.Add(rawMaterialId.Value);
+                foreach (var child in remnantChildren.Where(c => c.ParentId == rawMaterialId.Value))
+                    ids.Add(child.Id);
+                return ids;
+            }
+
+            decimal MatchBalance(int? productId, int? rawMaterialId, Func<InventoryBalance, decimal> pick)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return balances
                     .Where(b => productId.HasValue
                         ? b.ProductId == productId
-                        : b.RawMaterialId == rawMaterialId)
+                        : b.RawMaterialId.HasValue && family.Contains(b.RawMaterialId.Value))
                     .Sum(pick);
+            }
 
-            decimal MatchReserved(int? productId, int? rawMaterialId) =>
-                reservations
+            decimal MatchReserved(int? productId, int? rawMaterialId)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return reservations
                     .Where(r => productId.HasValue
                         ? r.ProductId == productId
-                        : r.RawMaterialId == rawMaterialId)
+                        : r.RawMaterialId.HasValue && family.Contains(r.RawMaterialId.Value))
                     .Sum(r => r.Quantity);
+            }
 
-            decimal MatchIssued(int? productId, int? rawMaterialId) =>
-                issues
+            decimal MatchIssued(int? productId, int? rawMaterialId)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return issues
                     .Where(t => productId.HasValue
                         ? t.ProductId == productId
-                        : t.RawMaterialId == rawMaterialId)
+                        : t.RawMaterialId.HasValue && family.Contains(t.RawMaterialId.Value))
                     .Sum(t => Math.Abs(t.Quantity));
+            }
 
             var lines = rows.Select(m =>
             {
@@ -990,12 +1023,26 @@ namespace CimmpleAPI.Controllers
                     allRefIds.Add(id);
             }
 
+            var remnantChildren = rawIds.Count == 0
+                ? new Dictionary<int, List<int>>()
+                : (await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .Where(r => r.Tenantid == tenantId
+                        && r.IsRemnant
+                        && r.ParentRawMaterialId.HasValue
+                        && rawIds.Contains(r.ParentRawMaterialId.Value))
+                    .Select(r => new { r.Id, ParentId = r.ParentRawMaterialId!.Value })
+                    .ToListAsync())
+                    .GroupBy(r => r.ParentId)
+                    .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+            var familyRawIds = rawIds.Concat(remnantChildren.SelectMany(kv => kv.Value)).Distinct().ToList();
+
             var balances = await _context.InventoryBalance
                 .AsNoTracking()
                 .Where(b => b.Tenantid == tenantId
                     && (
                         (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
-                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                        || (b.RawMaterialId.HasValue && familyRawIds.Contains(b.RawMaterialId.Value))
                     ))
                 .ToListAsync();
 
@@ -1030,24 +1077,34 @@ namespace CimmpleAPI.Controllers
                 {
                     if (line.QuantityNeeded <= 0)
                         continue;
+                    HashSet<int> Family(int? rawId)
+                    {
+                        var ids = new HashSet<int>();
+                        if (!rawId.HasValue) return ids;
+                        ids.Add(rawId.Value);
+                        if (remnantChildren.TryGetValue(rawId.Value, out var kids))
+                            foreach (var id in kids) ids.Add(id);
+                        return ids;
+                    }
+                    var family = Family(line.RawMaterialId);
                     var available = balances
                         .Where(b => (loc <= 0 || b.LocationId == loc)
                             && (line.ProductId.HasValue
                                 ? b.ProductId == line.ProductId
-                                : b.RawMaterialId == line.RawMaterialId))
+                                : b.RawMaterialId.HasValue && family.Contains(b.RawMaterialId.Value)))
                         .Sum(b => b.QuantityOnHand - b.QuantityReserved);
                     var reserved = reservations
                         .Where(r => refs.Contains(r.ReferenceId)
                             && (line.ProductId.HasValue
                                 ? r.ProductId == line.ProductId
-                                : r.RawMaterialId == line.RawMaterialId))
+                                : r.RawMaterialId.HasValue && family.Contains(r.RawMaterialId.Value)))
                         .Sum(r => r.Quantity);
                     var issued = issues
                         .Where(t => t.ReferenceId.HasValue
                             && refs.Contains(t.ReferenceId.Value)
                             && (line.ProductId.HasValue
                                 ? t.ProductId == line.ProductId
-                                : t.RawMaterialId == line.RawMaterialId))
+                                : t.RawMaterialId.HasValue && family.Contains(t.RawMaterialId.Value)))
                         .Sum(t => Math.Abs(t.Quantity));
                     if (MaterialShortageQty(line.QuantityNeeded, reserved, issued, available) > 0)
                     {

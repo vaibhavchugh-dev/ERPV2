@@ -282,11 +282,14 @@ export class AuthService {
     }
 
     AuthService.refreshInFlight = (async () => {
-      const refreshToken = localStorage.getItem(REFRESH_KEY);
+      const isVendor = (window.location.pathname || "").startsWith("/vendor");
+      const refreshToken = isVendor
+        ? localStorage.getItem("vendorRefreshToken")
+        : localStorage.getItem(REFRESH_KEY);
       if (!refreshToken) return null;
       try {
         const { data } = await Instense.post<LoginResponse>("/Auth/Refresh", { refreshToken });
-        AuthService.persistSession(data, "erp");
+        AuthService.persistSession(data, isVendor ? "vendor" : "erp");
         return data;
       } catch {
         return null;

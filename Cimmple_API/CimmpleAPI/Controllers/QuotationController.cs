@@ -983,15 +983,37 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (string.IsNullOrEmpty(vendorCode))
+                if (!IsVendorPortal() && string.IsNullOrEmpty(vendorCode))
                 {
                     return BadRequest(new { error = "Vendor code is required" });
                 }
 
-                var quotations = _context.VendorQuotations
-                    .Where(q => q.vendorcode != null && 
-                               q.vendorcode.ToLower() == vendorCode.ToLower() &&
-                               q.isSent == true)  // Only show quotations that the client sent to this vendor
+                var quotationsQuery = _context.VendorQuotations
+                    .Where(q => q.isSent == true);
+
+                if (IsVendorPortal())
+                {
+                    var tokenVendorId = GetVendorId();
+                    if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0)
+                    {
+                        return StatusCode(403, new { message = "Vendor portal account is not linked to a vendor" });
+                    }
+
+                    quotationsQuery = quotationsQuery.Where(q => q.VendorID == tokenVendorId.Value);
+                    var tokenTenantId = GetTenantId();
+                    if (tokenTenantId > 0)
+                    {
+                        quotationsQuery = quotationsQuery.Where(q => q.Tenantid == tokenTenantId);
+                    }
+                }
+                else
+                {
+                    quotationsQuery = quotationsQuery.Where(q =>
+                        q.vendorcode != null &&
+                        q.vendorcode.ToLower() == vendorCode.ToLower());
+                }
+
+                var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
                     .Select(q => new
                     {
@@ -1026,6 +1048,15 @@ namespace CimmpleAPI.Controllers
             try
             {
                 Console.WriteLine($"GetVendorQuotationById: Looking for quotationId {quotationId}, tenantId {tenantId}");
+
+                if (IsVendorPortal())
+                {
+                    var tokenTenantId = GetTenantId();
+                    if (tenantId <= 0 && tokenTenantId > 0)
+                    {
+                        tenantId = tokenTenantId;
+                    }
+                }
 
                 // Use a safer query approach that handles NULL values
                 VendorQuotations quotation = null;
@@ -1099,6 +1130,21 @@ namespace CimmpleAPI.Controllers
                 {
                     Console.WriteLine($"GetVendorQuotationById: Quotation not found for OrderID {quotationId} with tenantId {tenantId}");
                     return NotFound(new { error = "Quotation not found", quotationId = quotationId, tenantId = tenantId });
+                }
+
+                if (IsVendorPortal())
+                {
+                    var tokenVendorId = GetVendorId();
+                    if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0 || quotation.VendorID != tokenVendorId.Value)
+                    {
+                        return StatusCode(403, new { message = "You can only view quotations for your vendor account" });
+                    }
+
+                    var tokenTenantId = GetTenantId();
+                    if (tokenTenantId > 0 && quotation.Tenantid != tokenTenantId)
+                    {
+                        return NotFound(new { error = "Quotation not found", quotationId = quotationId, tenantId = tokenTenantId });
+                    }
                 }
 
                 Console.WriteLine($"GetVendorQuotationById: Loading details for OrderID {quotationId}");
@@ -1287,29 +1333,16 @@ namespace CimmpleAPI.Controllers
                 int tenantid = request.TryGetProperty("Tenantid", out JsonElement tenantidElem) ? tenantidElem.GetInt32() : 0;
                 int vendorID = request.TryGetProperty("VendorID", out JsonElement vendorIDElem) ? vendorIDElem.GetInt32() : 0;
 
-                if (vendorID <= 0)
-                {
-                    return BadRequest(new { error = "Vendor is required" });
-                }
-
                 var isVendorPortal = IsVendorPortal();
                 var tokenVendorId = GetVendorId();
                 if (isVendorPortal)
                 {
-                    if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0)
-                    {
-                        return StatusCode(403, new { message = "Vendor portal account is not linked to a vendor" });
-                    }
+                    return SaveVendorPortalQuotationResponse(request);
+                }
 
-                    if (tokenVendorId.Value != vendorID)
-                    {
-                        return StatusCode(403, new { message = "You can only update quotations for your vendor account" });
-                    }
-
-                    if (orderID <= 0)
-                    {
-                        return BadRequest(new { error = "Vendor portal can only update an existing quotation" });
-                    }
+                if (vendorID <= 0)
+                {
+                    return BadRequest(new { error = "Vendor is required" });
                 }
 
                 if (!request.TryGetProperty("Details", out JsonElement detailsElem) || detailsElem.ValueKind != JsonValueKind.Array || detailsElem.GetArrayLength() == 0)
@@ -1963,6 +1996,184 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private IActionResult SaveVendorPortalQuotationResponse(JsonElement request)
+        {
+            var tokenVendorId = GetVendorId();
+            if (!tokenVendorId.HasValue || tokenVendorId.Value <= 0)
+            {
+                return StatusCode(403, new { message = "Vendor portal account is not linked to a vendor" });
+            }
+
+            int orderID = ReadInt32Property(request, "OrderID", "orderID");
+            if (orderID <= 0)
+            {
+                return BadRequest(new { error = "Vendor portal can only update an existing quotation" });
+            }
+
+            if (!request.TryGetProperty("Details", out JsonElement detailsElem) &&
+                !request.TryGetProperty("details", out detailsElem))
+            {
+                return BadRequest(new { error = "At least one detail item is required" });
+            }
+
+            if (detailsElem.ValueKind != JsonValueKind.Array || detailsElem.GetArrayLength() == 0)
+            {
+                return BadRequest(new { error = "At least one detail item is required" });
+            }
+
+            var query = _context.VendorQuotations.Where(q => q.OrderID == orderID && q.VendorID == tokenVendorId.Value);
+            var tokenTenantId = GetTenantId();
+            if (tokenTenantId > 0)
+            {
+                query = query.Where(q => q.Tenantid == tokenTenantId);
+            }
+
+            var quotation = query.FirstOrDefault();
+            if (quotation == null)
+            {
+                return NotFound(new { error = "Vendor quotation not found" });
+            }
+
+            var status = (quotation.Status ?? "").Trim();
+            if (IsVendorPortalLockedStatus(status))
+            {
+                return BadRequest(new { error = "This quotation can no longer be updated from the vendor portal" });
+            }
+
+            var existingDetails = _context.VendorQuotationsDetails
+                .Where(d => d.OrderID == quotation.OrderID && d.Tenantid == quotation.Tenantid)
+                .ToList();
+
+            if (existingDetails.Count == 0)
+            {
+                existingDetails = _context.VendorQuotationsDetails
+                    .Where(d => d.OrderID == quotation.OrderID)
+                    .ToList();
+            }
+
+            foreach (var detailElem in detailsElem.EnumerateArray())
+            {
+                int detailId = ReadInt32Property(detailElem, "ID", "id");
+                int itemNo = ReadInt32Property(detailElem, "ItemNo", "itemNo");
+
+                VendorQuotationsDetails? detail = null;
+                if (detailId > 0)
+                {
+                    detail = existingDetails.FirstOrDefault(d => d.ID == detailId);
+                }
+                if (detail == null && itemNo > 0)
+                {
+                    detail = existingDetails.FirstOrDefault(d => d.ItemNo == itemNo);
+                }
+                if (detail == null)
+                {
+                    continue;
+                }
+
+                detail.UnitPrice = ReadDecimalProperty(detailElem, "UnitPrice", "unitPrice");
+                detail.Discount = ReadDecimalProperty(detailElem, "Discount", "discount");
+
+                var discountType = ReadStringJson(detailElem, "DiscountType", "discountType");
+                if (!string.IsNullOrWhiteSpace(discountType))
+                {
+                    detail.DiscountType = string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase)
+                        ? "Amount"
+                        : "Percent";
+                }
+
+                if (detailElem.TryGetProperty("Notes", out _) || detailElem.TryGetProperty("notes", out _))
+                {
+                    detail.notes = ReadStringJson(detailElem, "Notes", "notes") ?? "";
+                }
+            }
+
+            quotation.AdditionalNotes = request.TryGetProperty("AdditionalNotes", out _) ||
+                                        request.TryGetProperty("additionalNotes", out _)
+                ? (ReadStringJson(request, "AdditionalNotes", "additionalNotes") ?? "")
+                : quotation.AdditionalNotes;
+            quotation.Status = "Responded";
+            quotation.TotalAmount = existingDetails.Sum(d =>
+                ComputeVendorQuoteLineTotal(d.QtyOrdered, d.UnitPrice, d.Discount, d.DiscountType));
+
+            _context.SaveChanges();
+
+            return Ok(new { result = new { id = quotation.OrderID, message = "Vendor quotation response saved successfully" } });
+        }
+
+        private static bool IsVendorPortalLockedStatus(string status)
+        {
+            return status.Equals("Converted", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Rejected", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
+                || status.Equals("Accepted", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static decimal ComputeVendorQuoteLineTotal(int qty, decimal unitPrice, decimal discount, string? discountType)
+        {
+            var subtotal = qty * unitPrice;
+            if (subtotal <= 0)
+            {
+                return 0;
+            }
+
+            var discountAmount = string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase)
+                ? Math.Min(Math.Max(discount, 0), subtotal)
+                : subtotal * (Math.Min(Math.Max(discount, 0), 100) / 100m);
+
+            return Math.Max(0, subtotal - discountAmount);
+        }
+
+        private static int ReadInt32Property(JsonElement elem, string pascal, string camel)
+        {
+            foreach (var name in new[] { pascal, camel })
+            {
+                if (!elem.TryGetProperty(name, out var prop))
+                {
+                    continue;
+                }
+
+                if (prop.ValueKind == JsonValueKind.Number)
+                {
+                    if (prop.TryGetInt32(out var i))
+                    {
+                        return i;
+                    }
+                    if (prop.TryGetDecimal(out var d))
+                    {
+                        return (int)d;
+                    }
+                }
+                else if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return 0;
+        }
+
+        private static decimal ReadDecimalProperty(JsonElement elem, string pascal, string camel)
+        {
+            foreach (var name in new[] { pascal, camel })
+            {
+                if (!elem.TryGetProperty(name, out var prop))
+                {
+                    continue;
+                }
+
+                if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDecimal(out var d))
+                {
+                    return d;
+                }
+                if (prop.ValueKind == JsonValueKind.String && decimal.TryParse(prop.GetString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return 0;
         }
 
         private static string? ReadStringJson(JsonElement elem, string pascal, string camel)

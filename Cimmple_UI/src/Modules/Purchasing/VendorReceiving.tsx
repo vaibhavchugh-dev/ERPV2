@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorReceivingService, OrderForReceiving } from "../../Common/Services/VendorReceivingService";
@@ -12,6 +12,7 @@ const VendorReceiving: React.FC = () => {
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const hasLoadedOnceRef = useRef(false);
 
   // Handle URL parameter to open detail (from global search)
   useEffect(() => {
@@ -32,7 +33,9 @@ const VendorReceiving: React.FC = () => {
   }, []);
 
   const loadOrders = async () => {
-    setLoading(true);
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     try {
       const result = await VendorReceivingService.GetOrdersForReceiving();
 
@@ -46,13 +49,15 @@ const VendorReceiving: React.FC = () => {
       toast.error(`Error loading orders: ${error.message || "Unknown error"}`);
       setOrders([]);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
   };
 
   const handleRowClick = (row: Record<string, any>) => {
-    const order = row as OrderForReceiving;
-    setSelectedOrderId(order.orderID);
+    const orderId = Number(row.orderID ?? row.OrderID ?? 0);
+    if (!orderId) return;
+    setSelectedOrderId(orderId);
     setShowDetail(true);
   };
 
@@ -165,6 +170,7 @@ const VendorReceiving: React.FC = () => {
         data={orders}
         columns={columns}
         onRowClick={handleRowClick}
+        getRowId={(row) => row.orderID}
         loading={loading}
         enablePagination
         searchPlaceholder="Search by PO #, vendor..."

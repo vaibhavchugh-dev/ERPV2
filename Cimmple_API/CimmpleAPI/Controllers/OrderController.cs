@@ -2458,14 +2458,25 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    // Check if order references a quotation
-                    if (order.ParentQuotationID.HasValue || order.QuotationId.HasValue)
+                    var linkedQuotations = await GetVendorQuotationsLinkedToOrderAsync(order, tenantId);
+                    var quotationsToRevert = new List<VendorQuotations>();
+                    foreach (var quotation in linkedQuotations)
+                    {
+                        if (!await VendorQuotationHasOtherConvertedOrdersAsync(quotation, order.OrderID, tenantId))
+                        {
+                            quotationsToRevert.Add(quotation);
+                        }
+                    }
+
+                    if (quotationsToRevert.Count > 0)
                     {
                         impact.WillBeAffected.Add(new ImpactedEntity
                         {
-                            EntityType = "Quotation Reference",
-                            Count = 1,
-                            Description = "The quotation reference will be cleared from this order"
+                            EntityType = "Vendor Quotation",
+                            Count = quotationsToRevert.Count,
+                            Description = quotationsToRevert.Count == 1
+                                ? "The source quotation will be reverted from Converted"
+                                : $"{quotationsToRevert.Count} source quotations will be reverted from Converted"
                         });
                     }
 
@@ -2485,13 +2496,13 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                // Check if order exists
-                var orderExists = await _context.VendorOrders
-                    .AsNoTracking()
-                    .AnyAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                var order = await _context.VendorOrders
+                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
 
-                if (!orderExists)
+                if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
+
+                await RevertVendorQuotationsForDeletedOrderAsync(order, tenantId);
 
                 // Delete related records first to avoid foreign key constraint violations
                 // 1. Delete attachments
@@ -2540,14 +2551,7 @@ namespace CimmpleAPI.Controllers
                     _context.VendorOrderDetails.RemoveRange(details);
                 }
 
-                // 4. Delete the order itself (load it tracked for removal)
-                var order = await _context.VendorOrders
-                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
-                
-                if (order != null)
-                {
-                    _context.VendorOrders.Remove(order);
-                }
+                _context.VendorOrders.Remove(order);
 
                 await _context.SaveChangesAsync();
 
@@ -2565,12 +2569,59 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Find vendor quotations linked to this order via QuotationId or convertedOrderId
+        /// (stored as PONumber, with OrderID as a fallback for older rows).
+        /// </summary>
+        private async Task<List<VendorQuotations>> GetVendorQuotationsLinkedToOrderAsync(VendorOrder order, int tenantId)
+        {
+            int? quotationId = order.QuotationId;
+            int poNumber = order.PONumber;
+            int orderPk = order.OrderID;
+
+            return await _context.VendorQuotations
+                .Where(q => q.Tenantid == tenantId &&
+                    ((quotationId.HasValue && quotationId.Value > 0 && q.OrderID == quotationId.Value) ||
+                     (q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0 &&
+                      (q.convertedOrderId.Value == poNumber || q.convertedOrderId.Value == orderPk))))
+                .ToListAsync();
+        }
+
+        private async Task<bool> VendorQuotationHasOtherConvertedOrdersAsync(VendorQuotations quotation, int deletedOrderId, int tenantId)
+        {
+            return await _context.VendorOrders.AnyAsync(o =>
+                o.Tenantid == tenantId &&
+                o.OrderID != deletedOrderId &&
+                o.QuotationId.HasValue &&
+                o.QuotationId.Value == quotation.OrderID);
+        }
+
+        private async Task RevertVendorQuotationsForDeletedOrderAsync(VendorOrder order, int tenantId)
+        {
+            var linkedQuotations = await GetVendorQuotationsLinkedToOrderAsync(order, tenantId);
+            foreach (var quotation in linkedQuotations)
+            {
+                if (await VendorQuotationHasOtherConvertedOrdersAsync(quotation, order.OrderID, tenantId))
+                {
+                    continue;
+                }
+
+                quotation.convertedOrderId = null;
+                var wasConverted = quotation.isconverted == 1
+                    || (quotation.Status ?? "").IndexOf("convert", StringComparison.OrdinalIgnoreCase) >= 0;
+                quotation.isconverted = 0;
+                if (wasConverted)
+                {
+                    quotation.Status = quotation.isSent ? "Sent" : "Draft";
+                }
+            }
+        }
+
         [HttpGet("GetOrdersForReceiving")]
         public async Task<IActionResult> GetOrdersForReceiving([FromQuery] int tenantId)
         {
             try
             {
-                // Get orders that are "Sent" or have items that can be received
                 var orders = await _context.VendorOrders
                     .AsNoTracking()
                     .Where(o => o.Tenantid == tenantId && (o.Status == "Sent" || o.Status == "Partially Received"))
@@ -2588,54 +2639,53 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToListAsync();
 
-                // Get all order details for these orders
+                if (orders.Count == 0)
+                    return Ok(new { result = orders });
+
                 var orderIds = orders.Select(o => o.orderID).ToList();
+
                 var allDetails = await _context.VendorOrderDetails
                     .AsNoTracking()
                     .Where(d => orderIds.Contains(d.OrderID) && d.Tenantid == tenantId)
+                    .Select(d => new { d.ID, d.OrderID, d.QtyOrdered })
                     .ToListAsync();
 
-                // Calculate receiving statistics for each order detail
-                var receivingStats = await _context.VendorReceiving
-                    .AsNoTracking()
-                    .Where(r => orderIds.Contains(r.VendorOrderDetail.OrderID) && r.Tenantid == tenantId)
-                    .GroupBy(r => r.VendorOrderDetailID)
-                    .Select(g => new
-                    {
-                        detailID = g.Key,
-                        totalReceivedQty = g.Sum(r => r.ReceivedQty)
-                    })
-                    .ToDictionaryAsync(x => x.detailID, x => x.totalReceivedQty);
+                var receivingStats = allDetails.Count == 0
+                    ? new Dictionary<int, int>()
+                    : await _context.VendorReceiving
+                        .AsNoTracking()
+                        .Where(r => r.Tenantid == tenantId && orderIds.Contains(r.VendorOrderDetail.OrderID))
+                        .GroupBy(r => r.VendorOrderDetailID)
+                        .Select(g => new { detailID = g.Key, totalReceivedQty = g.Sum(r => r.ReceivedQty) })
+                        .ToDictionaryAsync(x => x.detailID, x => x.totalReceivedQty);
+
+                var detailsByOrder = allDetails.ToLookup(d => d.OrderID);
 
                 var ordersWithStats = orders.Select(o =>
                 {
-                    var orderDetails = allDetails.Where(d => d.OrderID == o.orderID).ToList();
-                    var totalOrdered = orderDetails.Sum(d => d.QtyOrdered);
-                    var totalReceived = orderDetails.Sum(d => receivingStats.ContainsKey(d.ID) ? receivingStats[d.ID] : 0);
-
-                    // Recalculate status based on actual received quantities per detail
+                    var totalOrdered = 0;
+                    var totalReceived = 0;
+                    var totalItems = 0;
                     bool allComplete = true;
                     bool anyReceived = false;
-                    foreach (var detail in orderDetails)
+
+                    foreach (var detail in detailsByOrder[o.orderID])
                     {
-                        var detailReceived = receivingStats.ContainsKey(detail.ID) ? receivingStats[detail.ID] : 0;
+                        var detailReceived = receivingStats.TryGetValue(detail.ID, out var qty) ? qty : 0;
+                        totalItems++;
+                        totalOrdered += detail.QtyOrdered;
+                        totalReceived += detailReceived;
                         if (detailReceived > 0) anyReceived = true;
                         if (detailReceived < detail.QtyOrdered) allComplete = false;
                     }
 
-                    string recalculatedStatus = o.status; // Default to stored status
+                    string recalculatedStatus;
                     if (allComplete && anyReceived)
-                    {
                         recalculatedStatus = "Fully Received";
-                    }
                     else if (anyReceived)
-                    {
                         recalculatedStatus = "Partially Received";
-                    }
                     else
-                    {
                         recalculatedStatus = "Sent";
-                    }
 
                     return new
                     {
@@ -2645,9 +2695,9 @@ namespace CimmpleAPI.Controllers
                         o.vendorCode,
                         o.vendorName,
                         o.orderDate,
-                        status = recalculatedStatus, // Use recalculated status
+                        status = recalculatedStatus,
                         o.locationId,
-                        totalItems = orderDetails.Count,
+                        totalItems,
                         totalOrdered,
                         totalReceived,
                         totalPending = totalOrdered - totalReceived
@@ -2676,25 +2726,42 @@ namespace CimmpleAPI.Controllers
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
 
-                // Get order details
+                // Get order details — only fields the receiving UI needs
                 var details = await _context.VendorOrderDetails
                     .AsNoTracking()
                     .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
                     .OrderBy(d => d.ItemNo)
+                    .Select(d => new
+                    {
+                        d.ID,
+                        d.ItemNo,
+                        d.PartName,
+                        d.PartNo,
+                        d.LineType,
+                        d.DueDate,
+                        d.DueDateDateTime,
+                        d.JobNumber,
+                        d.JobDesc,
+                        d.JobId,
+                        d.ProductId,
+                        d.RawMaterialId,
+                        d.QtyOrdered,
+                        d.ReceivedQty,
+                        d.Unit,
+                        d.UnitPrice
+                    })
                     .ToListAsync();
 
                 var detailIds = details.Select(d => d.ID).ToList();
 
-                // Get receiving transactions for these details
-                var receivingTransactions = await _context.VendorReceiving
-                    .AsNoTracking()
-                    .Where(r => detailIds.Contains(r.VendorOrderDetailID) && r.Tenantid == tenantId)
-                    .ToListAsync();
-
-                // Calculate received quantities per detail
-                var receivedQtyByDetail = receivingTransactions
-                    .GroupBy(r => r.VendorOrderDetailID)
-                    .ToDictionary(g => g.Key, g => g.Sum(r => r.ReceivedQty));
+                var receivedQtyByDetail = detailIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : await _context.VendorReceiving
+                        .AsNoTracking()
+                        .Where(r => detailIds.Contains(r.VendorOrderDetailID) && r.Tenantid == tenantId)
+                        .GroupBy(r => r.VendorOrderDetailID)
+                        .Select(g => new { Id = g.Key, Qty = g.Sum(r => r.ReceivedQty) })
+                        .ToDictionaryAsync(x => x.Id, x => x.Qty);
 
                 var detailsWithReceiving = details.Select(d =>
                 {

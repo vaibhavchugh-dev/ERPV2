@@ -120,7 +120,9 @@ const Inventory: React.FC = () => {
           locationId: locationFilter || undefined,
           lowStockOnly: lowStockOnly || undefined,
         }),
-        InventoryService.GetLowStockAlerts(),
+        InventoryService.GetLowStockAlerts({
+          locationId: locationFilter || undefined,
+        }),
         LocationService.GetLocations({ tenantid: tenantId }),
         InventoryService.GetTransactionHistory({
           locationId: locationFilter || undefined,
@@ -600,6 +602,7 @@ const Inventory: React.FC = () => {
           balances={balances}
           fallbackProducts={fallbackProducts}
           locations={locations}
+          defaultLocationId={activeLocationId}
           onClose={handleCloseMovement}
           onSuccess={handleMovementSuccess}
         />
