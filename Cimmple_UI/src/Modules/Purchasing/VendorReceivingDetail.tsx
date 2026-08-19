@@ -58,9 +58,10 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   onClose,
 }) => {
   const listNeedsRefreshRef = useRef(false);
+  const ignoreBackdropClickRef = useRef(true);
   const { locationId: activeLocationId } = useActiveLocation();
   const [order, setOrder] = useState<OrderForReceivingDetail | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [receiving, setReceiving] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [receivingForms, setReceivingForms] = useState<Map<number, ReceivingFormData>>(new Map());
@@ -73,12 +74,70 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   };
 
   useEffect(() => {
-    loadOrder();
-    loadLocations();
+    ignoreBackdropClickRef.current = true;
+    const timer = window.setTimeout(() => {
+      ignoreBackdropClickRef.current = false;
+    }, 400);
+    return () => window.clearTimeout(timer);
   }, [orderId]);
 
-  const loadOrder = async () => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadOrder = async () => {
+      if (!orderId) {
+        setLoading(false);
+        setOrder(null);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const result = await VendorReceivingService.GetOrderForReceiving(orderId);
+        if (!cancelled) {
+          setOrder(result || null);
+        }
+      } catch (error: any) {
+        console.error("[VendorReceivingDetail] Error loading order:", error);
+        toast.error(`Error loading order: ${error.message || "Unknown error"}`);
+        if (!cancelled) {
+          setOrder(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    const loadLocations = async () => {
+      try {
+        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+        const tenantID = storage?.tenantID || 0;
+        const result = await LocationService.GetLocations({ tenantid: tenantID });
+        if (!cancelled && result && Array.isArray(result)) {
+          setLocations(result);
+        }
+      } catch (error: any) {
+        console.error("Error loading locations:", error);
+      }
+    };
+
+    loadOrder();
+    loadLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
+
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (ignoreBackdropClickRef.current) return;
+    onClose(listNeedsRefreshRef.current);
+  };
+
+  const reloadOrder = async () => {
     try {
       const result = await VendorReceivingService.GetOrderForReceiving(orderId);
       if (result) {
@@ -87,21 +146,6 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     } catch (error: any) {
       console.error("[VendorReceivingDetail] Error loading order:", error);
       toast.error(`Error loading order: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadLocations = async () => {
-    try {
-      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-      const tenantID = storage?.tenantID || 0;
-      const result = await LocationService.GetLocations({ tenantid: tenantID });
-      if (result && Array.isArray(result)) {
-        setLocations(result);
-      }
-    } catch (error: any) {
-      console.error("Error loading locations:", error);
     }
   };
 
@@ -184,7 +228,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         toast.success(result.message || "Items received successfully");
         listNeedsRefreshRef.current = true;
         handleCancelReceiving(detail.id);
-        loadOrder(); // Reload to get updated quantities
+        reloadOrder();
       } else {
         toast.error(result.message || "Failed to receive items");
       }
@@ -246,7 +290,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         listNeedsRefreshRef.current = true;
         setReceivingForms(new Map());
         setShowReceivingForm(new Map());
-        loadOrder();
+        reloadOrder();
       } else {
         toast.error(`${failed.length} of ${formsToSubmit.length} receiving transactions failed`);
       }
@@ -280,41 +324,46 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     return <span className="badge badge-secondary">Pending</span>;
   };
 
-  if (loading) {
-    return createPortal(
-      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
-        <div className="form-card" onClick={(e) => e.stopPropagation()}>
-          <div className="page-loading">
-            <div className="loading-spinner"></div>
-            <p>Loading order details...</p>
-          </div>
-        </div>
-      </div>,
-      document.body
-    );
-  }
-
-  if (!order) {
-    return createPortal(
-      <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
-        <div className="form-card" onClick={(e) => e.stopPropagation()}>
-          <div style={{ padding: "2rem", textAlign: "center" }}>
-            <p>Order not found</p>
-            <button className="btn-submit" onClick={() => onClose(listNeedsRefreshRef.current)}>
-              Close
-            </button>
-          </div>
-        </div>
-      </div>,
-      document.body
-    );
-  }
-
   const hasPendingReceiving = Array.from(receivingForms.values()).some(f => f.receivedQty > 0);
 
   return createPortal(
-    <div className="slideout-overlay" onClick={() => onClose(listNeedsRefreshRef.current)}>
+    <div className="receiving-detail-overlay" onClick={handleBackdropClick}>
       <div className="receiving-detail-card" onClick={(e) => e.stopPropagation()}>
+        {loading ? (
+          <>
+            <div className="receiving-header">
+              <div>
+                <h2>Receive Items</h2>
+                <p style={{ margin: "0.5rem 0 0 0", color: "#6b7280" }}>Loading order details...</p>
+              </div>
+              <button className="btn-close" onClick={() => onClose(listNeedsRefreshRef.current)}>
+                ×
+              </button>
+            </div>
+            <div className="page-loading">
+              <div className="loading-spinner"></div>
+              <p>Loading order details...</p>
+            </div>
+          </>
+        ) : !order ? (
+          <>
+            <div className="receiving-header">
+              <div>
+                <h2>Receive Items</h2>
+              </div>
+              <button className="btn-close" onClick={() => onClose(listNeedsRefreshRef.current)}>
+                ×
+              </button>
+            </div>
+            <div style={{ padding: "2rem", textAlign: "center" }}>
+              <p>Order not found</p>
+              <button className="btn-submit" onClick={() => onClose(listNeedsRefreshRef.current)}>
+                Close
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         <div className="receiving-header">
           <div>
             <h2>Receive Items - PO #{order.orderNumber}</h2>
@@ -421,13 +470,17 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                   <input
                                     type="number"
                                     min="1"
+                                    step="1"
                                     max={detail.pendingQty}
                                     value={formData.receivedQty}
                                     onChange={(e) => {
-                                      const qty = parseInt(e.target.value) || 0;
+                                      const qty = parseInt(e.target.value, 10);
                                       setReceivingForms(prev => {
                                         const newMap = new Map(prev);
-                                        newMap.set(detail.id, { ...formData, receivedQty: qty });
+                                        newMap.set(detail.id, {
+                                          ...formData,
+                                          receivedQty: Number.isNaN(qty) ? 0 : qty,
+                                        });
                                         return newMap;
                                       });
                                     }}
@@ -539,6 +592,8 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
             </table>
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>,
     document.body

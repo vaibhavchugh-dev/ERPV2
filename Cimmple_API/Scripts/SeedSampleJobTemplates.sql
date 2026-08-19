@@ -10,7 +10,7 @@
 -- Re-running is safe: templates are keyed on TemplateCode per tenant and are skipped if
 -- they already exist. Child rows are only attached to templates created by this run.
 
-USE ERPv2Db
+USE CimmpleERPDB
 GO
 
 -- Required for inserts into the filtered unique indexes on TemplateCode and CategoryValue.
@@ -19,7 +19,7 @@ SET ANSI_NULLS ON;
 GO
 
 -- Guard and seed run in one batch so RETURN skips the rest when the tables are missing.
-IF OBJECT_ID('dbo.JobTemplateMaster', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateMaster', 'U') IS NULL
 BEGIN
     RAISERROR('JobTemplateMaster does not exist. Run AddJobTemplateMaster.sql first.', 16, 1);
     RETURN;
@@ -248,7 +248,7 @@ DECLARE @Tenants TABLE (Tenantid int PRIMARY KEY);
 
 INSERT INTO @Tenants (Tenantid)
 SELECT DISTINCT Tenantid
-FROM dbo.ProcessMaster
+FROM CimmpleFlow.ProcessMaster
 WHERE @TenantFilter IS NULL OR Tenantid = @TenantFilter;
 
 -- =============================================
@@ -267,22 +267,22 @@ INSERT INTO @NeededTypes VALUES
     ('Inspection',      'INSPECTION',  7),
     ('Complexity',      'COMPLEXITY',  8);
 
-INSERT INTO dbo.CategoryType (Tenantid, Name, Code, DisplayOrder, AllowUserValues, IsSystem, IsActive)
+INSERT INTO CimmpleFlow.CategoryType (Tenantid, Name, Code, DisplayOrder, AllowUserValues, IsSystem, IsActive)
 SELECT t.Tenantid, d.Name, d.Code, d.DisplayOrder, 1, 1, 1
 FROM @Tenants t
 CROSS JOIN @NeededTypes d
 WHERE NOT EXISTS (
-    SELECT 1 FROM dbo.CategoryType ct
+    SELECT 1 FROM CimmpleFlow.CategoryType ct
     WHERE ct.Tenantid = t.Tenantid AND ct.Name = d.Name
 );
 
-INSERT INTO dbo.CategoryValue (Tenantid, CategoryTypeId, Name, DisplayOrder, IsSystem, IsActive)
+INSERT INTO CimmpleFlow.CategoryValue (Tenantid, CategoryTypeId, Name, DisplayOrder, IsSystem, IsActive)
 SELECT DISTINCT ct.Tenantid, ct.Id, g.ValueName, 0, 0, 1
 FROM @Tenants t
 INNER JOIN @Tags g ON 1 = 1
-INNER JOIN dbo.CategoryType ct ON ct.Tenantid = t.Tenantid AND ct.Name = g.TypeName
+INNER JOIN CimmpleFlow.CategoryType ct ON ct.Tenantid = t.Tenantid AND ct.Name = g.TypeName
 WHERE NOT EXISTS (
-    SELECT 1 FROM dbo.CategoryValue cv
+    SELECT 1 FROM CimmpleFlow.CategoryValue cv
     WHERE cv.CategoryTypeId = ct.Id AND cv.Name = g.ValueName
 );
 
@@ -295,7 +295,7 @@ WHERE NOT EXISTS (
 
 DECLARE @New TABLE (Id int PRIMARY KEY, Tenantid int, Code nvarchar(50));
 
-INSERT INTO dbo.JobTemplateMaster
+INSERT INTO CimmpleFlow.JobTemplateMaster
 (
     Tenantid, TemplateCode, TemplateName, [Description], [Status], Revision,
     EffectiveFrom, EffectiveTo, PrimaryProcessId, WorkstationId,
@@ -321,16 +321,16 @@ SELECT
     SYSDATETIME(), NULL
 FROM @Tenants t
 CROSS JOIN @Templates s
-OUTER APPLY (SELECT TOP 1 p.Id FROM dbo.ProcessMaster p
+OUTER APPLY (SELECT TOP 1 p.Id FROM CimmpleFlow.ProcessMaster p
              WHERE p.Tenantid = t.Tenantid AND p.ProcessName = s.ProcessName ORDER BY p.Id) pm
-OUTER APPLY (SELECT TOP 1 p.Id FROM dbo.ProcessMaster p
+OUTER APPLY (SELECT TOP 1 p.Id FROM CimmpleFlow.ProcessMaster p
              WHERE p.Tenantid = t.Tenantid ORDER BY p.Id) fp
-OUTER APPLY (SELECT TOP 1 w.Id FROM dbo.WorkstationMaster w
+OUTER APPLY (SELECT TOP 1 w.Id FROM CimmpleFlow.WorkstationMaster w
              WHERE w.TenantId = t.Tenantid AND w.WorkstationName = s.WorkstationName ORDER BY w.Id) ws
-OUTER APPLY (SELECT TOP 1 w.Id FROM dbo.WorkstationMaster w
+OUTER APPLY (SELECT TOP 1 w.Id FROM CimmpleFlow.WorkstationMaster w
              WHERE w.TenantId = t.Tenantid ORDER BY w.Id) fw
 WHERE NOT EXISTS (
-    SELECT 1 FROM dbo.JobTemplateMaster jt
+    SELECT 1 FROM CimmpleFlow.JobTemplateMaster jt
     WHERE jt.Tenantid = t.Tenantid AND jt.TemplateCode = s.Code
 );
 
@@ -338,7 +338,7 @@ WHERE NOT EXISTS (
 -- Operations and category tags for the templates created above
 -- =============================================
 
-INSERT INTO dbo.JobTemplateOperation
+INSERT INTO CimmpleFlow.JobTemplateOperation
 (
     JobTemplateId, Tenantid, SequenceNumber, ProcessId, WorkstationId,
     SetupTimeMinutes, CycleTimeMinutes, Instructions, IsMandatory, QualityCheckRequired
@@ -351,27 +351,27 @@ SELECT
     o.SetupMin, o.CycleMin, o.Instructions, o.IsMandatory, o.QualityCheck
 FROM @New n
 INNER JOIN @Operations o ON o.TemplateCode = n.Code
-INNER JOIN dbo.JobTemplateMaster jt ON jt.Id = n.Id
-OUTER APPLY (SELECT TOP 1 p.Id FROM dbo.ProcessMaster p
+INNER JOIN CimmpleFlow.JobTemplateMaster jt ON jt.Id = n.Id
+OUTER APPLY (SELECT TOP 1 p.Id FROM CimmpleFlow.ProcessMaster p
              WHERE p.Tenantid = n.Tenantid AND p.ProcessName = o.ProcessName ORDER BY p.Id) pm
-OUTER APPLY (SELECT TOP 1 w.Id FROM dbo.WorkstationMaster w
+OUTER APPLY (SELECT TOP 1 w.Id FROM CimmpleFlow.WorkstationMaster w
              WHERE w.TenantId = n.Tenantid AND w.WorkstationName = o.WorkstationName ORDER BY w.Id) ws;
 
-INSERT INTO dbo.JobTemplateCategory (JobTemplateId, CategoryValueId, Tenantid)
+INSERT INTO CimmpleFlow.JobTemplateCategory (JobTemplateId, CategoryValueId, Tenantid)
 SELECT DISTINCT n.Id, cv.Id, n.Tenantid
 FROM @New n
 INNER JOIN @Tags g ON g.TemplateCode = n.Code
-INNER JOIN dbo.CategoryType ct ON ct.Tenantid = n.Tenantid AND ct.Name = g.TypeName
-INNER JOIN dbo.CategoryValue cv ON cv.CategoryTypeId = ct.Id AND cv.Name = g.ValueName
+INNER JOIN CimmpleFlow.CategoryType ct ON ct.Tenantid = n.Tenantid AND ct.Name = g.TypeName
+INNER JOIN CimmpleFlow.CategoryValue cv ON cv.CategoryTypeId = ct.Id AND cv.Name = g.ValueName
 WHERE NOT EXISTS (
-    SELECT 1 FROM dbo.JobTemplateCategory x
+    SELECT 1 FROM CimmpleFlow.JobTemplateCategory x
     WHERE x.JobTemplateId = n.Id AND x.CategoryValueId = cv.Id
 );
 
 SELECT
     (SELECT COUNT(*) FROM @New)                                              AS TemplatesCreated,
-    (SELECT COUNT(*) FROM dbo.JobTemplateOperation o
+    (SELECT COUNT(*) FROM CimmpleFlow.JobTemplateOperation o
       WHERE o.JobTemplateId IN (SELECT Id FROM @New))                        AS OperationsCreated,
-    (SELECT COUNT(*) FROM dbo.JobTemplateCategory c
+    (SELECT COUNT(*) FROM CimmpleFlow.JobTemplateCategory c
       WHERE c.JobTemplateId IN (SELECT Id FROM @New))                        AS CategoryTagsCreated;
 GO

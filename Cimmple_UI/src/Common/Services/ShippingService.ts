@@ -39,6 +39,7 @@ export interface Shipment {
   boxes: number;
   packingType: string;
   shipmentDate: string;
+  notes?: string;
   items: Array<{
     orderDetailId: number;
     qtyShipped: number;

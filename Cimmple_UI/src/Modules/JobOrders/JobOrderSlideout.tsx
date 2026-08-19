@@ -53,6 +53,7 @@ import {
   RawMaterial,
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { faPrint } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "./JobOrderSlideout.scss";
@@ -101,6 +102,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   onSaved,
   headerPreview,
 }) => {
+  const { locationId: activeLocationId } = useActiveLocation();
   const [formData, setFormData] = useState<JobOrderMasterReq>({
     JobOrderID: 0,
     JobOrderNumber: headerPreview?.jobOrderNumber || 0,
@@ -161,6 +163,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [routingSteps, setRoutingSteps] = useState<JobOrderRoutingStep[]>([]);
   const routingStepsRef = useRef<JobOrderRoutingStep[]>([]);
   const formDataRef = useRef(formData);
+  const jobIdRef = useRef(jobOrderId);
   const [newRoutingStep, setNewRoutingStep] = useState<Partial<JobOrderRoutingStep>>({
     sequence: 1,
     processName: "",
@@ -238,9 +241,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     setInitialLoading(jobOrderId > 0);
     setMaterialKitForced(null);
     setMaterialLedgerPanel("none");
+    jobIdRef.current = jobOrderId;
     if (jobOrderId > 0) {
-      loadJobOrder();
-      loadMaterialUsage();
+      loadJobOrder(jobOrderId);
+      loadMaterialUsage(jobOrderId);
     }
 
     // Load processes from Process Master
@@ -259,16 +263,17 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     formDataRef.current = formData;
   }, [formData]);
 
-  const loadMaterialUsage = async () => {
-    if (jobOrderId <= 0) {
+  const loadMaterialUsage = async (id?: number) => {
+    const targetId = id || jobIdRef.current || jobOrderId;
+    if (targetId <= 0) {
       setMaterialUsage([]);
       setJobReservations([]);
       return;
     }
     try {
       const [rows, reserved] = await Promise.all([
-        InventoryService.GetJobMaterialUsage(jobOrderId),
-        InventoryService.GetReservations({ jobOrderId }),
+        InventoryService.GetJobMaterialUsage(targetId),
+        InventoryService.GetReservations({ jobOrderId: targetId }),
       ]);
       setMaterialUsage(rows || []);
       setJobReservations(reserved || []);
@@ -507,9 +512,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const refreshMaterialSnapshot = async () => {
-    if (jobOrderId > 0) {
-      await loadJobOrder();
-      await loadMaterialUsage();
+    const targetId = jobIdRef.current || formData.JobOrderID || jobOrderId;
+    if (targetId > 0) {
+      await loadJobOrder(targetId);
+      await loadMaterialUsage(targetId);
     }
     onSaved?.();
   };
@@ -525,10 +531,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleReserveMaterialLine = async (line: JobMaterialRequirement) => {
-    const joId = formData.JobOrderID || jobOrderId;
+    const joId = jobIdRef.current || formData.JobOrderID || jobOrderId;
     const qty = remainingToReserve(line);
     const { productId, rawMaterialId } = resolveMaterialLineIds(line);
-    const locationId = line.LocationId || 0;
+    const locationId = line.LocationId || activeLocationId || 0;
     if (joId <= 0) {
       toast.error("Save the job before reserving material.");
       return;
@@ -571,10 +577,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleIssueMaterialLine = async (line: JobMaterialRequirement) => {
-    const joId = formData.JobOrderID || jobOrderId;
+    const joId = jobIdRef.current || formData.JobOrderID || jobOrderId;
     const qty = remainingToIssue(line);
     const { productId, rawMaterialId } = resolveMaterialLineIds(line);
-    const locationId = line.LocationId || 0;
+    const locationId = line.LocationId || activeLocationId || 0;
     if (joId <= 0) {
       toast.error("Save the job before issuing material.");
       return;
@@ -795,10 +801,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     await applyTrackChange(false);
   };
 
-  const loadJobOrder = async () => {
+  const loadJobOrder = async (id?: number) => {
+    const targetId = id || jobIdRef.current || jobOrderId;
+    if (targetId <= 0) return;
     setLoading(true);
     try {
-      const jobOrder = await JobOrderService.GetJobOrderById(jobOrderId);
+      const jobOrder = await JobOrderService.GetJobOrderById(targetId);
       if (jobOrder) {
         // Apply the job order immediately so the header (JO #) can paint without
         // waiting on the linked customer order fetch.
@@ -957,12 +965,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           EnableJobTracking: enableJobTracking,
           RoutingSteps: stepsToSave,
         }));
+        jobIdRef.current = result.id;
         onSaved?.();
-        // Stay open — reload so server-derived status / tracking match UI.
-        if (jobOrderId > 0) {
-          await loadJobOrder();
-          await loadMaterialUsage();
-        }
+        // Stay open — reload so snapshots, status, and tracking match the server.
+        await loadJobOrder(result.id);
+        await loadMaterialUsage(result.id);
       } else {
         toast.error("Failed to save job order");
       }

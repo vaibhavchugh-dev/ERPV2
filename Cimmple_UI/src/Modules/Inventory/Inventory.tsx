@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
@@ -31,22 +32,48 @@ const InventoryRowActions: React.FC<{
   onAction: (key: RowActionKey) => void;
 }> = ({ onAction }) => {
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const updateMenuPosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuHeight = 260;
+    const openUp = rect.bottom + menuHeight + 8 > window.innerHeight;
+    setMenuPos({
+      top: openUp ? rect.top - 4 : rect.bottom + 4,
+      left: rect.right,
+      openUp,
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
+    updateMenuPosition();
     const onPointerDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) {
-        setOpen(false);
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) {
+        return;
       }
+      setOpen(false);
     };
+    const onScrollOrResize = () => updateMenuPosition();
     document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    window.addEventListener("resize", onScrollOrResize);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+    };
   }, [open]);
 
   return (
-    <div className="row-action-menu" ref={menuRef}>
+    <div className="row-action-menu">
       <button
+        ref={triggerRef}
         type="button"
         className="row-action-trigger"
         aria-haspopup="menu"
@@ -56,24 +83,39 @@ const InventoryRowActions: React.FC<{
       >
         ⋯
       </button>
-      {open && (
-        <div className="row-action-dropdown" role="menu">
-          {ROW_ACTIONS.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              role="menuitem"
-              className="row-action-item"
-              onClick={() => {
-                setOpen(false);
-                onAction(action.key);
-              }}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {open &&
+        menuPos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="row-action-dropdown"
+            role="menu"
+            style={{
+              position: "fixed",
+              top: menuPos.openUp ? undefined : menuPos.top,
+              bottom: menuPos.openUp ? window.innerHeight - menuPos.top : undefined,
+              left: menuPos.left,
+              transform: "translateX(-100%)",
+              zIndex: 10050,
+            }}
+          >
+            {ROW_ACTIONS.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                role="menuitem"
+                className="row-action-item"
+                onClick={() => {
+                  setOpen(false);
+                  onAction(action.key);
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
@@ -120,7 +162,9 @@ const Inventory: React.FC = () => {
           locationId: locationFilter || undefined,
           lowStockOnly: lowStockOnly || undefined,
         }),
-        InventoryService.GetLowStockAlerts(),
+        InventoryService.GetLowStockAlerts({
+          locationId: locationFilter || undefined,
+        }),
         LocationService.GetLocations({ tenantid: tenantId }),
         InventoryService.GetTransactionHistory({
           locationId: locationFilter || undefined,
@@ -600,6 +644,7 @@ const Inventory: React.FC = () => {
           balances={balances}
           fallbackProducts={fallbackProducts}
           locations={locations}
+          defaultLocationId={activeLocationId}
           onClose={handleCloseMovement}
           onSuccess={handleMovementSuccess}
         />

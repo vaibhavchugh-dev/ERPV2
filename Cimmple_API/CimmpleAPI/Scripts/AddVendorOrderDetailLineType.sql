@@ -3,10 +3,10 @@
 
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
-    WHERE object_id = OBJECT_ID(N'dbo.VendorOrderDetails') AND name = N'LineType'
+    WHERE object_id = OBJECT_ID(N'CimmpleFlow.VendorOrderDetails') AND name = N'LineType'
 )
 BEGIN
-    ALTER TABLE dbo.VendorOrderDetails ADD LineType NVARCHAR(50) NULL;
+    ALTER TABLE CimmpleFlow.VendorOrderDetails ADD LineType NVARCHAR(50) NULL;
     -- Backfill: optional — align with order MaterialType when known via app, or leave NULL (API defaults on read)
     PRINT 'Column VendorOrderDetails.LineType added.';
 END

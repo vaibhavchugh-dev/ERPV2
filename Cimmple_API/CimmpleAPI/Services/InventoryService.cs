@@ -658,6 +658,34 @@ namespace CimmpleAPI.Services
             return ok ? (true, "") : (false, err);
         }
 
+        private async Task<int?> FindShortestRemnantWithStockAsync(
+            int tenantId,
+            int millOrRemnantId,
+            int locationId,
+            decimal quantity)
+        {
+            var source = await _context.RawMaterialMaster
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == millOrRemnantId && r.Tenantid == tenantId);
+            if (source == null || source.IsRemnant)
+                return null;
+
+            var remnants = await (
+                from r in _context.RawMaterialMaster.AsNoTracking()
+                join b in _context.InventoryBalance on r.Id equals b.RawMaterialId
+                where r.Tenantid == tenantId
+                    && r.IsRemnant
+                    && r.ParentRawMaterialId == millOrRemnantId
+                    && b.Tenantid == tenantId
+                    && b.LocationId == locationId
+                    && (b.QuantityOnHand - b.QuantityReserved) >= quantity
+                orderby r.LengthMm ?? 999999m, r.Id
+                select r.Id
+            ).FirstOrDefaultAsync();
+
+            return remnants > 0 ? remnants : null;
+        }
+
         private async Task<(bool Success, string Error, int? ConsumedLotId)> ApplyIssueCoreAsync(
             int tenantId,
             int? productId,
@@ -686,9 +714,22 @@ namespace CimmpleAPI.Services
             var free = balance.QuantityOnHand - balance.QuantityReserved;
             var canIssue = free + jobReserved;
             if (!allowShortage && canIssue < quantity)
+            {
+                if (isJobIssue && rawMaterialId.HasValue)
+                {
+                    var remnantId = await FindShortestRemnantWithStockAsync(
+                        tenantId, rawMaterialId.Value, locationId, quantity);
+                    if (remnantId.HasValue && remnantId.Value != rawMaterialId.Value)
+                    {
+                        return await ApplyIssueCoreAsync(
+                            tenantId, productId, remnantId, locationId, quantity,
+                            referenceType, referenceId, createdBy, notes, allowShortage, lotId, lotNumber);
+                    }
+                }
                 return (false, $"Insufficient stock. Available: {free}"
                     + (jobReserved > 0 ? $" plus {jobReserved} reserved for this job" : "")
                     + $", Requested: {quantity}", null);
+            }
 
             if (isJobIssue && jobReserved > 0)
                 await ConsumeReservationsAsync(tenantId, productId, rawMaterialId, locationId, referenceId!.Value, quantity, balance);

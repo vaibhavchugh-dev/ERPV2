@@ -34,6 +34,92 @@ public static class GlWorkflowService
         db.GlAccountingPeriodLocks.AsNoTracking()
             .Any(x => x.TenantId == tenantId && x.PeriodKey == periodKey);
 
+    /// <summary>
+    /// Posts a reversing journal for the latest unreversed entry with this reference.
+    /// Returns true when there is nothing to reverse or the reversal is posted.
+    /// </summary>
+    public static bool TryReverseJournalByReference(
+        CimmpleDbContext db,
+        int tenantId,
+        string? referenceNumber,
+        int? actorUserId,
+        string action,
+        out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(referenceNumber))
+            return true;
+
+        var source = db.JournalEntries
+            .Where(j => j.TenantId == tenantId
+                && j.ReferenceNumber == referenceNumber
+                && !j.ReversedByJournalEntryId.HasValue)
+            .OrderByDescending(j => j.Id)
+            .FirstOrDefault();
+        if (source == null)
+            return true;
+
+        var reversalDate = DateTime.Today;
+        var revPeriodKey = PeriodKeyFromDate(reversalDate);
+        if (IsPeriodLocked(db, tenantId, revPeriodKey))
+        {
+            error = $"Cannot void: accounting period {revPeriodKey} is closed.";
+            return false;
+        }
+
+        var fromLines = db.JournalEntryFrom.Where(f => f.JournalEntryId == source.Id).ToList();
+        var toLines = db.JournalEntryTo.Where(t => t.JournalEntryId == source.Id).ToList();
+        if (fromLines.Count + toLines.Count == 0)
+            return true;
+
+        var baseRef = source.ReferenceNumber!.Trim();
+        var refNo = $"REV-{baseRef}";
+        if (refNo.Length > 200)
+            refNo = $"REV-{source.Id}";
+
+        var header = new JournalEntry
+        {
+            EntryDate = reversalDate,
+            ReferenceNumber = refNo,
+            Description = $"Reversal of {baseRef}",
+            AccountingPeriod = revPeriodKey,
+            TenantId = tenantId,
+            locationId = source.locationId > 0 ? source.locationId : 1,
+            createdby = actorUserId,
+            createdDate = DateTime.UtcNow,
+            ReversesJournalEntryId = source.Id
+        };
+        db.JournalEntries.Add(header);
+        db.SaveChanges();
+
+        foreach (var f in fromLines)
+        {
+            db.JournalEntryTo.Add(new JournalDetailsTo
+            {
+                JournalEntryId = header.Id,
+                AccountId = f.AccountId,
+                Amount = f.Amount,
+                Description = f.Description
+            });
+        }
+
+        foreach (var t in toLines)
+        {
+            db.JournalEntryFrom.Add(new JournalDetailsFrom
+            {
+                JournalEntryId = header.Id,
+                AccountId = t.AccountId,
+                Amount = t.Amount,
+                Description = t.Description
+            });
+        }
+
+        source.ReversedByJournalEntryId = header.Id;
+        AddAudit(db, tenantId, action, actorUserId, header.Id, source.Id, revPeriodKey, baseRef);
+        db.SaveChanges();
+        return true;
+    }
+
     public static void AddAudit(
         CimmpleDbContext db,
         int tenantId,

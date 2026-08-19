@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faFileInvoiceDollar, faPlus, faSearch, faFilter, faEye, faPrint, faCreditCard, faBan } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { VendorInvoiceService, VendorInvoiceSummary } from "../../Common/Services/VendorInvoiceService";
+import { PdfService } from "../../Common/Services/PdfService";
 import VendorInvoiceDetailModal from "./VendorInvoiceDetailModal";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
@@ -431,7 +432,7 @@ const VendorInvoices: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
     status: 'All',
-    dateRange: 'Last 30 Days',
+    dateRange: 'All',
     searchTerm: ''
   });
   const [showFilters, setShowFilters] = useState(false);
@@ -460,26 +461,22 @@ const VendorInvoices: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters]);
+  }, []);
 
   const loadInvoices = async () => {
     setLoading(true);
     try {
-      console.log("[VendorInvoices] Loading invoices with filters:", filters);
       const result = await VendorInvoiceService.GetAllVendorInvoices(
-        filters.status,
+        "All",
         "",
         undefined,
-        filters.dateRange
+        "All"
       );
 
-      console.log("[VendorInvoices] API result:", result);
       if (result) {
         setInvoices(result);
-        console.log(`[VendorInvoices] Loaded ${result.length} invoices`);
       } else {
         setInvoices([]);
-        console.log("[VendorInvoices] No invoices returned from API");
       }
     } catch (error: any) {
       console.error("[VendorInvoices] Error loading invoices:", error);
@@ -489,6 +486,40 @@ const VendorInvoices: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const invoiceMatchesDateRange = (invoiceDate: string, range: string): boolean => {
+    if (!range || range === "All") return true;
+    const d = new Date(invoiceDate);
+    if (Number.isNaN(d.getTime())) return false;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (range === "Last 7 Days") {
+      return d >= new Date(startOfToday.getTime() - 7 * 86400000);
+    }
+    if (range === "Last 30 Days") {
+      return d >= new Date(startOfToday.getTime() - 30 * 86400000);
+    }
+    if (range === "This Month") {
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }
+    if (range === "Last Month") {
+      const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return d.getFullYear() === last.getFullYear() && d.getMonth() === last.getMonth();
+    }
+    return true;
+  };
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter((invoice) => {
+      if (filters.status !== "All" && invoice.status !== filters.status) {
+        return false;
+      }
+      if (!invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange)) {
+        return false;
+      }
+      return true;
+    });
+  }, [invoices, filters.status, filters.dateRange]);
 
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat('en-US', {
@@ -564,14 +595,35 @@ const VendorInvoices: React.FC = () => {
     setShowPaymentModal(true);
   };
 
-  const handlePrintInvoice = (invoice: VendorInvoiceSummary) => {
-    // TODO: Open print modal
-    toast.info(`Printing invoice ${invoice.invoiceNo}`);
+  const handlePrintInvoice = async (invoice: VendorInvoiceSummary) => {
+    try {
+      const blob = await PdfService.GenerateVendorInvoice(invoice.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `VendorInvoice_${invoice.invoiceNo}_${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success("Vendor invoice PDF generated successfully");
+    } catch (error: any) {
+      console.error("Error generating vendor invoice PDF:", error);
+      toast.error(error.response?.data?.error || "Failed to generate vendor invoice PDF");
+    }
   };
 
-  const handleVoidInvoice = (invoice: VendorInvoiceSummary) => {
-    // TODO: Void invoice (only if unpaid)
-    toast.info(`Voiding invoice ${invoice.invoiceNo}`);
+  const handleVoidInvoice = async (invoice: VendorInvoiceSummary) => {
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await VendorInvoiceService.VoidVendorInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoices();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to void invoice");
+    }
   };
 
   const handleNewInvoice = () => {
@@ -803,7 +855,7 @@ const VendorInvoices: React.FC = () => {
       <MasterListPage
         title="Vendor Invoices"
         subtitle="Manage all vendor invoices across orders"
-        data={invoices}
+        data={filteredInvoices}
         columns={columns}
         loading={loading}
         enablePagination

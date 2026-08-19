@@ -193,6 +193,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       return <span className="badge badge-warning">Draft</span>;
     } else if (statusLower === "sent" || statusLower === "active") {
       return <span className="badge badge-success">Sent</span>;
+    } else if (statusLower === "responded") {
+      return <span className="badge badge-info">Responded</span>;
     } else if (statusLower === "accepted") {
       return <span className="badge badge-info">Accepted</span>;
     } else if (statusLower === "rejected" || statusLower === "cancelled") {

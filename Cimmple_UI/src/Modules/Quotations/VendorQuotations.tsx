@@ -104,6 +104,8 @@ const VendorQuotations: React.FC = () => {
       return <span className="badge badge-warning">Draft</span>;
     } else if (statusLower === "sent" || statusLower === "active") {
       return <span className="badge badge-success">Sent</span>;
+    } else if (statusLower === "responded") {
+      return <span className="badge badge-info">Responded</span>;
     } else if (statusLower === "accepted") {
       return <span className="badge badge-info">Accepted</span>;
     } else if (statusLower === "rejected" || statusLower === "cancelled") {
@@ -166,7 +168,7 @@ const VendorQuotations: React.FC = () => {
     },
     {
       key: "quotationType",
-      label: "Type",
+      label: "Category",
       sortable: true,
       align: "center" as const,
       render: (value: any) => getQuotationTypeBadge(value),
@@ -316,6 +318,7 @@ const VendorQuotations: React.FC = () => {
               { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
+              { value: "Responded", label: "Responded" },
               { value: "Accepted", label: "Accepted" },
               { value: "Rejected", label: "Rejected" },
               { value: "Converted", label: "Converted" },

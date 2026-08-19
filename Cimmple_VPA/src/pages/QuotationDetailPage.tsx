@@ -55,10 +55,33 @@ function sanitizeDecimal(raw: string): string {
   });
 }
 
+function calculateVendorLineTotal(detail: QuotationDetailReq): number {
+  const qty = Number(detail.QtyOrdered) || 0;
+  const unitPrice = Number(detail.UnitPrice) || 0;
+  const discount = Number(detail.Discount) || 0;
+  const subtotal = qty * unitPrice;
+  if (subtotal <= 0) {
+    return 0;
+  }
+  const discountAmount =
+    detail.DiscountType === "Amount"
+      ? Math.min(Math.max(discount, 0), subtotal)
+      : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+  return Math.max(0, subtotal - discountAmount);
+}
+
+function isLockedVendorStatus(status: string): boolean {
+  const s = (status || "").toLowerCase().trim();
+  return s === "converted" || s === "rejected" || s === "cancelled" || s === "accepted";
+}
+
 function statusBadgeStyle(status: string): { bg: string; text: string; label: string } {
   const s = (status || "").toLowerCase().trim();
   if (s === "accepted") {
     return { bg: "bg-emerald-100 dark:bg-emerald-950/50", text: "text-emerald-700 dark:text-emerald-300", label: "ACCEPTED" };
+  }
+  if (s === "responded") {
+    return { bg: "bg-emerald-100 dark:bg-emerald-950/50", text: "text-emerald-700 dark:text-emerald-300", label: "RESPONDED" };
   }
   if (s === "rejected" || s === "cancelled") {
     return { bg: "bg-red-100 dark:bg-red-950/50", text: "text-red-700 dark:text-red-300", label: s.toUpperCase() };
@@ -158,8 +181,8 @@ export function QuotationDetailPage() {
       }
       setFormData({
         ...result,
-        Tenantid: 0,
-        UserId: 0,
+        Tenantid: result.Tenantid || AuthService.getTenantId() || 0,
+        UserId: result.UserId || 0,
         UserToken: 0,
         AdditionalNotes: result.AdditionalNotes || "",
       });
@@ -196,12 +219,7 @@ export function QuotationDetailPage() {
     setFormData((prev) => {
       const newDetails = [...prev.Details];
       newDetails[index] = { ...newDetails[index], [field]: value };
-      const total = newDetails.reduce((sum, detail) => {
-        const qty = detail.QtyOrdered || 0;
-        const price = detail.UnitPrice || 0;
-        const discount = detail.Discount || 0;
-        return sum + (qty * price - discount);
-      }, 0);
+      const total = newDetails.reduce((sum, detail) => sum + calculateVendorLineTotal(detail), 0);
       return { ...prev, Details: newDetails, TotalAmount: total };
     });
   };
@@ -236,6 +254,9 @@ export function QuotationDetailPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (isLockedVendorStatus(formData.Status)) {
+      return;
+    }
     setSaving(true);
     setError("");
     setSuccess("");
@@ -246,12 +267,12 @@ export function QuotationDetailPage() {
       }));
       await QuotationService.saveVendorQuotation({
         ...formData,
-        Status: "Accepted",
+        Status: "Responded",
         ParentQuotationID: formData.ParentQuotationID,
         Attachments: attachments,
         Details: detailsWithAttachments,
       });
-      setFormData((prev) => ({ ...prev, Status: "Accepted" }));
+      setFormData((prev) => ({ ...prev, Status: "Responded" }));
       setSuccess("Response submitted successfully");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err: unknown) {
@@ -301,6 +322,7 @@ export function QuotationDetailPage() {
 
   const badge = statusBadgeStyle(formData.Status);
   const isService = formData.QuotationType === "Service";
+  const isReadOnly = isLockedVendorStatus(formData.Status);
 
   return (
     <div>
@@ -392,7 +414,7 @@ export function QuotationDetailPage() {
           ) : (
             <ul className="space-y-3">
               {formData.Details.map((detail, index) => {
-                const lineTotal = (detail.QtyOrdered || 0) * (detail.UnitPrice || 0) - (detail.Discount || 0);
+                const lineTotal = calculateVendorLineTotal(detail);
                 return (
                   <li
                     key={`${detail.ID}-${index}`}
@@ -426,7 +448,8 @@ export function QuotationDetailPage() {
                         <input
                           type="text"
                           inputMode="decimal"
-                          required
+                          required={!isReadOnly}
+                          disabled={isReadOnly}
                           className="field-input"
                           value={
                             numericDisplayValues.get(`price-${index}`) ??
@@ -466,6 +489,7 @@ export function QuotationDetailPage() {
                           type="text"
                           inputMode="decimal"
                           className="field-input"
+                          disabled={isReadOnly}
                           value={
                             numericDisplayValues.get(`discount-${index}`) ??
                             (detail.Discount === 0 ? "" : detail.Discount.toString())
@@ -506,6 +530,7 @@ export function QuotationDetailPage() {
                         value={detail.Notes || ""}
                         onChange={(e) => handleDetailChange(index, "Notes", e.target.value)}
                         placeholder="Add notes..."
+                        disabled={isReadOnly}
                       />
                     </label>
 
@@ -597,6 +622,7 @@ export function QuotationDetailPage() {
               value={formData.AdditionalNotes || ""}
               onChange={(e) => setFormData((prev) => ({ ...prev, AdditionalNotes: e.target.value }))}
               placeholder="Add any additional notes, terms, or conditions..."
+              disabled={isReadOnly}
             />
           </label>
         </section>
@@ -608,9 +634,9 @@ export function QuotationDetailPage() {
           <button
             type="submit"
             className="btn btn-primary flex-1"
-            disabled={saving || formData.Details.length === 0}
+            disabled={saving || isReadOnly || formData.Details.length === 0}
           >
-            {saving ? "Submitting..." : "Submit response"}
+            {saving ? "Submitting..." : isReadOnly ? "Response locked" : "Submit response"}
           </button>
         </div>
       </form>

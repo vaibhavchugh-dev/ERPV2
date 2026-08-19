@@ -512,9 +512,17 @@ const CustomerInvoices: React.FC = () => {
     }
   };
 
-  const handleVoidInvoice = (invoice: CustomerInvoiceSummary) => {
-    // TODO: Void invoice (only if unpaid)
-    toast.info(`Voiding invoice ${invoice.invoiceNo}`);
+  const handleVoidInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await CustomerInvoicesService.VoidInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoices();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to void invoice");
+    }
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {

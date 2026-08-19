@@ -56,6 +56,7 @@ const VendorDashboard: React.FC = () => {
 
   const handleLogout = () => {
     localStorage.removeItem("vendorToken");
+    localStorage.removeItem("vendorRefreshToken");
     localStorage.removeItem("vendorStorage");
     window.location.href = "/vendor/login";
   };
@@ -94,6 +95,8 @@ const VendorDashboard: React.FC = () => {
 
     if (statusLower === "sent" || statusLower === "active") {
       return <span className="badge badge-sent">Sent</span>;
+    } else if (statusLower === "responded") {
+      return <span className="badge badge-accepted">Responded</span>;
     } else if (statusLower === "accepted") {
       return <span className="badge badge-accepted">Accepted</span>;
     } else if (statusLower === "rejected" || statusLower === "cancelled") {

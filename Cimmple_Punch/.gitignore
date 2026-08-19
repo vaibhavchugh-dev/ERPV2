@@ -1,0 +1,15 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+node_modules/
+dist/
+dist-ssr/
+*.local
+.env
+.env.local
+.DS_Store
+Thumbs.db
+.idea/
+.vite/
+*.tsbuildinfo

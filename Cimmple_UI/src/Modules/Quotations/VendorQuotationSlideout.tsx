@@ -1096,6 +1096,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     const current = (formData.Status || "").trim();
     if (
       current === "Sent" ||
+      current === "Responded" ||
       current === "Accepted" ||
       current === "Converted" ||
       current === "Rejected"
@@ -1263,7 +1264,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               </>
             )}
             <div className="status-field-inline">
-              <div className={`input-group ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active-group" : "status-inactive-group"}`} style={{ maxWidth: "150px" }}>
+              <div className={`input-group ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Responded" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active-group" : "status-inactive-group"}`} style={{ maxWidth: "150px" }}>
                 <div className="input-group-prepend">
                   <span className="input-group-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1272,12 +1273,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   </span>
                 </div>
                 <select
-                  className={`form-input ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active" : "status-inactive"}`}
+                  className={`form-input ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Responded" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active" : "status-inactive"}`}
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
                 >
                   <option value="Draft">Draft</option>
                   <option value="Sent">Sent</option>
+                  <option value="Responded">Responded</option>
                   <option value="Accepted">Accepted</option>
                   <option value="Rejected">Rejected</option>
                   <option value="Converted">Converted</option>
