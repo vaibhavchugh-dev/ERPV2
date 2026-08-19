@@ -415,23 +415,21 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
               </div>
 
               {/* Notes */}
-              {shipment.notes && (
-                <div style={{ marginTop: '2rem' }}>
-                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
-                    Notes
-                  </h4>
-                  <div style={{
-                    padding: '1rem',
-                    backgroundColor: '#f9fafb',
-                    borderRadius: '0.5rem',
-                    border: '1px solid #e5e7eb'
-                  }}>
-                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', whiteSpace: 'pre-wrap' }}>
-                      {shipment.notes}
-                    </p>
-                  </div>
+              <div style={{ marginTop: '2rem' }}>
+                <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                  Notes
+                </h4>
+                <div style={{
+                  padding: '1rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', whiteSpace: 'pre-wrap' }}>
+                    {shipment.notes?.trim() ? shipment.notes : 'No notes added.'}
+                  </p>
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>

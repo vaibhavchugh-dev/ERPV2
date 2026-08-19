@@ -50,6 +50,7 @@ export interface MovementDocumentOption {
   id: number;
   label: string;
   detail?: string;
+  remainingQty?: number;
 }
 
 export interface JobMaterialUsage {
@@ -356,10 +357,12 @@ export class InventoryService {
     return Array.isArray(result) ? (result as InventoryLotOption[]) : [];
   };
 
-  public static GetLowStockAlerts = async (): Promise<LowStockAlert[] | null> => {
+  public static GetLowStockAlerts = async (params?: {
+    locationId?: number;
+  }): Promise<LowStockAlert[] | null> => {
     const tenantId = getTenantId();
     const response = await Instense.get("/Inventory/GetLowStockAlerts", {
-      params: { tenantId },
+      params: { tenantId, ...params },
     });
     return response.data.result as LowStockAlert[];
   };
@@ -378,7 +381,10 @@ export class InventoryService {
   }): Promise<RawMaterial[] | null> => {
     const tenantId = getTenantId();
     const response = await Instense.get("/Inventory/GetRawMaterials", {
-      params: { tenantId, ...params },
+      params: {
+        tenantId,
+        ...(params?.includeInactive ? { includeInactive: true } : {}),
+      },
     });
     return response.data.result as RawMaterial[];
   };

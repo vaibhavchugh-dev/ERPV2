@@ -311,14 +311,11 @@ const JobOrders: React.FC = () => {
       return true;
     });
 
-    // Default order: Urgent → High → Normal, then earlier due date
+    // Latest job orders first (id is monotonic; fall back to order date)
     return [...filtered].sort((a, b) => {
-      const priorityDiff =
-        normalizeJobPriority(b.jobPriority) - normalizeJobPriority(a.jobPriority);
-      if (priorityDiff !== 0) return priorityDiff;
-      const aDue = a.dueDate || "";
-      const bDue = b.dueDate || "";
-      return aDue.localeCompare(bDue);
+      const idDiff = (b.jobOrderID || 0) - (a.jobOrderID || 0);
+      if (idDiff !== 0) return idDiff;
+      return (b.orderDate || "").localeCompare(a.orderDate || "");
     });
   }, [jobOrders, statusFilter, priorityFilter, materialFilter]);
 

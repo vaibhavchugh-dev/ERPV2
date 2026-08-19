@@ -17,6 +17,7 @@ namespace CimmpleAPI.Data.Models
         public DateTime ShipmentDate { get; set; }
         public int TenantId { get; set; }
         public int OrderId { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class ShippingDetails

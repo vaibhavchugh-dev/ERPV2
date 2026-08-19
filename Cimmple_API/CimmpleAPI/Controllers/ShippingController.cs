@@ -148,7 +148,8 @@ namespace CimmpleAPI.Controllers
                         PackingType = request.PackingType ?? "Standard",
                         Terms = request.Terms ?? "",
                         ShipmentDate = request.ShipDate ?? DateTime.Now,
-                        TenantId = tenantId
+                        TenantId = tenantId,
+                        Notes = request.Notes ?? ""
                     };
 
                     _context.Shipping.Add(shipment);
@@ -242,7 +243,7 @@ namespace CimmpleAPI.Controllers
                         boxes = so.Shipment.TotalBoxNo,
                         packingType = so.Shipment.PackingType,
                         terms = so.Shipment.Terms,
-                        notes = "", // Notes could be added to Shipping model if needed
+                        notes = so.Shipment.Notes ?? "",
                         items = _context.ShippingDetails
                             .Where(sd => sd.ShipmentId == so.Shipment.Id)
                             .Join(_context.CustomerOrderDetails,
@@ -300,6 +301,7 @@ namespace CimmpleAPI.Controllers
                         boxes = s.TotalBoxNo,
                         packingType = s.PackingType,
                         shipmentDate = s.ShipmentDate,
+                        notes = s.Notes ?? "",
                         items = _context.ShippingDetails
                             .Where(sd => sd.ShipmentId == s.Id)
                             .Select(sd => new
@@ -410,6 +412,7 @@ namespace CimmpleAPI.Controllers
                         itemCount = x.itemCount,
                         boxes = x.shipment.TotalBoxNo,
                         packingType = x.shipment.PackingType,
+                        notes = x.shipment.Notes ?? "",
                         status = "Shipped" // All shipments are considered shipped
                     })
                     .ToList();

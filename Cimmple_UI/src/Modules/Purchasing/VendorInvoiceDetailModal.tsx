@@ -559,8 +559,19 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
     }
   };
 
-  const handleVoidInvoice = () => {
-    toast.info('Void functionality coming soon...');
+  const handleVoidInvoice = async () => {
+    if (!invoice?.id) return;
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await VendorInvoiceService.VoidVendorInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoiceDetails();
+      onPaymentComplete?.();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to void invoice');
+    }
   };
 
   const handleDeleteInvoice = async () => {
@@ -825,6 +836,20 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Subtotal:</span>
                       <span>{formatCurrency(invoice.amount)}</span>
                     </div>
+                    {(invoice.taxAmount ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Tax:</span>
+                        <span>{formatCurrency(invoice.taxAmount ?? 0)}</span>
+                      </div>
+                    )}
+                    {(invoice.freightCharge ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Freight:</span>
+                        <span>{formatCurrency(invoice.freightCharge ?? 0)}</span>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                       <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
                       <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Total Amount:</span>
@@ -918,6 +943,46 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       ))}
                     </tbody>
                     <tfoot>
+                      <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
+                        <td colSpan={2} style={{
+                          padding: '0.75rem 1rem',
+                          textAlign: 'right',
+                          fontWeight: '600',
+                          color: '#374151'
+                        }}>Subtotal:</td>
+                        <td style={{
+                          padding: '0.75rem 1rem',
+                          textAlign: 'right'
+                        }}>{formatCurrency(invoice.amount)}</td>
+                      </tr>
+                      {(invoice.taxAmount ?? 0) > 0 && (
+                        <tr style={{ backgroundColor: '#f9fafb' }}>
+                          <td colSpan={2} style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right',
+                            fontWeight: '500',
+                            color: '#374151'
+                          }}>Tax:</td>
+                          <td style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right'
+                          }}>{formatCurrency(invoice.taxAmount ?? 0)}</td>
+                        </tr>
+                      )}
+                      {(invoice.freightCharge ?? 0) > 0 && (
+                        <tr style={{ backgroundColor: '#f9fafb' }}>
+                          <td colSpan={2} style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right',
+                            fontWeight: '500',
+                            color: '#374151'
+                          }}>Freight:</td>
+                          <td style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right'
+                          }}>{formatCurrency(invoice.freightCharge ?? 0)}</td>
+                        </tr>
+                      )}
                       <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
                         <td colSpan={2} style={{
                           padding: '0.75rem 1rem',

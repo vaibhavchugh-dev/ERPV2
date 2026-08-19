@@ -50,6 +50,9 @@ function statusBadgeStyle(status: string): { bg: string; text: string; label: st
   if (s === "accepted") {
     return { bg: "bg-emerald-100 dark:bg-emerald-950/50", text: "text-emerald-700 dark:text-emerald-300", label: "ACCEPTED" };
   }
+  if (s === "responded") {
+    return { bg: "bg-emerald-100 dark:bg-emerald-950/50", text: "text-emerald-700 dark:text-emerald-300", label: "RESPONDED" };
+  }
   if (s === "rejected" || s === "cancelled") {
     return { bg: "bg-red-100 dark:bg-red-950/50", text: "text-red-700 dark:text-red-300", label: s.toUpperCase() };
   }

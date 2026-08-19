@@ -149,6 +149,9 @@ namespace CimmpleAPI.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            // ERP tables live in CimmpleFlow (CimmpleERPDB also has CimmplePay / CimmplePunch).
+            modelBuilder.HasDefaultSchema(DbSchema.Flow);
             
             // Configure PriceBreakdownMaster table name
             modelBuilder.Entity<PriceBreakdownMaster>()

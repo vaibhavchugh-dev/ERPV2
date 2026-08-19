@@ -796,7 +796,10 @@ export class QuotationService {
     // If tenantId is not provided, try to get it from storage (regular or vendor)
     let tenantID = tenantId;
     if (tenantID === undefined) {
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const isVendor = (window.location.pathname || "").startsWith("/vendor");
+      const storage = JSON.parse(
+        localStorage.getItem(isVendor ? "vendorStorage" : "storage") || "{}"
+      );
       tenantID = storage?.tenantID || 0;
     }
 
@@ -938,6 +941,7 @@ export class QuotationService {
         LocationId: result.LocationId || result.locationId,
         convertedOrderId: result.convertedOrderId,
         ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
+        AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
         Details: details,
         Attachments: result.Attachments || result.attachments || [],
         Comments: result.Comments || result.comments || [],
@@ -948,17 +952,20 @@ export class QuotationService {
   public static SaveVendorQuotation = async (
     request: VendorQuotationMasterReq
   ): Promise<{ id: number; message: string }> => {
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const isVendor = (window.location.pathname || "").startsWith("/vendor");
+    const storage = JSON.parse(
+      localStorage.getItem(isVendor ? "vendorStorage" : "storage") || "{}"
+    );
     let tenantID = storage?.tenantID || 0;
     
     // For development: if tenantID is not set, use a default value
-    if (tenantID === 0 && process.env.NODE_ENV === 'development') {
+    if (tenantID === 0 && process.env.NODE_ENV === 'development' && !isVendor) {
       tenantID = 1; // Default tenant ID for development
     }
 
-    request.Tenantid = tenantID;
-    request.UserId = storage?.userId || 0;
-    request.UserToken = storage?.userToken || 0;
+    request.Tenantid = tenantID || request.Tenantid || 0;
+    request.UserId = storage?.userId || request.UserId || 0;
+    request.UserToken = storage?.userToken || request.UserToken || 0;
 
     const url = `/Quotation/SaveVendorQuotation`;
     return Instense.post(url, request).then((response) => {

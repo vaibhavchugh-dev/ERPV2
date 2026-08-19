@@ -1,6 +1,6 @@
 -- Job Template Master + generic category system
 -- (run if the EF migration 20260731085225_AddJobTemplateMaster has not been applied yet)
-USE ERPv2Db
+USE CimmpleERPDB
 GO
 
 -- =============================================
@@ -8,9 +8,9 @@ GO
 -- Generic classification tables, not specific to job templates
 -- =============================================
 
-IF OBJECT_ID('dbo.CategoryType', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.CategoryType', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.CategoryType
+    CREATE TABLE CimmpleFlow.CategoryType
     (
         Id              int IDENTITY(1,1) NOT NULL CONSTRAINT PK_CategoryType PRIMARY KEY,
         Tenantid        int NOT NULL,
@@ -24,13 +24,13 @@ BEGIN
     );
 
     CREATE UNIQUE INDEX IX_CategoryType_Tenantid_Name
-        ON dbo.CategoryType (Tenantid, Name) WHERE Name IS NOT NULL;
+        ON CimmpleFlow.CategoryType (Tenantid, Name) WHERE Name IS NOT NULL;
 END
 GO
 
-IF OBJECT_ID('dbo.CategoryValue', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.CategoryValue', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.CategoryValue
+    CREATE TABLE CimmpleFlow.CategoryValue
     (
         Id             int IDENTITY(1,1) NOT NULL CONSTRAINT PK_CategoryValue PRIMARY KEY,
         Tenantid       int NOT NULL,
@@ -42,13 +42,13 @@ BEGIN
         IsSystem       bit NOT NULL CONSTRAINT DF_CategoryValue_IsSystem DEFAULT 0,
         IsActive       bit NOT NULL CONSTRAINT DF_CategoryValue_IsActive DEFAULT 1,
         CONSTRAINT FK_CategoryValue_CategoryType_CategoryTypeId
-            FOREIGN KEY (CategoryTypeId) REFERENCES dbo.CategoryType (Id) ON DELETE CASCADE
+            FOREIGN KEY (CategoryTypeId) REFERENCES CimmpleFlow.CategoryType (Id) ON DELETE CASCADE
     );
 
     CREATE UNIQUE INDEX IX_CategoryValue_CategoryTypeId_Name
-        ON dbo.CategoryValue (CategoryTypeId, Name) WHERE Name IS NOT NULL;
+        ON CimmpleFlow.CategoryValue (CategoryTypeId, Name) WHERE Name IS NOT NULL;
     CREATE INDEX IX_CategoryValue_Tenantid_CategoryTypeId
-        ON dbo.CategoryValue (Tenantid, CategoryTypeId);
+        ON CimmpleFlow.CategoryValue (Tenantid, CategoryTypeId);
 END
 GO
 
@@ -56,9 +56,9 @@ GO
 -- JOB TEMPLATE MASTER
 -- =============================================
 
-IF OBJECT_ID('dbo.JobTemplateMaster', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateMaster', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.JobTemplateMaster
+    CREATE TABLE CimmpleFlow.JobTemplateMaster
     (
         Id                           int IDENTITY(1,1) NOT NULL CONSTRAINT PK_JobTemplateMaster PRIMARY KEY,
         Tenantid                     int NOT NULL,
@@ -104,17 +104,17 @@ BEGIN
     );
 
     CREATE UNIQUE INDEX IX_JobTemplateMaster_Tenantid_TemplateCode
-        ON dbo.JobTemplateMaster (Tenantid, TemplateCode) WHERE TemplateCode IS NOT NULL;
+        ON CimmpleFlow.JobTemplateMaster (Tenantid, TemplateCode) WHERE TemplateCode IS NOT NULL;
     CREATE INDEX IX_JobTemplateMaster_Tenantid_TemplateName
-        ON dbo.JobTemplateMaster (Tenantid, TemplateName);
+        ON CimmpleFlow.JobTemplateMaster (Tenantid, TemplateName);
     CREATE INDEX IX_JobTemplateMaster_Tenantid_Status
-        ON dbo.JobTemplateMaster (Tenantid, [Status]);
+        ON CimmpleFlow.JobTemplateMaster (Tenantid, [Status]);
 END
 GO
 
-IF OBJECT_ID('dbo.JobTemplateOperation', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateOperation', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.JobTemplateOperation
+    CREATE TABLE CimmpleFlow.JobTemplateOperation
     (
         Id                   int IDENTITY(1,1) NOT NULL CONSTRAINT PK_JobTemplateOperation PRIMARY KEY,
         JobTemplateId        int NOT NULL,
@@ -128,38 +128,38 @@ BEGIN
         IsMandatory          bit NOT NULL CONSTRAINT DF_JobTemplateOperation_IsMandatory DEFAULT 1,
         QualityCheckRequired bit NOT NULL CONSTRAINT DF_JobTemplateOperation_QualityCheckRequired DEFAULT 0,
         CONSTRAINT FK_JobTemplateOperation_JobTemplateMaster_JobTemplateId
-            FOREIGN KEY (JobTemplateId) REFERENCES dbo.JobTemplateMaster (Id) ON DELETE CASCADE
+            FOREIGN KEY (JobTemplateId) REFERENCES CimmpleFlow.JobTemplateMaster (Id) ON DELETE CASCADE
     );
 
     CREATE UNIQUE INDEX IX_JobTemplateOperation_JobTemplateId_SequenceNumber
-        ON dbo.JobTemplateOperation (JobTemplateId, SequenceNumber);
+        ON CimmpleFlow.JobTemplateOperation (JobTemplateId, SequenceNumber);
 END
 GO
 
-IF OBJECT_ID('dbo.JobTemplateCategory', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateCategory', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.JobTemplateCategory
+    CREATE TABLE CimmpleFlow.JobTemplateCategory
     (
         Id              int IDENTITY(1,1) NOT NULL CONSTRAINT PK_JobTemplateCategory PRIMARY KEY,
         JobTemplateId   int NOT NULL,
         CategoryValueId int NOT NULL,
         Tenantid        int NOT NULL,
         CONSTRAINT FK_JobTemplateCategory_JobTemplateMaster_JobTemplateId
-            FOREIGN KEY (JobTemplateId) REFERENCES dbo.JobTemplateMaster (Id) ON DELETE CASCADE,
+            FOREIGN KEY (JobTemplateId) REFERENCES CimmpleFlow.JobTemplateMaster (Id) ON DELETE CASCADE,
         CONSTRAINT FK_JobTemplateCategory_CategoryValue_CategoryValueId
-            FOREIGN KEY (CategoryValueId) REFERENCES dbo.CategoryValue (Id)
+            FOREIGN KEY (CategoryValueId) REFERENCES CimmpleFlow.CategoryValue (Id)
     );
 
     CREATE UNIQUE INDEX IX_JobTemplateCategory_JobTemplateId_CategoryValueId
-        ON dbo.JobTemplateCategory (JobTemplateId, CategoryValueId);
+        ON CimmpleFlow.JobTemplateCategory (JobTemplateId, CategoryValueId);
     CREATE INDEX IX_JobTemplateCategory_CategoryValueId
-        ON dbo.JobTemplateCategory (CategoryValueId);
+        ON CimmpleFlow.JobTemplateCategory (CategoryValueId);
 END
 GO
 
-IF OBJECT_ID('dbo.JobTemplateAttachment', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateAttachment', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.JobTemplateAttachment
+    CREATE TABLE CimmpleFlow.JobTemplateAttachment
     (
         Id             int IDENTITY(1,1) NOT NULL CONSTRAINT PK_JobTemplateAttachment PRIMARY KEY,
         JobTemplateId  int NOT NULL,
@@ -172,11 +172,11 @@ BEGIN
         UploadedDate   datetime2 NOT NULL CONSTRAINT DF_JobTemplateAttachment_UploadedDate DEFAULT SYSDATETIME(),
         UploadedBy     int NULL,
         CONSTRAINT FK_JobTemplateAttachment_JobTemplateMaster_JobTemplateId
-            FOREIGN KEY (JobTemplateId) REFERENCES dbo.JobTemplateMaster (Id) ON DELETE CASCADE
+            FOREIGN KEY (JobTemplateId) REFERENCES CimmpleFlow.JobTemplateMaster (Id) ON DELETE CASCADE
     );
 
     CREATE INDEX IX_JobTemplateAttachment_JobTemplateId
-        ON dbo.JobTemplateAttachment (JobTemplateId);
+        ON CimmpleFlow.JobTemplateAttachment (JobTemplateId);
 END
 GO
 
@@ -211,32 +211,32 @@ INSERT INTO @DefaultValues (TypeName, Name, DisplayOrder) VALUES
     ('Inspection', 'Final', 3), ('Inspection', 'CMM', 4),
     ('Complexity', 'Low', 1), ('Complexity', 'Medium', 2), ('Complexity', 'High', 3);
 
-INSERT INTO dbo.CategoryType (Tenantid, Name, Code, DisplayOrder, AllowUserValues, IsSystem, IsActive)
+INSERT INTO CimmpleFlow.CategoryType (Tenantid, Name, Code, DisplayOrder, AllowUserValues, IsSystem, IsActive)
 SELECT t.Tenantid, d.Name, d.Code, d.DisplayOrder, 1, 1, 1
-FROM (SELECT DISTINCT Tenantid FROM dbo.ProcessMaster) t
+FROM (SELECT DISTINCT Tenantid FROM CimmpleFlow.ProcessMaster) t
 CROSS JOIN @DefaultTypes d
 WHERE NOT EXISTS (
-    SELECT 1 FROM dbo.CategoryType ct
+    SELECT 1 FROM CimmpleFlow.CategoryType ct
     WHERE ct.Tenantid = t.Tenantid AND ct.Name = d.Name
 );
 
-INSERT INTO dbo.CategoryValue (Tenantid, CategoryTypeId, Name, DisplayOrder, IsSystem, IsActive)
+INSERT INTO CimmpleFlow.CategoryValue (Tenantid, CategoryTypeId, Name, DisplayOrder, IsSystem, IsActive)
 SELECT ct.Tenantid, ct.Id, dv.Name, dv.DisplayOrder, 1, 1
-FROM dbo.CategoryType ct
+FROM CimmpleFlow.CategoryType ct
 INNER JOIN @DefaultValues dv ON dv.TypeName = ct.Name
 WHERE ct.IsSystem = 1
   AND NOT EXISTS (
-    SELECT 1 FROM dbo.CategoryValue cv
+    SELECT 1 FROM CimmpleFlow.CategoryValue cv
     WHERE cv.CategoryTypeId = ct.Id AND cv.Name = dv.Name
 );
 GO
 
 -- Mark the equivalent EF migration as applied so a later "dotnet ef database update"
 -- does not try to re-create these tables
-IF OBJECT_ID('dbo.__EFMigrationsHistory', 'U') IS NOT NULL
+IF OBJECT_ID('CimmpleFlow.__EFMigrationsHistory', 'U') IS NOT NULL
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM dbo.__EFMigrationsHistory WHERE MigrationId = '20260731085225_AddJobTemplateMaster')
-        INSERT INTO dbo.__EFMigrationsHistory (MigrationId, ProductVersion)
+    IF NOT EXISTS (SELECT 1 FROM CimmpleFlow.__EFMigrationsHistory WHERE MigrationId = '20260731085225_AddJobTemplateMaster')
+        INSERT INTO CimmpleFlow.__EFMigrationsHistory (MigrationId, ProductVersion)
         VALUES ('20260731085225_AddJobTemplateMaster', '7.0.0');
 END
 GO

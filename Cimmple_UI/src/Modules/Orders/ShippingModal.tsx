@@ -241,9 +241,10 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <label style={{ fontSize: '0.875rem' }}>Ship:</label>
                       <input
-                        type="text"
+                        type="number"
                         inputMode="numeric"
-                        pattern="[0-9]*"
+                        min={0}
+                        step="1"
                         value={quantityInputs[item.id] !== undefined ? quantityInputs[item.id] : (quantities[item.id] || 0).toString()}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -251,11 +252,10 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                           if (val === '' || val === '0') {
                             handleQuantityChange(item.id, 0);
                           } else {
-                            const numVal = parseInt(val);
+                            const numVal = parseInt(val, 10);
                             if (!isNaN(numVal) && numVal >= 0) {
                               if (numVal > item.availableQty) {
-                                toast.warning(`Cannot ship ${numVal} units. Only ${item.availableQty} available.`);
-                                // Reset to available quantity
+                                toast.warning(`Cannot ship ${numVal}. Only ${item.availableQty} remaining on the order.`);
                                 handleQuantityChange(item.id, item.availableQty);
                                 setQuantityInputs(prev => ({ ...prev, [item.id]: item.availableQty.toString() }));
                               } else {
@@ -266,7 +266,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                         }}
                         onBlur={(e) => {
                           const val = e.target.value;
-                          const numVal = parseInt(val) || 0;
+                          const numVal = parseInt(val, 10) || 0;
                           const clampedVal = Math.max(0, Math.min(numVal, item.availableQty));
                           handleQuantityChange(item.id, clampedVal);
                           setQuantityInputs(prev => ({ ...prev, [item.id]: clampedVal.toString() }));

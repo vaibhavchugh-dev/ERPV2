@@ -319,30 +319,13 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
-                    // Get next Job Order Number
-                    var existingJobOrders = _context.JobOrderMaster
-                        .Where(j => j.Tenantid == request.Tenantid)
-                        .ToList();
-
-                    int nextJobOrderNumber;
-                    if (existingJobOrders.Any())
-                    {
-                        var maxJobOrderNumber = existingJobOrders.Max(j => j.JobOrderNumber);
-                        nextJobOrderNumber = Math.Max(1000, maxJobOrderNumber + 1);
-                    }
-                    else
-                    {
-                        nextJobOrderNumber = 1000;
-                    }
-
-                    // Create new job order
                     jobOrder = new JobOrderMaster
                     {
                         Tenantid = request.Tenantid,
                         OrderDate = ParseDate(request.OrderDate) ?? DateTime.Now,
                         UserId = request.UserId,
                         UserToken = request.UserToken,
-                        JobOrderNumber = nextJobOrderNumber,
+                        JobOrderNumber = AllocateNextJobOrderNumber(request.Tenantid),
                         CreatedDate = DateTime.Now
                     };
                     _context.JobOrderMaster.Add(jobOrder);
@@ -537,26 +520,9 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Job order already exists for this order detail" });
                 }
 
-                // Get next Job Order Number
-                var existingJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == request.Tenantid)
-                    .ToList();
-
-                int nextJobOrderNumber;
-                if (existingJobOrders.Any())
-                {
-                    var maxJobOrderNumber = existingJobOrders.Max(j => j.JobOrderNumber);
-                    nextJobOrderNumber = Math.Max(1000, maxJobOrderNumber + 1);
-                }
-                else
-                {
-                    nextJobOrderNumber = 1000;
-                }
-
-                // Create new job order from order detail
                 var jobOrder = new JobOrderMaster
                 {
-                    JobOrderNumber = nextJobOrderNumber,
+                    JobOrderNumber = AllocateNextJobOrderNumber(request.Tenantid),
                     CustomerOrderID = request.OrderID,
                     CustomerOrderDetailID = request.OrderDetailID,
                     CustomerID = order.CustomerID,
@@ -597,7 +563,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("CheckJobOrderDeletionImpact")]
-        public IActionResult CheckJobOrderDeletionImpact([FromQuery] int jobOrderId, [FromQuery] int tenantId)
+        public async Task<IActionResult> CheckJobOrderDeletionImpact([FromQuery] int jobOrderId, [FromQuery] int tenantId)
         {
             try
             {
@@ -618,13 +584,21 @@ namespace CimmpleAPI.Controllers
                     Warnings = new List<string>()
                 };
 
+                var fgOnHand = await NetFinishedGoodsQtyAsync(tenantId, jobOrderId);
+                if (fgOnHand > 0)
+                {
+                    impact.CanDelete = false;
+                    impact.BlockingReasons.Add(
+                        $"This job still has {fgOnHand:0.##} finished goods in inventory. Reopen the job to reverse stock, or ship/issue the goods before deleting.");
+                }
+
                 // Check if job order is in progress or completed
                 if (!string.IsNullOrEmpty(jobOrder.Status) && 
                     (jobOrder.Status.Equals("In Progress", StringComparison.OrdinalIgnoreCase) ||
                      jobOrder.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)))
                 {
                     impact.Warnings.Add(
-                        $"Job order status is '{jobOrder.Status}'. Deleting may affect production tracking."
+                        $"Job order status is '{jobOrder.Status}'. Deleting will not reuse this job's unique ID."
                     );
                 }
 
@@ -673,6 +647,15 @@ namespace CimmpleAPI.Controllers
                 if (jobOrder == null)
                 {
                     return NotFound(new { error = "Job order not found" });
+                }
+
+                var fgOnHand = await NetFinishedGoodsQtyAsync(tenantId, jobOrderId);
+                if (fgOnHand > 0)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot delete job order while {fgOnHand:0.##} finished goods remain in inventory. Reopen the job to reverse stock first."
+                    });
                 }
 
                 await _inventoryService.ReleaseOpenReservationsForJobInTransactionAsync(tenantId, jobOrderId);
@@ -848,13 +831,27 @@ namespace CimmpleAPI.Controllers
             var productIds = rows.Where(r => r.ProductId.HasValue).Select(r => r.ProductId!.Value).Distinct().ToList();
             var rawIds = rows.Where(r => r.RawMaterialId.HasValue).Select(r => r.RawMaterialId!.Value).Distinct().ToList();
 
+            var remnantChildren = rawIds.Count == 0
+                ? new List<(int Id, int ParentId)>()
+                : (await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .Where(r => r.Tenantid == job.Tenantid
+                        && r.IsRemnant
+                        && r.ParentRawMaterialId.HasValue
+                        && rawIds.Contains(r.ParentRawMaterialId.Value))
+                    .Select(r => new { r.Id, ParentId = r.ParentRawMaterialId!.Value })
+                    .ToListAsync())
+                    .Select(r => (r.Id, r.ParentId))
+                    .ToList();
+            var familyRawIds = rawIds.Concat(remnantChildren.Select(r => r.Id)).Distinct().ToList();
+
             var balances = await _context.InventoryBalance
                 .AsNoTracking()
                 .Where(b => b.Tenantid == job.Tenantid
                     && (!locationId.HasValue || b.LocationId == locationId.Value)
                     && (
                         (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
-                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                        || (b.RawMaterialId.HasValue && familyRawIds.Contains(b.RawMaterialId.Value))
                     ))
                 .ToListAsync();
 
@@ -875,26 +872,45 @@ namespace CimmpleAPI.Controllers
                     && t.TransactionTypeId == 2)
                 .ToListAsync();
 
-            decimal MatchBalance(int? productId, int? rawMaterialId, Func<InventoryBalance, decimal> pick) =>
-                balances
+            HashSet<int> FamilyRawIds(int? rawMaterialId)
+            {
+                var ids = new HashSet<int>();
+                if (!rawMaterialId.HasValue) return ids;
+                ids.Add(rawMaterialId.Value);
+                foreach (var child in remnantChildren.Where(c => c.ParentId == rawMaterialId.Value))
+                    ids.Add(child.Id);
+                return ids;
+            }
+
+            decimal MatchBalance(int? productId, int? rawMaterialId, Func<InventoryBalance, decimal> pick)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return balances
                     .Where(b => productId.HasValue
                         ? b.ProductId == productId
-                        : b.RawMaterialId == rawMaterialId)
+                        : b.RawMaterialId.HasValue && family.Contains(b.RawMaterialId.Value))
                     .Sum(pick);
+            }
 
-            decimal MatchReserved(int? productId, int? rawMaterialId) =>
-                reservations
+            decimal MatchReserved(int? productId, int? rawMaterialId)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return reservations
                     .Where(r => productId.HasValue
                         ? r.ProductId == productId
-                        : r.RawMaterialId == rawMaterialId)
+                        : r.RawMaterialId.HasValue && family.Contains(r.RawMaterialId.Value))
                     .Sum(r => r.Quantity);
+            }
 
-            decimal MatchIssued(int? productId, int? rawMaterialId) =>
-                issues
+            decimal MatchIssued(int? productId, int? rawMaterialId)
+            {
+                var family = FamilyRawIds(rawMaterialId);
+                return issues
                     .Where(t => productId.HasValue
                         ? t.ProductId == productId
-                        : t.RawMaterialId == rawMaterialId)
+                        : t.RawMaterialId.HasValue && family.Contains(t.RawMaterialId.Value))
                     .Sum(t => Math.Abs(t.Quantity));
+            }
 
             var lines = rows.Select(m =>
             {
@@ -941,14 +957,47 @@ namespace CimmpleAPI.Controllers
 
         private static HashSet<int> JobMaterialRefIds(int jobOrderId, int jobOrderNumber)
         {
-            var ids = new HashSet<int> { jobOrderId };
-            if (jobOrderNumber > 0)
-            {
-                ids.Add(jobOrderNumber);
-                if (jobOrderNumber < 1000)
-                    ids.Add(jobOrderNumber + 999);
-            }
-            return ids;
+            _ = jobOrderNumber;
+            // Always key inventory to JobOrderID. Including JobOrderNumber reused IDs after delete
+            // and attached previous finished-goods / reservations to a new job.
+            return new HashSet<int> { jobOrderId };
+        }
+
+        private int AllocateNextJobOrderNumber(int tenantId)
+        {
+            var maxLive = _context.JobOrderMaster.AsNoTracking()
+                .Where(j => j.Tenantid == tenantId)
+                .Select(j => (int?)j.JobOrderNumber)
+                .Max() ?? 0;
+            var maxId = _context.JobOrderMaster.AsNoTracking()
+                .Where(j => j.Tenantid == tenantId)
+                .Select(j => (int?)j.JobOrderID)
+                .Max() ?? 0;
+            var maxInv = _context.InventoryTransaction.AsNoTracking()
+                .Where(t => t.Tenantid == tenantId && t.ReferenceType == "JobOrder" && t.ReferenceId.HasValue)
+                .Select(t => t.ReferenceId)
+                .Max() ?? 0;
+            var maxRes = _context.InventoryReservation.AsNoTracking()
+                .Where(r => r.Tenantid == tenantId && r.ReferenceType == "JobOrder")
+                .Select(r => (int?)r.ReferenceId)
+                .Max() ?? 0;
+            return Math.Max(1000, Math.Max(Math.Max(maxLive, maxId), Math.Max(maxInv, maxRes)) + 1);
+        }
+
+        private async Task<decimal> NetFinishedGoodsQtyAsync(int tenantId, int jobOrderId)
+        {
+            var received = await FinishedGoodsReceiptsQuery(tenantId, jobOrderId)
+                .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+            var issued = await _context.InventoryTransaction
+                .Where(t => t.Tenantid == tenantId
+                    && t.ReferenceType == "JobOrder"
+                    && t.ReferenceId == jobOrderId
+                    && t.TransactionTypeId == 2
+                    && t.ProductId != null
+                    && t.RawMaterialId == null)
+                .SumAsync(t => (decimal?)(t.Quantity < 0 ? -t.Quantity : t.Quantity)) ?? 0;
+            var net = received - issued;
+            return net > 0 ? net : 0;
         }
 
         private static decimal MaterialShortageQty(
@@ -990,12 +1039,26 @@ namespace CimmpleAPI.Controllers
                     allRefIds.Add(id);
             }
 
+            var remnantChildren = rawIds.Count == 0
+                ? new Dictionary<int, List<int>>()
+                : (await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .Where(r => r.Tenantid == tenantId
+                        && r.IsRemnant
+                        && r.ParentRawMaterialId.HasValue
+                        && rawIds.Contains(r.ParentRawMaterialId.Value))
+                    .Select(r => new { r.Id, ParentId = r.ParentRawMaterialId!.Value })
+                    .ToListAsync())
+                    .GroupBy(r => r.ParentId)
+                    .ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+            var familyRawIds = rawIds.Concat(remnantChildren.SelectMany(kv => kv.Value)).Distinct().ToList();
+
             var balances = await _context.InventoryBalance
                 .AsNoTracking()
                 .Where(b => b.Tenantid == tenantId
                     && (
                         (b.ProductId.HasValue && productIds.Contains(b.ProductId.Value))
-                        || (b.RawMaterialId.HasValue && rawIds.Contains(b.RawMaterialId.Value))
+                        || (b.RawMaterialId.HasValue && familyRawIds.Contains(b.RawMaterialId.Value))
                     ))
                 .ToListAsync();
 
@@ -1030,24 +1093,34 @@ namespace CimmpleAPI.Controllers
                 {
                     if (line.QuantityNeeded <= 0)
                         continue;
+                    HashSet<int> Family(int? rawId)
+                    {
+                        var ids = new HashSet<int>();
+                        if (!rawId.HasValue) return ids;
+                        ids.Add(rawId.Value);
+                        if (remnantChildren.TryGetValue(rawId.Value, out var kids))
+                            foreach (var id in kids) ids.Add(id);
+                        return ids;
+                    }
+                    var family = Family(line.RawMaterialId);
                     var available = balances
                         .Where(b => (loc <= 0 || b.LocationId == loc)
                             && (line.ProductId.HasValue
                                 ? b.ProductId == line.ProductId
-                                : b.RawMaterialId == line.RawMaterialId))
+                                : b.RawMaterialId.HasValue && family.Contains(b.RawMaterialId.Value)))
                         .Sum(b => b.QuantityOnHand - b.QuantityReserved);
                     var reserved = reservations
                         .Where(r => refs.Contains(r.ReferenceId)
                             && (line.ProductId.HasValue
                                 ? r.ProductId == line.ProductId
-                                : r.RawMaterialId == line.RawMaterialId))
+                                : r.RawMaterialId.HasValue && family.Contains(r.RawMaterialId.Value)))
                         .Sum(r => r.Quantity);
                     var issued = issues
                         .Where(t => t.ReferenceId.HasValue
                             && refs.Contains(t.ReferenceId.Value)
                             && (line.ProductId.HasValue
                                 ? t.ProductId == line.ProductId
-                                : t.RawMaterialId == line.RawMaterialId))
+                                : t.RawMaterialId.HasValue && family.Contains(t.RawMaterialId.Value)))
                         .Sum(t => Math.Abs(t.Quantity));
                     if (MaterialShortageQty(line.QuantityNeeded, reserved, issued, available) > 0)
                     {

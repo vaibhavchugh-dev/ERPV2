@@ -1,5 +1,5 @@
 /*
-  Canonical manufacturing Chart of Accounts seed for dbo.ChartofAccounts.
+  Canonical manufacturing Chart of Accounts seed for CimmpleFlow.ChartofAccounts.
   Idempotent: inserts only rows where (Tenantid, AccountCode) does not already exist.
   Matches ManufacturingChartOfAccountsSeed.cs — keep both in sync when editing.
   Does not delete or alter existing (including legacy) accounts.
@@ -15,7 +15,7 @@ SET NOCOUNT ON;
 
 DECLARE @TenantId INT = 1;
 
-INSERT INTO dbo.ChartofAccounts (
+INSERT INTO CimmpleFlow.ChartofAccounts (
     AccountCode,
     AccountName,
     AccountType,
@@ -106,7 +106,7 @@ FROM (VALUES
 ) AS v(AccountCode, AccountName, AccountType, MainGroup)
 WHERE NOT EXISTS (
     SELECT 1
-    FROM dbo.ChartofAccounts c
+    FROM CimmpleFlow.ChartofAccounts c
     WHERE c.Tenantid = @TenantId
       AND c.AccountCode = v.AccountCode
 );

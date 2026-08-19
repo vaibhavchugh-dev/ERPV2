@@ -96,9 +96,17 @@ const AccountsPayable: React.FC = () => {
     }
   };
 
-  const handleRejectInvoice = (invoice: VendorInvoiceSummary) => {
-    // For now, just show a message. In a real app, this would open a rejection modal
-    toast.info('Invoice rejection functionality coming soon');
+  const handleRejectInvoice = async (invoice: VendorInvoiceSummary) => {
+    if (!window.confirm(`Reject and void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await VendorInvoiceService.VoidVendorInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} rejected`);
+      loadInvoices();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to reject invoice");
+    }
   };
 
   const openInvoiceDetail = (invoice: VendorInvoiceSummary, showPayment = false) => {

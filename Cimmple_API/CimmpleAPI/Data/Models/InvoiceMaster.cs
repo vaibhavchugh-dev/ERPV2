@@ -30,6 +30,7 @@ namespace CimmpleAPI.Data.Models
         public int? Bankid { get; set; }
         public int? createdby { get; set; }
         public DateTime? createdDate { get; set; }
+        public bool IsVoided { get; set; }
     }
 
     public class InvoiceDetail

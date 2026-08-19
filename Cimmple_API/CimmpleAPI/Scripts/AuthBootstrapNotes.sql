@@ -21,5 +21,5 @@ SELECT TOP 20 User_UniqueID, UserName, TenantID, Status, Role,
             WHEN Password LIKE '%.%.%' THEN 'HASHED'
             ELSE 'PLAINTEXT' END AS PasswordState,
        DefaultLocationId, CanAccessAllLocations, FailedLoginCount, LockoutEndUtc
-FROM dbo.UserDetails
+FROM CimmpleFlow.UserDetails
 ORDER BY User_UniqueID;
