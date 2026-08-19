@@ -400,19 +400,18 @@ const PunchWorkflowPanel: React.FC<{
 
             <div className="punch-camera-stage">
               <div className="punch-camera-stage-preview">
+                <video ref={videoRef} autoPlay playsInline muted />
                 {cameraError ? (
                   <div className="camera-placeholder">
                     <FaCamera />
                     <span>{cameraError}</span>
                   </div>
-                ) : stream ? (
-                  <video ref={videoRef} autoPlay playsInline muted />
-                ) : (
+                ) : !stream ? (
                   <div className="camera-placeholder">
                     <FaCamera />
                     <span>{cameraLoading ? "Starting camera..." : "Opening camera..."}</span>
                   </div>
-                )}
+                ) : null}
                 <div className="punch-oval-overlay" />
               </div>
 
@@ -881,7 +880,6 @@ export const PunchInOut: React.FC = () => {
   const startCamera = React.useCallback(
     async (): Promise<MediaStream | null> => {
       const stream = mainStream;
-      const videoRef = mainVideoRef;
 
       if (stream) {
         return stream;
@@ -902,12 +900,6 @@ export const PunchInOut: React.FC = () => {
           audio: false,
         });
         setMainStream(mediaStream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-          videoRef.current.play?.().catch(() => {
-            // Some browsers need a user gesture before autoplay starts.
-          });
-        }
         return mediaStream;
       } catch (err) {
         console.error("Camera error:", err);
@@ -1044,6 +1036,18 @@ export const PunchInOut: React.FC = () => {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  React.useEffect(() => {
+    const video = mainVideoRef.current;
+    if (!video || !mainStream) {
+      return;
+    }
+
+    video.srcObject = mainStream;
+    void video.play().catch(() => {
+      // Autoplay can wait for the existing camera-step user gesture.
+    });
+  }, [mainStream]);
 
   React.useEffect(() => {
     if (punchStage !== "camera") {
