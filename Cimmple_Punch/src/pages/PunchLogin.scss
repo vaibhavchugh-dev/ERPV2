@@ -88,6 +88,17 @@
   line-height: 1;
 }
 
+.login-brand-product {
+  margin-top: 0.55rem;
+  margin-left: 3.6rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  animation: login-rise 0.7s 0.04s ease both;
+}
+
 .login-brand-copy {
   max-width: 28rem;
   margin: 4rem 0;

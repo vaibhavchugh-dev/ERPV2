@@ -25,6 +25,7 @@ export interface EmployeeMaster {
   locationName?: string;
   defaultLocationId?: number | null;
   canAccessAllLocations?: boolean;
+  faceEnrolled?: boolean;
 }
 
 export interface EmployeeMasterReq {
@@ -61,6 +62,7 @@ export interface EmployeeMasterReq {
   HasPassword?: boolean;
   /** True when username + password exist and status is Active */
   CanLogin?: boolean;
+  FaceEnrolled?: boolean;
 }
 
 export interface EmployeeImportRow {
@@ -200,6 +202,7 @@ export class EmployeeService {
         SSN: result.ssn || "",
         HasPassword: !!result.hasPassword,
         CanLogin: !!result.canLogin,
+        FaceEnrolled: !!(result.faceEnrolled ?? result.FaceEnrolled),
       } as EmployeeMasterReq;
     });
   };
@@ -366,6 +369,4 @@ export class EmployeeService {
     });
   };
 }
-
-export {};
 

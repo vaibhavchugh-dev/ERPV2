@@ -65,6 +65,7 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
+builder.Services.AddScoped<CimmpleAPI.Services.FaceRecognitionService>();
 
 // Legacy user repository (UserController login / maintenance helpers)
 builder.Services.AddHttpContextAccessor();

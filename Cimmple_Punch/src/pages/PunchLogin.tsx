@@ -51,33 +51,33 @@ export function PunchLogin() {
 
   return (
     <div className="login-page">
-      <aside className="login-brand" aria-label="Cimmple brand">
+      <aside className="login-brand" aria-label="Cimmple Time Clock">
         <div className="login-brand-top">
           <div className="login-brand-mark">
             <img src="/logo.svg" alt="" />
             <span>Cimmple</span>
           </div>
+          <div className="login-brand-product">Time Clock</div>
         </div>
 
         <div className="login-brand-copy">
           <h1>
-            Cloud operating system for <em>machine shops</em>
+            Time Clock for the <em>shop floor</em>
           </h1>
           <p>
-            Sign in to CimmpleFlow — manufacturing ERP for quoting, production,
-            quality, inventory, and accounting in one place.
+            Unlock this kiosk to punch in and out. Use the same Cimmple username
+            and password as the main ERP.
           </p>
           <div className="login-brand-pills" aria-hidden="true">
-            <span>Quoting</span>
-            <span>Production</span>
-            <span>Quality</span>
-            <span>Inventory</span>
-            <span>Accounting</span>
+            <span>Punch In</span>
+            <span>Punch Out</span>
+            <span>Face</span>
+            <span>Password</span>
           </div>
         </div>
 
         <div className="login-brand-foot">
-          <span>Built for CNC &amp; job shops</span>
+          <span>Shop floor attendance</span>
           <a href="https://www.cimmple.com/" target="_blank" rel="noopener noreferrer">
             cimmple.com
           </a>
@@ -87,8 +87,8 @@ export function PunchLogin() {
       <main className="login-panel">
         <div className="login-panel-inner">
           <div className="login-panel-header">
-            <h2>Welcome back</h2>
-            <p>Sign in to your Cimmple account</p>
+            <h2>Unlock Time Clock</h2>
+            <p>Supervisor or kiosk sign-in to open the punch board</p>
           </div>
 
           {errorMessage && (
@@ -164,11 +164,11 @@ export function PunchLogin() {
               </div>
             )}
             <button type="submit" className="w-100 login-submit" disabled={isLoading}>
-              {isLoading ? "Signing in..." : "Sign In"}
+              {isLoading ? "Unlocking..." : "Unlock kiosk"}
             </button>
           </form>
 
-          <div className="login-footer-link">Time Clock kiosk</div>
+          <div className="login-footer-link">Not the ERP — this is Time Clock only</div>
         </div>
       </main>
     </div>

@@ -16,8 +16,8 @@ import {
 } from "../services/authService";
 import "./PunchInOut.scss";
 
-/** Phase 1: password punch only. Face verify lands in a later slice. */
-const FACE_PUNCH_ENABLED = false;
+/** Face punch uses Azure against CimmplePunch.EmployeeFace. Password remains a fallback. */
+const FACE_PUNCH_ENABLED = true;
 const FACE_MATCH_THRESHOLD = 0.75;
 
 const Spinner: React.FC<{ animation?: string; size?: string }> = () => (
@@ -241,14 +241,12 @@ const PunchWorkflowPanel: React.FC<{
       !!selectedEmployee &&
       !captureLoading &&
       !passwordLoading &&
-      (FACE_PUNCH_ENABLED ? !isNewEmployee || passwordEntry.trim().length > 0 : passwordEntry.trim().length > 0);
-    const submitLabel = !FACE_PUNCH_ENABLED
+      (FACE_PUNCH_ENABLED
+        ? !isNewEmployee || passwordEntry.trim().length > 0
+        : passwordEntry.trim().length > 0);
+    const submitLabel = !FACE_PUNCH_ENABLED || isNewEmployee || passwordEntry.trim()
       ? "Verify Password"
-      : isNewEmployee
-      ? "Verify & Register"
-      : passwordEntry.trim()
-        ? "Verify Password"
-        : "Capture & Punch";
+      : "Capture & Punch";
 
     return (
       <div className="punch-workflow-panel">
@@ -420,11 +418,11 @@ const PunchWorkflowPanel: React.FC<{
 
               <div className="punch-camera-hint">
                 {isNewEmployee
-                  ? "Enter the password to register your face, then capture."
+                  ? "This employee is not enrolled yet. Enter the password to punch, then add a face photo in Employee Master."
                   : passwordEntry.trim()
                     ? "Password entered - tap submit to verify only."
                     : FACE_PUNCH_ENABLED
-                      ? "Optional password. Leave it blank to punch with face only."
+                      ? "Look at the camera, or enter a password as a fallback."
                       : "Enter your password to punch. Face recognition will be enabled later."}
               </div>
 
@@ -437,8 +435,8 @@ const PunchWorkflowPanel: React.FC<{
                     placeholder={
                       FACE_PUNCH_ENABLED
                         ? isNewEmployee
-                          ? "Required for new users"
-                          : "Optional for existing users"
+                          ? "Required until a face is enrolled"
+                          : "Optional fallback"
                         : "Required to punch"
                     }
                     value={passwordEntry}
@@ -1238,23 +1236,16 @@ export const PunchInOut: React.FC = () => {
 
     if (isNewEmployee) {
       if (!hasPassword) {
-        toast.error("Password is required for new employees.");
+        toast.error("This employee is not enrolled. Enter a password, or add a face photo in Employee Master.");
         return;
       }
 
       const passwordVerified = await verifyPasswordPunch();
-      if (!passwordVerified) {
-        return;
+      if (passwordVerified) {
+        toast.success(`Punched successfully for ${getDisplayName(selectedEmployee)}.`);
+        resetSelection();
+        setTimeout(() => loadBoard(), 500);
       }
-
-      const captureResult = await captureAndPunch();
-      if (captureResult.success) {
-        toast.success(`Punched successfully and registered for ${getDisplayName(selectedEmployee)}.`);
-      } else {
-        toast.success(`Punched successfully for ${getDisplayName(selectedEmployee)}, but unable to register.`);
-      }
-      resetSelection();
-      setTimeout(() => loadBoard(), 500);
       return;
     }
 

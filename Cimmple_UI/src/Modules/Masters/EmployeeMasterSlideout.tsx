@@ -62,6 +62,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   // Login access: checked only when the employee can actually authenticate (has password)
   const [loginAccessEnabled, setLoginAccessEnabled] = useState(false);
   const [hasPassword, setHasPassword] = useState(false);
+  const [faceEnrolled, setFaceEnrolled] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [loginPasswordConfirm, setLoginPasswordConfirm] = useState("");
   const [initialLoginAccessEnabled, setInitialLoginAccessEnabled] = useState(false);
@@ -95,6 +96,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     } else {
       setLoginAccessEnabled(false);
       setHasPassword(false);
+      setFaceEnrolled(false);
       setInitialLoginAccessEnabled(false);
       setLoginPassword("");
       setLoginPasswordConfirm("");
@@ -333,6 +335,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
         const passwordExists = !!employee.HasPassword;
         setHasPassword(passwordExists);
+        setFaceEnrolled(!!employee.FaceEnrolled);
         setLoginAccessEnabled(passwordExists);
         setInitialLoginAccessEnabled(passwordExists);
         setLoginPassword("");
@@ -576,10 +579,17 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         delete submitData.Password;
       }
       
-      await EmployeeService.SaveEmployeeData(submitData, profilePicFile);
+      const saved = await EmployeeService.SaveEmployeeData(submitData, profilePicFile);
       toast.success(
         employeeId > 0 ? "Employee updated successfully" : "Employee created successfully"
       );
+      if (profilePicFile) {
+        if (saved?.faceEnrolled || saved?.FaceEnrolled) {
+          toast.success("Face enrolled for Time Clock");
+        } else if (saved?.faceMessage || saved?.FaceMessage) {
+          toast.warn(saved.faceMessage || saved.FaceMessage);
+        }
+      }
       setIsStateChanged(false);
       onClose(true);
     } catch (error: any) {
@@ -658,9 +668,16 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                 </span>
               </button>
             </div>
-            <h2>
-              {employeeId === 0 ? "New Employee" : formData.FirstName && formData.LastName ? `${formData.FirstName} ${formData.LastName}` : "Edit Employee"}
-            </h2>
+            <div>
+              <h2>
+                {employeeId === 0 ? "New Employee" : formData.FirstName && formData.LastName ? `${formData.FirstName} ${formData.LastName}` : "Edit Employee"}
+              </h2>
+              {employeeId > 0 && (
+                <div style={{ fontSize: "12px", color: faceEnrolled ? "#198754" : "#6c757d", marginTop: "2px" }}>
+                  {faceEnrolled ? "Face enrolled" : "Face not enrolled"}
+                </div>
+              )}
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div className="status-field-inline">
@@ -1498,6 +1515,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                   }}
                 />
               )}
+              <p className="text-muted mt-3 mb-0" style={{ fontSize: "13px" }}>
+                Use a clear, single-face photo. Saving the employee enrolls this photo for Time Clock.
+              </p>
               <div className="d-flex align-items-center justify-content-center gap-2 mt-4">
                 <Button
                   variant="secondary"
