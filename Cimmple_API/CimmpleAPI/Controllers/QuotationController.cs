@@ -1249,6 +1249,8 @@ namespace CimmpleAPI.Controllers
                     Address = quotation.address ?? "",
                     VendorPoNumber = quotation.VendorPoNumber ?? "",
                     OrderDate = quotation.OrderDate?.ToString("yyyy-MM-dd") ?? DateTime.Now.ToString("yyyy-MM-dd"),
+                    ExternalOrderDate = quotation.DueDate?.ToString("yyyy-MM-dd"),
+                    DueDate = quotation.DueDate?.ToString("yyyy-MM-dd"),
                     TotalAmount = quotation.TotalAmount,
                     UserId = quotation.UserId,
                     UserToken = quotation.UserToken,
@@ -1491,17 +1493,31 @@ namespace CimmpleAPI.Controllers
                     if (orderDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(orderDateElem.GetString(), out DateTime orderDate))
                     {
                         quotation.OrderDate = orderDate;
-                        // If DueDate is not provided, use OrderDate
-                        DateTime dueDate = orderDate; // Initialize with orderDate as default
-                        if (request.TryGetProperty("ExternalOrderDate", out JsonElement dueDateElem))
-                        {
-                            if (DateTime.TryParse(dueDateElem.GetString(), out DateTime parsedDueDate))
-                            {
-                                dueDate = parsedDueDate;
-                            }
-                        }
-                        quotation.DueDate = dueDate;
                     }
+                }
+
+                DateTime? explicitDueDate = null;
+                if (request.TryGetProperty("ExternalOrderDate", out JsonElement extDueDateElem) && extDueDateElem.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(extDueDateElem.GetString()))
+                {
+                    if (DateTime.TryParse(extDueDateElem.GetString(), out DateTime parsedExtDue))
+                    {
+                        explicitDueDate = parsedExtDue;
+                    }
+                }
+                else if (request.TryGetProperty("DueDate", out JsonElement dueDateElem) && dueDateElem.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(dueDateElem.GetString()))
+                {
+                    if (DateTime.TryParse(dueDateElem.GetString(), out DateTime parsedDue))
+                    {
+                        explicitDueDate = parsedDue;
+                    }
+                }
+                if (explicitDueDate.HasValue)
+                {
+                    quotation.DueDate = explicitDueDate.Value;
+                }
+                else if (quotation.OrderDate.HasValue)
+                {
+                    quotation.DueDate = quotation.OrderDate.Value;
                 }
 
                 quotation.TotalAmount = request.TryGetProperty("TotalAmount", out JsonElement totalAmountElem) ? totalAmountElem.GetDecimal() : 0;

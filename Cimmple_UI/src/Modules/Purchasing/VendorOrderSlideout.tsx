@@ -309,26 +309,34 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     try {
       const result = await VendorOrderService.GetVendorOrderById(orderId);
       if (result) {
-        // Convert OrderDate from MM/DD/YY to YYYY-MM-DD for date input
+        // Convert OrderDate/DueDate from MM/DD/YY or ISO to YYYY-MM-DD for date input
         const convertToDateInputFormat = (dateStr: string): string => {
           if (!dateStr) return "";
           try {
-            // Handle MM/DD/YY format
-            const parts = dateStr.split('/');
+            const str = String(dateStr).trim();
+            if (!str || str === "null" || str === "undefined") return "";
+            if (str.includes('T')) {
+              const datePart = str.split('T')[0];
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                return datePart;
+              }
+            }
+            const parts = str.split('/');
             if (parts.length === 3) {
               const month = parts[0].padStart(2, '0');
               const day = parts[1].padStart(2, '0');
               const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
               return `${year}-${month}-${day}`;
             }
-            // If already in YYYY-MM-DD format, return as is
-            if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-              return dateStr;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+              return str;
             }
-            // Try parsing as ISO date
-            const date = new Date(dateStr);
+            const date = new Date(str);
             if (!isNaN(date.getTime())) {
-              return date.toISOString().split('T')[0];
+              const year = date.getUTCFullYear();
+              const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+              const day = String(date.getUTCDate()).padStart(2, '0');
+              return `${year}-${month}-${day}`;
             }
           } catch (e) {
             console.warn("Error converting date:", dateStr, e);
@@ -348,9 +356,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           return detail;
         });
 
+        const resAny = result as any;
+        const rawExtDate = result.ExternalOrderDate || resAny.externalOrderDate || resAny.DueDate || resAny.dueDate;
+
         const formDataWithDetails = {
           ...result,
-          OrderDate: convertToDateInputFormat(result.OrderDate), // Convert to YYYY-MM-DD format
+          OrderDate: convertToDateInputFormat(result.OrderDate || resAny.orderDate),
+          ExternalOrderDate: convertToDateInputFormat(rawExtDate),
           Details: normalizedDetails,
           OrderType: "Vendor", // Always "Vendor" for vendor orders
           MaterialType:

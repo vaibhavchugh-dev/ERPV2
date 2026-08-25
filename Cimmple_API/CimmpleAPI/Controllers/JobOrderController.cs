@@ -46,7 +46,8 @@ namespace CimmpleAPI.Controllers
                     select new
                     {
                         Job = j,
-                        OrderLocationId = o != null ? o.locationId : 0
+                        OrderLocationId = o != null ? o.locationId : 0,
+                        CustomerPONumber = o != null ? o.PONumber : 0
                     };
 
                 if (filterLocationId.HasValue)
@@ -61,6 +62,7 @@ namespace CimmpleAPI.Controllers
                         jobOrderID = x.Job.JobOrderID,
                         jobOrderNumber = x.Job.JobOrderNumber,
                         customerOrderID = x.Job.CustomerOrderID,
+                        customerPONumber = x.CustomerPONumber > 0 ? x.CustomerPONumber : x.Job.CustomerOrderID,
                         customerOrderDetailID = x.Job.CustomerOrderDetailID,
                         customerID = x.Job.CustomerID,
                         customerName = x.Job.CustomerName ?? "",
@@ -91,6 +93,7 @@ namespace CimmpleAPI.Controllers
                         x.jobOrderID,
                         x.jobOrderNumber,
                         x.customerOrderID,
+                        x.customerPONumber,
                         x.customerOrderDetailID,
                         x.customerID,
                         x.customerName,

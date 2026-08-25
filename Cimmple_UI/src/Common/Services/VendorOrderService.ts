@@ -165,36 +165,48 @@ export class VendorOrderService {
 
     const result = response.data.result as any;
 
-    // Format dates for display (MM/DD/YY) - used for DueDate in line items
     const formatDate = (dateStr: string | null | undefined | Date): string => {
       if (!dateStr) return "";
       try {
-        let date: Date;
         if (dateStr instanceof Date) {
-          date = dateStr;
-        } else if (typeof dateStr === 'string') {
-          // Handle various date string formats
-          const dateStrTrimmed = dateStr.trim();
-          if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
-            return "";
-          }
-          date = new Date(dateStrTrimmed);
-          // Check if date is valid
-          if (isNaN(date.getTime())) {
-            return "";
-          }
-        } else {
-          return "";
+          const month = String(dateStr.getMonth() + 1).padStart(2, '0');
+          const day = String(dateStr.getDate()).padStart(2, '0');
+          const year = String(dateStr.getFullYear()).slice(-2);
+          return `${month}/${day}/${year}`;
         }
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const year = String(date.getFullYear()).slice(-2);
-        return `${month}/${day}/${year}`;
+        const str = String(dateStr).trim();
+        if (!str || str === "null" || str === "undefined") return "";
+        if (str.includes("T")) {
+          const datePart = str.split("T")[0];
+          const parts = datePart.split("-");
+          if (parts.length === 3) {
+            return `${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}/${parts[0].slice(-2)}`;
+          }
+        }
+        if (str.includes("/")) {
+          const parts = str.split("/");
+          if (parts.length === 3) {
+            return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2].slice(-2)}`;
+          }
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+          const parts = str.split("-");
+          return `${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}/${parts[0].slice(-2)}`;
+        }
+        const date = new Date(str);
+        if (!isNaN(date.getTime())) {
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(date.getUTCDate()).padStart(2, '0');
+          const year = String(date.getUTCFullYear()).slice(-2);
+          return `${month}/${day}/${year}`;
+        }
       } catch (e) {
         console.warn("Error formatting date:", dateStr, e);
-        return "";
       }
+      return "";
     };
+
+    const rawExtDate = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
 
     return {
       OrderID: result.OrderID || result.orderID || 0,
@@ -212,7 +224,7 @@ export class VendorOrderService {
       Status: result.Status || result.status || "Draft",
       ShippingInstructions: result.ShippingInstructions || result.shippingInstructions || "",
       ExternalVendorPO: result.ExternalVendorPO || result.externalVendorPO || "",
-      ExternalOrderDate: result.ExternalOrderDate ? formatDate(result.ExternalOrderDate) : undefined,
+      ExternalOrderDate: rawExtDate ? formatDate(rawExtDate) : undefined,
       BuyerName: result.BuyerName || result.buyerName || "",
       VendorRefNo: result.VendorRefNo || result.vendorRefNo || "",
       OrderType: "Vendor", // Always "Vendor" for vendor orders

@@ -542,9 +542,24 @@ const VendorInvoices: React.FC = () => {
   };
 
   const getStatusBadge = (status: string, daysOverdue?: number) => {
-    const statusLower = status.toLowerCase();
+    const statusLower = (status || '').toLowerCase();
 
-    if (statusLower === 'paid') {
+    if (statusLower === 'void') {
+      return (
+        <span
+          className="badge badge-secondary"
+          style={{
+            backgroundColor: '#4b5563',
+            color: '#ffffff',
+            fontWeight: 600,
+            padding: '0.25rem 0.625rem',
+            borderRadius: '0.25rem'
+          }}
+        >
+          Void
+        </span>
+      );
+    } else if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
     } else if (statusLower === 'partially paid') {
       return (
@@ -554,8 +569,6 @@ const VendorInvoices: React.FC = () => {
       );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
       return <span className="badge badge-danger">Overdue {daysOverdue ? `(${daysOverdue}d)` : ''}</span>;
-    } else if (statusLower === 'void') {
-      return <span className="badge badge-secondary">Void</span>;
     } else {
       return <span className="badge badge-warning">{status || 'Unpaid'}</span>;
     }

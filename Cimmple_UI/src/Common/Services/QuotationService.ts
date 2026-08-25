@@ -806,78 +806,70 @@ export class QuotationService {
     }).then((response) => {
       const result = response.data.result as any;
       
-      // Format dates for display (MM/DD/YY) - used for DueDate in line items
-      const formatDate = (dateStr: string | null | undefined | Date): string => {
-        if (!dateStr) return "";
-        try {
-          let date: Date;
-          if (dateStr instanceof Date) {
-            date = dateStr;
-          } else if (typeof dateStr === 'string') {
-            // Handle various date string formats
-            const dateStrTrimmed = dateStr.trim();
-            if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
-              return "";
-            }
-            date = new Date(dateStrTrimmed);
-            // Check if date is valid
-            if (isNaN(date.getTime())) {
-              return "";
-            }
-          } else {
-            return "";
-          }
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const year = String(date.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        } catch (e) {
-          console.warn("Error formatting date:", dateStr, e);
-          return "";
-        }
-      };
-
       // Format dates for HTML date inputs (yyyy-MM-dd) - used for OrderDate and ExternalOrderDate
       const formatDateForInput = (dateStr: string | null | undefined | Date): string => {
         if (!dateStr) return "";
         try {
-          let date: Date;
           if (dateStr instanceof Date) {
-            date = dateStr;
-          } else if (typeof dateStr === 'string') {
-            // Handle various date string formats
-            const dateStrTrimmed = dateStr.trim();
-            if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
-              return "";
-            }
-            // If already in yyyy-MM-dd format, return as is
-            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStrTrimmed)) {
-              return dateStrTrimmed;
-            }
-            date = new Date(dateStrTrimmed);
-            // Check if date is valid
-            if (isNaN(date.getTime())) {
-              return "";
-            }
-          } else {
-            return "";
+            const year = String(dateStr.getFullYear());
+            const month = String(dateStr.getMonth() + 1).padStart(2, '0');
+            const day = String(dateStr.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
           }
-          const year = String(date.getFullYear());
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
+          const str = String(dateStr).trim();
+          if (str === "" || str === "null" || str === "undefined") return "";
+          if (str.includes("T")) {
+            const datePart = str.split("T")[0];
+            if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+              return datePart;
+            }
+          }
+          if (str.includes("/")) {
+            const parts = str.split("/");
+            if (parts.length === 3) {
+              const month = parts[0].padStart(2, '0');
+              const day = parts[1].padStart(2, '0');
+              const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+              return `${year}-${month}-${day}`;
+            }
+          }
+          if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+            return str;
+          }
+          const date = new Date(str);
+          if (!isNaN(date.getTime())) {
+            const year = String(date.getUTCFullYear());
+            const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(date.getUTCDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          }
         } catch (e) {
           console.warn("Error formatting date for input:", dateStr, e);
-          return "";
         }
+        return "";
+      };
+
+      // Format dates for display (MM/DD/YY) - used for DueDate in line items
+      const formatDate = (dateStr: string | null | undefined | Date): string => {
+        if (!dateStr) return "";
+        try {
+          const inputFormatted = formatDateForInput(dateStr);
+          if (inputFormatted && /^\d{4}-\d{2}-\d{2}$/.test(inputFormatted)) {
+            const [year, month, day] = inputFormatted.split('-');
+            return `${month}/${day}/${year.slice(-2)}`;
+          }
+        } catch (e) {
+          console.warn("Error formatting date:", dateStr, e);
+        }
+        return "";
       };
 
       // Map details array
       const details: QuotationDetailReq[] = (result.Details || result.details || []).map((d: any) => {
         // Parse dueDate - handle various formats
         let dueDateStr = "";
-        if (d.dueDate) {
-          dueDateStr = formatDate(d.dueDate);
+        if (d.dueDate || d.DueDate) {
+          dueDateStr = formatDate(d.dueDate || d.DueDate);
           // If formatting failed, try to get a default date
           if (!dueDateStr) {
             dueDateStr = formatDate(new Date().toISOString());
@@ -915,6 +907,9 @@ export class QuotationService {
         };
       });
 
+      const rawExtDate = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
+      const rawOrderDate = result.OrderDate || result.orderDate;
+
       return {
         OrderID: result.OrderID || result.orderID || 0,
         Tenantid: result.Tenantid || result.tenantid || tenantID,
@@ -924,14 +919,14 @@ export class QuotationService {
         VendorName: result.VendorName || result.vendorName || "",
         Address: result.Address || result.address || "",
         VendorPoNumber: result.VendorPoNumber || result.vendorPoNumber || "",
-        OrderDate: result.OrderDate ? formatDateForInput(result.OrderDate) : formatDateForInput(new Date().toISOString()),
+        OrderDate: rawOrderDate ? formatDateForInput(rawOrderDate) : formatDateForInput(new Date()),
         TotalAmount: result.TotalAmount || result.totalAmount || 0,
         UserId: result.UserId || result.userId || 0,
         UserToken: result.UserToken || result.userToken || 0,
         Status: result.Status || result.status || "Draft",
         ShippingInstructions: result.ShippingInstructions || result.shippingInstructions || "",
         ExternalVendorPO: result.ExternalVendorPO || result.externalVendorPO || "",
-        ExternalOrderDate: result.ExternalOrderDate ? formatDateForInput(result.ExternalOrderDate) : undefined,
+        ExternalOrderDate: rawExtDate ? formatDateForInput(rawExtDate) : undefined,
         BuyerName: result.BuyerName || result.buyerName || "",
         VendorRefNo: result.VendorRefNo || result.vendorRefNo || "",
         QuotationType: result.QuotationType || result.quotationType || "Material",

@@ -223,7 +223,9 @@ const JobOrders: React.FC = () => {
       label: "Customer Order #",
       sortable: true,
       render: (value: any, row: any) => {
-        if (value) {
+        const orderId = value || row?.customerOrderID || row?.CustomerOrderID || row?.customerOrderId;
+        const poNumber = row?.customerPONumber || row?.customerOrderNumber || row?.poNumber || orderId;
+        if (orderId && Number(orderId) > 0) {
           return (
             <span
               style={{
@@ -234,12 +236,11 @@ const JobOrders: React.FC = () => {
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                // Navigate to customer order - you can implement navigation here
-                window.location.href = `/orders/customer?orderId=${value}`;
+                history.push(`/orders/customer?open=${orderId}`);
               }}
               title="Click to view customer order"
             >
-              {formatCustomerOrderNumber(value)}
+              {formatCustomerOrderNumber(Number(poNumber))}
             </span>
           );
         }

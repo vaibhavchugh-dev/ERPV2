@@ -265,8 +265,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                int offsetNumber = orderId > 999 ? orderId - 999 : orderId;
                 var order = _context.CustomerOrder
-                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Where(o => (o.OrderID == orderId || o.PONumber == orderId || o.OrderID == offsetNumber || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
                     .FirstOrDefault();
 
                 if (order == null)
@@ -274,9 +275,11 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order not found" });
                 }
 
+                int actualOrderId = order.OrderID;
+
                 // Query details
                 var detailsList = _context.CustomerOrderDetails
-                    .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                    .Where(d => d.OrderID == actualOrderId && d.Tenantid == tenantId)
                     .OrderBy(d => d.ItemNo)
                     .ToList();
 
@@ -1292,19 +1295,22 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                int offsetNumber = orderId > 999 ? orderId - 999 : orderId;
                 var order = await _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Where(o => (o.OrderID == orderId || o.PONumber == orderId || o.OrderID == offsetNumber || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
                     .FirstOrDefaultAsync();
 
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
 
+                int actualOrderId = order.OrderID;
+
                 // Get details separately to avoid circular references
                 // Use raw SQL to handle both DueDateString and DueDate columns safely
                 var detailsList = await _context.VendorOrderDetails
                     .AsNoTracking()
-                    .Where(d => d.OrderID == orderId)
+                    .Where(d => d.OrderID == actualOrderId)
                     .OrderBy(d => d.ItemNo)
                     .ToListAsync();
 
@@ -1507,7 +1513,9 @@ namespace CimmpleAPI.Controllers
                     Status = orderData.TryGetProperty("Status", out JsonElement statusElem) ? statusElem.GetString() ?? "Draft" : "Draft",
                     ShippingInstructions = orderData.TryGetProperty("ShippingInstructions", out JsonElement shippingInstructionsElem) ? shippingInstructionsElem.GetString() ?? "" : "",
                     ExternalVendorPO = orderData.TryGetProperty("ExternalVendorPO", out JsonElement externalVendorPOElem) ? externalVendorPOElem.GetString() ?? "" : "",
-                    ExternalOrderDate = orderData.TryGetProperty("ExternalOrderDate", out JsonElement externalOrderDateElem) && externalOrderDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(externalOrderDateElem.GetString(), out DateTime parsedExternalDate) ? parsedExternalDate : (DateTime?)null,
+                    ExternalOrderDate = (orderData.TryGetProperty("ExternalOrderDate", out JsonElement externalOrderDateElem) && externalOrderDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(externalOrderDateElem.GetString(), out DateTime parsedExternalDate))
+                        ? parsedExternalDate
+                        : (orderData.TryGetProperty("DueDate", out JsonElement dueDateElem) && dueDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(dueDateElem.GetString(), out DateTime parsedDueDate) ? parsedDueDate : (DateTime?)null),
                     BuyerName = orderData.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "",
                     VendorRefNo = orderData.TryGetProperty("VendorRefNo", out JsonElement vendorRefNoElem) ? vendorRefNoElem.GetString() ?? "" : "",
                     OrderType = orderData.TryGetProperty("OrderType", out JsonElement orderTypeElem) ? orderTypeElem.GetString() ?? "Vendor" : "Vendor",
@@ -3693,7 +3701,8 @@ namespace CimmpleAPI.Controllers
                     items = invoiceDetails.Select(d => new
                     {
                         orderDetailId = d.VendorOrderDetailID ?? 0,
-                        qtyInvoiced = 1, // This would need to be calculated from the quantity field if available
+                        qtyInvoiced = d.qty.HasValue && d.qty.Value > 0 ? d.qty.Value : (d.price.HasValue && d.price.Value > 0 && d.Amount > 0 ? (int)Math.Round(d.Amount / d.price.Value) : 1),
+                        unitPrice = d.price ?? 0m,
                         description = d.Description ?? "",
                         amount = d.Amount
                     }).ToList()

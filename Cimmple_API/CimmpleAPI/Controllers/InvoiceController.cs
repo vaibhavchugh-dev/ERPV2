@@ -106,6 +106,11 @@ namespace CimmpleAPI.Controllers
                     var tenantId = GetTenantId();
                     Console.WriteLine($"CreateInvoice called - TenantId: {tenantId}, OrderId: {request.OrderId}, LineItems: {request.LineItems.Count}");
 
+                    if (request.DueDate.HasValue && request.InvoiceDate.HasValue && request.DueDate.Value.Date < request.InvoiceDate.Value.Date)
+                    {
+                        return BadRequest(new { error = "Due Date cannot be earlier than Invoice Date." });
+                    }
+
                     // Validate all line items can be invoiced
                     foreach (var item in request.LineItems)
                     {

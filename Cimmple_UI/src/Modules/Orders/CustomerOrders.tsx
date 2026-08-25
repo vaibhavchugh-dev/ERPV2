@@ -24,10 +24,10 @@ const CustomerOrders: React.FC = () => {
     loadOrders();
   }, [locationIdParam]);
 
-  // Handle URL parameter to open slideout (from global search)
+  // Handle URL parameter to open slideout (from global search or Job Orders link)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const openId = params.get('open');
+    const openId = params.get('open') || params.get('orderId');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -114,6 +114,10 @@ const CustomerOrders: React.FC = () => {
       return <span className="badge badge-primary">Partially Shipped</span>;
     } else if (statusLower === "shipped") {
       return <span className="badge badge-success">Shipped</span>;
+    } else if (statusLower === "partially invoiced" || statusLower === "partially-invoiced") {
+      return <span className="badge badge-info">Partially Invoiced</span>;
+    } else if (statusLower === "fully invoiced" || statusLower === "fully-invoiced" || statusLower === "invoiced") {
+      return <span className="badge badge-success">Fully Invoiced</span>;
     } else if (statusLower === "completed") {
       return <span className="badge badge-success">Completed</span>;
     } else if (statusLower === "cancelled" || statusLower === "canceled") {
