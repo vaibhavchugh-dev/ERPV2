@@ -1,5 +1,6 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
+import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
 
 export interface PriceBreakdownMatrix {
   quantities: number[]; // Quantity values for column headers (e.g., [1, 5, 10, 25])
@@ -448,13 +449,11 @@ export class QuotationService {
 
     const formData = new FormData();
     formData.append("formField", JSON.stringify(cleanPayload));
-    (newFiles || []).forEach((file) => {
-      formData.append("file", file);
-    });
+    appendFilesToFormData(formData, newFiles || []); 
 
     const url = `/Quotation/SaveQuotation`;
-    return Instense.post(url, formData).then((response) => {
-      const result = response.data.result;
+    return postMultipart<{ result?: any }>(url, formData).then((data) => {      
+      const result = data.result;
       if (result && result.id) {
         const attachments = Array.isArray(result.attachments)
           ? result.attachments.map((a: any) => ({
@@ -501,9 +500,7 @@ export class QuotationService {
     }
 
     const formData = new FormData();
-    files.forEach((file) => {
-      formData.append("file", file);
-    });
+    appendFilesToFormData(formData, files); 
     formData.append(
       "formField",
       JSON.stringify({
@@ -518,8 +515,8 @@ export class QuotationService {
     formData.append("tenantId", String(tenantID));
 
     const url = `/Quotation/QuotationSaveFile`;
-    return Instense.post(url, formData).then((response) => {
-      const result = response.data.result;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
       const attachments = result?.attachments || [];
       return attachments.map((a: any) => ({
         id: a.id || a.Id || 0,

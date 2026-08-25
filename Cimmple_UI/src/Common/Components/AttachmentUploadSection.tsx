@@ -1,6 +1,25 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCloudArrowUp,
+  faDownload,
+  faEye,
+  faPaperclip,
+  faPlus,
+  faTrash,
+} from "@fortawesome/free-solid-svg-icons";
 import { DocumentViewerFile } from "./DocumentViewerWorkspace";
+import {
+  createPendingAttachments,
+  DEFAULT_MAX_UPLOAD_BYTES,
+  DEFAULT_UPLOAD_EXTENSIONS,
+  formatFileSize,
+  getApiErrorMessage,
+  getFileExtension,
+  triggerBrowserDownload,
+  validateSelectedFiles,
+} from "../Services/FileUploadHelper";
 import "./AttachmentUploadSection.scss";
 
 export type ModuleAttachment = {
@@ -30,10 +49,6 @@ type Props = {
   onUploadFiles?: (files: File[]) => Promise<void>;
   onDeleteAttachment: (attachment: ModuleAttachment) => Promise<void>;
   onDownloadAttachment: (attachment: ModuleAttachment) => Promise<void>;
-  /**
-   * Opens the parent-owned document workspace with metadata only.
-   * Parent is responsible for lazy-loading/caching document bytes.
-   */
   onViewAttachment?: (
     attachment: ModuleAttachment,
     index: number,
@@ -41,28 +56,13 @@ type Props = {
   ) => void;
 };
 
-const DEFAULT_EXTENSIONS = [
-  "pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "rtf",
-  "ppt", "pptx", "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "msg", "eml"
-];
-
-const formatSize = (size: number) => {
-  if (!size || size <= 0) return "0 KB";
-  return `${(size / 1024).toFixed(2)} KB`;
-};
-
-const getExtension = (name: string) => {
-  const parts = name.split(".");
-  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
-};
-
 const AttachmentUploadSection: React.FC<Props> = ({
   attachments,
   orderId,
   disabled = false,
   deferUploadUntilSave = false,
-  maxFileSizeBytes = 5 * 1024 * 1024,
-  acceptedExtensions = DEFAULT_EXTENSIONS,
+  maxFileSizeBytes = DEFAULT_MAX_UPLOAD_BYTES,
+  acceptedExtensions = DEFAULT_UPLOAD_EXTENSIONS,
   onAttachmentsChange,
   onUploadFiles,
   onDeleteAttachment,
@@ -72,67 +72,51 @@ const AttachmentUploadSection: React.FC<Props> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [busyAttachmentId, setBusyAttachmentId] = useState<number | null>(null);
 
   const acceptAttr = useMemo(
     () => acceptedExtensions.map((ext) => `.${ext}`).join(","),
     [acceptedExtensions]
   );
 
-  const validateFiles = useCallback(
-    (files: File[]) => {
-      const valid: File[] = [];
-      for (const file of files) {
-        const ext = getExtension(file.name);
-        if (!acceptedExtensions.includes(ext)) {
-          toast.error(`File type .${ext || "unknown"} is not supported: ${file.name}`);
-          continue;
-        }
-        if (file.size > maxFileSizeBytes) {
-          toast.error(`File exceeds ${(maxFileSizeBytes / (1024 * 1024)).toFixed(0)} MB limit: ${file.name}`);
-          continue;
-        }
-        valid.push(file);
-      }
-      return valid;
-    },
-    [acceptedExtensions, maxFileSizeBytes]
-  );
+  const showValidationErrors = useCallback((errors: string[]) => {
+    if (errors.length === 0) return;
+    const preview = errors.slice(0, 3).join(" ");
+    const suffix = errors.length > 3 ? ` (+${errors.length - 3} more)` : "";
+    toast.error(`${preview}${suffix}`);
+  }, []);
 
   const handleIncomingFiles = async (fileList: FileList | File[] | null) => {
     if (!fileList || disabled) return;
-    const files = validateFiles(Array.from(fileList));
-    if (files.length === 0) return;
+
+    const { valid, errors } = validateSelectedFiles(Array.from(fileList), {
+      acceptedExtensions,
+      maxFileSizeBytes,
+      existing: attachments.map((a) => ({ name: a.name, size: a.size })),
+    });
+    showValidationErrors(errors);
+    if (valid.length === 0) return;
 
     if (orderId > 0 && !deferUploadUntilSave && onUploadFiles) {
       setUploading(true);
+      setUploadProgress(0);
       try {
-        await onUploadFiles(files);
-      } catch (error: any) {
-        toast.error(error?.message || "Failed to upload attachment(s)");
+        await onUploadFiles(valid);
+        setUploadProgress(100);
+      } catch (error: unknown) {
+        toast.error(getApiErrorMessage(error, "Failed to upload attachment(s)"));
       } finally {
         setUploading(false);
+        window.setTimeout(() => setUploadProgress(null), 400);
       }
       return;
     }
 
-    // Keep files locally until save when deferred by the consuming module.
-    const pending = files.map((file, idx) => {
-      const localUrl = URL.createObjectURL(file);
-      return {
-        id: Date.now() + idx,
-        name: file.name,
-        size: file.size,
-        isPending: true,
-        localUrl,
-        file,
-        contentType: file.type,
-      } as ModuleAttachment;
-    });
+    const pending = createPendingAttachments(valid) as ModuleAttachment[];
     onAttachmentsChange([...attachments, ...pending]);
   };
 
-  /** Metadata-only document list. Bytes are loaded lazily by the parent viewer/cache. */
   const buildViewerDocuments = (): DocumentViewerFile[] => {
     return attachments.map((attachment) => ({
       id: attachment.id,
@@ -141,7 +125,6 @@ const AttachmentUploadSection: React.FC<Props> = ({
       contentType: attachment.contentType,
       fileUniqueno: attachment.fileUniqueno,
       isPending: !!attachment.isPending,
-      // Pending unsaved files already have a local object URL.
       localUrl: attachment.isPending ? attachment.localUrl : undefined,
     }));
   };
@@ -168,40 +151,41 @@ const AttachmentUploadSection: React.FC<Props> = ({
   };
 
   const handleDelete = async (attachment: ModuleAttachment) => {
-    setMenuOpenId(null);
     if (!window.confirm(`Delete attachment "${attachment.name}"?`)) {
       return;
     }
 
-    if (attachment.isPending || !attachment.fileUniqueno) {
-      if (attachment.localUrl) {
-        URL.revokeObjectURL(attachment.localUrl);
-      }
-      onAttachmentsChange(attachments.filter((a) => a.id !== attachment.id));
-      return;
-    }
-
+    setBusyAttachmentId(attachment.id);
     try {
+      if (attachment.isPending || !attachment.fileUniqueno) {
+        if (attachment.localUrl) {
+          URL.revokeObjectURL(attachment.localUrl);
+        }
+        onAttachmentsChange(attachments.filter((a) => a.id !== attachment.id));
+        return;
+      }
+
       await onDeleteAttachment(attachment);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to delete attachment");
+    } catch (error: unknown) {
+      toast.error(getApiErrorMessage(error, "Failed to delete attachment"));
+    } finally {
+      setBusyAttachmentId(null);
     }
   };
 
   const handleDownload = async (attachment: ModuleAttachment) => {
-    setMenuOpenId(null);
-    if (attachment.isPending && attachment.localUrl) {
-      const link = document.createElement("a");
-      link.href = attachment.localUrl;
-      link.download = attachment.name;
-      link.click();
-      return;
-    }
-
+    setBusyAttachmentId(attachment.id);
     try {
+      if (attachment.isPending && attachment.localUrl) {
+        triggerBrowserDownload(attachment.localUrl, attachment.name);
+        return;
+      }
+
       await onDownloadAttachment(attachment);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to download attachment");
+    } catch (error: unknown) {
+      toast.error(getApiErrorMessage(error, "Failed to download attachment"));
+    } finally {
+      setBusyAttachmentId(null);
     }
   };
 
@@ -238,6 +222,8 @@ const AttachmentUploadSection: React.FC<Props> = ({
 
   const hasAttachments = attachments.length > 0;
   const maxSizeMb = (maxFileSizeBytes / (1024 * 1024)).toFixed(0);
+  const canDownload = (attachment: ModuleAttachment) =>
+    attachment.isPending || orderId > 0 || !!attachment.fileUniqueno;
 
   return (
     <div className="attachment-upload-section">
@@ -255,17 +241,21 @@ const AttachmentUploadSection: React.FC<Props> = ({
       />
 
       <div className="attachment-upload-section__header">
-        <h3>Attachments</h3>
-        {/* {hasAttachments && onViewAttachment && (
-          <button
-            type="button"
-            className="attachment-upload-section__viewer-btn"
-            onClick={() => openViewer(0)}
-          >
-            Open Viewer
-          </button>
-        )} */}
+        <h3>
+          <FontAwesomeIcon icon={faPaperclip} className="attachment-upload-section__header-icon" />
+          Attachments
+        </h3>
       </div>
+
+      {uploading && uploadProgress != null && (
+        <div className="attachment-upload-section__progress" role="status" aria-live="polite">
+          <div
+            className="attachment-upload-section__progress-bar"
+            style={{ width: `${uploadProgress}%` }}
+          />
+          <span>Uploading… {uploadProgress}%</span>
+        </div>
+      )}
 
       {!hasAttachments ? (
         <div
@@ -286,10 +276,7 @@ const AttachmentUploadSection: React.FC<Props> = ({
           }}
         >
           <div className="attachment-upload-section__dropzone-icon" aria-hidden>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M12 16V4m0 0l-4 4m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" strokeLinecap="round" />
-            </svg>
+            <FontAwesomeIcon icon={faCloudArrowUp} />
           </div>
           <div className="attachment-upload-section__dropzone-text">
             {uploading ? (
@@ -312,57 +299,69 @@ const AttachmentUploadSection: React.FC<Props> = ({
       ) : (
         <>
           <div className="attachment-upload-section__list">
-            {attachments.map((attachment, index) => (
-              <div key={`${attachment.id}-${attachment.fileUniqueno || "pending"}`} className="attachment-upload-section__item">
-                <div className="attachment-upload-section__item-main">
-                  <span className="attachment-upload-section__badge">
-                    {getExtension(attachment.name).toUpperCase() || "FILE"}
-                  </span>
-                  <div className="attachment-upload-section__meta">
-                    <div className="attachment-upload-section__name" title={attachment.name}>
-                      {attachment.name}
-                      {attachment.isPending && <span className="pending-tag">Pending save</span>}
-                    </div>
-                    <div className="attachment-upload-section__size">{formatSize(attachment.size)}</div>
-                  </div>
-                </div>
-
-                <div className="attachment-upload-section__item-actions">
-                  {/* <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => openViewer(index)}
-                  >
-                    View
-                  </button>
-                  {(orderId > 0 || attachment.isPending) && (
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => handleDownload(attachment)}
-                    >
-                      Download
-                    </button>
-                  )} */}
-                  <div className="more-menu">
-                    <button
-                      type="button"
-                      className="more-btn"
-                      onClick={() => setMenuOpenId(menuOpenId === attachment.id ? null : attachment.id)}
-                    >
-                      ⋮
-                    </button>
-                    {menuOpenId === attachment.id && (
-                      <div className="more-menu__dropdown">
-                        <button type="button" onClick={() => openViewer(index)}>View</button>
-                        <button type="button" onClick={() => handleDownload(attachment)}>Download</button>
-                        <button type="button" className="danger" onClick={() => handleDelete(attachment)}>Delete</button>
+            {attachments.map((attachment, index) => {
+              const isBusy = busyAttachmentId === attachment.id;
+              return (
+                <div
+                  key={`${attachment.id}-${attachment.fileUniqueno || "pending"}`}
+                  className="attachment-upload-section__item"
+                >
+                  <div className="attachment-upload-section__item-main">
+                    <span className="attachment-upload-section__badge">
+                      {getFileExtension(attachment.name).toUpperCase() || "FILE"}
+                    </span>
+                    <div className="attachment-upload-section__meta">
+                      <div className="attachment-upload-section__name" title={attachment.name}>
+                        {attachment.name}
+                        {attachment.isPending && (
+                          <span className="pending-tag">Pending save</span>
+                        )}
                       </div>
+                      <div className="attachment-upload-section__size">
+                        {formatFileSize(attachment.size)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="attachment-upload-section__item-actions">
+                    {onViewAttachment && (
+                      <button
+                        type="button"
+                        className="attachment-upload-section__action-btn"
+                        title="View"
+                        aria-label={`View ${attachment.name}`}
+                        disabled={isBusy}
+                        onClick={() => openViewer(index)}
+                      >
+                        <FontAwesomeIcon icon={faEye} />
+                      </button>
                     )}
+                    {canDownload(attachment) && (
+                      <button
+                        type="button"
+                        className="attachment-upload-section__action-btn"
+                        title="Download"
+                        aria-label={`Download ${attachment.name}`}
+                        disabled={isBusy}
+                        onClick={() => void handleDownload(attachment)}
+                      >
+                        <FontAwesomeIcon icon={faDownload} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="attachment-upload-section__action-btn attachment-upload-section__action-btn--danger"
+                      title="Delete"
+                      aria-label={`Delete ${attachment.name}`}
+                      disabled={isBusy || disabled}
+                      onClick={() => void handleDelete(attachment)}
+                    >
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="attachment-upload-section__footer">
@@ -372,7 +371,8 @@ const AttachmentUploadSection: React.FC<Props> = ({
               disabled={disabled || uploading}
               onClick={openFilePicker}
             >
-              + Add Attachment
+              <FontAwesomeIcon icon={faPlus} />
+              Add Attachment
             </button>
           </div>
         </>
