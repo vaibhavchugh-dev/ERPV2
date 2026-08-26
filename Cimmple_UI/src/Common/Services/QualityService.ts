@@ -296,9 +296,9 @@ export class QualityService {
         params: { ncrId, tenantId }
       });
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error deleting NCR:", error);
-      return false;
+      throw new Error(error.response?.data?.error || error.message || "Failed to delete NCR");
     }
   }
 

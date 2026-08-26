@@ -70,17 +70,40 @@ const getDisplayName = (user: PunchBoardUser) => {
   return name || user.userName || "Unknown user";
 };
 
-const formatPunchTime = (value?: string) => {
+const parseUtcDate = (value?: string | Date): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  let str = String(value).trim();
+  if (!str) return null;
+  if (!/Z|[+-]\d{2}:?\d{2}$/i.test(str)) {
+    str += "Z";
+  }
+  const d = new Date(str);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const formatPunchTime = (value?: string, timeZone?: string) => {
   if (!value) {
     return "--";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseUtcDate(value);
+  if (!date) {
     return value;
   }
-  const hours = date.getHours() % 12 || 12;
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  return `${hours}:${minutes}`;
+  const resolvedTimeZone = timeZone && timeZone.trim() ? timeZone.trim() : Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    return new Intl.DateTimeFormat([], {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: resolvedTimeZone,
+    }).format(date);
+  } catch {
+    const hours = date.getHours() % 12 || 12;
+    const minutes = date.getMinutes().toString().padStart(2, "0");
+    const ampm = date.getHours() >= 12 ? "PM" : "AM";
+    return `${hours}:${minutes} ${ampm}`;
+  }
 };
 
 const normalizeEmployeeCode = (value?: string) => (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -148,20 +171,21 @@ const normalizePunchStorage = (session: any) => ({
 const AttendanceUserListItem: React.FC<{
   user: PunchBoardUser;
   status: "on-premises" | "on-break" | "not-arrived" | "left";
-}> = ({ user, status }) => {
+  timeZone?: string;
+}> = ({ user, status, timeZone }) => {
   return (
     <div className={`attendance-user-item ${status}`}>
       <div className="attendance-user-info">
         <strong>{getDisplayName(user)}</strong>
         <span className="emp-code">{user.empCode || "--"}</span>
         {status === "on-premises" && user.todayPunchIn && (
-          <span className="punch-time">{formatPunchTime(user.todayPunchIn)} In</span>
+          <span className="punch-time">{formatPunchTime(user.todayPunchIn, timeZone)} In</span>
         )}
         {status === "on-break" && user.todayBreakOut && (
-          <span className="punch-time">{formatPunchTime(user.todayBreakOut)} Break</span>
+          <span className="punch-time">{formatPunchTime(user.todayBreakOut, timeZone)} Break</span>
         )}
         {status === "left" && user.todayPunchOut && (
-          <span className="punch-time">{formatPunchTime(user.todayPunchOut)} Out</span>
+          <span className="punch-time">{formatPunchTime(user.todayPunchOut, timeZone)} Out</span>
         )}
       </div>
       {status === "on-premises" && (
@@ -479,7 +503,8 @@ const AttendanceSummaryPanel: React.FC<{
   outUsers: PunchBoardUser[];
   availableUsers: PunchBoardUser[];
   loading: boolean;
-}> = ({ inUsers, breakUsers, outUsers, availableUsers, loading }) => {
+  timeZone?: string;
+}> = ({ inUsers, breakUsers, outUsers, availableUsers, loading, timeZone }) => {
   const totalOnPremises = inUsers.length;
   const totalOnBreak = breakUsers.length;
   const totalNotArrived = availableUsers.length;
@@ -568,7 +593,7 @@ const AttendanceSummaryPanel: React.FC<{
               <div className="empty-state">No users present</div>
             ) : (
               inUsers.map((user) => (
-                <AttendanceUserListItem key={user.userUniqueId} user={user} status="on-premises" />
+                <AttendanceUserListItem key={user.userUniqueId} user={user} status="on-premises" timeZone={timeZone} />
               ))
             )}
           </div>
@@ -585,7 +610,7 @@ const AttendanceSummaryPanel: React.FC<{
               <div className="empty-state">No users on break</div>
             ) : (
               breakUsers.map((user) => (
-                <AttendanceUserListItem key={user.userUniqueId} user={user} status="on-break" />
+                <AttendanceUserListItem key={user.userUniqueId} user={user} status="on-break" timeZone={timeZone} />
               ))
             )}
           </div>
@@ -602,7 +627,7 @@ const AttendanceSummaryPanel: React.FC<{
               <div className="empty-state">No users not arrived</div>
             ) : (
               availableUsers.map((user) => (
-                <AttendanceUserListItem key={user.userUniqueId} user={user} status="not-arrived" />
+                <AttendanceUserListItem key={user.userUniqueId} user={user} status="not-arrived" timeZone={timeZone} />
               ))
             )}
           </div>
@@ -619,7 +644,7 @@ const AttendanceSummaryPanel: React.FC<{
               <div className="empty-state">No users out</div>
             ) : (
               outUsers.map((user) => (
-                <AttendanceUserListItem key={user.userUniqueId} user={user} status="left" />
+                <AttendanceUserListItem key={user.userUniqueId} user={user} status="left" timeZone={timeZone} />
               ))
             )}
           </div>
@@ -646,7 +671,8 @@ const UserList: React.FC<{
   users: PunchBoardUser[];
   tone: "in" | "out";
   onSelectUser?: (user: PunchBoardUser) => void;
-}> = ({ title, users, tone, onSelectUser }) => {
+  timeZone?: string;
+}> = ({ title, users, tone, onSelectUser, timeZone }) => {
   const isSelectable = tone === "in" && !!onSelectUser;
 
   return (
@@ -686,12 +712,12 @@ const UserList: React.FC<{
               <strong>{getDisplayName(user)}</strong>
               {tone === "in" && user.todayPunchIn && (
                 <div className="punch-timer green-timer">
-                  {formatPunchTime(user.todayPunchIn)} In
+                  {formatPunchTime(user.todayPunchIn, timeZone)} In
                 </div>
               )}
               {tone === "out" && user.todayPunchOut && (
                 <div className="punch-timer red-timer">
-                  {formatPunchTime(user.todayPunchOut)} Out
+                  {formatPunchTime(user.todayPunchOut, timeZone)} Out
                 </div>
               )}
             </div>
@@ -1373,6 +1399,7 @@ export const PunchInOut: React.FC = () => {
             outUsers={outUsers}
             availableUsers={availableUsers}
             loading={loading}
+            timeZone={punchTimeZone}
           />
         )}
       </div>

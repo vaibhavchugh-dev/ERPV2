@@ -51,6 +51,7 @@ export interface MasterListPageProps<T = any> {
     value: string;
     onChange: (value: string) => void;
   }[];
+  extraFilters?: React.ReactNode;
   emptyMessage?: string;
   getRowId?: (row: T) => number | string; // Function to get unique ID for row
   customActionButtons?: CustomActionButton[]; // Custom action buttons
@@ -79,6 +80,7 @@ const MasterListPage = <T extends Record<string, any>>({
   searchFields = [],
   matchRowSearch,
   filters = [],
+  extraFilters,
   emptyMessage = "No data available",
   getRowId,
   customActionButtons = [],
@@ -305,6 +307,7 @@ const MasterListPage = <T extends Record<string, any>>({
             </select>
           </div>
         ))}
+        {extraFilters}
       </div>
 
       {/* Table */}

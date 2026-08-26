@@ -93,6 +93,11 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const handleRecordPayment = (invoice: InvoiceSummary) => {
+    const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    if (isVoided) {
+      toast.error("Cannot record payment for a voided invoice");
+      return;
+    }
     openInvoiceDetail(invoice, true);
   };
 
@@ -508,40 +513,47 @@ const AccountsReceivable: React.FC = () => {
                           <FontAwesomeIcon icon={faEye} />
                         </button>
 
-                        {invoice.status !== 'Paid' && (
-                          <>
-                            <button
-                              onClick={() => handleSendReminder(invoice)}
-                              style={{
-                                padding: "0.25rem 0.5rem",
-                                backgroundColor: "#f59e0b",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "0.25rem",
-                                cursor: "pointer",
-                                fontSize: "0.75rem",
-                              }}
-                              title="Send Reminder"
-                            >
-                              <FontAwesomeIcon icon={faEnvelope} />
-                            </button>
-                            <button
-                              onClick={() => handleRecordPayment(invoice)}
-                              style={{
-                                padding: "0.25rem 0.5rem",
-                                backgroundColor: "#10b981",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "0.25rem",
-                                cursor: "pointer",
-                                fontSize: "0.75rem",
-                              }}
-                              title="Record Payment"
-                            >
-                              <FontAwesomeIcon icon={faCreditCard} />
-                            </button>
-                          </>
-                        )}
+                        {(() => {
+                          const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+                          const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
+
+                          if (isPaid || isVoided) return null;
+
+                          return (
+                            <>
+                              <button
+                                onClick={() => handleSendReminder(invoice)}
+                                style={{
+                                  padding: "0.25rem 0.5rem",
+                                  backgroundColor: "#f59e0b",
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "0.25rem",
+                                  cursor: "pointer",
+                                  fontSize: "0.75rem",
+                                }}
+                                title="Send Reminder"
+                              >
+                                <FontAwesomeIcon icon={faEnvelope} />
+                              </button>
+                              <button
+                                onClick={() => handleRecordPayment(invoice)}
+                                style={{
+                                  padding: "0.25rem 0.5rem",
+                                  backgroundColor: "#10b981",
+                                  color: "white",
+                                  border: "none",
+                                  borderRadius: "0.25rem",
+                                  cursor: "pointer",
+                                  fontSize: "0.75rem",
+                                }}
+                                title="Record Payment"
+                              >
+                                <FontAwesomeIcon icon={faCreditCard} />
+                              </button>
+                            </>
+                          );
+                        })()}
                       </div>
                     </td>
                   </tr>
@@ -564,6 +576,7 @@ const AccountsReceivable: React.FC = () => {
         invoiceId={selectedInvoiceId}
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
     </div>
   );

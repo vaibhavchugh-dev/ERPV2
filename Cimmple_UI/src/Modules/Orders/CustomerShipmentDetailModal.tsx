@@ -11,12 +11,14 @@ interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   shipmentId: number;
+  onShipmentDeleted?: () => void;
 }
 
 const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = ({
   isOpen,
   onClose,
-  shipmentId
+  shipmentId,
+  onShipmentDeleted
 }) => {
   const [shipment, setShipment] = useState<CustomerShipmentDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -156,6 +158,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
         toast.success(`Shipment ${shipment.shipmentNo} deleted successfully`);
         setShowDeletionDialog(false);
         setDeletionImpact(null);
+        onShipmentDeleted?.();
         onClose();
       } else {
         toast.error(`Failed to delete shipment ${shipment.shipmentNo}`);

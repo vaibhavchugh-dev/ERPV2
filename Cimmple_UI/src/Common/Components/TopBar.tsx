@@ -401,8 +401,8 @@ const TopBar: React.FC = () => {
     setShowSearchResults(true);
   };
 
-  const getFirstResult = (): SearchResult | null => {
-    if (!searchResults) return null;
+  const getFirstResult = (resultsData: GlobalSearchResults = searchResults): SearchResult | null => {
+    if (!resultsData) return null;
     const categories: (keyof GlobalSearchResults)[] = [
       'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
       'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
@@ -410,7 +410,7 @@ const TopBar: React.FC = () => {
       'shipments', 'ncrReports', 'users', 'documents'
     ];
     for (const cat of categories) {
-      const list = searchResults[cat];
+      const list = resultsData[cat];
       if (list && list.length > 0) {
         return list[0];
       }
@@ -418,10 +418,33 @@ const TopBar: React.FC = () => {
     return null;
   };
 
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const firstResult = getFirstResult();
+      const trimmed = searchQuery.trim();
+      if (!trimmed) return;
+
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+
+      let currentResults = searchResults;
+
+      const existingFirst = getFirstResult(currentResults);
+      if (!existingFirst || searchLoading) {
+        try {
+          setSearchLoading(true);
+          currentResults = await GlobalSearchService.Search(trimmed, tenantId, 5);
+          setSearchResults(currentResults);
+        } catch (err) {
+          console.error("Immediate search error on Enter:", err);
+        } finally {
+          setSearchLoading(false);
+        }
+      }
+
+      const firstResult = getFirstResult(currentResults);
       if (firstResult) {
         handleResultClick(firstResult);
       }

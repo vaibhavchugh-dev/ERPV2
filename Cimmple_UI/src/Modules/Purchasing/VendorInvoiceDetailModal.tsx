@@ -423,6 +423,7 @@ interface VendorInvoiceDetailModalProps {
   /** When true, opens the payment form after the invoice loads */
   initialShowPayment?: boolean;
   onPaymentComplete?: () => void;
+  onInvoiceDeleted?: () => void;
 }
 
 const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
@@ -430,7 +431,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   onClose,
   invoiceId,
   initialShowPayment = false,
-  onPaymentComplete
+  onPaymentComplete,
+  onInvoiceDeleted
 }) => {
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
@@ -616,6 +618,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       toast.success("Vendor invoice deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
+      onInvoiceDeleted?.();
+      onPaymentComplete?.();
       onClose();
     } catch (error: any) {
       console.error("Error deleting vendor invoice:", error);
