@@ -330,7 +330,10 @@ const JobOrders: React.FC = () => {
         enablePagination
         matchRowSearch={matchJobOrderSearch}
         onAdd={() => {
-          toast.info("Create job orders from Customer Order line items");
+          toast.info("Redirecting to Customer Orders to create job orders from order line items.", {
+            autoClose: 4000
+          });
+          history.push("/orders/customer");
         }}
         onRowClick={handleRowClick}
         filters={[

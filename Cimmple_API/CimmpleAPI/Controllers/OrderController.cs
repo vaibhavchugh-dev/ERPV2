@@ -2885,8 +2885,8 @@ namespace CimmpleAPI.Controllers
                 int tenantId = receivingData.TryGetProperty("tenantid", out JsonElement tenantElem) ? tenantElem.GetInt32() : 0;
                 int orderDetailId = receivingData.TryGetProperty("orderDetailId", out JsonElement detailElem) ? detailElem.GetInt32() : 0;
                 int receivedQty = receivingData.TryGetProperty("receivedQty", out JsonElement qtyElem) ? qtyElem.GetInt32() : 0;
-                DateTime receivedDate = receivingData.TryGetProperty("receivedDate", out JsonElement dateElem) && dateElem.ValueKind == JsonValueKind.String
-                    ? DateTime.Parse(dateElem.GetString())
+                DateTime receivedDate = receivingData.TryGetProperty("receivedDate", out JsonElement dateElem) && dateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(dateElem.GetString(), out var parsedDate)
+                    ? parsedDate
                     : DateTime.UtcNow;
                 int? locationId = receivingData.TryGetProperty("locationId", out JsonElement locElem) && locElem.ValueKind == JsonValueKind.Number
                     ? locElem.GetInt32()

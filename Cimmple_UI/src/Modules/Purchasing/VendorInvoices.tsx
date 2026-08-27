@@ -659,11 +659,10 @@ const VendorInvoices: React.FC = () => {
 
   const handleNewInvoice = () => {
     // Redirect to vendor orders page with a helpful message
-    toast.info("To create a new vendor invoice, go to Vendor Orders and create an invoice from an existing order with received items.", {
-      autoClose: 5000
+    toast.info("Redirecting to Vendor Orders to create an invoice from an order with received items.", {
+      autoClose: 4000
     });
-    // Optionally navigate to vendor orders
-    // history.push('/purchasing/vendor-orders');
+    history.push('/purchasing/vendor-orders');
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
