@@ -265,8 +265,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                int offsetNumber = orderId > 999 ? orderId - 999 : orderId;
                 var order = _context.CustomerOrder
-                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Where(o => (o.OrderID == orderId || o.PONumber == orderId || o.OrderID == offsetNumber || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
                     .FirstOrDefault();
 
                 if (order == null)
@@ -274,9 +275,11 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order not found" });
                 }
 
+                int actualOrderId = order.OrderID;
+
                 // Query details
                 var detailsList = _context.CustomerOrderDetails
-                    .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                    .Where(d => d.OrderID == actualOrderId && d.Tenantid == tenantId)
                     .OrderBy(d => d.ItemNo)
                     .ToList();
 
@@ -1294,17 +1297,28 @@ namespace CimmpleAPI.Controllers
             {
                 var order = await _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Where(o => (o.OrderID == orderId || o.PONumber == orderId) && o.Tenantid == tenantId)
                     .FirstOrDefaultAsync();
+
+                if (order == null && orderId > 999)
+                {
+                    int offsetNumber = orderId - 999;
+                    order = await _context.VendorOrders
+                        .AsNoTracking()
+                        .Where(o => (o.OrderID == offsetNumber || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
+                        .FirstOrDefaultAsync();
+                }
 
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
+
+                int actualOrderId = order.OrderID;
 
                 // Get details separately to avoid circular references
                 // Use raw SQL to handle both DueDateString and DueDate columns safely
                 var detailsList = await _context.VendorOrderDetails
                     .AsNoTracking()
-                    .Where(d => d.OrderID == orderId)
+                    .Where(d => d.OrderID == actualOrderId)
                     .OrderBy(d => d.ItemNo)
                     .ToListAsync();
 
@@ -1507,7 +1521,9 @@ namespace CimmpleAPI.Controllers
                     Status = orderData.TryGetProperty("Status", out JsonElement statusElem) ? statusElem.GetString() ?? "Draft" : "Draft",
                     ShippingInstructions = orderData.TryGetProperty("ShippingInstructions", out JsonElement shippingInstructionsElem) ? shippingInstructionsElem.GetString() ?? "" : "",
                     ExternalVendorPO = orderData.TryGetProperty("ExternalVendorPO", out JsonElement externalVendorPOElem) ? externalVendorPOElem.GetString() ?? "" : "",
-                    ExternalOrderDate = orderData.TryGetProperty("ExternalOrderDate", out JsonElement externalOrderDateElem) && externalOrderDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(externalOrderDateElem.GetString(), out DateTime parsedExternalDate) ? parsedExternalDate : (DateTime?)null,
+                    ExternalOrderDate = (orderData.TryGetProperty("ExternalOrderDate", out JsonElement externalOrderDateElem) && externalOrderDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(externalOrderDateElem.GetString(), out DateTime parsedExternalDate))
+                        ? parsedExternalDate
+                        : (orderData.TryGetProperty("DueDate", out JsonElement dueDateElem) && dueDateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(dueDateElem.GetString(), out DateTime parsedDueDate) ? parsedDueDate : (DateTime?)null),
                     BuyerName = orderData.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "",
                     VendorRefNo = orderData.TryGetProperty("VendorRefNo", out JsonElement vendorRefNoElem) ? vendorRefNoElem.GetString() ?? "" : "",
                     OrderType = orderData.TryGetProperty("OrderType", out JsonElement orderTypeElem) ? orderTypeElem.GetString() ?? "Vendor" : "Vendor",
@@ -1710,7 +1726,13 @@ namespace CimmpleAPI.Controllers
                             }
                             else
                             {
-                                // Keep invoiced detail as-is
+                                // Validate if quantity or price was modified
+                                int reqQty = detailElem.TryGetProperty("QtyOrdered", out JsonElement qElem) ? qElem.GetInt32() : existingDetail.QtyOrdered;
+                                decimal reqPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement pElem) ? pElem.GetDecimal() : existingDetail.UnitPrice;
+                                if (reqQty != existingDetail.QtyOrdered || Math.Abs(reqPrice - existingDetail.UnitPrice) > 0.001m)
+                                {
+                                    return BadRequest(new { error = $"Quantity or price for line item #{itemNo} cannot be edited because it has already been invoiced." });
+                                }
                                 Console.WriteLine($"SaveVendorOrder: Keeping invoiced detail unchanged (JobId: {jobId}, ItemNo: {itemNo})");
                             }
 
@@ -1723,6 +1745,18 @@ namespace CimmpleAPI.Controllers
                             detailsToAdd.Add(newDetail);
                             Console.WriteLine($"SaveVendorOrder: Adding new detail (JobId: {jobId}, ItemNo: {itemNo})");
                         }
+                    }
+
+                    // Check if user attempted to remove any invoiced line item
+                    var invoicedDetailsDeleted = existingDetails
+                        .Where(d => !processedDetailIds.Contains(d.ID) &&
+                                   d.VendorInvoicings != null && d.VendorInvoicings.Any())
+                        .ToList();
+
+                    if (invoicedDetailsDeleted.Any())
+                    {
+                        var delItem = invoicedDetailsDeleted.First();
+                        return BadRequest(new { error = $"Line item #{delItem.ItemNo} cannot be removed from the order because it has already been invoiced." });
                     }
 
                     // Add all new details
@@ -2851,8 +2885,8 @@ namespace CimmpleAPI.Controllers
                 int tenantId = receivingData.TryGetProperty("tenantid", out JsonElement tenantElem) ? tenantElem.GetInt32() : 0;
                 int orderDetailId = receivingData.TryGetProperty("orderDetailId", out JsonElement detailElem) ? detailElem.GetInt32() : 0;
                 int receivedQty = receivingData.TryGetProperty("receivedQty", out JsonElement qtyElem) ? qtyElem.GetInt32() : 0;
-                DateTime receivedDate = receivingData.TryGetProperty("receivedDate", out JsonElement dateElem) && dateElem.ValueKind == JsonValueKind.String
-                    ? DateTime.Parse(dateElem.GetString())
+                DateTime receivedDate = receivingData.TryGetProperty("receivedDate", out JsonElement dateElem) && dateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(dateElem.GetString(), out var parsedDate)
+                    ? parsedDate
                     : DateTime.UtcNow;
                 int? locationId = receivingData.TryGetProperty("locationId", out JsonElement locElem) && locElem.ValueKind == JsonValueKind.Number
                     ? locElem.GetInt32()
@@ -3522,11 +3556,11 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetAllVendorInvoices")]
-        public async Task<IActionResult> GetAllVendorInvoices([FromQuery] int tenantId, [FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public async Task<IActionResult> GetAllVendorInvoices([FromQuery] int tenantId, [FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days", [FromQuery] string startDate = null, [FromQuery] string endDate = null)
         {
             try
             {
-                Console.WriteLine($"GetAllVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
+                Console.WriteLine($"GetAllVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}, StartDate: {startDate}, EndDate: {endDate}");
 
                 // Get real vendor invoices from database
                 var invoices = await _context.VendorInvoiceMaster
@@ -3638,7 +3672,7 @@ namespace CimmpleAPI.Controllers
                     ).ToList();
                 }
 
-                invoiceSummaries = ApplyVendorInvoiceListFilters(invoiceSummaries, status, dateRange, vendorId).ToList();
+                invoiceSummaries = ApplyVendorInvoiceListFilters(invoiceSummaries, status, dateRange, vendorId, startDate, endDate).ToList();
 
                 return Ok(new { result = invoiceSummaries });
             }
@@ -3693,7 +3727,8 @@ namespace CimmpleAPI.Controllers
                     items = invoiceDetails.Select(d => new
                     {
                         orderDetailId = d.VendorOrderDetailID ?? 0,
-                        qtyInvoiced = 1, // This would need to be calculated from the quantity field if available
+                        qtyInvoiced = d.qty.HasValue && d.qty.Value > 0 ? d.qty.Value : (d.price.HasValue && d.price.Value > 0 && d.Amount > 0 ? (int)Math.Round(d.Amount / d.price.Value) : 1),
+                        unitPrice = d.price ?? 0m,
                         description = d.Description ?? "",
                         amount = d.Amount
                     }).ToList()
@@ -3844,29 +3879,45 @@ namespace CimmpleAPI.Controllers
         }
 
         private static List<dynamic> ApplyVendorInvoiceListFilters(
-            List<dynamic> invoices, string status, string dateRange, int? _vendorId)
+            List<dynamic> invoices, string status, string dateRange, int? _vendorId, string startDate = null, string endDate = null)
         {
             var now = DateTime.Now;
             DateTime? start = null;
             DateTime? end = null;
-            switch ((dateRange ?? "").Trim().ToLowerInvariant())
+            var rangeLower = (dateRange ?? "").Trim().ToLowerInvariant();
+
+            if (rangeLower == "custom" || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
             {
-                case "last 7 days":
-                    start = now.Date.AddDays(-7);
-                    break;
-                case "last 30 days":
-                    start = now.Date.AddDays(-30);
-                    break;
-                case "this month":
-                    start = new DateTime(now.Year, now.Month, 1);
-                    break;
-                case "last month":
-                    start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
-                    end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
-                    break;
-                case "all":
-                case "":
-                    break;
+                if (DateTime.TryParse(startDate, out DateTime parsedStart))
+                {
+                    start = parsedStart.Date;
+                }
+                if (DateTime.TryParse(endDate, out DateTime parsedEnd))
+                {
+                    end = parsedEnd.Date;
+                }
+            }
+            else
+            {
+                switch (rangeLower)
+                {
+                    case "last 7 days":
+                        start = now.Date.AddDays(-7);
+                        break;
+                    case "last 30 days":
+                        start = now.Date.AddDays(-30);
+                        break;
+                    case "this month":
+                        start = new DateTime(now.Year, now.Month, 1);
+                        break;
+                    case "last month":
+                        start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                        end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                        break;
+                    case "all":
+                    case "":
+                        break;
+                }
             }
 
             IEnumerable<dynamic> result = invoices;
@@ -3874,13 +3925,13 @@ namespace CimmpleAPI.Controllers
             {
                 result = result.Where(x => string.Equals((string)x.status, status, StringComparison.OrdinalIgnoreCase));
             }
-            if (start.HasValue)
+            if (start.HasValue || end.HasValue)
             {
                 result = result.Where(x =>
                 {
                     if (!DateTime.TryParse((string)x.invoiceDate, out DateTime d))
                         return false;
-                    if (d.Date < start.Value.Date) return false;
+                    if (start.HasValue && d.Date < start.Value.Date) return false;
                     if (end.HasValue && d.Date > end.Value.Date) return false;
                     return true;
                 });

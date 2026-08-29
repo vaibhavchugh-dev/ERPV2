@@ -80,12 +80,15 @@ namespace CimmpleAPI.Controllers
                 // Financial Metrics (reuse from AccountingController logic)
                 var totalReceivables = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
-                               im.PaymentDate == null)
+                               im.PaymentDate == null &&
+                               !im.IsVoided)
                     .Sum(im => (decimal?)im.TotalAmount) ?? 0;
 
                 var totalPayables = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.Paydate == null)
                     .Sum(vim => (decimal?)vim.TotalAmount) ?? 0;
 
                 var revenueThisMonth = _context.InvoiceMaster
@@ -502,7 +505,9 @@ namespace CimmpleAPI.Controllers
                     .Where(j => j.Tenantid == tenantId &&
                                j.DueDate < today &&
                                j.Status != null &&
-                               j.Status != "Completed")
+                               j.Status != "Completed" &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Void")
                     .Select(j => new
                     {
                         type = "overdue_job",
@@ -520,7 +525,8 @@ namespace CimmpleAPI.Controllers
                 var overdueAR = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                im.DueDate < today &&
-                               im.PaymentDate == null)
+                               im.PaymentDate == null &&
+                               !im.IsVoided)
                     .Select(im => new
                     {
                         type = "overdue_invoice_ar",
@@ -539,7 +545,9 @@ namespace CimmpleAPI.Controllers
                 var overdueAP = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate < today &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.Paydate == null)
                     .Select(vim => new
                     {
                         type = "overdue_invoice_ap",
@@ -792,7 +800,9 @@ namespace CimmpleAPI.Controllers
                                j.DueDate >= today &&
                                j.DueDate <= endDate &&
                                j.Status != null &&
-                               j.Status != "Completed")
+                               j.Status != "Completed" &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Void")
                     .Select(j => new
                     {
                         type = "job_order",
@@ -810,7 +820,8 @@ namespace CimmpleAPI.Controllers
                     .Where(im => im.TenantId == tenantId &&
                                im.DueDate >= today &&
                                im.DueDate <= endDate &&
-                               im.PaymentDate == null)
+                               im.PaymentDate == null &&
+                               !im.IsVoided)
                     .Select(im => new
                     {
                         type = "invoice_ar",
@@ -828,7 +839,9 @@ namespace CimmpleAPI.Controllers
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate >= today &&
                                  vim.DueDate <= endDate &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.Paydate == null)
                     .Select(vim => new
                     {
                         type = "invoice_ap",

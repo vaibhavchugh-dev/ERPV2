@@ -2,7 +2,7 @@ import Instense from "./Axios-config";
 
 export interface SearchResult {
   id: number;
-  type: 'customer' | 'vendor' | 'order' | 'invoice' | 'jobOrder' | 'quotation' |
+  type: 'customer' | 'vendor' | 'product' | 'rawMaterial' | 'order' | 'invoice' | 'jobOrder' | 'quotation' |
         'bank' | 'workstation' | 'location' | 'process' | 'jobTemplate' | 'priceBreakdown' | 
         'creditCard' | 'chartOfAccount' | 'vendorOrder' | 'vendorInvoice' | 
         'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'document';
@@ -43,6 +43,9 @@ export interface SearchResult {
   city?: string;
   state?: string;
   description?: string;
+  unitPrice?: number;
+  unitCost?: number;
+  unit?: string;
   ledgerCode?: string;
   nickName?: string;
   lastFourDigits?: string;
@@ -63,6 +66,8 @@ export interface SearchResult {
 export interface GlobalSearchResults {
   customers: SearchResult[];
   vendors: SearchResult[];
+  products?: SearchResult[];
+  rawMaterials?: SearchResult[];
   orders: SearchResult[];
   invoices: SearchResult[];
   jobOrders: SearchResult[];
@@ -91,6 +96,8 @@ export class GlobalSearchService {
       return {
         customers: [],
         vendors: [],
+        products: [],
+        rawMaterials: [],
         orders: [],
         invoices: [],
         jobOrders: [],
@@ -115,10 +122,37 @@ export class GlobalSearchService {
     }
 
     const url = `/GlobalSearch/Search`;
-    const response = await Instense.get(url, {
+    return Instense.get(url, {
       params: { query: query.trim(), tenantId, limit }
+    }).then((response) => {
+      const data = response.data || {};
+      return {
+        customers: data.customers || [],
+        vendors: data.vendors || [],
+        products: data.products || [],
+        rawMaterials: data.rawMaterials || [],
+        orders: data.orders || [],
+        invoices: data.invoices || [],
+        jobOrders: data.jobOrders || [],
+        quotations: data.quotations || [],
+        banks: data.banks || [],
+        workstations: data.workstations || [],
+        locations: data.locations || [],
+        processes: data.processes || [],
+        jobTemplates: data.jobTemplates || [],
+        priceBreakdowns: data.priceBreakdowns || [],
+        creditCards: data.creditCards || [],
+        chartOfAccounts: data.chartOfAccounts || [],
+        vendorOrders: data.vendorOrders || [],
+        vendorInvoices: data.vendorInvoices || [],
+        vendorReceiving: data.vendorReceiving || [],
+        vendorQuotations: data.vendorQuotations || [],
+        shipments: data.shipments || [],
+        ncrReports: data.ncrReports || [],
+        users: data.users || [],
+        documents: data.documents || []
+      };
     });
-    return response.data;
   }
 
   public static getResultUrl(result: SearchResult): string {
@@ -127,6 +161,11 @@ export class GlobalSearchService {
         return `/masters/customer?open=${result.id}`;
       case 'vendor':
         return `/masters/vendor?open=${result.id}`;
+      case 'product':
+        const partVal = result.partNo || result.code || String(result.id);
+        return `/masters/product?open=${encodeURIComponent(partVal)}`;
+      case 'rawMaterial':
+        return `/masters/raw-material?open=${result.id}`;
       case 'order':
         return `/orders/customer?open=${result.id}`;
       case 'invoice':
@@ -177,6 +216,10 @@ export class GlobalSearchService {
       case 'customer':
       case 'vendor':
         return result.name || result.code || '';
+      case 'product':
+        return result.partNo ? `${result.partNo}${result.partName ? ` — ${result.partName}` : ''}` : (result.name || 'Product');
+      case 'rawMaterial':
+        return result.partNo ? `${result.partNo}${result.partName ? ` — ${result.partName}` : ''}` : (result.name || 'Raw Material');
       case 'order':
         return result.displayNumber || `CO#${result.orderNumber}`;
       case 'invoice':
@@ -222,4 +265,3 @@ export class GlobalSearchService {
     }
   }
 }
-

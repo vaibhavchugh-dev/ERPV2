@@ -309,26 +309,34 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     try {
       const result = await VendorOrderService.GetVendorOrderById(orderId);
       if (result) {
-        // Convert OrderDate from MM/DD/YY to YYYY-MM-DD for date input
+        // Convert OrderDate/DueDate from MM/DD/YY or ISO to YYYY-MM-DD for date input
         const convertToDateInputFormat = (dateStr: string): string => {
           if (!dateStr) return "";
           try {
-            // Handle MM/DD/YY format
-            const parts = dateStr.split('/');
+            const str = String(dateStr).trim();
+            if (!str || str === "null" || str === "undefined") return "";
+            if (str.includes('T')) {
+              const datePart = str.split('T')[0];
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                return datePart;
+              }
+            }
+            const parts = str.split('/');
             if (parts.length === 3) {
               const month = parts[0].padStart(2, '0');
               const day = parts[1].padStart(2, '0');
               const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
               return `${year}-${month}-${day}`;
             }
-            // If already in YYYY-MM-DD format, return as is
-            if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-              return dateStr;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+              return str;
             }
-            // Try parsing as ISO date
-            const date = new Date(dateStr);
+            const date = new Date(str);
             if (!isNaN(date.getTime())) {
-              return date.toISOString().split('T')[0];
+              const year = date.getUTCFullYear();
+              const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+              const day = String(date.getUTCDate()).padStart(2, '0');
+              return `${year}-${month}-${day}`;
             }
           } catch (e) {
             console.warn("Error converting date:", dateStr, e);
@@ -348,9 +356,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           return detail;
         });
 
+        const resAny = result as any;
+        const rawExtDate = result.ExternalOrderDate || resAny.externalOrderDate || resAny.DueDate || resAny.dueDate;
+
         const formDataWithDetails = {
           ...result,
-          OrderDate: convertToDateInputFormat(result.OrderDate), // Convert to YYYY-MM-DD format
+          OrderDate: convertToDateInputFormat(result.OrderDate || resAny.orderDate),
+          ExternalOrderDate: convertToDateInputFormat(rawExtDate),
           Details: normalizedDetails,
           OrderType: "Vendor", // Always "Vendor" for vendor orders
           MaterialType:
@@ -668,7 +680,22 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     setIsStateChanged(true);
   };
 
+  const isDetailInvoiced = (d: any): boolean => {
+    if (!d) return false;
+    const qty = Number(d.InvoicedQty ?? d.invoicedQty ?? 0);
+    if (qty > 0) return true;
+    const status = String(d.InvoiceStatus ?? d.invoiceStatus ?? "").toLowerCase().trim();
+    return status === "fully invoiced" || status === "partially invoiced" || status === "invoiced";
+  };
+
   const handleDetailChange = (index: number, field: keyof VendorOrderDetailReq, value: any) => {
+    const detailToEdit = formData.Details?.[index];
+    const isItemInvoiced = isDetailInvoiced(detailToEdit);
+    if (isItemInvoiced) {
+      toast.error("Invoiced line items cannot be edited");
+      return;
+    }
+
     setFormData((prev) => {
       const newDetails = [...(prev.Details || [])];
       const current = { ...newDetails[index], [field]: value };
@@ -700,6 +727,12 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
   const handleDeleteDetail = (index: number) => {
     const removed = formData.Details?.[index];
+    const isInvoiced = isDetailInvoiced(removed);
+    if (isInvoiced) {
+      toast.error("Invoiced line items cannot be removed from the order");
+      return;
+    }
+
     setFormData((prev) => {
       const newDetails = (prev.Details || []).filter((_, i) => i !== index);
       const total = newDetails.reduce((sum, detail) => sum + calculateLineTotal(detail), 0);
@@ -1294,7 +1327,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "180px" }}>Account</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
-                        <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Action</th>
+                        <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600, minWidth: "90px" }}>Action</th>
+                        <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600, minWidth: "110px" }}></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1315,13 +1349,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
                         return (
                           <React.Fragment key={detail.ItemNo}>
+                          {(() => {
+                            const isInvoiced = isDetailInvoiced(detail);
+                            return (
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
                             <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
                                 className={`form-input vo-line-type-select ${lineTypeAccentClass(lineType)}`}
-                                title="Line type controls receiving and inventory. Check this before saving."
+                                title={isInvoiced ? "Line type locked: item has been invoiced" : "Line type controls receiving and inventory. Check this before saving."}
                                 value={lineType}
+                                disabled={isInvoiced}
                                 onChange={(e) =>
                                   handleDetailChange(index, "LineType", e.target.value)
                                 }
@@ -1346,6 +1384,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   suggestedUnit={detail.Unit}
                                   suggestedUnitCost={detail.UnitPrice}
                                   vendorId={formData.VendorID}
+                                  disabled={isInvoiced}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) => {
                                     setFormData((prev) => {
@@ -1372,6 +1411,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                       : detail.PartNo || ""
                                   }
                                   productId={detail.ProductId}
+                                  disabled={isInvoiced}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) => {
                                     setFormData((prev) => {
@@ -1401,6 +1441,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   vendorSelected={
                                     !!formData.VendorID && formData.VendorID > 0
                                   }
+                                  disabled={isInvoiced}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) =>
                                     handleDetailChange(index, "PartNo", partNo)
@@ -1422,22 +1463,25 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               <input
                                 type="text"
                                 className="form-input"
+                                disabled={isInvoiced}
                                 style={{
                                   width: "100%",
                                   minWidth: "150px",
-                                  cursor: "pointer",
+                                  cursor: isInvoiced ? "not-allowed" : "pointer",
+                                  backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
                                   textOverflow: "ellipsis",
                                   overflow: "hidden",
                                   whiteSpace: "nowrap"
                                 }}
                                 value={getFirstLine(detail.PartName || "")}
                                 onClick={() => {
+                                  if (isInvoiced) return;
                                   setEditingField({ index, field: "PartName", value: detail.PartName || "" });
                                   setShowTextEditorPopup(true);
                                 }}
                                 placeholder="Click to edit item name"
                                 readOnly
-                                title={detail.PartName || "Click to edit item name"}
+                                title={isInvoiced ? "Item name locked: item has been invoiced" : (detail.PartName || "Click to edit item name")}
                               />
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
@@ -1445,7 +1489,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 <input
                                   type="text"
                                   className="form-input"
-                                  style={{ width: "100%", minWidth: "150px", cursor: "pointer" }}
+                                  disabled={isInvoiced}
+                                  style={{
+                                    width: "100%",
+                                    minWidth: "150px",
+                                    cursor: isInvoiced ? "not-allowed" : "pointer",
+                                    backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                  }}
                                   value={displayText}
                                   ref={(el) => {
                                     if (el) {
@@ -1455,6 +1505,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     }
                                   }}
                                   onClick={() => {
+                                    if (isInvoiced) return;
                                     updateJobOrderDropdownPosition(index);
                                     setJobOrderDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -1569,9 +1620,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 type="text"
                                 inputMode="numeric"
                                 className="form-input no-spinner"
+                                disabled={isInvoiced}
+                                title={isInvoiced ? "Quantity locked: this line item has been invoiced." : undefined}
                                 style={{
                                   width: "100%",
-                                  minWidth: "80px"
+                                  minWidth: "80px",
+                                  backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                  cursor: isInvoiced ? "not-allowed" : undefined,
                                 }}
                                 value={numericDisplayValues.get(`qty-${index}`) ?? (detail.QtyOrdered === 0 ? "" : detail.QtyOrdered.toString())}
                                 onChange={(e) => {
@@ -1607,10 +1662,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 <input
                                   type="text"
                                   className="form-input"
+                                  disabled={isInvoiced}
                                   style={{
                                     width: "100%",
                                     minWidth: "80px",
-                                    paddingRight: "2rem"
+                                    paddingRight: "2rem",
+                                    backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                    cursor: isInvoiced ? "not-allowed" : undefined,
                                   }}
                                   value={detail.Unit || ""}
                                   onChange={(e) => {
@@ -1629,6 +1687,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     }
                                   }}
                                   onFocus={(e) => {
+                                    if (isInvoiced) return;
                                     updateUnitDropdownPosition(index);
                                     setUnitDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -1649,7 +1708,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 />
                                 <button
                                   type="button"
+                                  disabled={isInvoiced}
                                   onClick={(e) => {
+                                    if (isInvoiced) return;
                                     updateUnitDropdownPosition(index);
                                     setUnitDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -1664,7 +1725,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     transform: "translateY(-50%)",
                                     background: "none",
                                     border: "none",
-                                    cursor: "pointer",
+                                    cursor: isInvoiced ? "not-allowed" : "pointer",
                                     fontSize: "0.75rem",
                                     color: "#6b7280",
                                     padding: "0.25rem",
@@ -1748,9 +1809,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 type="text"
                                 inputMode="decimal"
                                 className="form-input no-spinner"
+                                disabled={isInvoiced}
+                                title={isInvoiced ? "Price locked: item has been invoiced." : undefined}
                                 style={{
                                   width: "100%",
-                                  minWidth: "100px"
+                                  minWidth: "100px",
+                                  backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                  cursor: isInvoiced ? "not-allowed" : undefined,
                                 }}
                                 value={numericDisplayValues.get(`price-${index}`) ?? (detail.UnitPrice === 0 ? "" : detail.UnitPrice.toString())}
                                 onChange={(e) => {
@@ -1787,7 +1852,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
                                 <select
                                   className="form-input"
-                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  disabled={isInvoiced}
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0, backgroundColor: isInvoiced ? "#f3f4f6" : undefined, cursor: isInvoiced ? "not-allowed" : undefined }}
                                   value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
                                   onChange={(e) =>
                                     handleDetailChange(
@@ -1805,7 +1871,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   type="text"
                                   inputMode="decimal"
                                   className="form-input no-spinner"
-                                  style={{ width: "100%", minWidth: "70px" }}
+                                  disabled={isInvoiced}
+                                  title={isInvoiced ? "Discount locked: item has been invoiced." : undefined}
+                                  style={{ width: "100%", minWidth: "70px", backgroundColor: isInvoiced ? "#f3f4f6" : undefined, cursor: isInvoiced ? "not-allowed" : undefined }}
                                   value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
                                   onChange={(e) => {
                                     const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
@@ -1844,10 +1912,11 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                             <td style={{ padding: "0.75rem" }}>
                               <select
                                 className="form-input"
-                                style={{ minWidth: "170px", fontSize: "0.8125rem", padding: "0.35rem 0.5rem" }}
+                                disabled={isInvoiced}
+                                style={{ minWidth: "170px", fontSize: "0.8125rem", padding: "0.35rem 0.5rem", backgroundColor: isInvoiced ? "#f3f4f6" : undefined, cursor: isInvoiced ? "not-allowed" : undefined }}
                                 value={detail.glcode || ""}
                                 onChange={(e) => handleDetailChange(index, "glcode", e.target.value)}
-                                title="Expense account for vendor bill posting"
+                                title={isInvoiced ? "Expense account locked: item has been invoiced" : "Expense account for vendor bill posting"}
                               >
                                 <option value="">Company / vendor default</option>
                                 {coaAccounts.map((coa) => (
@@ -1861,7 +1930,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               <input
                                 type="text"
                                 className="form-input"
-                                style={{ width: "100%", minWidth: "150px" }}
+                                disabled={isInvoiced}
+                                style={{ width: "100%", minWidth: "150px", backgroundColor: isInvoiced ? "#f3f4f6" : undefined, cursor: isInvoiced ? "not-allowed" : undefined }}
                                 value={detail.Notes}
                                 onChange={(e) => handleDetailChange(index, "Notes", e.target.value)}
                                 placeholder="Notes"
@@ -1871,25 +1941,50 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleDeleteDetail(index)}
+                                disabled={isInvoiced}
+                                title={isInvoiced ? "Invoiced items cannot be deleted" : "Delete"}
                                 style={{
                                   padding: "0.25rem 0.5rem",
-                                  backgroundColor: "#ef4444",
+                                  backgroundColor: isInvoiced ? "#9ca3af" : "#ef4444",
                                   color: "white",
                                   border: "none",
                                   borderRadius: "0.25rem",
-                                  cursor: "pointer",
+                                  cursor: isInvoiced ? "not-allowed" : "pointer",
                                   fontSize: "0.75rem",
                                 }}
                               >
                                 Delete
                               </button>
                             </td>
+                            <td style={{ padding: "0.75rem", textAlign: "center" }}>
+                              {isInvoiced ? (
+                                <span
+                                  style={{
+                                    fontSize: "0.75rem",
+                                    color: "#92400e",
+                                    backgroundColor: "#fef3c7",
+                                    padding: "0.2rem 0.5rem",
+                                    borderRadius: "0.25rem",
+                                    whiteSpace: "nowrap",
+                                    fontWeight: 500,
+                                    display: "inline-block"
+                                  }}
+                                  title="Item locked because it has been invoiced"
+                                >
+                                  🔒 Invoiced ({detail.InvoicedQty || (detail as any)?.invoicedQty || 0})
+                                </span>
+                              ) : (
+                                <span style={{ color: "#9ca3af", fontSize: "0.75rem" }}>—</span>
+                              )}
+                            </td>
                           </tr>
+                          );
+                        })()}
                           {historyHint ? (
                             <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
                               <td colSpan={2} style={{ padding: 0, border: "none" }} />
                               <td
-                                colSpan={11}
+                                colSpan={12}
                                 style={{
                                   padding: "0 0.75rem 0.5rem",
                                   fontSize: "0.6875rem",

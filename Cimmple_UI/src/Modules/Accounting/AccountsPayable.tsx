@@ -32,6 +32,47 @@ const AccountsPayable: React.FC = () => {
     loadInvoices();
   }, [filters]);
 
+  const invoiceMatchesDateRange = (dateStr: string, range: string) => {
+    if (!dateStr) return true;
+    const invDate = new Date(dateStr);
+    if (isNaN(invDate.getTime())) return true;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    switch (range) {
+      case "This Week":
+      case "Last 7 Days": {
+        const sevenDaysAgo = new Date(today);
+        sevenDaysAgo.setDate(today.getDate() - 7);
+        return invDate >= sevenDaysAgo;
+      }
+      case "Last 30 Days": {
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        return invDate >= thirtyDaysAgo;
+      }
+      case "Last 90 Days": {
+        const ninetyDaysAgo = new Date(today);
+        ninetyDaysAgo.setDate(today.getDate() - 90);
+        return invDate >= ninetyDaysAgo;
+      }
+      case "This Month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        return invDate >= startOfMonth;
+      }
+      case "Last Month": {
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+        return invDate >= startOfLastMonth && invDate <= endOfLastMonth;
+      }
+      case "All":
+      case "All Dates":
+      default:
+        return true;
+    }
+  };
+
   const loadInvoices = async () => {
     setLoading(true);
     try {
@@ -63,12 +104,18 @@ const AccountsPayable: React.FC = () => {
           });
         }
 
+        if (filters.dateRange && filters.dateRange !== 'All') {
+          filteredInvoices = filteredInvoices.filter(invoice =>
+            invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange)
+          );
+        }
+
         if (filters.amountRange !== 'All') {
           filteredInvoices = filteredInvoices.filter(invoice => {
             switch (filters.amountRange) {
               case 'Under $1,000': return invoice.totalAmount < 1000;
               case '$1,000 - $10,000': return invoice.totalAmount >= 1000 && invoice.totalAmount < 10000;
-              case '$10,000 - $50,000': return invoice.totalAmount >= 10000 && invoice.totalAmount < 50000;
+              case '$1,0000 - $50,000': return invoice.totalAmount >= 10000 && invoice.totalAmount < 50000;
               case 'Over $50,000': return invoice.totalAmount >= 50000;
               default: return true;
             }
@@ -363,6 +410,7 @@ const AccountsPayable: React.FC = () => {
               fontSize: '0.875rem'
             }}
           >
+            <option value="All">All Dates</option>
             <option value="This Week">This Week</option>
             <option value="This Month">This Month</option>
             <option value="Last 30 Days">Last 30 Days</option>
@@ -565,6 +613,7 @@ const AccountsPayable: React.FC = () => {
         invoiceId={selectedInvoiceId}
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
     </div>
   );

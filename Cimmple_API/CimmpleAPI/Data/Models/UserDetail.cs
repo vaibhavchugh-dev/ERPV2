@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CimmpleAPI.Data.Models
 {
@@ -50,6 +51,9 @@ namespace CimmpleAPI.Data.Models
         public string? PrimaryMethod { get; set; }
         public int? VendorId { get; set; }
         public string? ContractId { get; set; }
+        public string? Department { get; set; }
+        public string? EmployeeCategory { get; set; }
+        public string? Apartment { get; set; }
         public int? PaidByVendor { get; set; }
         public int? AllowContactorOverTime { get; set; }
         public string? SearchSSN { get; set; }

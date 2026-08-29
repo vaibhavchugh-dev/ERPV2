@@ -421,6 +421,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
 interface FilterOptions {
   status: string;
   dateRange: string;
+  startDate?: string;
+  endDate?: string;
   vendorId?: number;
   searchTerm: string;
 }
@@ -433,6 +435,8 @@ const VendorInvoices: React.FC = () => {
   const [filters, setFilters] = useState<FilterOptions>({
     status: 'All',
     dateRange: 'All',
+    startDate: '',
+    endDate: '',
     searchTerm: ''
   });
   const [showFilters, setShowFilters] = useState(false);
@@ -487,10 +491,24 @@ const VendorInvoices: React.FC = () => {
     }
   };
 
-  const invoiceMatchesDateRange = (invoiceDate: string, range: string): boolean => {
+  const invoiceMatchesDateRange = (invoiceDate: string, range: string, startDate?: string, endDate?: string): boolean => {
     if (!range || range === "All") return true;
     const d = new Date(invoiceDate);
     if (Number.isNaN(d.getTime())) return false;
+
+    if (range === "Custom") {
+      const invTime = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      if (startDate) {
+        const sTime = new Date(startDate).getTime();
+        if (!isNaN(sTime) && invTime < sTime) return false;
+      }
+      if (endDate) {
+        const eTime = new Date(endDate).getTime();
+        if (!isNaN(eTime) && invTime > eTime) return false;
+      }
+      return true;
+    }
+
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (range === "Last 7 Days") {
@@ -514,12 +532,12 @@ const VendorInvoices: React.FC = () => {
       if (filters.status !== "All" && invoice.status !== filters.status) {
         return false;
       }
-      if (!invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange)) {
+      if (!invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange, filters.startDate, filters.endDate)) {
         return false;
       }
       return true;
     });
-  }, [invoices, filters.status, filters.dateRange]);
+  }, [invoices, filters.status, filters.dateRange, filters.startDate, filters.endDate]);
 
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat('en-US', {
@@ -542,9 +560,24 @@ const VendorInvoices: React.FC = () => {
   };
 
   const getStatusBadge = (status: string, daysOverdue?: number) => {
-    const statusLower = status.toLowerCase();
+    const statusLower = (status || '').toLowerCase();
 
-    if (statusLower === 'paid') {
+    if (statusLower === 'void') {
+      return (
+        <span
+          className="badge badge-secondary"
+          style={{
+            backgroundColor: '#4b5563',
+            color: '#ffffff',
+            fontWeight: 600,
+            padding: '0.25rem 0.625rem',
+            borderRadius: '0.25rem'
+          }}
+        >
+          Void
+        </span>
+      );
+    } else if (statusLower === 'paid') {
       return <span className="badge badge-success">Paid</span>;
     } else if (statusLower === 'partially paid') {
       return (
@@ -554,8 +587,6 @@ const VendorInvoices: React.FC = () => {
       );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
       return <span className="badge badge-danger">Overdue {daysOverdue ? `(${daysOverdue}d)` : ''}</span>;
-    } else if (statusLower === 'void') {
-      return <span className="badge badge-secondary">Void</span>;
     } else {
       return <span className="badge badge-warning">{status || 'Unpaid'}</span>;
     }
@@ -628,18 +659,21 @@ const VendorInvoices: React.FC = () => {
 
   const handleNewInvoice = () => {
     // Redirect to vendor orders page with a helpful message
-    toast.info("To create a new vendor invoice, go to Vendor Orders and create an invoice from an existing order with received items.", {
-      autoClose: 5000
+    toast.info("Redirecting to Vendor Orders to create an invoice from an order with received items.", {
+      autoClose: 4000
     });
-    // Optionally navigate to vendor orders
-    // history.push('/purchasing/vendor-orders');
+    history.push('/purchasing/vendor-orders');
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterType]: value
-    }));
+    setFilters(prev => {
+      const next = { ...prev, [filterType]: value };
+      if (filterType === 'dateRange' && value !== 'Custom') {
+        next.startDate = '';
+        next.endDate = '';
+      }
+      return next;
+    });
   };
 
   const columns = [
@@ -877,6 +911,51 @@ const VendorInvoices: React.FC = () => {
             onChange: (value) => handleFilterChange('dateRange', value)
           }
         ]}
+        extraFilters={
+          filters.dateRange === 'Custom' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
+                <input
+                  type="date"
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.startDate || ''}
+                  onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>To:</label>
+                <input
+                  type="date"
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.endDate || ''}
+                  onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                />
+              </div>
+              {(filters.startDate || filters.endDate) && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, startDate: '', endDate: '' }))}
+                  title="Clear custom dates"
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#f3f4f6',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.8125rem',
+                    cursor: 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  Clear Dates
+                </button>
+              )}
+            </div>
+          ) : null
+        }
         emptyMessage="No vendor invoices found"
       />
 
@@ -886,6 +965,7 @@ const VendorInvoices: React.FC = () => {
         onClose={handleCloseDetailModal}
         invoiceId={selectedInvoiceId}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
 
       {/* Vendor Order Slideout */}

@@ -401,6 +401,56 @@ const TopBar: React.FC = () => {
     setShowSearchResults(true);
   };
 
+  const getFirstResult = (resultsData: GlobalSearchResults = searchResults): SearchResult | null => {
+    if (!resultsData) return null;
+    const categories: (keyof GlobalSearchResults)[] = [
+      'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
+      'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
+      'locations', 'processes', 'jobTemplates', 'priceBreakdowns', 'creditCards', 'chartOfAccounts',
+      'shipments', 'ncrReports', 'users', 'documents'
+    ];
+    for (const cat of categories) {
+      const list = resultsData[cat];
+      if (list && list.length > 0) {
+        return list[0];
+      }
+    }
+    return null;
+  };
+
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = searchQuery.trim();
+      if (!trimmed) return;
+
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+
+      let currentResults = searchResults;
+
+      const existingFirst = getFirstResult(currentResults);
+      if (!existingFirst || searchLoading) {
+        try {
+          setSearchLoading(true);
+          currentResults = await GlobalSearchService.Search(trimmed, tenantId, 5);
+          setSearchResults(currentResults);
+        } catch (err) {
+          console.error("Immediate search error on Enter:", err);
+        } finally {
+          setSearchLoading(false);
+        }
+      }
+
+      const firstResult = getFirstResult(currentResults);
+      if (firstResult) {
+        handleResultClick(firstResult);
+      }
+    }
+  };
+
   const handleSearchFocus = () => {
     if (searchQuery.trim() !== '') {
       setShowSearchResults(true);
@@ -423,7 +473,7 @@ const TopBar: React.FC = () => {
     setTimeout(() => {
       // Trigger a custom event that components can listen to
       window.dispatchEvent(new CustomEvent('openEntity', { 
-        detail: { type: result.type, id: result.id } 
+        detail: { type: result.type, id: result.type === 'product' ? (result.partNo || result.code || result.id) : result.id } 
       }));
     }, 100);
   };
@@ -466,6 +516,7 @@ const TopBar: React.FC = () => {
             value={searchQuery}
             onChange={handleSearchChange}
             onFocus={handleSearchFocus}
+            onKeyDown={handleSearchKeyDown}
           />
           {showSearchResults && (
             <SearchResultsDropdown
