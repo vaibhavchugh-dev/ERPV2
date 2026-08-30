@@ -14,6 +14,7 @@ export interface CustomerShipmentSummary {
   itemCount: number;
   boxes: number;
   packingType: string;
+  notes?: string;
   status: string;
 }
 
@@ -47,7 +48,8 @@ export class CustomerShipmentsService {
     status: string = "All",
     searchTerm: string = "",
     customerId?: number,
-    dateRange: string = "Last 30 Days"
+    dateRange: string = "Last 30 Days",
+    locationId?: number
   ): Promise<CustomerShipmentSummary[] | null> => {
     const url = `/Shipping/GetAllShipments`;
     try {
@@ -56,7 +58,8 @@ export class CustomerShipmentsService {
           status,
           searchTerm,
           customerId,
-          dateRange
+          dateRange,
+          locationId
         }
       });
       const result = response.data.result as CustomerShipmentSummary[];

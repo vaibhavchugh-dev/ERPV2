@@ -27,7 +27,9 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string searchTerm = "",
             [FromQuery] int? vendorId = null,
             [FromQuery] string dateRange = "Last 30 Days",
-            [FromQuery] int? locationId = null)
+            [FromQuery] int? locationId = null,
+            [FromQuery] string startDate = null,
+            [FromQuery] string endDate = null)
         {
             try
             {
@@ -60,6 +62,8 @@ namespace CimmpleAPI.Controllers
                         invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                         dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                         amount = invoice.Amount,
+                        freightCharge = invoice.FreightCharge,
+                        taxAmount = Math.Max(0, Math.Round(invoice.TotalAmount - invoice.Amount - invoice.FreightCharge, 2)),
                         totalAmount = invoice.TotalAmount,
                         paidAmount = GetEffectiveVendorPaidAmount(invoice),
                         balanceDue = GetVendorBalanceDue(invoice),
@@ -71,6 +75,77 @@ namespace CimmpleAPI.Controllers
                     })
                     .OrderByDescending(x => x.invoiceDate)
                     .ToList();
+
+                if (!string.IsNullOrWhiteSpace(status) && !status.Equals("All", StringComparison.OrdinalIgnoreCase))
+                {
+                    invoiceSummaries = invoiceSummaries
+                        .Where(x => string.Equals(x.status, status, StringComparison.OrdinalIgnoreCase)
+                            || (status.Equals("Unpaid", StringComparison.OrdinalIgnoreCase)
+                                && (x.status == "Unpaid" || x.status == "Pending" || x.status == "Approved" || x.status == "Pending Approval")))
+                        .ToList();
+                }
+
+                if (!string.IsNullOrWhiteSpace(dateRange) && !dateRange.Equals("All", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
+                {
+                    var now = DateTime.Now;
+                    DateTime? start = null;
+                    DateTime? end = null;
+                    var rangeLower = (dateRange ?? "").Trim().ToLowerInvariant();
+
+                    if (rangeLower == "custom" || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
+                    {
+                        if (DateTime.TryParse(startDate, out DateTime parsedStart))
+                        {
+                            start = parsedStart.Date;
+                        }
+                        if (DateTime.TryParse(endDate, out DateTime parsedEnd))
+                        {
+                            end = parsedEnd.Date;
+                        }
+                    }
+                    else
+                    {
+                        switch (rangeLower)
+                        {
+                            case "this week":
+                                start = now.Date.AddDays(-(int)now.DayOfWeek);
+                                end = start.Value.AddDays(6);
+                                break;
+                            case "last 7 days":
+                                start = now.Date.AddDays(-7);
+                                break;
+                            case "last 30 days":
+                                start = now.Date.AddDays(-30);
+                                break;
+                            case "last 90 days":
+                                start = now.Date.AddDays(-90);
+                                break;
+                            case "this month":
+                                start = new DateTime(now.Year, now.Month, 1);
+                                break;
+                            case "last month":
+                                start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                                end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                                break;
+                            case "all":
+                            case "all dates":
+                                start = null;
+                                end = null;
+                                break;
+                        }
+                    }
+
+                    if (start.HasValue || end.HasValue)
+                    {
+                        invoiceSummaries = invoiceSummaries.Where(x =>
+                        {
+                            if (!DateTime.TryParse(x.invoiceDate, out var d)) return false;
+                            if (start.HasValue && d.Date < start.Value.Date) return false;
+                            if (end.HasValue && d.Date > end.Value.Date) return false;
+                            return true;
+                        }).ToList();
+                    }
+                }
 
                 Console.WriteLine($"GetVendorInvoices - Returning {invoiceSummaries.Count} vendor invoices");
 
@@ -115,6 +190,8 @@ namespace CimmpleAPI.Controllers
                     invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
+                    freightCharge = invoice.FreightCharge,
+                    taxAmount = Math.Max(0, Math.Round(invoice.TotalAmount - invoice.Amount - invoice.FreightCharge, 2)),
                     totalAmount = invoice.TotalAmount,
                     paidAmount = GetEffectiveVendorPaidAmount(invoice),
                     balanceDue = GetVendorBalanceDue(invoice),
@@ -697,6 +774,60 @@ namespace CimmpleAPI.Controllers
             return reference.Length > 200 ? reference[..200] : reference;
         }
 
+        [HttpPost("VoidVendorInvoice/{invoiceId}")]
+        public IActionResult VoidVendorInvoice(int invoiceId)
+        {
+            using (var transaction = _context.Database.BeginTransaction())
+            {
+                try
+                {
+                    var tenantId = GetTenantId();
+                    var invoice = _context.VendorInvoiceMaster
+                        .FirstOrDefault(vim => vim.Id == invoiceId && vim.TenantId == tenantId);
+
+                    if (invoice == null)
+                        return NotFound(new { error = "Vendor invoice not found" });
+
+                    if (invoice.isPaid == 2)
+                        return BadRequest(new { error = "Invoice is already voided." });
+
+                    var paid = GetEffectiveVendorPaidAmount(invoice);
+                    if (paid > 0.009m)
+                        return BadRequest(new { error = "Cannot void a paid or partially paid invoice. Reverse payments first." });
+
+                    var billPostingRef = BuildAutoPostingReference("APBILL", invoice.prefixinvoiceno ?? invoice.InvoiceNo, invoice.Id);
+                    if (!GlWorkflowService.TryReverseJournalByReference(
+                        _context, tenantId, billPostingRef, GetUserId(), "VendorInvoiceVoid", out var reverseError))
+                    {
+                        return BadRequest(new { error = reverseError });
+                    }
+
+                    var invoiceDetails = _context.VendorInvoiceDetail.Where(vid => vid.InvoiceId == invoiceId).ToList();
+                    var detailIds = invoiceDetails.Select(d => d.Id).ToList();
+                    var vendorInvoicingRecords = _context.VendorInvoicing
+                        .Where(vi => detailIds.Contains(vi.VendorInvoiceDetailID))
+                        .ToList();
+                    _context.VendorInvoicing.RemoveRange(vendorInvoicingRecords);
+
+                    invoice.isPaid = 2;
+                    invoice.voidedby = GetUserId();
+                    invoice.voideddate = DateTime.Now;
+                    invoice.PaidAmount = 0;
+                    invoice.Approved = false;
+
+                    _context.SaveChanges();
+                    transaction.Commit();
+
+                    return Ok(new { result = new { message = "Vendor invoice voided successfully" } });
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    return StatusCode(500, new { error = ex.Message });
+                }
+            }
+        }
+
         [HttpDelete("DeleteVendorInvoice/{invoiceId}")]
         public IActionResult DeleteVendorInvoice(int invoiceId)
         {
@@ -712,15 +843,23 @@ namespace CimmpleAPI.Controllers
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
 
-                    // Check if invoice is already paid
+                    // Check if invoice is already paid / partially paid
                     if (invoice.isPaid == 1)
                         return BadRequest(new { error = "Cannot delete a paid invoice" });
 
+                    var paid = GetEffectiveVendorPaidAmount(invoice);
+                    if (paid > 0.009m)
+                        return BadRequest(new { error = "Cannot delete a paid or partially paid invoice. Reverse payments first." });
+
+                    if (invoice.isPaid == 2)
+                        return BadRequest(new { error = "Cannot delete a voided invoice. It is already reversed in GL." });
+
                     var billPostingRef = BuildAutoPostingReference("APBILL", invoice.prefixinvoiceno ?? invoice.InvoiceNo, invoice.Id);
-                    var hasPostedGlEntry = _context.JournalEntries
-                        .Any(je => je.TenantId == tenantId && je.ReferenceNumber == billPostingRef);
-                    if (hasPostedGlEntry)
-                        return BadRequest(new { error = "Cannot delete vendor invoice because a GL entry exists. Reverse/delete the related journal entry first." });
+                    if (!GlWorkflowService.TryReverseJournalByReference(
+                        _context, tenantId, billPostingRef, GetUserId(), "VendorInvoiceDelete", out var reverseError))
+                    {
+                        return BadRequest(new { error = reverseError ?? "Failed to reverse the related journal entry." });
+                    }
 
                     // Remove vendor invoicing records
                     var invoiceDetails = _context.VendorInvoiceDetail.Where(vid => vid.InvoiceId == invoiceId).ToList();
@@ -761,6 +900,8 @@ namespace CimmpleAPI.Controllers
 
         private static decimal GetEffectiveVendorPaidAmount(VendorInvoiceMaster invoice)
         {
+            if (invoice.isPaid == 2)
+                return 0m;
             if (invoice.PaidAmount > 0)
                 return invoice.PaidAmount;
             if (invoice.isPaid == 1 || invoice.Paydate.HasValue)

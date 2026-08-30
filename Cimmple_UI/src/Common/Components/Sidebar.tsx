@@ -31,6 +31,7 @@ import {
   faLock,
   faTimes,
   faChevronRight,
+  faClock,
 } from "@fortawesome/free-solid-svg-icons";
 import { AuthService } from "../Services/AuthService";
 import "./Sidebar.scss";
@@ -140,6 +141,7 @@ const Sidebar: React.FC = () => {
       title: "Access & settings",
       items: [
         { icon: faUsers, title: "User Management", path: "/user-management" },
+        { icon: faClock, title: "Attendance Register", path: "/attendance" },
         { icon: faCog, title: "System Settings", path: "/settings" },
       ],
     },

@@ -1,17 +1,22 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorReceivingService, OrderForReceiving } from "../../Common/Services/VendorReceivingService";
 import VendorReceivingDetail from "./VendorReceivingDetail";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const VendorReceiving: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<OrderForReceiving[]>([]);
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const hasLoadedOnceRef = useRef(false);
 
   // Handle URL parameter to open detail (from global search)
   useEffect(() => {
@@ -29,12 +34,14 @@ const VendorReceiving: React.FC = () => {
 
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [locationIdParam]);
 
   const loadOrders = async () => {
-    setLoading(true);
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     try {
-      const result = await VendorReceivingService.GetOrdersForReceiving();
+      const result = await VendorReceivingService.GetOrdersForReceiving(locationIdParam);
 
       if (result && Array.isArray(result)) {
         setOrders(result);
@@ -46,13 +53,15 @@ const VendorReceiving: React.FC = () => {
       toast.error(`Error loading orders: ${error.message || "Unknown error"}`);
       setOrders([]);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
   };
 
   const handleRowClick = (row: Record<string, any>) => {
-    const order = row as OrderForReceiving;
-    setSelectedOrderId(order.orderID);
+    const orderId = Number(row.orderID ?? row.OrderID ?? 0);
+    if (!orderId) return;
+    setSelectedOrderId(orderId);
     setShowDetail(true);
   };
 
@@ -61,19 +70,6 @@ const VendorReceiving: React.FC = () => {
     setSelectedOrderId(0);
     if (refreshList) {
       loadOrders();
-    }
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
     }
   };
 
@@ -165,10 +161,12 @@ const VendorReceiving: React.FC = () => {
         data={orders}
         columns={columns}
         onRowClick={handleRowClick}
+        getRowId={(row) => row.orderID}
         loading={loading}
         enablePagination
         searchPlaceholder="Search by PO #, vendor..."
         searchFields={["orderNumber", "vendorName", "vendorCode"]}
+        filters={[masterListFilter]}
       />
       {showDetail && (
         <VendorReceivingDetail

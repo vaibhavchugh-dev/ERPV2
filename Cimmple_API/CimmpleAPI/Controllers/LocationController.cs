@@ -56,7 +56,8 @@ namespace CimmpleAPI.Controllers
                         email = l.email ?? "",
                         phone = l.phone ?? "",
                         webaddress = l.webaddress ?? "",
-                        status = "Active",
+                        status = l.Status ?? "Active",
+                        apartment = l.Region ?? "",
                         parentLocationId = l.ParentLocationId,
                         parentName,
                         locType = l.LocType,
@@ -128,7 +129,7 @@ namespace CimmpleAPI.Controllers
                     code = location.Code ?? "",
                     name = location.Name ?? "",
                     address = location.Address ?? "",
-                    apartment = "",
+                    apartment = location.Region ?? "",
                     city = location.city ?? "",
                     state = location.state ?? "",
                     zip = location.zip ?? "",
@@ -137,7 +138,7 @@ namespace CimmpleAPI.Controllers
                     email = location.email ?? "",
                     phone = location.phone ?? "",
                     webaddress = location.webaddress ?? "",
-                    status = "Active",
+                    status = location.Status ?? "Active",
                     logoUrl = logoUrl,
                     parentLocationId = location.ParentLocationId,
                     parentName,
@@ -175,14 +176,15 @@ namespace CimmpleAPI.Controllers
                     location.Code = request.Code ?? location.Code ?? "";
                     location.Name = request.Name ?? location.Name ?? "";
                     location.Address = request.Address ?? location.Address ?? "";
+                    location.Region = !string.IsNullOrWhiteSpace(request.Apartment) ? request.Apartment : (request.Region ?? location.Region ?? "");
                     location.city = request.City ?? location.city ?? "";
                     location.state = request.State ?? location.state ?? "";
                     location.zip = request.Zip ?? location.zip ?? "";
                     location.Country = request.Country ?? location.Country ?? "US";
-                    location.Region = request.Region ?? location.Region ?? "";
                     location.email = request.Email ?? location.email ?? "";
                     location.phone = request.Phone ?? location.phone ?? "";
                     location.webaddress = request.WebAddress ?? location.webaddress ?? "";
+                    location.Status = request.Status ?? location.Status ?? "Active";
 
                     // Parent is fixed after create (avoids moving subtrees / cycles).
                     if (location.ParentLocationId == null)
@@ -231,10 +233,11 @@ namespace CimmpleAPI.Controllers
                         state = request.State ?? "",
                         zip = request.Zip ?? "",
                         Country = request.Country ?? "US",
-                        Region = request.Region ?? "",
+                        Region = !string.IsNullOrWhiteSpace(request.Apartment) ? request.Apartment : (request.Region ?? ""),
                         email = request.Email ?? "",
                         phone = request.Phone ?? "",
                         webaddress = request.WebAddress ?? "",
+                        Status = request.Status ?? "Active",
                         LocType = childLocType,
                         ParentLocationId = parentId
                     };
@@ -612,6 +615,7 @@ namespace CimmpleAPI.Controllers
         public string Code { get; set; }
         public string Name { get; set; }
         public string Address { get; set; }
+        public string Apartment { get; set; }
         public string City { get; set; }
         public string State { get; set; }
         public string Zip { get; set; }

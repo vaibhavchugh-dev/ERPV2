@@ -5,6 +5,7 @@ import { UserManagementService, UserManagement as UserManagementType, UserQueryP
 import UserManagementSlideout from "./UserManagementSlideout";
 import RolePermissionManager from "./RolePermissionManager";
 import RoleManager from "./RoleManager";
+import ResetPasswordModal, { ResetPasswordUser } from "./ResetPasswordModal";
 import "./UserManagement.scss";
 
 const UserManagementComponent: React.FC = () => {
@@ -13,6 +14,7 @@ const UserManagementComponent: React.FC = () => {
   const [users, setUsers] = useState<UserManagementType[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<number>(0);
+  const [resetPasswordUser, setResetPasswordUser] = useState<ResetPasswordUser | null>(null);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -139,24 +141,13 @@ const UserManagementComponent: React.FC = () => {
     }
   };
 
-  const handleResetPassword = async (userId: number) => {
-    const newPassword = prompt("Enter new password:");
-    if (!newPassword) return;
-
-    try {
-      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-      const tenantID = storage?.tenantID || 1;
-
-      await UserManagementService.ResetPassword({
-        userId,
-        tenantId: tenantID,
-        newPassword
-      });
-      toast.success("Password reset successfully");
-    } catch (error: any) {
-      console.error('[UserManagement] Error resetting password:', error);
-      toast.error(`Error resetting password: ${error.message || 'Unknown error'}`);
-    }
+  const handleResetPassword = (user: UserManagementType) => {
+    const displayName = `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    setResetPasswordUser({
+      userId: user.userUniqueID,
+      userName: user.userName,
+      displayName: displayName || undefined,
+    });
   };
 
   const handleSort = (column: keyof UserManagementType) => {
@@ -315,7 +306,7 @@ const UserManagementComponent: React.FC = () => {
                             </button>
                             <button
                               className="btn btn-sm btn-warning"
-                              onClick={() => handleResetPassword(user.userUniqueID)}
+                              onClick={() => handleResetPassword(user)}
                               title="Reset Password"
                             >
                               <i className="fas fa-key"></i>
@@ -407,6 +398,13 @@ const UserManagementComponent: React.FC = () => {
             loadUsers();
             loadRoles();
           }}
+        />
+      )}
+
+      {resetPasswordUser && (
+        <ResetPasswordModal
+          user={resetPasswordUser}
+          onClose={() => setResetPasswordUser(null)}
         />
       )}
     </div>

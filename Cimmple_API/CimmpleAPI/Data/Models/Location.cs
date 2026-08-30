@@ -20,6 +20,9 @@ namespace CimmpleAPI.Data.Models
         public string webaddress { get; set; }
         public string phone { get; set; }
         public string Country { get; set; }
+        [NotMapped]
+        public string? Apartment { get => Region; set => Region = value ?? ""; }
+        public string? Status { get; set; }
 
         /// <summary>See <see cref="LocationKind"/> — business site (root) through bin.</summary>
         public int LocType { get; set; }

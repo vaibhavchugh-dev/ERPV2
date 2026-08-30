@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
@@ -78,12 +79,11 @@ const emptyForm = (): RawMaterialForm => ({
 });
 
 function formatStorage(m: RawMaterial): string {
-  const parts = [
-    m.warehouseLocation,
-    m.bin ? `Bin ${m.bin}` : "",
-    m.box ? `Box ${m.box}` : "",
-  ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "—";
+  const parts: string[] = [];
+  if (m.warehouseLocation?.trim()) parts.push(m.warehouseLocation.trim());
+  if (m.bin?.trim()) parts.push(`Bin: ${m.bin.trim()}`);
+  if (m.box?.trim()) parts.push(`Box: ${m.box.trim()}`);
+  return parts.length > 0 ? parts.join(" / ") : "—";
 }
 
 const COLUMNS: ColumnDefinition[] = [
@@ -111,9 +111,12 @@ const DEFAULT_HIDDEN_COLUMNS = [
   "dims",
   "description",
 ];
-const COLUMN_PREFERENCE_KEY = "rawMaterialMaster.hiddenColumns";
+const COLUMN_PREFERENCE_KEY = "cimmple_raw_material_master_hidden_columns";
 
 const RawMaterialMaster: React.FC = () => {
+  const location = useLocation();
+  const history = useHistory();
+  const processedOpenIdRef = useRef<string | null>(null);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
@@ -165,18 +168,52 @@ const RawMaterialMaster: React.FC = () => {
   }, [vendors]);
 
   useEffect(() => {
-    loadMaterials(showInactive);
-  }, [showInactive]);
-
-  useEffect(() => {
+    loadMaterials();
     loadLocations();
     loadVendors();
   }, []);
 
-  const loadMaterials = async (includeInactive = showInactive) => {
+  // Handle URL parameter to open slideout (from global search)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openId = params.get("open") || params.get("search");
+    if (!openId || openId === processedOpenIdRef.current || materials.length === 0) {
+      return;
+    }
+    const match = materials.find(
+      (m) => String(m.id) === openId || m.partNo?.toLowerCase() === openId.toLowerCase()
+    );
+    if (match) {
+      processedOpenIdRef.current = openId;
+      handleEdit(match);
+      history.replace(location.pathname);
+    }
+  }, [location.search, materials, history, location.pathname]);
+
+  // Listen for custom event from global search
+  useEffect(() => {
+    const handleOpenEntity = (event: CustomEvent) => {
+      if (event.detail.type === 'rawMaterial') {
+        const entityId = String(event.detail.id);
+        const match = materials.find(m => String(m.id) === entityId || m.partNo?.toLowerCase() === entityId.toLowerCase());
+        if (match) {
+          handleEdit(match);
+        }
+      }
+    };
+
+    window.addEventListener('openEntity', handleOpenEntity as EventListener);
+    return () => {
+      window.removeEventListener('openEntity', handleOpenEntity as EventListener);
+    };
+  }, [materials]);
+
+  const loadMaterials = async () => {
     setLoading(true);
     try {
-      const result = await InventoryService.GetRawMaterials({ includeInactive });
+      const result = await InventoryService.GetRawMaterials({
+        includeInactive: true,
+      });
       setMaterials(Array.isArray(result) ? result : []);
     } catch (error: any) {
       toast.error(
@@ -203,7 +240,7 @@ const RawMaterialMaster: React.FC = () => {
       if (result) {
         toast.success(next ? "Raw material activated" : "Raw material deactivated");
       }
-      await loadMaterials(showInactive);
+      await loadMaterials();
     } catch (error: any) {
       const message =
         error?.response?.data?.error || error.message || `Could not ${verb} raw material`;
@@ -417,9 +454,10 @@ const RawMaterialMaster: React.FC = () => {
 
   const filteredMaterials = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return materials;
-    return materials.filter((material) =>
-      [
+    return materials.filter((material) => {
+      if (!showInactive && material.isActive === false) return false;
+      if (!term) return true;
+      return [
         material.partNo,
         material.partName,
         material.description,
@@ -434,9 +472,9 @@ const RawMaterialMaster: React.FC = () => {
         material.isActive ? "active" : "inactive",
       ]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(term))
-    );
-  }, [materials, searchTerm]);
+        .some((value) => String(value).toLowerCase().includes(term));
+    });
+  }, [materials, searchTerm, showInactive]);
 
   const parentOptions = useMemo(() => {
     const id = form.id;
@@ -539,7 +577,7 @@ const RawMaterialMaster: React.FC = () => {
     }
   };
 
-  if (loading) {
+  if (loading && materials.length === 0) {
     return (
       <div className="page-loading">
         <div className="loading-spinner"></div>
@@ -562,7 +600,7 @@ const RawMaterialMaster: React.FC = () => {
             type="button"
             className="btn-secondary"
             onClick={() => {
-              loadMaterials(showInactive);
+              loadMaterials();
               loadLocations();
               loadVendors();
             }}

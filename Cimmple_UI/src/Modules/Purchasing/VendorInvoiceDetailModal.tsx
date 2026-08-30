@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faTrash } from "@fortawesome/free-solid-svg-icons";
+import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faTrash, faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoice, RecordVendorPaymentRequest } from '../../Common/Services/VendorInvoiceService';
 import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -30,6 +31,7 @@ interface PaymentModalProps {
 }
 
 const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -45,13 +47,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [paymentAmount, setPaymentAmount] = useState(
     balanceDue > 0 ? balanceDue.toFixed(2) : invoice.totalAmount.toFixed(2)
   );
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -418,11 +413,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
 
 interface VendorInvoiceDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (refresh?: boolean) => void;
   invoiceId: number;
   /** When true, opens the payment form after the invoice loads */
   initialShowPayment?: boolean;
   onPaymentComplete?: () => void;
+  onInvoiceDeleted?: () => void;
 }
 
 const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
@@ -430,8 +426,10 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   onClose,
   invoiceId,
   initialShowPayment = false,
-  onPaymentComplete
+  onPaymentComplete,
+  onInvoiceDeleted
 }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -492,26 +490,6 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase();
 
@@ -519,10 +497,23 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       return <span className="badge badge-success">Paid</span>;
     } else if (statusLower === 'partially paid') {
       return <span className="badge badge-info">Partially Paid</span>;
+    } else if (statusLower === 'void') {
+      return (
+        <span
+          className="badge badge-secondary"
+          style={{
+            backgroundColor: '#4b5563',
+            color: '#ffffff',
+            fontWeight: 600,
+            padding: '0.25rem 0.625rem',
+            borderRadius: '0.25rem'
+          }}
+        >
+          Void
+        </span>
+      );
     } else if (statusLower === 'overdue') {
       return <span className="badge badge-danger">Overdue</span>;
-    } else if (statusLower === 'void') {
-      return <span className="badge badge-secondary">Void</span>;
     } else if (statusLower === 'approved') {
       return <span className="badge badge-success">Approved</span>;
     } else {
@@ -559,8 +550,19 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
     }
   };
 
-  const handleVoidInvoice = () => {
-    toast.info('Void functionality coming soon...');
+  const handleVoidInvoice = async () => {
+    if (!invoice?.id) return;
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await VendorInvoiceService.VoidVendorInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoiceDetails();
+      onPaymentComplete?.();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to void invoice');
+    }
   };
 
   const handleDeleteInvoice = async () => {
@@ -578,7 +580,10 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
         }
       ],
       willBeAffected: [],
-      warnings: ["This action cannot be undone"]
+      warnings: [
+        "This action cannot be undone",
+        "Any related AP bill journal entry will be reversed automatically"
+      ]
     };
     setDeletionImpact(impact);
     setShowDeletionDialog(true);
@@ -592,7 +597,9 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       toast.success("Vendor invoice deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onInvoiceDeleted?.();
+      onPaymentComplete?.();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting vendor invoice:", error);
       toast.error(`Error deleting vendor invoice: ${error.message || "Unknown error"}`);
@@ -658,48 +665,44 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               Invoice Details
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && invoice?.isApproved && (
               <button
                 onClick={handlePayInvoice}
                 style={{
-                  padding: '0.5rem 1rem',
+                  height: '36px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0 1rem',
                   backgroundColor: '#10b981',
                   color: 'white',
                   border: 'none',
                   borderRadius: '0.375rem',
                   cursor: 'pointer',
                   fontSize: '0.875rem',
-                  fontWeight: '500'
+                  fontWeight: '500',
+                  boxSizing: 'border-box'
                 }}
               >
                 <FontAwesomeIcon icon={faCreditCard} style={{ marginRight: '0.5rem' }} />
                 Pay Invoice
               </button>
             )}
-            {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && !invoice?.isApproved && (
-              <span style={{
-                padding: '0.5rem 1rem',
-                fontSize: '0.875rem',
-                color: '#92400e',
-                backgroundColor: '#fef3c7',
-                borderRadius: '0.375rem',
-                alignSelf: 'center'
-              }}>
-                Awaiting approval before payment
-              </span>
-            )}
             <button
               onClick={handlePrintInvoice}
               style={{
-                padding: '0.5rem 1rem',
+                height: '36px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '0 1rem',
                 backgroundColor: '#6b7280',
                 color: 'white',
                 border: 'none',
                 borderRadius: '0.375rem',
                 cursor: 'pointer',
                 fontSize: '0.875rem',
-                fontWeight: '500'
+                fontWeight: '500',
+                boxSizing: 'border-box'
               }}
             >
               <FontAwesomeIcon icon={faPrint} style={{ marginRight: '0.5rem' }} />
@@ -709,14 +712,18 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               <button
                 onClick={handleVoidInvoice}
                 style={{
-                  padding: '0.5rem 1rem',
+                  height: '36px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0 1rem',
                   backgroundColor: '#ef4444',
                   color: 'white',
                   border: 'none',
                   borderRadius: '0.375rem',
                   cursor: 'pointer',
                   fontSize: '0.875rem',
-                  fontWeight: '500'
+                  fontWeight: '500',
+                  boxSizing: 'border-box'
                 }}
               >
                 <FontAwesomeIcon icon={faBan} style={{ marginRight: '0.5rem' }} />
@@ -726,7 +733,10 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
             <button
               onClick={handleDeleteInvoice}
               style={{
-                padding: '0.5rem 1rem',
+                height: '36px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '0 1rem',
                 backgroundColor: '#dc2626',
                 color: 'white',
                 border: 'none',
@@ -734,27 +744,30 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 cursor: 'pointer',
                 fontSize: '0.875rem',
                 fontWeight: '500',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
+                boxSizing: 'border-box'
               }}
             >
-              <FontAwesomeIcon icon={faTrash} />
+              <FontAwesomeIcon icon={faTrash} style={{ marginRight: '0.5rem' }} />
               Delete
             </button>
             <button
-              onClick={onClose}
+              onClick={() => onClose()}
               style={{
-                padding: '0.5rem',
-                backgroundColor: '#6b7280',
-                color: 'white',
-                border: 'none',
+                height: '36px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '0 1rem',
+                backgroundColor: '#f3f4f6',
+                color: '#374151',
+                border: '1px solid #d1d5db',
                 borderRadius: '0.375rem',
                 cursor: 'pointer',
-                fontSize: '1rem'
+                fontSize: '0.875rem',
+                fontWeight: '500',
+                boxSizing: 'border-box'
               }}
             >
-              <FontAwesomeIcon icon={faTimes} />
+              Close
             </button>
           </div>
         </div>
@@ -771,6 +784,25 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
             </div>
           ) : invoice ? (
             <>
+              {/* Unapproved Warning Alert Banner */}
+              {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && !invoice?.isApproved && (
+                <div style={{
+                  backgroundColor: '#fef3c7',
+                  border: '1px solid #f59e0b',
+                  borderRadius: '0.375rem',
+                  padding: '0.75rem 1rem',
+                  marginBottom: '1.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: '#92400e',
+                  fontSize: '0.875rem',
+                  fontWeight: 500
+                }}>
+                  <FontAwesomeIcon icon={faExclamationTriangle} style={{ marginRight: '0.625rem', color: '#d97706', fontSize: '1rem' }} />
+                  <span><strong>Awaiting Approval:</strong> This invoice requires approval before payment can be recorded.</span>
+                </div>
+              )}
+
               {/* Invoice Header Info */}
               <div style={{
                 display: 'grid',
@@ -825,6 +857,20 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Subtotal:</span>
                       <span>{formatCurrency(invoice.amount)}</span>
                     </div>
+                    {(invoice.taxAmount ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Tax:</span>
+                        <span>{formatCurrency(invoice.taxAmount ?? 0)}</span>
+                      </div>
+                    )}
+                    {(invoice.freightCharge ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
+                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Freight:</span>
+                        <span>{formatCurrency(invoice.freightCharge ?? 0)}</span>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                       <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
                       <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Total Amount:</span>
@@ -918,6 +964,46 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       ))}
                     </tbody>
                     <tfoot>
+                      <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
+                        <td colSpan={2} style={{
+                          padding: '0.75rem 1rem',
+                          textAlign: 'right',
+                          fontWeight: '600',
+                          color: '#374151'
+                        }}>Subtotal:</td>
+                        <td style={{
+                          padding: '0.75rem 1rem',
+                          textAlign: 'right'
+                        }}>{formatCurrency(invoice.amount)}</td>
+                      </tr>
+                      {(invoice.taxAmount ?? 0) > 0 && (
+                        <tr style={{ backgroundColor: '#f9fafb' }}>
+                          <td colSpan={2} style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right',
+                            fontWeight: '500',
+                            color: '#374151'
+                          }}>Tax:</td>
+                          <td style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right'
+                          }}>{formatCurrency(invoice.taxAmount ?? 0)}</td>
+                        </tr>
+                      )}
+                      {(invoice.freightCharge ?? 0) > 0 && (
+                        <tr style={{ backgroundColor: '#f9fafb' }}>
+                          <td colSpan={2} style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right',
+                            fontWeight: '500',
+                            color: '#374151'
+                          }}>Freight:</td>
+                          <td style={{
+                            padding: '0.5rem 1rem',
+                            textAlign: 'right'
+                          }}>{formatCurrency(invoice.freightCharge ?? 0)}</td>
+                        </tr>
+                      )}
                       <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
                         <td colSpan={2} style={{
                           padding: '0.75rem 1rem',

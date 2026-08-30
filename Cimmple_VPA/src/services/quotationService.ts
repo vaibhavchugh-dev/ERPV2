@@ -23,6 +23,8 @@ export interface QuotationDetailReq {
   Discount: number;
   DiscountType?: "Amount" | "Percent";
   ProductId?: number;
+  RawMaterialId?: number;
+  LineType?: string;
   LeadTime: string;
   Notes: string;
   glcode?: string;
@@ -170,6 +172,8 @@ export class QuotationService {
           | "Amount"
           | "Percent",
         ProductId: (d.productId ?? d.ProductId) as number | undefined,
+        RawMaterialId: (d.rawMaterialId ?? d.RawMaterialId) as number | undefined,
+        LineType: String(d.lineType ?? d.LineType ?? ""),
         LeadTime: String(d.leadTime ?? d.LeadTime ?? ""),
         Notes: String(d.notes ?? d.Notes ?? ""),
         glcode: String(d.glcode ?? d.Glcode ?? ""),
@@ -210,6 +214,7 @@ export class QuotationService {
       LocationId: (result.LocationId ?? result.locationId) as number | undefined,
       convertedOrderId: result.convertedOrderId as number | undefined,
       ParentQuotationID: (result.ParentQuotationID ?? result.parentQuotationID) as number | undefined,
+      AdditionalNotes: String(result.AdditionalNotes ?? result.additionalNotes ?? ""),
       Details: details,
       Attachments: ((result.Attachments ?? result.attachments ?? []) as Record<string, unknown>[]).map((a) => ({
         id: Number(a.id ?? a.Id ?? 0),

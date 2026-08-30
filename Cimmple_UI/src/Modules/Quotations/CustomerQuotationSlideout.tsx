@@ -20,6 +20,10 @@ import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Compone
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
+import {
+  getPendingFiles,
+  revokeLocalAttachmentUrls,
+} from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
 import {
@@ -763,9 +767,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       console.log("Saving quotation with comments:", comments);
       console.log("Form data before save:", formData);
 
-      const pendingFiles = (attachments || [])
-        .filter((a) => a.isPending && a.file)
-        .map((a) => a.file as File);
+      const pendingFiles = getPendingFiles(attachments);
       const hadDeletes = deletedAttachmentIds.length > 0;
 
       const persistedAttachments = (attachments || [])
@@ -821,11 +823,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         }
       }
 
-      attachments
-        .filter((a) => a.isPending && a.localUrl)
-        .forEach((a) => {
-          if (a.localUrl) URL.revokeObjectURL(a.localUrl);
-        });
+      revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
 
       if (result.attachments) {
         setAttachments(
@@ -908,13 +906,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const discardPendingAttachments = () => {
-    attachments
-      .filter((attachment) => attachment.isPending && attachment.localUrl)
-      .forEach((attachment) => {
-        if (attachment.localUrl) {
-          URL.revokeObjectURL(attachment.localUrl);
-        }
-      });
+    revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
     setDeletedAttachmentIds([]);
   };
 

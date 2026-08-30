@@ -60,6 +60,8 @@ const Dashboard: React.FC = () => {
   const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("This Month");
+  const [productionPeriod, setProductionPeriod] = useState("This Week");
+  const [revenuePeriod, setRevenuePeriod] = useState("30days");
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [productionStatus, setProductionStatus] = useState<ProductionStatus | null>(null);
   const [revenueTrends, setRevenueTrends] = useState<RevenueTrends | null>(null);
@@ -73,6 +75,14 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadDashboardData();
   }, [dateRange]);
+
+  useEffect(() => {
+    DashboardService.GetProductionStatus(productionPeriod).then((d) => d && setProductionStatus(d));
+  }, [productionPeriod]);
+
+  useEffect(() => {
+    DashboardService.GetRevenueTrends(revenuePeriod).then((d) => d && setRevenueTrends(d));
+  }, [revenuePeriod]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -92,8 +102,8 @@ const Dashboard: React.FC = () => {
 
     // Secondary widgets load in parallel and paint as each completes.
     const secondary = [
-      DashboardService.GetProductionStatus("This Week").then((d) => d && setProductionStatus(d)),
-      DashboardService.GetRevenueTrends("30days").then((d) => d && setRevenueTrends(d)),
+      DashboardService.GetProductionStatus(productionPeriod).then((d) => d && setProductionStatus(d)),
+      DashboardService.GetRevenueTrends(revenuePeriod).then((d) => d && setRevenueTrends(d)),
       DashboardService.GetRecentActivities(20).then((d) => d && setRecentActivities(d)),
       DashboardService.GetAlerts().then((d) => d && setAlerts(d)),
       DashboardService.GetTopCustomers(5).then((d) => d && setTopCustomers(d)),
@@ -167,21 +177,26 @@ const Dashboard: React.FC = () => {
   };
 
   const handleNavigate = (entityType: string, entityId: number) => {
+    const returnState = { returnTo: "/dashboard" };
     switch (entityType) {
       case "JobOrder":
-        history.push(`/job-orders?open=${entityId}`);
+        history.push(`/job-orders?open=${entityId}`, returnState);
+        break;
+      case "Order":
+      case "CustomerOrder":
+        history.push(`/orders/customer?open=${entityId}`);
         break;
       case "Shipment":
-        history.push(`/orders/customer-shipments?open=${entityId}`);
+        history.push(`/orders/customer-shipments?open=${entityId}`, returnState);
         break;
       case "Invoice":
-        history.push(`/orders/customer-invoices?open=${entityId}`);
+        history.push(`/orders/customer-invoices?open=${entityId}`, returnState);
         break;
       case "VendorInvoice":
-        history.push(`/purchasing/vendor-invoices?open=${entityId}`);
+        history.push(`/purchasing/vendor-invoices?open=${entityId}`, returnState);
         break;
       case "NCR":
-        history.push(`/quality?open=${entityId}`);
+        history.push(`/quality?open=${entityId}`, returnState);
         break;
       default:
         break;
@@ -320,10 +335,14 @@ const Dashboard: React.FC = () => {
         <div className="dashboard-widget chart-widget-left chart-widget-row-1">
           <div className="widget-header">
             <h3>Production Status</h3>
-            <select className="widget-period-select">
-              <option>This Week</option>
-              <option>This Month</option>
-              <option>This Quarter</option>
+            <select
+              className="widget-period-select"
+              value={productionPeriod}
+              onChange={(e) => setProductionPeriod(e.target.value)}
+            >
+              <option value="This Week">This Week</option>
+              <option value="This Month">This Month</option>
+              <option value="This Quarter">This Quarter</option>
             </select>
           </div>
           <div className="widget-content">
@@ -383,10 +402,14 @@ const Dashboard: React.FC = () => {
         <div className="dashboard-widget chart-widget-left chart-widget-row-2">
           <div className="widget-header">
             <h3>Revenue & Expenses Trend</h3>
-            <select className="widget-period-select">
-              <option>Last 7 Days</option>
-              <option>Last 30 Days</option>
-              <option>Last 90 Days</option>
+            <select
+              className="widget-period-select"
+              value={revenuePeriod}
+              onChange={(e) => setRevenuePeriod(e.target.value)}
+            >
+              <option value="7days">Last 7 Days</option>
+              <option value="30days">Last 30 Days</option>
+              <option value="90days">Last 90 Days</option>
             </select>
           </div>
           <div className="widget-content">
@@ -564,36 +587,45 @@ const Dashboard: React.FC = () => {
 
         {/* Upcoming Deadlines - Row 2, Col 2 */}
         <div className="dashboard-widget bottom-widget-right bottom-widget-row-2">
-          <div className="widget-header">
-            <h3>Upcoming Deadlines</h3>
-            <span className="deadline-badge">{upcomingDeadlines.length}</span>
-          </div>
-          <div className="widget-content">
-            {upcomingDeadlines.length > 0 ? (
-              <div className="deadlines-list">
-                {upcomingDeadlines.slice(0, 7).map((deadline, index) => (
-                  <div
-                    key={index}
-                    className="deadline-item"
-                    onClick={() => handleNavigate(deadline.entityType, deadline.entityId)}
-                  >
-                    <div className="deadline-icon">
-                      <FontAwesomeIcon icon={faCalendar} />
+          {(() => {
+            const filteredDeadlines = upcomingDeadlines.filter(
+              (d: any) => !d.isVoided && d.status !== 'Void' && d.status !== 'Voided'
+            );
+            return (
+              <>
+                <div className="widget-header">
+                  <h3>Upcoming Deadlines</h3>
+                  <span className="deadline-badge">{filteredDeadlines.length}</span>
+                </div>
+                <div className="widget-content">
+                  {filteredDeadlines.length > 0 ? (
+                    <div className="deadlines-list">
+                      {filteredDeadlines.slice(0, 7).map((deadline, index) => (
+                        <div
+                          key={index}
+                          className="deadline-item"
+                          onClick={() => handleNavigate(deadline.entityType, deadline.entityId)}
+                        >
+                          <div className="deadline-icon">
+                            <FontAwesomeIcon icon={faCalendar} />
+                          </div>
+                          <div className="deadline-content">
+                            <div className="deadline-title">{deadline.title}</div>
+                            <div className="deadline-description">{deadline.description}</div>
+                            <div className="deadline-date">
+                              Due: {new Date(deadline.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="deadline-content">
-                      <div className="deadline-title">{deadline.title}</div>
-                      <div className="deadline-description">{deadline.description}</div>
-                      <div className="deadline-date">
-                        Due: {new Date(deadline.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="widget-empty">No upcoming deadlines</div>
-            )}
-          </div>
+                  ) : (
+                    <div className="widget-empty">No upcoming deadlines</div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>

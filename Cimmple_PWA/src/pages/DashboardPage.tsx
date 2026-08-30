@@ -155,7 +155,7 @@ export function DashboardPage() {
       {/* Soft page atmosphere — stays within Cimmple slate/blue language */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -inset-x-4 -top-6 h-56 overflow-hidden"
+        className="pointer-events-none absolute -inset-x-4 -top-[calc(2.25rem+env(safe-area-inset-top,0px))] h-60 overflow-hidden"
       >
         <div className="absolute inset-0 bg-[radial-gradient(80%_70%_at_10%_0%,rgba(37,99,235,0.14),transparent_55%),radial-gradient(60%_50%_at_90%_10%,rgba(15,23,42,0.08),transparent_50%)] dark:bg-[radial-gradient(80%_70%_at_10%_0%,rgba(59,130,246,0.18),transparent_55%),radial-gradient(60%_50%_at_95%_0%,rgba(148,163,184,0.08),transparent_45%)]" />
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-canvas dark:to-slate-950" />

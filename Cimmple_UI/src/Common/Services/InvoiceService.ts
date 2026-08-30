@@ -220,6 +220,17 @@ export class InvoiceService {
     }
   };
 
+  public static VoidInvoice = async (invoiceId: number): Promise<{ message: string } | null> => {
+    const url = `/Invoice/VoidInvoice/${invoiceId}`;
+    try {
+      const response = await Instense.post(url);
+      return response.data.result;
+    } catch (error: any) {
+      console.error("Error voiding invoice:", error);
+      throw new Error(error.response?.data?.error || error.message || "Failed to void invoice");
+    }
+  };
+
   public static GetInvoiceDetails = async (
     invoiceId: number
   ): Promise<InvoiceDetail | null> => {
@@ -238,7 +249,9 @@ export class InvoiceService {
     status: string = "All",
     searchTerm: string = "",
     customerId?: number,
-    dateRange: string = "Last 30 Days"
+    dateRange: string = "Last 30 Days",
+    startDate?: string,
+    endDate?: string
   ): Promise<InvoiceSummary[] | null> => {
     const url = `/Invoice/GetAllInvoices`;
     try {
@@ -247,7 +260,9 @@ export class InvoiceService {
           status,
           searchTerm,
           customerId,
-          dateRange
+          dateRange,
+          startDate,
+          endDate
         }
       });
       const result = response.data.result as InvoiceSummary[];

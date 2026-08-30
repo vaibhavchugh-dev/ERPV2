@@ -31,6 +31,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
   formatPartHistoryHint,
@@ -313,8 +314,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           }
           return detail;
         });
+        const resAny = result as any;
+        const rawExtDate = result.ExternalOrderDate || resAny.externalOrderDate || resAny.DueDate || resAny.dueDate;
         const formDataWithDetails = {
           ...result,
+          ExternalOrderDate: rawExtDate || "",
           Details: normalizedDetails,
           QuotationType: result.QuotationType || "Material",
         };
@@ -755,26 +759,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Function to convert MM/DD/YY date string to ISO format
-      const convertDateToISO = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString();
-
-        // Handle MM/DD/YY format (e.g., "12/25/24")
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1; // JS months are 0-based
-          const day = parseInt(parts[1]);
-          const year = 2000 + parseInt(parts[2]); // Convert YY to YYYY
-          return new Date(year, month, day).toISOString();
-        }
-
-        // If already in ISO format or other format, try to parse
-        try {
-          return new Date(dateStr).toISOString();
-        } catch {
-          return new Date().toISOString();
-        }
-      };
+      const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
       // Convert quotation data to vendor order format
       const quotationNumber = formData.PONumber < 1000
@@ -1096,6 +1081,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     const current = (formData.Status || "").trim();
     if (
       current === "Sent" ||
+      current === "Responded" ||
       current === "Accepted" ||
       current === "Converted" ||
       current === "Rejected"
@@ -1263,7 +1249,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               </>
             )}
             <div className="status-field-inline">
-              <div className={`input-group ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active-group" : "status-inactive-group"}`} style={{ maxWidth: "150px" }}>
+              <div className={`input-group ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Responded" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active-group" : "status-inactive-group"}`} style={{ maxWidth: "150px" }}>
                 <div className="input-group-prepend">
                   <span className="input-group-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1272,12 +1258,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   </span>
                 </div>
                 <select
-                  className={`form-input ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active" : "status-inactive"}`}
+                  className={`form-input ${formData.Status === "Active" || formData.Status === "Sent" || formData.Status === "Responded" || formData.Status === "Accepted" || formData.Status === "Converted" ? "status-active" : "status-inactive"}`}
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
                 >
                   <option value="Draft">Draft</option>
                   <option value="Sent">Sent</option>
+                  <option value="Responded">Responded</option>
                   <option value="Accepted">Accepted</option>
                   <option value="Rejected">Rejected</option>
                   <option value="Converted">Converted</option>

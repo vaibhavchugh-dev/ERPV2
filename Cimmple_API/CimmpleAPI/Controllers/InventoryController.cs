@@ -235,6 +235,10 @@ namespace CimmpleAPI.Controllers
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
+                var (docOk, docError) = await ValidateLinkedDocumentQtyAsync(
+                    tenantId, refType, refId, request.Quantity, isReceive: true);
+                if (!docOk)
+                    return BadRequest(new { error = docError });
 
                 var (success, error) = await _inventoryService.ReceiveStockAsync(
                     tenantId,
@@ -267,6 +271,10 @@ namespace CimmpleAPI.Controllers
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
+                var (docOk, docError) = await ValidateLinkedDocumentQtyAsync(
+                    tenantId, refType, refId, request.Quantity, isReceive: false);
+                if (!docOk)
+                    return BadRequest(new { error = docError });
 
                 var (success, error) = await _inventoryService.IssueStockAsync(
                     tenantId,
@@ -524,11 +532,13 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetLowStockAlerts")]
-        public async Task<IActionResult> GetLowStockAlerts([FromQuery] int tenantId)
+        public async Task<IActionResult> GetLowStockAlerts(
+            [FromQuery] int tenantId,
+            [FromQuery] int? locationId)
         {
             try
             {
-                var alerts = await _context.InventoryBalance
+                var query = _context.InventoryBalance
                     .Include(b => b.Product)
                     .Include(b => b.RawMaterial)
                     .Include(b => b.Location)
@@ -538,7 +548,11 @@ namespace CimmpleAPI.Controllers
                             ?? (b.Product != null ? b.Product.ReorderPoint : null)).HasValue
                         && b.QuantityOnHand <= (b.ReorderPoint
                             ?? (b.RawMaterial != null ? b.RawMaterial.ReorderPoint : null)
-                            ?? b.Product!.ReorderPoint))
+                            ?? b.Product!.ReorderPoint));
+                if (locationId.HasValue && locationId.Value > 0)
+                    query = query.Where(b => b.LocationId == locationId.Value);
+
+                var alerts = await query
                     .Select(b => new
                     {
                         id = b.Id,
@@ -647,15 +661,27 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRawMaterials")]
-        public async Task<IActionResult> GetRawMaterials([FromQuery] int tenantId, [FromQuery] bool includeInactive = false)
+        public async Task<IActionResult> GetRawMaterials([FromQuery] int tenantId, [FromQuery] bool? includeInactive = null)
         {
             try
             {
-                var materials = await _context.RawMaterialMaster
+                if (tenantId <= 0)
+                    tenantId = GetTenantId();
+
+                var include = includeInactive == true
+                    || string.Equals(Request.Query["includeInactive"].ToString(), "true", StringComparison.OrdinalIgnoreCase)
+                    || Request.Query["includeInactive"].ToString() == "1";
+
+                var query = _context.RawMaterialMaster
                     .AsNoTracking()
                     .Include(r => r.ParentRawMaterial)
                     .Include(r => r.DefaultLocation)
-                    .Where(r => r.Tenantid == tenantId && (includeInactive || r.IsActive))
+                    .Where(r => r.Tenantid == tenantId);
+
+                if (!include)
+                    query = query.Where(r => r.IsActive);
+
+                var materials = await query
                     .OrderBy(r => r.IsRemnant)
                     .ThenBy(r => r.PartNo)
                     .Select(r => new
@@ -902,16 +928,37 @@ namespace CimmpleAPI.Controllers
                         poNumber = o.PONumber,
                         partNo = d.PartNo,
                         partName = d.PartName,
-                        receivedDate = r.ReceivedDate
+                        receivedDate = r.ReceivedDate,
+                        receivedQty = r.ReceivedQty
                     }
                 ).Take(50).ToListAsync();
 
-                var receivings = receivingRows.Select(r => new
+                var receivingIds = receivingRows.Select(r => r.id).ToList();
+                var bookedReceives = receivingIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : await _context.InventoryTransaction
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "VendorReceiving"
+                            && t.ReferenceId.HasValue
+                            && receivingIds.Contains(t.ReferenceId.Value)
+                            && t.TransactionTypeId == 1)
+                        .GroupBy(t => t.ReferenceId!.Value)
+                        .Select(g => new { id = g.Key, qty = g.Sum(x => x.Quantity) })
+                        .ToDictionaryAsync(x => x.id, x => x.qty);
+
+                var receivings = receivingRows.Select(r =>
                 {
-                    id = r.id,
-                    label = "VO#" + FormatVendorPoNumber(r.poNumber),
-                    detail = ((r.partNo ?? "") + (string.IsNullOrWhiteSpace(r.partName) ? "" : " — " + r.partName)).Trim(' ', '—')
-                        + (r.receivedDate == default ? "" : " · " + r.receivedDate.ToString("yyyy-MM-dd"))
+                    var booked = bookedReceives.TryGetValue(r.id, out var q) ? q : 0;
+                    var remaining = Math.Max(0, r.receivedQty - booked);
+                    return new
+                    {
+                        id = r.id,
+                        label = "VO#" + FormatVendorPoNumber(r.poNumber),
+                        remainingQty = remaining,
+                        detail = ((r.partNo ?? "") + (string.IsNullOrWhiteSpace(r.partName) ? "" : " — " + r.partName)).Trim(' ', '—')
+                            + (r.receivedDate == default ? "" : " · " + r.receivedDate.ToString("yyyy-MM-dd"))
+                            + " · remaining " + remaining.ToString("0.##")
+                    };
                 }).ToList();
 
                 var shipmentRows = await _context.Shipping
@@ -921,11 +968,40 @@ namespace CimmpleAPI.Controllers
                     .Select(s => new { s.Id, s.ShipmentNo, s.ShipmentDate })
                     .ToListAsync();
 
-                var shipments = shipmentRows.Select(s => new
+                var shipmentIds = shipmentRows.Select(s => s.Id).ToList();
+                var shippedByShipment = shipmentIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : await _context.ShippingDetails
+                        .Where(d => shipmentIds.Contains(d.ShipmentId))
+                        .GroupBy(d => d.ShipmentId)
+                        .Select(g => new { id = g.Key, qty = g.Sum(x => x.ShippedQty) })
+                        .ToDictionaryAsync(x => x.id, x => x.qty);
+
+                var bookedIssues = shipmentIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : await _context.InventoryTransaction
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "CustomerShipment"
+                            && t.ReferenceId.HasValue
+                            && shipmentIds.Contains(t.ReferenceId.Value)
+                            && t.TransactionTypeId == 2)
+                        .GroupBy(t => t.ReferenceId!.Value)
+                        .Select(g => new { id = g.Key, qty = g.Sum(x => x.Quantity) })
+                        .ToDictionaryAsync(x => x.id, x => Math.Abs(x.qty));
+
+                var shipments = shipmentRows.Select(s =>
                 {
-                    id = s.Id,
-                    label = string.IsNullOrWhiteSpace(s.ShipmentNo) ? ("SHIP#" + s.Id) : s.ShipmentNo,
-                    detail = s.ShipmentDate.ToString("yyyy-MM-dd")
+                    var shipped = shippedByShipment.TryGetValue(s.Id, out var sq) ? sq : 0;
+                    var booked = bookedIssues.TryGetValue(s.Id, out var q) ? q : 0;
+                    var remaining = Math.Max(0, shipped - booked);
+                    return new
+                    {
+                        id = s.Id,
+                        label = string.IsNullOrWhiteSpace(s.ShipmentNo) ? ("SHIP#" + s.Id) : s.ShipmentNo,
+                        remainingQty = remaining,
+                        detail = s.ShipmentDate.ToString("yyyy-MM-dd")
+                            + " · remaining " + remaining.ToString("0.##")
+                    };
                 }).ToList();
 
                 return Ok(new
@@ -942,6 +1018,56 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private async Task<(bool Ok, string Error)> ValidateLinkedDocumentQtyAsync(
+            int tenantId,
+            string? referenceType,
+            int? referenceId,
+            decimal quantity,
+            bool isReceive)
+        {
+            if (!referenceId.HasValue || referenceId.Value <= 0 || string.IsNullOrWhiteSpace(referenceType))
+                return (true, "");
+
+            if (isReceive && referenceType.Equals("VendorReceiving", StringComparison.OrdinalIgnoreCase))
+            {
+                var received = await _context.VendorReceiving
+                    .Where(r => r.Tenantid == tenantId && r.ID == referenceId.Value)
+                    .Select(r => (decimal?)r.ReceivedQty)
+                    .FirstOrDefaultAsync() ?? 0;
+                var booked = await _context.InventoryTransaction
+                    .Where(t => t.Tenantid == tenantId
+                        && t.ReferenceType == "VendorReceiving"
+                        && t.ReferenceId == referenceId.Value
+                        && t.TransactionTypeId == 1)
+                    .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+                var remaining = received - booked;
+                if (quantity > remaining + 0.0001m)
+                    return (false, remaining <= 0
+                        ? "This vendor receive already posted its quantity to inventory."
+                        : $"Quantity cannot exceed remaining {remaining:0.##} on that vendor receive.");
+            }
+
+            if (!isReceive && referenceType.Equals("CustomerShipment", StringComparison.OrdinalIgnoreCase))
+            {
+                var shipped = await _context.ShippingDetails
+                    .Where(d => d.ShipmentId == referenceId.Value)
+                    .SumAsync(d => (decimal?)d.ShippedQty) ?? 0;
+                var booked = Math.Abs(await _context.InventoryTransaction
+                    .Where(t => t.Tenantid == tenantId
+                        && t.ReferenceType == "CustomerShipment"
+                        && t.ReferenceId == referenceId.Value
+                        && t.TransactionTypeId == 2)
+                    .SumAsync(t => (decimal?)t.Quantity) ?? 0);
+                var remaining = shipped - booked;
+                if (quantity > remaining + 0.0001m)
+                    return (false, remaining <= 0
+                        ? "This shipment already took that quantity off the shelf."
+                        : $"Quantity cannot exceed remaining {remaining:0.##} on that shipment.");
+            }
+
+            return (true, "");
         }
 
         private static (string? type, int? id) NormalizeDocumentReference(string? referenceType, int? referenceId, string? fallbackType)

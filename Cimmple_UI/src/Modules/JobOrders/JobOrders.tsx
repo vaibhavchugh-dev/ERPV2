@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
@@ -17,6 +17,7 @@ import "./JobOrders.scss";
 const JobOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -34,21 +35,22 @@ const JobOrders: React.FC = () => {
     loadJobOrders();
   }, [locationIdParam]);
 
-  // Handle URL parameter to open slideout (from global search)
+  // Handle URL parameter to open slideout (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedJobOrderId(id);
         setHeaderPreview(null);
         setShowSlideout(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -111,6 +113,11 @@ const JobOrders: React.FC = () => {
     setHeaderPreview(null);
     if (refreshList) {
       loadJobOrders();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 
@@ -223,7 +230,9 @@ const JobOrders: React.FC = () => {
       label: "Customer Order #",
       sortable: true,
       render: (value: any, row: any) => {
-        if (value) {
+        const orderId = value || row?.customerOrderID || row?.CustomerOrderID || row?.customerOrderId;
+        const poNumber = row?.customerPONumber || row?.customerOrderNumber || row?.poNumber || orderId;
+        if (orderId && Number(orderId) > 0) {
           return (
             <span
               style={{
@@ -234,12 +243,11 @@ const JobOrders: React.FC = () => {
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                // Navigate to customer order - you can implement navigation here
-                window.location.href = `/orders/customer?orderId=${value}`;
+                history.push(`/orders/customer?open=${orderId}`);
               }}
               title="Click to view customer order"
             >
-              {formatCustomerOrderNumber(value)}
+              {formatCustomerOrderNumber(Number(poNumber))}
             </span>
           );
         }
@@ -311,14 +319,11 @@ const JobOrders: React.FC = () => {
       return true;
     });
 
-    // Default order: Urgent → High → Normal, then earlier due date
+    // Latest job orders first (id is monotonic; fall back to order date)
     return [...filtered].sort((a, b) => {
-      const priorityDiff =
-        normalizeJobPriority(b.jobPriority) - normalizeJobPriority(a.jobPriority);
-      if (priorityDiff !== 0) return priorityDiff;
-      const aDue = a.dueDate || "";
-      const bDue = b.dueDate || "";
-      return aDue.localeCompare(bDue);
+      const idDiff = (b.jobOrderID || 0) - (a.jobOrderID || 0);
+      if (idDiff !== 0) return idDiff;
+      return (b.orderDate || "").localeCompare(a.orderDate || "");
     });
   }, [jobOrders, statusFilter, priorityFilter, materialFilter]);
 
@@ -332,7 +337,10 @@ const JobOrders: React.FC = () => {
         enablePagination
         matchRowSearch={matchJobOrderSearch}
         onAdd={() => {
-          toast.info("Create job orders from Customer Order line items");
+          toast.info("Redirecting to Customer Orders to create job orders from order line items.", {
+            autoClose: 4000
+          });
+          history.push("/orders/customer");
         }}
         onRowClick={handleRowClick}
         filters={[

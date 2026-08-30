@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faEye, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
@@ -12,6 +12,7 @@ import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -355,15 +356,17 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
 
 interface FilterOptions {
   status: string;
-  dateRange: string;
   customerId?: number;
+  dateRange: string;
   searchTerm: string;
 }
 
 const CustomerInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -386,22 +389,23 @@ const CustomerInvoices: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
-  // Handle URL parameter to open invoice (from global search)
+  // Handle URL parameter to open invoice (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedInvoiceId(id);
         setShowDetailModal(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -425,7 +429,8 @@ const CustomerInvoices: React.FC = () => {
         filters.status,
         filters.searchTerm,
         filters.customerId,
-        filters.dateRange
+        filters.dateRange,
+        locationIdParam
       );
 
       if (result && Array.isArray(result)) {
@@ -467,9 +472,17 @@ const CustomerInvoices: React.FC = () => {
     setShowDetailModal(true);
   };
 
-  const handleCloseDetailModal = () => {
+  const handleCloseDetailModal = (refresh?: boolean) => {
     setShowDetailModal(false);
     setSelectedInvoiceId(0);
+    if (refresh) {
+      loadInvoices();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
+    }
   };
 
   const handleNavigateToOrder = (orderId: number) => {
@@ -485,6 +498,11 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handlePayInvoice = (invoice: CustomerInvoiceSummary) => {
+    const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    if (isVoided) {
+      toast.error("Cannot record payment for a voided invoice");
+      return;
+    }
     setSelectedInvoiceForPayment(invoice);
     setShowPaymentModal(true);
   };
@@ -512,9 +530,17 @@ const CustomerInvoices: React.FC = () => {
     }
   };
 
-  const handleVoidInvoice = (invoice: CustomerInvoiceSummary) => {
-    // TODO: Void invoice (only if unpaid)
-    toast.info(`Voiding invoice ${invoice.invoiceNo}`);
+  const handleVoidInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await CustomerInvoicesService.VoidInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoices();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to void invoice");
+    }
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
@@ -632,24 +658,31 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
-          {row.status !== 'Paid' && row.status !== 'Void' && (
-            <button
-              type="button"
-              onClick={() => handlePayInvoice(row)}
-              title="Pay Invoice"
-              style={{
-                padding: "0.25rem 0.5rem",
-                backgroundColor: "#10b981",
-                color: "white",
-                border: "none",
-                borderRadius: "0.25rem",
-                cursor: "pointer",
-                fontSize: "0.75rem",
-              }}
-            >
-              <FontAwesomeIcon icon={faCreditCard} />
-            </button>
-          )}
+          {(() => {
+            const isVoided = !!(row.status && (row.status.toLowerCase().includes("void") || row.status.toLowerCase() === "cancelled"));
+            const isPaid = row.status?.toLowerCase() === 'paid' || (row.balanceDue !== undefined && row.balanceDue <= 0);
+
+            if (isPaid || isVoided) return null;
+
+            return (
+              <button
+                type="button"
+                onClick={() => handlePayInvoice(row)}
+                title="Pay Invoice"
+                style={{
+                  padding: "0.25rem 0.5rem",
+                  backgroundColor: "#10b981",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.25rem",
+                  cursor: "pointer",
+                  fontSize: "0.75rem",
+                }}
+              >
+                <FontAwesomeIcon icon={faCreditCard} />
+              </button>
+            );
+          })()}
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -699,8 +732,10 @@ const CustomerInvoices: React.FC = () => {
 
   const dateRangeOptions = [
     { value: 'All', label: 'All Dates' },
+    { value: 'This Week', label: 'This Week' },
     { value: 'Last 7 Days', label: 'Last 7 Days' },
     { value: 'Last 30 Days', label: 'Last 30 Days' },
+    { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
     { value: 'Last Month', label: 'Last Month' }
   ];
@@ -717,6 +752,7 @@ const CustomerInvoices: React.FC = () => {
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: statusOptions,
@@ -739,6 +775,7 @@ const CustomerInvoices: React.FC = () => {
         onClose={handleCloseDetailModal}
         invoiceId={selectedInvoiceId}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
 
       {/* Order Slideout */}

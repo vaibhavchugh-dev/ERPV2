@@ -1,3 +1,18 @@
+.receiving-detail-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
 .receiving-detail-card {
   background: white;
   border-radius: 0.5rem;
@@ -5,10 +20,11 @@
   max-width: 1200px;
   width: 95vw;
   max-height: 95vh;
+  min-height: 50vh;
   display: flex;
   flex-direction: column;
   position: relative;
-  margin: 2.5vh auto;
+  margin: auto;
 }
 
 .receiving-header {

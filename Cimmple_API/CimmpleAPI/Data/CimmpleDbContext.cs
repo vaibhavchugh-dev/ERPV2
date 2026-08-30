@@ -119,6 +119,9 @@ namespace CimmpleAPI.Data
         public DbSet<PermissionRole> PermissionRole { get; set; }
         public DbSet<SystemSettings> SystemSettings { get; set; }
 
+        public DbSet<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog> FaceAttendanceLog { get; set; }
+        public DbSet<CimmpleAPI.Data.Models.Punch.EmployeeFace> EmployeeFace { get; set; }
+
         // Supporting Entities
         public DbSet<Comment> Comments { get; set; }
         public DbSet<Shipping> Shipping { get; set; }
@@ -149,6 +152,9 @@ namespace CimmpleAPI.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            // ERP tables live in CimmpleFlow (CimmpleERPDB also has CimmplePay / CimmplePunch).
+            modelBuilder.HasDefaultSchema(DbSchema.Flow);
             
             // Configure PriceBreakdownMaster table name
             modelBuilder.Entity<PriceBreakdownMaster>()
@@ -688,6 +694,29 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.FiscalYearStart).HasMaxLength(10);
                 entity.Property(e => e.DefaultCurrency).HasMaxLength(10);
                 entity.Property(e => e.TaxRate).HasColumnType("decimal(18,2)");
+            });
+
+            modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>
+            {
+                entity.ToTable("FaceAttendanceLog", DbSchema.Punch);
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UserName).HasMaxLength(255);
+                entity.Property(e => e.Direction).HasMaxLength(50);
+                entity.Property(e => e.FailureReason).HasMaxLength(500);
+                entity.Property(e => e.AzurePersonId).HasMaxLength(255);
+                entity.Property(e => e.VerificationType).HasMaxLength(100);
+                entity.HasIndex(e => new { e.TenantId, e.UserUniqueId, e.PunchTime });
+            });
+
+            modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.EmployeeFace>(entity =>
+            {
+                entity.ToTable("EmployeeFace", DbSchema.Punch);
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.TenantId, e.UserUniqueId }).IsUnique();
+                entity.Property(e => e.AzurePersonId).HasMaxLength(255);
+                entity.Property(e => e.AzurePersistedFaceId).HasMaxLength(255);
+                entity.Property(e => e.AwsPersonId).HasMaxLength(255);
+                entity.Property(e => e.PendingImagePath).HasMaxLength(500);
             });
 
             // Seed default transaction types

@@ -45,30 +45,7 @@ const TopBar: React.FC = () => {
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<GlobalSearchResults>({
-    customers: [],
-    vendors: [],
-    orders: [],
-    invoices: [],
-    jobOrders: [],
-    quotations: [],
-    banks: [],
-    workstations: [],
-    locations: [],
-    processes: [],
-    jobTemplates: [],
-    priceBreakdowns: [],
-    creditCards: [],
-    chartOfAccounts: [],
-    vendorOrders: [],
-    vendorInvoices: [],
-    vendorReceiving: [],
-    vendorQuotations: [],
-    shipments: [],
-    ncrReports: [],
-    users: [],
-    documents: []
-  });
+  const [searchResults, setSearchResults] = useState<GlobalSearchResults>(GlobalSearchService.emptyResults());
   const [searchLoading, setSearchLoading] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -107,30 +84,7 @@ const TopBar: React.FC = () => {
 
   const performSearch = useCallback(async (query: string) => {
     if (!query || query.trim() === '' || tenantId === 0) {
-      setSearchResults({
-        customers: [],
-        vendors: [],
-        orders: [],
-        invoices: [],
-        jobOrders: [],
-        quotations: [],
-        banks: [],
-        workstations: [],
-        locations: [],
-        processes: [],
-        jobTemplates: [],
-        priceBreakdowns: [],
-        creditCards: [],
-        chartOfAccounts: [],
-        vendorOrders: [],
-        vendorInvoices: [],
-        vendorReceiving: [],
-        vendorQuotations: [],
-        shipments: [],
-        ncrReports: [],
-        users: [],
-        documents: []
-      });
+      setSearchResults(GlobalSearchService.emptyResults());
       setSearchLoading(false);
       return;
     }
@@ -141,30 +95,7 @@ const TopBar: React.FC = () => {
       setSearchResults(results);
     } catch (error) {
       console.error('Search error:', error);
-      setSearchResults({
-        customers: [],
-        vendors: [],
-        orders: [],
-        invoices: [],
-        jobOrders: [],
-        quotations: [],
-        banks: [],
-        workstations: [],
-        locations: [],
-        processes: [],
-        jobTemplates: [],
-        priceBreakdowns: [],
-        creditCards: [],
-        chartOfAccounts: [],
-        vendorOrders: [],
-        vendorInvoices: [],
-        vendorReceiving: [],
-        vendorQuotations: [],
-        shipments: [],
-        ncrReports: [],
-        users: [],
-        documents: []
-      });
+      setSearchResults(GlobalSearchService.emptyResults());
     } finally {
       setSearchLoading(false);
     }
@@ -181,30 +112,7 @@ const TopBar: React.FC = () => {
         performSearch(searchQuery);
       }, 300);
     } else {
-      setSearchResults({
-        customers: [],
-        vendors: [],
-        orders: [],
-        invoices: [],
-        jobOrders: [],
-        quotations: [],
-        banks: [],
-        workstations: [],
-        locations: [],
-        processes: [],
-        jobTemplates: [],
-        priceBreakdowns: [],
-        creditCards: [],
-        chartOfAccounts: [],
-        vendorOrders: [],
-        vendorInvoices: [],
-        vendorReceiving: [],
-        vendorQuotations: [],
-        shipments: [],
-        ncrReports: [],
-        users: [],
-        documents: []
-      });
+      setSearchResults(GlobalSearchService.emptyResults());
       setSearchLoading(false);
     }
 
@@ -401,6 +309,56 @@ const TopBar: React.FC = () => {
     setShowSearchResults(true);
   };
 
+  const getFirstResult = (resultsData: GlobalSearchResults = searchResults): SearchResult | null => {
+    if (!resultsData) return null;
+    const categories: (keyof GlobalSearchResults)[] = [
+      'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
+      'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
+      'locations', 'processes', 'jobTemplates', 'priceBreakdowns', 'creditCards', 'chartOfAccounts',
+      'shipments', 'ncrReports', 'users', 'documents'
+    ];
+    for (const cat of categories) {
+      const list = resultsData[cat];
+      if (list && list.length > 0) {
+        return list[0];
+      }
+    }
+    return null;
+  };
+
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = searchQuery.trim();
+      if (!trimmed) return;
+
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+
+      let currentResults = searchResults;
+
+      const existingFirst = getFirstResult(currentResults);
+      if (!existingFirst || searchLoading) {
+        try {
+          setSearchLoading(true);
+          currentResults = await GlobalSearchService.Search(trimmed, tenantId, 5);
+          setSearchResults(currentResults);
+        } catch (err) {
+          console.error("Immediate search error on Enter:", err);
+        } finally {
+          setSearchLoading(false);
+        }
+      }
+
+      const firstResult = getFirstResult(currentResults);
+      if (firstResult) {
+        handleResultClick(firstResult);
+      }
+    }
+  };
+
   const handleSearchFocus = () => {
     if (searchQuery.trim() !== '') {
       setShowSearchResults(true);
@@ -419,11 +377,15 @@ const TopBar: React.FC = () => {
     searchInputRef.current?.blur();
 
     // For pages that support opening slideouts via URL params, the component will handle it
-    // Otherwise, we'll need to trigger the slideout programmatically
+    // ProductMaster opens by part number; others by numeric id
     setTimeout(() => {
-      // Trigger a custom event that components can listen to
       window.dispatchEvent(new CustomEvent('openEntity', { 
-        detail: { type: result.type, id: result.id } 
+        detail: {
+          type: result.type,
+          id: result.type === 'product'
+            ? (result.partNo || result.code || String(result.id))
+            : result.id,
+        }
       }));
     }, 100);
   };
@@ -466,6 +428,7 @@ const TopBar: React.FC = () => {
             value={searchQuery}
             onChange={handleSearchChange}
             onFocus={handleSearchFocus}
+            onKeyDown={handleSearchKeyDown}
           />
           {showSearchResults && (
             <SearchResultsDropdown

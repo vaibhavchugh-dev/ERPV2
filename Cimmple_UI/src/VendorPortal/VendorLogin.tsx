@@ -21,6 +21,10 @@ export const VendorLogin: React.FC = () => {
         toast.error("Vendor code is required");
         return;
       }
+      if (!password) {
+        toast.error("Password is required");
+        return;
+      }
 
       const parsedTenant = tenantId ? parseInt(tenantId, 10) : undefined;
       await AuthService.vendorLogin(

@@ -19,6 +19,8 @@ interface StockMovementModalProps {
   balances?: InventoryBalance[];
   fallbackProducts?: ProductOption[];
   locations: { locationId: number; name: string }[];
+  /** TopBar working site — used when the action is not opened from a row. */
+  defaultLocationId?: number;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -81,6 +83,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
   balances = [],
   fallbackProducts = [],
   locations,
+  defaultLocationId = 0,
   onClose,
   onSuccess,
 }) => {
@@ -93,14 +96,18 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
   const [rawMaterialId, setRawMaterialId] = useState<number | "">(
     balance?.rawMaterialId ?? ""
   );
-  const [locationId, setLocationId] = useState<number>(
-    balance?.locationId ?? (locations[0]?.locationId ?? 0)
-  );
-  const [fromLocationId, setFromLocationId] = useState<number>(
-    balance?.locationId ?? (locations[0]?.locationId ?? 0)
-  );
+  const resolveDefaultLocation = () =>
+    balance?.locationId
+    || (defaultLocationId > 0 ? defaultLocationId : 0)
+    || locations[0]?.locationId
+    || 0;
+
+  const [locationId, setLocationId] = useState<number>(resolveDefaultLocation());
+  const [fromLocationId, setFromLocationId] = useState<number>(resolveDefaultLocation());
   const [toLocationId, setToLocationId] = useState<number>(
-    locations[1]?.locationId ?? locations[0]?.locationId ?? 0
+    locations.find((l) => l.locationId !== resolveDefaultLocation())?.locationId
+      ?? locations[0]?.locationId
+      ?? 0
   );
   const [quantity, setQuantity] = useState<string>(
     type === "adjust" ? "" : "1"
@@ -146,8 +153,14 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       setRawMaterialId(balance.rawMaterialId ?? "");
       setLocationId(balance.locationId);
       setFromLocationId(balance.locationId);
+      return;
     }
-  }, [balance]);
+    const loc = resolveDefaultLocation();
+    if (loc > 0) {
+      setLocationId(loc);
+      setFromLocationId(loc);
+    }
+  }, [balance, defaultLocationId, locations]);
 
   useEffect(() => {
     if (preferRemnantDone.current) return;
@@ -342,8 +355,12 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const qty = parseFloat(quantity);
-    if (isNaN(qty) || (type === "adjust" ? qty === 0 : qty <= 0)) {
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty)) {
+      toast.error("Quantity must be a whole number");
+      return;
+    }
+    if (type === "adjust" ? qty === 0 : qty <= 0) {
       toast.error(
         type === "adjust"
           ? "Adjustment quantity cannot be zero"
@@ -355,6 +372,26 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     if (type === "reserve" && (referenceType !== "JobOrder" || referenceId === "")) {
       toast.error("Select a job to reserve this quantity for.");
       return;
+    }
+
+    if (referenceType === "VendorReceiving" || referenceType === "CustomerShipment") {
+      const selected = documentOptions().find((d) => d.id === Number(referenceId));
+      const remaining =
+        selected && typeof selected.remainingQty === "number"
+          ? selected.remainingQty
+          : undefined;
+      if (referenceId === "") {
+        toast.error("Select the linked document, or set Linked to None.");
+        return;
+      }
+      if (remaining != null && qty - remaining > 0.0001) {
+        toast.error(
+          remaining <= 0
+            ? "This document already has its full quantity in inventory. Unlink it or pick another."
+            : `Quantity cannot exceed remaining ${remaining} on that document.`
+        );
+        return;
+      }
     }
 
     const hasProduct = materialType === "product" && productId !== "";
@@ -646,6 +683,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                   {locations.map((loc) => (
                     <option key={loc.locationId} value={loc.locationId}>
                       {loc.name}
+                      {defaultLocationId === loc.locationId ? " (working site)" : ""}
                     </option>
                   ))}
                 </select>
@@ -659,6 +697,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                   {locations.map((loc) => (
                     <option key={loc.locationId} value={loc.locationId}>
                       {loc.name}
+                      {defaultLocationId === loc.locationId ? " (working site)" : ""}
                     </option>
                   ))}
                 </select>
@@ -674,6 +713,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                 {locations.map((loc) => (
                   <option key={loc.locationId} value={loc.locationId}>
                     {loc.name}
+                    {defaultLocationId === loc.locationId ? " (working site)" : ""}
                   </option>
                 ))}
               </select>
@@ -684,8 +724,9 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
             <label>Quantity {type === "adjust" && "(+ or -)"}</label>
             <input
               type="number"
-              step="0.01"
-              min={type === "adjust" ? undefined : "0.01"}
+              inputMode="numeric"
+              step="1"
+              min={type === "adjust" ? undefined : "1"}
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               placeholder={type === "adjust" ? "e.g. 10 or -5" : "0"}
@@ -779,19 +820,21 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
             >
               {type !== "reserve" && <option value="">None</option>}
               <option value="JobOrder">Job</option>
-              {type !== "reserve" && (
-                <>
-                  <option value="VendorReceiving">Vendor receive</option>
-                  <option value="CustomerShipment">Shipment</option>
-                </>
+              {type === "receive" && (
+                <option value="VendorReceiving">Vendor receive</option>
+              )}
+              {type === "issue" && (
+                <option value="CustomerShipment">Shipment</option>
               )}
             </select>
             <p className="form-row-help">
               {type === "reserve"
                 ? "Holds this qty for the job. On-hand stays the same; available drops until you issue or release."
                 : type === "issue"
-                ? "If linked to a job, that job’s reserved qty is used first."
-                : "Records why this quantity moved. Jobs and shipments are not updated from here."}
+                ? "Link a job to consume that job’s reservation first. Shipment is only for qty that shipment did not already take off the shelf."
+                : type === "receive"
+                ? "Link a vendor receive only for qty that receive has not already put on the shelf."
+                : "Optional note of why this quantity moved."}
             </p>
           </div>
 

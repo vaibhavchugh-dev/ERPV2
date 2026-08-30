@@ -42,6 +42,8 @@ export interface VendorInvoice {
   invoiceDate: string;
   dueDate: string;
   amount: number;
+  taxAmount?: number;
+  freightCharge?: number;
   totalAmount: number;
   paidAmount?: number;
   balanceDue?: number;
@@ -68,6 +70,8 @@ export interface VendorInvoiceSummary {
   invoiceDate: string;
   dueDate: string;
   amount: number;
+  taxAmount?: number;
+  freightCharge?: number;
   totalAmount: number;
   paidAmount?: number;
   balanceDue?: number;
@@ -143,7 +147,10 @@ export class VendorInvoiceService {
     status: string = "All",
     searchTerm: string = "",
     vendorId?: number,
-    dateRange: string = "Last 30 Days"
+    dateRange: string = "Last 30 Days",
+    startDate?: string,
+    endDate?: string,
+    locationId?: number
   ): Promise<VendorInvoiceSummary[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
@@ -156,7 +163,10 @@ export class VendorInvoiceService {
           status,
           searchTerm,
           vendorId,
-          dateRange
+          dateRange,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          locationId
         }
       });
       const result = response.data.result as VendorInvoiceSummary[];
@@ -224,11 +234,25 @@ export class VendorInvoiceService {
     }
   };
 
+  public static VoidVendorInvoice = async (
+    invoiceId: number
+  ): Promise<{ message: string } | null> => {
+    const url = `/VendorInvoice/VoidVendorInvoice/${invoiceId}`;
+    try {
+      const response = await Instense.post(url);
+      return response.data.result;
+    } catch (error: any) {
+      console.error("Error voiding vendor invoice:", error);
+      throw new Error(error.response?.data?.error || error.message || "Failed to void vendor invoice");
+    }
+  };
+
   public static GetVendorInvoicesDirect = async (
     status: string = "All",
     searchTerm: string = "",
     vendorId?: number,
-    dateRange: string = "Last 30 Days"
+    dateRange: string = "Last 30 Days",
+    locationId?: number
   ): Promise<VendorInvoiceSummary[] | null> => {
     const url = `/VendorInvoice/GetVendorInvoices`;
     try {
@@ -237,7 +261,8 @@ export class VendorInvoiceService {
           status,
           searchTerm,
           vendorId,
-          dateRange
+          dateRange,
+          locationId
         }
       });
       const result = response.data.result as VendorInvoiceSummary[];

@@ -1097,8 +1097,8 @@ export function JobDetailPage() {
       {/* Sticky toast banners — full-width top strip */}
       {(actionError || actionOk) && (
         <div
-          className="fixed left-0 right-0 top-0 z-50"
-          style={{ paddingTop: "env(safe-area-inset-top)" }}
+          className={`fixed left-0 right-0 top-0 z-50 ${actionError ? "bg-red-50 dark:bg-red-950" : "bg-emerald-50 dark:bg-emerald-950"}`}
+          style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
         >
           {actionError ? (
             <div
@@ -1652,9 +1652,6 @@ export function JobDetailPage() {
             })()}
 
             {trackingDialog.type === "disableTrack" && (() => {
-              const runningSteps = stepsRef.current.filter(
-                (s) => s.progressState === "running"
-              );
               return (
                 <>
                   <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">

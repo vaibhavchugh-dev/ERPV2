@@ -7,7 +7,7 @@
 -- Category values added by the seed (part families, machines, customers) are removed only
 -- when no remaining template still uses them, and never when they are marked IsSystem.
 
-USE ERPv2Db
+USE CimmpleERPDB
 GO
 
 -- Required for deletes against the filtered unique indexes on TemplateCode and CategoryValue.
@@ -15,7 +15,7 @@ SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
 GO
 
-IF OBJECT_ID('dbo.JobTemplateMaster', 'U') IS NULL
+IF OBJECT_ID('CimmpleFlow.JobTemplateMaster', 'U') IS NULL
 BEGIN
     RAISERROR('JobTemplateMaster does not exist. Nothing to remove.', 16, 1);
     RETURN;
@@ -48,25 +48,25 @@ DECLARE @Doomed TABLE (Id int PRIMARY KEY);
 
 INSERT INTO @Doomed (Id)
 SELECT jt.Id
-FROM dbo.JobTemplateMaster jt
+FROM CimmpleFlow.JobTemplateMaster jt
 INNER JOIN @SampleCodes c ON c.Code = jt.TemplateCode
 WHERE @TenantFilter IS NULL OR jt.Tenantid = @TenantFilter;
 
 -- Attachment rows are cleared here, but any uploaded files stay in wwwroot/uploads/jobtemplates.
 -- Deleting through the UI removes the files as well.
-DELETE FROM dbo.JobTemplateAttachment WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
-DELETE FROM dbo.JobTemplateCategory   WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
-DELETE FROM dbo.JobTemplateOperation  WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
-DELETE FROM dbo.JobTemplateMaster     WHERE Id IN (SELECT Id FROM @Doomed);
+DELETE FROM CimmpleFlow.JobTemplateAttachment WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
+DELETE FROM CimmpleFlow.JobTemplateCategory   WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
+DELETE FROM CimmpleFlow.JobTemplateOperation  WHERE JobTemplateId IN (SELECT Id FROM @Doomed);
+DELETE FROM CimmpleFlow.JobTemplateMaster     WHERE Id IN (SELECT Id FROM @Doomed);
 
 DELETE cv
-FROM dbo.CategoryValue cv
-INNER JOIN dbo.CategoryType ct ON ct.Id = cv.CategoryTypeId
+FROM CimmpleFlow.CategoryValue cv
+INNER JOIN CimmpleFlow.CategoryType ct ON ct.Id = cv.CategoryTypeId
 INNER JOIN @SampleValues sv ON sv.TypeName = ct.Name AND sv.ValueName = cv.Name
 WHERE cv.IsSystem = 0
   AND (@TenantFilter IS NULL OR cv.Tenantid = @TenantFilter)
   AND NOT EXISTS (
-      SELECT 1 FROM dbo.JobTemplateCategory jc WHERE jc.CategoryValueId = cv.Id
+      SELECT 1 FROM CimmpleFlow.JobTemplateCategory jc WHERE jc.CategoryValueId = cv.Id
   );
 
 SELECT (SELECT COUNT(*) FROM @Doomed) AS TemplatesRemoved;

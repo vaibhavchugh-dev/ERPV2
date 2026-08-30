@@ -68,7 +68,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
 
         const formDataWithDetails: VendorQuotationMasterReq & { QuotationType?: string } = {
           OrderID: result.OrderID,
-          Tenantid: 0, // Vendor portal doesn't need tenant ID
+          Tenantid: result.Tenantid || tenantId || 0,
           VendorID: result.VendorID,
           VendorCode: result.VendorCode,
           PONumber: result.PONumber || 0,
@@ -132,18 +132,32 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
     }
   };
 
+  const calculateVendorLineTotal = (detail: QuotationDetailReq): number => {
+    const qty = Number(detail.QtyOrdered) || 0;
+    const unitPrice = Number(detail.UnitPrice) || 0;
+    const discount = Number(detail.Discount) || 0;
+    const subtotal = qty * unitPrice;
+    if (subtotal <= 0) {
+      return 0;
+    }
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(Math.max(discount, 0), subtotal)
+        : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
+  };
+
+  const isReadOnlyResponse = ["converted", "rejected", "cancelled", "accepted"].includes(
+    (formData.Status || "").toLowerCase().trim()
+  );
+
   const handleDetailChange = (index: number, field: keyof QuotationDetailReq, value: any) => {
     setFormData((prev) => {
       const newDetails = [...prev.Details];
       newDetails[index] = { ...newDetails[index], [field]: value };
 
       // Recalculate total
-      const total = newDetails.reduce((sum, detail) => {
-        const qty = detail.QtyOrdered || 0;
-        const price = detail.UnitPrice || 0;
-        const discount = detail.Discount || 0;
-        return sum + (qty * price - discount);
-      }, 0);
+      const total = newDetails.reduce((sum, detail) => sum + calculateVendorLineTotal(detail), 0);
 
       return {
         ...prev,
@@ -155,12 +169,13 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReadOnlyResponse) {
+      return;
+    }
     setSaving(true);
 
     try {
-      // Update status to "Accepted" when vendor submits response
-      // Preserve ParentQuotationID if it exists
-      // Include line item attachments in details
+      // Vendor response updates pricing/notes only; backend keeps original RFQ line identity.
       const detailsWithAttachments = formData.Details.map((detail, index) => {
         const lineItemAtts = lineItemAttachments.get(index) || [];
         console.log(`VendorQuotationResponse: Saving detail ${index} (ItemNo: ${detail.ItemNo}) with ${lineItemAtts.length} attachments:`, lineItemAtts);
@@ -177,11 +192,10 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
       
       const dataToSave: VendorQuotationMasterReq = {
         ...formData,
-        Status: "Accepted",
-        // Ensure ParentQuotationID is preserved from the original quotation
+        Status: "Responded",
         ParentQuotationID: formData.ParentQuotationID,
-        Attachments: attachments, // Master quotation attachments (for reference)
-        Details: detailsWithAttachments, // Include line item attachments
+        Attachments: attachments,
+        Details: detailsWithAttachments,
       };
       
       console.log("VendorQuotationResponse: Full data to save:", JSON.stringify(dataToSave, null, 2));
@@ -381,7 +395,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                     </thead>
                     <tbody>
                       {formData.Details.map((detail, index) => {
-                        const lineTotal = (detail.QtyOrdered || 0) * (detail.UnitPrice || 0) - (detail.Discount || 0);
+                        const lineTotal = calculateVendorLineTotal(detail);
                         return (
                           <tr key={index}>
                             <td>{detail.ItemNo}</td>
@@ -428,7 +442,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                     return newMap;
                                   });
                                 }}
-                                required
+                                required={!isReadOnlyResponse}
+                                disabled={isReadOnlyResponse}
                               />
                             </td>
                             <td>
@@ -466,6 +481,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                     return newMap;
                                   });
                                 }}
+                                disabled={isReadOnlyResponse}
                               />
                             </td>
                             <td style={{ fontWeight: 600 }}>{formatCurrency(lineTotal)}</td>
@@ -484,6 +500,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                 value={detail.Notes || ""}
                                 onChange={(e) => handleDetailChange(index, "Notes", e.target.value)}
                                 placeholder="Add notes..."
+                                disabled={isReadOnlyResponse}
                               />
                             </td>
                             <td style={{ verticalAlign: "top", minWidth: "200px" }}>
@@ -638,6 +655,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                 onChange={(e) => setFormData(prev => ({ ...prev, AdditionalNotes: e.target.value }))}
                 placeholder="Add any additional notes, terms, or conditions..."
                 style={{ width: "100%", resize: "vertical" }}
+                disabled={isReadOnlyResponse}
               />
             </div>
           </div>
@@ -646,8 +664,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
             <button type="button" className="btn-cancel" onClick={handleDismiss} disabled={saving}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={saving || formData.Details.length === 0}>
-              {saving ? "Submitting..." : "Submit Response"}
+            <button type="submit" className="btn-submit" disabled={saving || isReadOnlyResponse || formData.Details.length === 0}>
+              {saving ? "Submitting..." : isReadOnlyResponse ? "Response locked" : "Submit Response"}
             </button>
           </div>
         </form>

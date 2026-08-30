@@ -148,7 +148,8 @@ namespace CimmpleAPI.Controllers
                         PackingType = request.PackingType ?? "Standard",
                         Terms = request.Terms ?? "",
                         ShipmentDate = request.ShipDate ?? DateTime.Now,
-                        TenantId = tenantId
+                        TenantId = tenantId,
+                        Notes = request.Notes ?? ""
                     };
 
                     _context.Shipping.Add(shipment);
@@ -242,7 +243,7 @@ namespace CimmpleAPI.Controllers
                         boxes = so.Shipment.TotalBoxNo,
                         packingType = so.Shipment.PackingType,
                         terms = so.Shipment.Terms,
-                        notes = "", // Notes could be added to Shipping model if needed
+                        notes = so.Shipment.Notes ?? "",
                         items = _context.ShippingDetails
                             .Where(sd => sd.ShipmentId == so.Shipment.Id)
                             .Join(_context.CustomerOrderDetails,
@@ -300,6 +301,7 @@ namespace CimmpleAPI.Controllers
                         boxes = s.TotalBoxNo,
                         packingType = s.PackingType,
                         shipmentDate = s.ShipmentDate,
+                        notes = s.Notes ?? "",
                         items = _context.ShippingDetails
                             .Where(sd => sd.ShipmentId == s.Id)
                             .Select(sd => new
@@ -324,11 +326,18 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetAllShipments")]
-        public IActionResult GetAllShipments([FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? customerId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public IActionResult GetAllShipments(
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? customerId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
 
                 // Build base query
                 var shipmentsQuery = _context.Shipping
@@ -349,6 +358,11 @@ namespace CimmpleAPI.Controllers
                             .Count()
                     });
 
+                if (filterLocationId.HasValue)
+                {
+                    shipmentsQuery = shipmentsQuery.Where(x => x.order.locationId == filterLocationId.Value);
+                }
+
                 // Apply filters
                 if (!string.IsNullOrEmpty(searchTerm))
                 {
@@ -364,32 +378,44 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Date range filter
-                var startDate = DateTime.Now.AddDays(-30); // Default to last 30 days
-                switch (dateRange.ToLower())
+                DateTime? startDate = null;
+                DateTime? endDate = null;
+                switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
+                    case "this week":
+                        startDate = DateTime.Now.Date.AddDays(-(int)DateTime.Now.DayOfWeek);
+                        endDate = startDate.Value.AddDays(6);
+                        break;
                     case "last 7 days":
-                        startDate = DateTime.Now.AddDays(-7);
+                        startDate = DateTime.Now.Date.AddDays(-7);
                         break;
                     case "last 30 days":
-                        startDate = DateTime.Now.AddDays(-30);
+                        startDate = DateTime.Now.Date.AddDays(-30);
+                        break;
+                    case "last 90 days":
+                        startDate = DateTime.Now.Date.AddDays(-90);
                         break;
                     case "this month":
                         startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
                         break;
                     case "last month":
                         startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1);
-                        var endOfLastMonth = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddDays(-1);
-                        shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= startDate && x.shipment.ShipmentDate <= endOfLastMonth);
+                        endDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddDays(-1);
                         break;
                     case "all":
+                        break;
                     default:
-                        startDate = DateTime.MinValue;
+                        startDate = DateTime.Now.Date.AddDays(-30);
                         break;
                 }
 
-                if (startDate != DateTime.MinValue && dateRange.ToLower() != "last month")
+                if (startDate.HasValue)
                 {
-                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= startDate);
+                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= startDate.Value);
+                    if (endDate.HasValue)
+                    {
+                        shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate <= endDate.Value);
+                    }
                 }
 
                 // Get results and format
@@ -410,6 +436,7 @@ namespace CimmpleAPI.Controllers
                         itemCount = x.itemCount,
                         boxes = x.shipment.TotalBoxNo,
                         packingType = x.shipment.PackingType,
+                        notes = x.shipment.Notes ?? "",
                         status = "Shipped" // All shipments are considered shipped
                     })
                     .ToList();

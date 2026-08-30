@@ -40,6 +40,7 @@ const AccountingSetup = React.lazy(() => import("../Modules/Accounting/Accountin
 const SystemSettings = React.lazy(() => import("../Modules/Settings/SystemSettings"));
 const Documents = React.lazy(() => import("../Modules/Documents/Documents"));
 const BusinessIntelligence = React.lazy(() => import("../Modules/Reports/BusinessIntelligence"));
+const AttendanceRegister = React.lazy(() => import("../Modules/Attendance/AttendanceRegister"));
 
 export const protectedRoutes: any[] = [
   {
@@ -241,5 +242,10 @@ export const protectedRoutes: any[] = [
     path: "/reports",
     name: "Business Intelligence",
     Component: BusinessIntelligence,
+  },
+  {
+    path: "/attendance",
+    name: "Attendance Register",
+    Component: AttendanceRegister,
   },
 ];

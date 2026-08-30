@@ -8,6 +8,7 @@ import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -17,6 +18,7 @@ interface CustomerPaymentModalProps {
 }
 
 const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -79,25 +81,6 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
       toast.error(error.message || 'Failed to record payment');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateString;
     }
   };
 
@@ -376,11 +359,12 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
 
 interface CustomerInvoiceDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (refresh?: boolean) => void;
   invoiceId: number;
   /** When true, opens the payment form after the invoice loads */
   initialShowPayment?: boolean;
   onPaymentComplete?: () => void;
+  onInvoiceDeleted?: () => void;
 }
 
 const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
@@ -388,8 +372,10 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   onClose,
   invoiceId,
   initialShowPayment = false,
-  onPaymentComplete
+  onPaymentComplete,
+  onInvoiceDeleted
 }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoice, setInvoice] = useState<CustomerInvoiceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -413,14 +399,17 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   }, [isOpen, invoiceId]);
 
   useEffect(() => {
+    const isVoided = !!(invoice?.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    const isPaid = invoice?.status?.toLowerCase() === 'paid' || (invoice?.balanceDue !== undefined && invoice.balanceDue <= 0);
+
     if (
       isOpen &&
       initialShowPayment &&
       !paymentPromptedRef.current &&
       invoice &&
       invoice.id === invoiceId &&
-      invoice.status !== 'Paid' &&
-      invoice.status !== 'Void'
+      !isPaid &&
+      !isVoided
     ) {
       paymentPromptedRef.current = true;
       setShowPaymentModal(true);
@@ -449,26 +438,6 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
     }
   };
 
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
   const getStatusBadge = (status: string, daysOverdue?: number) => {
     const statusLower = status.toLowerCase();
 
@@ -491,6 +460,11 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
 
   const handlePayInvoice = () => {
     if (invoice) {
+      const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+      if (isVoided) {
+        toast.error("Cannot record payment for a voided invoice");
+        return;
+      }
       setShowPaymentModal(true);
     }
   };
@@ -518,8 +492,19 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
     }
   };
 
-  const handleVoidInvoice = () => {
-    toast.info('Void functionality coming soon...');
+  const handleVoidInvoice = async () => {
+    if (!invoice?.id) return;
+    if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await InvoiceService.VoidInvoice(invoice.id);
+      toast.success(`Invoice ${invoice.invoiceNo} voided`);
+      loadInvoiceDetails();
+      onPaymentComplete?.();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to void invoice');
+    }
   };
 
   const refreshDeletionImpact = async () => {
@@ -555,7 +540,9 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
       toast.success("Invoice deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onInvoiceDeleted?.();
+      onPaymentComplete?.();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting invoice:", error);
       toast.error(`Error deleting invoice: ${error.message || "Unknown error"}`);
@@ -624,7 +611,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={() => onClose()}
             style={{
               background: 'none',
               border: 'none',
@@ -999,27 +986,34 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
               Invoice {invoice.invoiceNo} • {invoice.items.length} item{invoice.items.length !== 1 ? 's' : ''} • {formatCurrency(invoice.totalAmount)}
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {invoice.status !== 'Paid' && invoice.status !== 'Void' && (
-                <button
-                  onClick={handlePayInvoice}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    backgroundColor: '#10b981',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                  }}
-                >
-                  <FontAwesomeIcon icon={faCreditCard} />
-                  Record Payment
-                </button>
-              )}
+              {(() => {
+                const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+                const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
+
+                if (isPaid || isVoided) return null;
+
+                return (
+                  <button
+                    onClick={handlePayInvoice}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: '500',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCreditCard} />
+                    Record Payment
+                  </button>
+                );
+              })()}
               <button
                 onClick={handlePrintInvoice}
                 style={{
