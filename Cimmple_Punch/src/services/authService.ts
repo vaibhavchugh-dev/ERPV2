@@ -19,6 +19,9 @@ export interface AuthUser {
   mustChangePassword: boolean;
   portalType: string;
   locations: AuthLocation[];
+  timeZone?: string;
+  timezone?: string;
+  timezoneui?: string;
 }
 
 export interface LoginResponse {

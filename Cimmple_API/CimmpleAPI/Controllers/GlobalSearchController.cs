@@ -51,9 +51,7 @@ namespace CimmpleAPI.Controllers
                         shipments = new List<object>(),
                         ncrReports = new List<object>(),
                         users = new List<object>(),
-                        documents = new List<object>(),
-                        products = new List<object>(),
-                        rawMaterials = new List<object>()
+                        documents = new List<object>()
                     });
                 }
 
@@ -83,9 +81,7 @@ namespace CimmpleAPI.Controllers
                     shipments = await SearchShipments(searchTerm, tenantId, limit),
                     ncrReports = await SearchNCRReports(searchTerm, tenantId, limit),
                     users = await SearchUsers(searchTerm, tenantId, limit),
-                    documents = await SearchDocuments(searchTerm, tenantId, limit),
-                    products = await SearchProducts(searchTerm, tenantId, limit),
-                    rawMaterials = await SearchRawMaterials(searchTerm, tenantId, limit)
+                    documents = await SearchDocuments(searchTerm, tenantId, limit)
                 };
 
                 return Ok(results);
@@ -497,9 +493,9 @@ namespace CimmpleAPI.Controllers
         {
             var products = await _context.ProductMaster
                 .Where(p => p.tenantid == tenantId &&
-                    (p.partno != null && p.partno.ToLower().Contains(searchTerm) ||
-                     p.partname != null && p.partname.ToLower().Contains(searchTerm) ||
-                     p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm)))
+                    ((p.partno != null && p.partno.ToLower().Contains(searchTerm)) ||
+                     (p.partname != null && p.partname.ToLower().Contains(searchTerm)) ||
+                     (p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm))))
                 .Take(limit)
                 .Select(p => new
                 {
@@ -521,11 +517,11 @@ namespace CimmpleAPI.Controllers
         private async Task<List<object>> SearchRawMaterials(string searchTerm, int tenantId, int limit)
         {
             var materials = await _context.RawMaterialMaster
-                .Where(r => r.Tenantid == tenantId &&
-                    (r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm) ||
-                     r.PartName != null && r.PartName.ToLower().Contains(searchTerm) ||
-                     r.Description != null && r.Description.ToLower().Contains(searchTerm) ||
-                     r.Sku != null && r.Sku.ToLower().Contains(searchTerm)))
+                .Where(r => r.Tenantid == tenantId && r.IsActive &&
+                    ((r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm)) ||
+                     (r.PartName != null && r.PartName.ToLower().Contains(searchTerm)) ||
+                     (r.Description != null && r.Description.ToLower().Contains(searchTerm)) ||
+                     (r.Sku != null && r.Sku.ToLower().Contains(searchTerm))))
                 .Take(limit)
                 .Select(r => new
                 {
@@ -589,55 +585,6 @@ namespace CimmpleAPI.Controllers
                 .ToListAsync();
 
             return vendorOrders.Cast<object>().ToList();
-        }
-
-        private async Task<List<object>> SearchProducts(string searchTerm, int tenantId, int limit)
-        {
-            var products = await _context.ProductMaster
-                .Where(p => p.tenantid == tenantId &&
-                    ((p.partno != null && p.partno.ToLower().Contains(searchTerm)) ||
-                     (p.partname != null && p.partname.ToLower().Contains(searchTerm)) ||
-                     (p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm))))
-                .Take(limit)
-                .Select(p => new
-                {
-                    id = p.Id,
-                    type = "product",
-                    name = p.partname ?? "",
-                    code = p.partno ?? "",
-                    partNo = p.partno ?? "",
-                    partName = p.partname ?? "",
-                    description = p.pdescription ?? "",
-                    unit = p.Unit ?? ""
-                })
-                .ToListAsync();
-
-            return products.Cast<object>().ToList();
-        }
-
-        private async Task<List<object>> SearchRawMaterials(string searchTerm, int tenantId, int limit)
-        {
-            var materials = await _context.RawMaterialMaster
-                .Where(r => r.Tenantid == tenantId && r.IsActive &&
-                    ((r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm)) ||
-                     (r.PartName != null && r.PartName.ToLower().Contains(searchTerm)) ||
-                     (r.Sku != null && r.Sku.ToLower().Contains(searchTerm)) ||
-                     (r.Description != null && r.Description.ToLower().Contains(searchTerm))))
-                .Take(limit)
-                .Select(r => new
-                {
-                    id = r.Id,
-                    type = "rawMaterial",
-                    name = r.PartName ?? "",
-                    code = r.PartNo ?? "",
-                    partNo = r.PartNo ?? "",
-                    partName = r.PartName ?? "",
-                    description = r.Description ?? "",
-                    unit = r.Unit ?? ""
-                })
-                .ToListAsync();
-
-            return materials.Cast<object>().ToList();
         }
 
         private async Task<List<object>> SearchVendorInvoices(string searchTerm, int tenantId, int limit)

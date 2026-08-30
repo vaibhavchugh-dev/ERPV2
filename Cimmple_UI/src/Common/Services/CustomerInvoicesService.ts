@@ -61,9 +61,9 @@ export class CustomerInvoicesService {
     searchTerm: string = "",
     customerId?: number,
     dateRange: string = "Last 30 Days",
+    locationId?: number,
     startDate?: string,
-    endDate?: string,
-    locationId?: number
+    endDate?: string
   ): Promise<CustomerInvoiceSummary[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
