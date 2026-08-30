@@ -1,5 +1,6 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
+import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
 
 export interface PriceBreakdownMatrix {
   quantities: number[]; // Quantity values for column headers (e.g., [1, 5, 10, 25])
@@ -448,13 +449,11 @@ export class QuotationService {
 
     const formData = new FormData();
     formData.append("formField", JSON.stringify(cleanPayload));
-    (newFiles || []).forEach((file) => {
-      formData.append("file", file);
-    });
+    appendFilesToFormData(formData, newFiles || []); 
 
     const url = `/Quotation/SaveQuotation`;
-    return Instense.post(url, formData).then((response) => {
-      const result = response.data.result;
+    return postMultipart<{ result?: any }>(url, formData).then((data) => {      
+      const result = data.result;
       if (result && result.id) {
         const attachments = Array.isArray(result.attachments)
           ? result.attachments.map((a: any) => ({
@@ -501,9 +500,7 @@ export class QuotationService {
     }
 
     const formData = new FormData();
-    files.forEach((file) => {
-      formData.append("file", file);
-    });
+    appendFilesToFormData(formData, files); 
     formData.append(
       "formField",
       JSON.stringify({
@@ -518,8 +515,8 @@ export class QuotationService {
     formData.append("tenantId", String(tenantID));
 
     const url = `/Quotation/QuotationSaveFile`;
-    return Instense.post(url, formData).then((response) => {
-      const result = response.data.result;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
       const attachments = result?.attachments || [];
       return attachments.map((a: any) => ({
         id: a.id || a.Id || 0,
@@ -809,37 +806,6 @@ export class QuotationService {
     }).then((response) => {
       const result = response.data.result as any;
       
-      // Format dates for display (MM/DD/YY) - used for DueDate in line items
-      const formatDate = (dateStr: string | null | undefined | Date): string => {
-        if (!dateStr) return "";
-        try {
-          let date: Date;
-          if (dateStr instanceof Date) {
-            date = dateStr;
-          } else if (typeof dateStr === 'string') {
-            // Handle various date string formats
-            const dateStrTrimmed = dateStr.trim();
-            if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
-              return "";
-            }
-            date = new Date(dateStrTrimmed);
-            // Check if date is valid
-            if (isNaN(date.getTime())) {
-              return "";
-            }
-          } else {
-            return "";
-          }
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const year = String(date.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        } catch (e) {
-          console.warn("Error formatting date:", dateStr, e);
-          return "";
-        }
-      };
-
       // Format dates for HTML date inputs (yyyy-MM-dd) - used for OrderDate and ExternalOrderDate
       const formatDateForInput = (dateStr: string | null | undefined | Date): string => {
         if (!dateStr) return "";
@@ -848,18 +814,24 @@ export class QuotationService {
           if (dateStr instanceof Date) {
             date = dateStr;
           } else if (typeof dateStr === 'string') {
-            // Handle various date string formats
             const dateStrTrimmed = dateStr.trim();
             if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
               return "";
             }
-            // If already in yyyy-MM-dd (or ISO datetime), take the date part only — no UTC shift
             const isoMatch = dateStrTrimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
             if (isoMatch) {
               return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
             }
+            if (dateStrTrimmed.includes("/")) {
+              const parts = dateStrTrimmed.split("/");
+              if (parts.length === 3) {
+                const month = parts[0].padStart(2, '0');
+                const day = parts[1].padStart(2, '0');
+                const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+                return `${year}-${month}-${day}`;
+              }
+            }
             date = new Date(dateStrTrimmed);
-            // Check if date is valid
             if (isNaN(date.getTime())) {
               return "";
             }
@@ -872,16 +844,31 @@ export class QuotationService {
           return `${year}-${month}-${day}`;
         } catch (e) {
           console.warn("Error formatting date for input:", dateStr, e);
-          return "";
         }
+        return "";
+      };
+
+      // Format dates for display (MM/DD/YY) - used for DueDate in line items
+      const formatDate = (dateStr: string | null | undefined | Date): string => {
+        if (!dateStr) return "";
+        try {
+          const inputFormatted = formatDateForInput(dateStr);
+          if (inputFormatted && /^\d{4}-\d{2}-\d{2}$/.test(inputFormatted)) {
+            const [year, month, day] = inputFormatted.split('-');
+            return `${month}/${day}/${year.slice(-2)}`;
+          }
+        } catch (e) {
+          console.warn("Error formatting date:", dateStr, e);
+        }
+        return "";
       };
 
       // Map details array
       const details: QuotationDetailReq[] = (result.Details || result.details || []).map((d: any) => {
         // Parse dueDate - handle various formats
         let dueDateStr = "";
-        if (d.dueDate) {
-          dueDateStr = formatDate(d.dueDate);
+        if (d.dueDate || d.DueDate) {
+          dueDateStr = formatDate(d.dueDate || d.DueDate);
           // If formatting failed, try to get a default date
           if (!dueDateStr) {
             dueDateStr = formatDate(new Date().toISOString());
@@ -919,6 +906,9 @@ export class QuotationService {
         };
       });
 
+      const rawExtDate = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
+      const rawOrderDate = result.OrderDate || result.orderDate;
+
       return {
         OrderID: result.OrderID || result.orderID || 0,
         Tenantid: result.Tenantid || result.tenantid || tenantID,
@@ -928,16 +918,14 @@ export class QuotationService {
         VendorName: result.VendorName || result.vendorName || "",
         Address: result.Address || result.address || "",
         VendorPoNumber: result.VendorPoNumber || result.vendorPoNumber || "",
-        OrderDate: result.OrderDate ? formatDateForInput(result.OrderDate) : formatDateForInput(new Date().toISOString()),
+        OrderDate: rawOrderDate ? formatDateForInput(rawOrderDate) : formatDateForInput(new Date()),
         TotalAmount: result.TotalAmount || result.totalAmount || 0,
         UserId: result.UserId || result.userId || 0,
         UserToken: result.UserToken || result.userToken || 0,
         Status: result.Status || result.status || "Draft",
         ShippingInstructions: result.ShippingInstructions || result.shippingInstructions || "",
         ExternalVendorPO: result.ExternalVendorPO || result.externalVendorPO || "",
-        ExternalOrderDate: (result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate)
-          ? formatDateForInput(result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate)
-          : undefined,
+        ExternalOrderDate: rawExtDate ? formatDateForInput(rawExtDate) : undefined,
         BuyerName: result.BuyerName || result.buyerName || "",
         VendorRefNo: result.VendorRefNo || result.vendorRefNo || "",
         QuotationType: result.QuotationType || result.quotationType || "Material",

@@ -186,8 +186,8 @@ export class VendorOrderService {
         return `${month}/${day}/${year}`;
       } catch (e) {
         console.warn("Error formatting date:", dateStr, e);
-        return "";
       }
+      return "";
     };
 
     // Header dates must be yyyy-MM-dd for <input type="date">
@@ -204,7 +204,7 @@ export class VendorOrderService {
     };
 
     const orderDateRaw = result.OrderDate || result.orderDate;
-    const externalDateRaw = result.ExternalOrderDate || result.externalOrderDate;
+    const externalDateRaw = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
 
     return {
       OrderID: result.OrderID || result.orderID || 0,
@@ -230,6 +230,9 @@ export class VendorOrderService {
       LocationId: result.LocationId || result.locationId,
       convertedOrderId: result.convertedOrderId,
       ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
+      QuotationId: result.QuotationId || result.quotationId || 0,
+      QuotationNo: result.QuotationNo || result.quotationNo || "",
+      AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
       Details: (result.Details || result.details || []).map((d: any) => ({
         ID: d.ID || d.id || 0,
         ItemNo: d.ItemNo || d.itemNo || 0,

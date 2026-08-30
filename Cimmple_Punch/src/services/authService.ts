@@ -90,8 +90,8 @@ export class AuthService {
       role: user.roleName,
       companyName: displayName,
       name: displayName,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      currentUtcTime: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeZone: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      currentUtcTime: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
       expiresAt,
     };
 

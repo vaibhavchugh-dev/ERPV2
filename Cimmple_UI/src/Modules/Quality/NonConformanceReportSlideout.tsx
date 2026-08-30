@@ -647,7 +647,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   };
 
   const confirmDeletion = async () => {
-    if (ncrId === 0 || !deletionImpact?.canDelete) return;
+    const canDelete = deletionImpact?.canDelete ?? (deletionImpact as any)?.CanDelete ?? true;
+    if (ncrId === 0 || !canDelete) return;
     setLoading(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");

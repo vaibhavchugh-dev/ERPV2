@@ -346,8 +346,12 @@ const CustomerShipments: React.FC = () => {
       {/* Shipment Detail Modal */}
       <CustomerShipmentDetailModal
         isOpen={showDetailModal}
-        onClose={handleCloseDetailModal}
+        onClose={() => {
+          handleCloseDetailModal();
+          loadShipments();
+        }}
         shipmentId={selectedShipmentId}
+        onShipmentDeleted={loadShipments}
       />
 
       {/* Deletion Impact Dialog */}

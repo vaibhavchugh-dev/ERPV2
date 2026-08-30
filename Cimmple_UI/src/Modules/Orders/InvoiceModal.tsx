@@ -145,7 +145,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       }
 
       if (dueDate && invoiceDate && dueDate < invoiceDate) {
-        toast.error('Due Date cannot be earlier than Invoice Date.');
+        toast.warning('Due Date cannot be earlier than Invoice Date.');
         setLoading(false);
         return;
       }
@@ -457,10 +457,10 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
                     type="date"
                     value={invoiceDate}
                     onChange={(e) => {
-                      const next = e.target.value;
-                      setInvoiceDate(next);
-                      if (dueDate && next && dueDate < next) {
-                        setDueDate(next);
+                      const newInvDate = e.target.value;
+                      setInvoiceDate(newInvDate);
+                      if (dueDate && newInvDate && dueDate < newInvDate) {
+                        setDueDate(newInvDate);
                       }
                     }}
                     required
@@ -478,9 +478,17 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   </label>
                   <input
                     type="date"
-                    value={dueDate}
                     min={invoiceDate}
-                    onChange={(e) => setDueDate(e.target.value)}
+                    value={dueDate}
+                    onChange={(e) => {
+                      const newDueDate = e.target.value;
+                      if (invoiceDate && newDueDate && newDueDate < invoiceDate) {
+                        toast.warning('Due Date cannot be earlier than Invoice Date.');
+                        setDueDate(invoiceDate);
+                        return;
+                      }
+                      setDueDate(newDueDate);
+                    }}
                     required
                     style={{
                       width: '100%',

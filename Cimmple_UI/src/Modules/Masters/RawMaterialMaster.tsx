@@ -79,12 +79,11 @@ const emptyForm = (): RawMaterialForm => ({
 });
 
 function formatStorage(m: RawMaterial): string {
-  const parts = [
-    m.warehouseLocation,
-    m.bin ? `Bin ${m.bin}` : "",
-    m.box ? `Box ${m.box}` : "",
-  ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "—";
+  const parts: string[] = [];
+  if (m.warehouseLocation?.trim()) parts.push(m.warehouseLocation.trim());
+  if (m.bin?.trim()) parts.push(`Bin: ${m.bin.trim()}`);
+  if (m.box?.trim()) parts.push(`Box: ${m.box.trim()}`);
+  return parts.length > 0 ? parts.join(" / ") : "—";
 }
 
 const COLUMNS: ColumnDefinition[] = [
@@ -112,7 +111,7 @@ const DEFAULT_HIDDEN_COLUMNS = [
   "dims",
   "description",
 ];
-const COLUMN_PREFERENCE_KEY = "rawMaterialMaster.hiddenColumns";
+const COLUMN_PREFERENCE_KEY = "cimmple_raw_material_master_hidden_columns";
 
 const RawMaterialMaster: React.FC = () => {
   const location = useLocation();
@@ -173,6 +172,41 @@ const RawMaterialMaster: React.FC = () => {
     loadLocations();
     loadVendors();
   }, []);
+
+  // Handle URL parameter to open slideout (from global search)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openId = params.get("open") || params.get("search");
+    if (!openId || openId === processedOpenIdRef.current || materials.length === 0) {
+      return;
+    }
+    const match = materials.find(
+      (m) => String(m.id) === openId || m.partNo?.toLowerCase() === openId.toLowerCase()
+    );
+    if (match) {
+      processedOpenIdRef.current = openId;
+      handleEdit(match);
+      history.replace(location.pathname);
+    }
+  }, [location.search, materials, history, location.pathname]);
+
+  // Listen for custom event from global search
+  useEffect(() => {
+    const handleOpenEntity = (event: CustomEvent) => {
+      if (event.detail.type === 'rawMaterial') {
+        const entityId = String(event.detail.id);
+        const match = materials.find(m => String(m.id) === entityId || m.partNo?.toLowerCase() === entityId.toLowerCase());
+        if (match) {
+          handleEdit(match);
+        }
+      }
+    };
+
+    window.addEventListener('openEntity', handleOpenEntity as EventListener);
+    return () => {
+      window.removeEventListener('openEntity', handleOpenEntity as EventListener);
+    };
+  }, [materials]);
 
   const loadMaterials = async () => {
     setLoading(true);
@@ -276,23 +310,6 @@ const RawMaterialMaster: React.FC = () => {
     );
     setShowForm(true);
   };
-
-  // Open edit form from global search (?open=id)
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const openId = params.get("open");
-    if (!openId || openId === processedOpenIdRef.current || materials.length === 0) {
-      return;
-    }
-    const id = parseInt(openId, 10);
-    if (id <= 0) return;
-    const material = materials.find((m) => m.id === id);
-    if (material) {
-      processedOpenIdRef.current = openId;
-      handleEdit(material);
-      history.replace(location.pathname);
-    }
-  }, [location.search, location.pathname, history, materials]);
 
   const parseOptDecimal = (s: string): number | null | undefined => {
     const t = s.trim();

@@ -163,6 +163,7 @@ namespace CimmpleAPI.Controllers
 
                 recentTransactions.AddRange(vendorInvoiceFallbackPayments);
 
+                var today = DateTime.Now.Date;
                 // 3. Recent open invoices (skip paid/voided so amounts are not duplicated with payments)
                 var recentInvoices = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
@@ -183,10 +184,10 @@ namespace CimmpleAPI.Controllers
                         {
                             id = im.Id,
                             type = "invoice" as string,
-                            description = $"Invoice {im.InvoiceNo} created",
+                            description = $"Invoice {im.PrefixInvoiceNo ?? im.InvoiceNo.ToString()} created",
                             amount = balance,
                             date = (DateTime?)im.InvoiceDate,
-                            status = (im.DueDate.Date < DateTime.Today ? "overdue" : "pending") as string,
+                            status = (im.DueDate.Date < today ? "overdue" : "pending") as string,
                             customerVendor = "Customer" as string
                         };
                     })
@@ -194,6 +195,29 @@ namespace CimmpleAPI.Controllers
                     .ToList();
 
                 recentTransactions.AddRange(recentInvoices!);
+
+                // 4. Recent Vendor Invoices
+                var recentVendorInvoices = _context.VendorInvoiceMaster
+                    .Where(vim => vim.TenantId == tenantId && vim.voideddate == null)
+                    .OrderByDescending(vim => vim.InvoiceDate)
+                    .ThenByDescending(vim => vim.Id)
+                    .Take(safeLimit)
+                    .ToList()
+                    .Select(vim => new
+                    {
+                        id = vim.Id,
+                        type = "invoice" as string,
+                        description = $"Vendor Invoice {vim.prefixinvoiceno ?? vim.InvoiceNo} created",
+                        amount = -vim.TotalAmount,
+                        date = vim.InvoiceDate,
+                        status = (vim.isPaid == 1 || vim.Paydate != null || (vim.PaidAmount > 0 && vim.PaidAmount >= vim.TotalAmount))
+                            ? "completed"
+                            : (vim.DueDate.Date < today ? "overdue" : "pending") as string,
+                        customerVendor = string.IsNullOrWhiteSpace(vim.VendorName) ? "Vendor" : vim.VendorName
+                    })
+                    .ToList();
+
+                recentTransactions.AddRange(recentVendorInvoices);
 
                 // Sort all transactions by date and take the most recent ones
                 var sortedTransactions = recentTransactions

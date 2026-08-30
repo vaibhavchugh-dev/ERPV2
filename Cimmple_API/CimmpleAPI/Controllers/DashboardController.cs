@@ -553,7 +553,9 @@ namespace CimmpleAPI.Controllers
                     .Where(j => j.Tenantid == tenantId &&
                                j.DueDate < today &&
                                j.Status != null &&
-                               j.Status != "Completed")
+                               j.Status != "Completed" &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Void")
                     .Select(j => new
                     {
                         type = "overdue_job",
@@ -571,7 +573,8 @@ namespace CimmpleAPI.Controllers
                 var overdueAR = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                im.DueDate < today &&
-                               im.PaymentDate == null)
+                               im.PaymentDate == null &&
+                               !im.IsVoided)
                     .Select(im => new
                     {
                         type = "overdue_invoice_ar",
@@ -590,7 +593,9 @@ namespace CimmpleAPI.Controllers
                 var overdueAP = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate < today &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.Paydate == null)
                     .Select(vim => new
                     {
                         type = "overdue_invoice_ap",
@@ -846,7 +851,8 @@ namespace CimmpleAPI.Controllers
                                j.Status != "Completed" &&
                                j.Status != "Shipped" &&
                                j.Status != "Cancelled" &&
-                               j.Status != "Canceled")
+                               j.Status != "Canceled" &&
+                               j.Status != "Void")
                     .Select(j => new
                     {
                         type = "job_order",
@@ -865,7 +871,8 @@ namespace CimmpleAPI.Controllers
                                !im.IsVoided &&
                                im.DueDate >= today &&
                                im.DueDate <= endDate &&
-                               im.PaymentDate == null)
+                               im.PaymentDate == null &&
+                               !im.IsVoided)
                     .Select(im => new
                     {
                         type = "invoice_ar",
