@@ -139,12 +139,13 @@ const LocationMasterComponent: React.FC = () => {
       return matchesSearch;
     }
 
+    const locStatus = (location.status || "Active").toLowerCase().trim();
     if (filterValue === "active") {
-      return matchesSearch && location.status === "Active";
+      return matchesSearch && locStatus === "active";
     }
 
     if (filterValue === "inactive") {
-      return matchesSearch && location.status === "Inactive";
+      return matchesSearch && locStatus === "inactive";
     }
 
     return matchesSearch;

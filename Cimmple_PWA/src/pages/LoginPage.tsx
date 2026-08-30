@@ -14,7 +14,6 @@ export function LoginPage() {
   const [showTenant, setShowTenant] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   if (isAuthenticated) {

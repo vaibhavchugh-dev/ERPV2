@@ -550,7 +550,14 @@ const Quality: React.FC = () => {
       />
 
       {showSlideout && (
-        <NonConformanceReportSlideout ncrId={selectedNCRId} onClose={handleCloseSlideout} />
+        <NonConformanceReportSlideout
+          ncrId={selectedNCRId}
+          onClose={handleCloseSlideout}
+          onDeleted={() => {
+            loadNCRs();
+            loadStats();
+          }}
+        />
       )}
     </div>
   );

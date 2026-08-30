@@ -19,6 +19,9 @@ export interface AuthUser {
   mustChangePassword: boolean;
   portalType: string;
   locations: AuthLocation[];
+  timeZone?: string;
+  timezone?: string;
+  timezoneui?: string;
 }
 
 export interface LoginResponse {
@@ -90,8 +93,8 @@ export class AuthService {
       role: user.roleName,
       companyName: displayName,
       name: displayName,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      currentUtcTime: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeZone: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      currentUtcTime: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
       expiresAt,
     };
 

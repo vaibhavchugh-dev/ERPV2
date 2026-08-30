@@ -148,7 +148,9 @@ export class VendorInvoiceService {
     searchTerm: string = "",
     vendorId?: number,
     dateRange: string = "Last 30 Days",
-    locationId?: number
+    locationId?: number,
+    startDate?: string,
+    endDate?: string
   ): Promise<VendorInvoiceSummary[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
@@ -162,6 +164,8 @@ export class VendorInvoiceService {
           searchTerm,
           vendorId,
           dateRange,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
           locationId
         }
       });

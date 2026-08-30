@@ -27,7 +27,9 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string searchTerm = "",
             [FromQuery] int? vendorId = null,
             [FromQuery] string dateRange = "Last 30 Days",
-            [FromQuery] int? locationId = null)
+            [FromQuery] int? locationId = null,
+            [FromQuery] string startDate = null,
+            [FromQuery] string endDate = null)
         {
             try
             {
@@ -83,40 +85,62 @@ namespace CimmpleAPI.Controllers
                         .ToList();
                 }
 
-                if (!string.IsNullOrWhiteSpace(dateRange) && !dateRange.Equals("All", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrWhiteSpace(dateRange) && !dateRange.Equals("All", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
                 {
                     var now = DateTime.Now;
                     DateTime? start = null;
                     DateTime? end = null;
-                    switch (dateRange.Trim().ToLowerInvariant())
+                    var rangeLower = (dateRange ?? "").Trim().ToLowerInvariant();
+
+                    if (rangeLower == "custom" || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
                     {
-                        case "this week":
-                            start = now.Date.AddDays(-(int)now.DayOfWeek);
-                            end = start.Value.AddDays(6);
-                            break;
-                        case "last 7 days":
-                            start = now.Date.AddDays(-7);
-                            break;
-                        case "last 30 days":
-                            start = now.Date.AddDays(-30);
-                            break;
-                        case "last 90 days":
-                            start = now.Date.AddDays(-90);
-                            break;
-                        case "this month":
-                            start = new DateTime(now.Year, now.Month, 1);
-                            break;
-                        case "last month":
-                            start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
-                            end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
-                            break;
+                        if (DateTime.TryParse(startDate, out DateTime parsedStart))
+                        {
+                            start = parsedStart.Date;
+                        }
+                        if (DateTime.TryParse(endDate, out DateTime parsedEnd))
+                        {
+                            end = parsedEnd.Date;
+                        }
                     }
-                    if (start.HasValue)
+                    else
+                    {
+                        switch (rangeLower)
+                        {
+                            case "this week":
+                                start = now.Date.AddDays(-(int)now.DayOfWeek);
+                                end = start.Value.AddDays(6);
+                                break;
+                            case "last 7 days":
+                                start = now.Date.AddDays(-7);
+                                break;
+                            case "last 30 days":
+                                start = now.Date.AddDays(-30);
+                                break;
+                            case "last 90 days":
+                                start = now.Date.AddDays(-90);
+                                break;
+                            case "this month":
+                                start = new DateTime(now.Year, now.Month, 1);
+                                break;
+                            case "last month":
+                                start = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                                end = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                                break;
+                            case "all":
+                            case "all dates":
+                                start = null;
+                                end = null;
+                                break;
+                        }
+                    }
+
+                    if (start.HasValue || end.HasValue)
                     {
                         invoiceSummaries = invoiceSummaries.Where(x =>
                         {
                             if (!DateTime.TryParse(x.invoiceDate, out var d)) return false;
-                            if (d.Date < start.Value.Date) return false;
+                            if (start.HasValue && d.Date < start.Value.Date) return false;
                             if (end.HasValue && d.Date > end.Value.Date) return false;
                             return true;
                         }).ToList();

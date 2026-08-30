@@ -61,12 +61,14 @@ export class CustomerInvoicesService {
     searchTerm: string = "",
     customerId?: number,
     dateRange: string = "Last 30 Days",
-    locationId?: number
+    locationId?: number,
+    startDate?: string,
+    endDate?: string
   ): Promise<CustomerInvoiceSummary[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
-    console.log("[CustomerInvoicesService] Calling GetAllInvoices with params:", { tenantId: tenantID, status, searchTerm, customerId, dateRange, locationId });
+    console.log("[CustomerInvoicesService] Calling GetAllInvoices with params:", { tenantId: tenantID, status, searchTerm, customerId, dateRange, startDate, endDate, locationId });
     const url = `/Invoice/GetAllInvoices`;
     try {
       const response = await Instense.get(url, {
@@ -76,6 +78,8 @@ export class CustomerInvoicesService {
           searchTerm,
           customerId,
           dateRange,
+          startDate,
+          endDate,
           locationId
         }
       });

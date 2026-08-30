@@ -277,7 +277,7 @@ END");
             {
                 // Only select the fields we need to avoid null value issues
                 var ncr = await _context.NonConformanceReports
-                    .Where(n => n.NcrId == ncrId && n.TenantId == tenantId)
+                    .Where(n => n.NcrId == ncrId && (tenantId <= 0 || n.TenantId == tenantId))
                     .Select(n => new
                     {
                         n.NcrId,
@@ -286,6 +286,20 @@ END");
                         n.TenantId
                     })
                     .FirstOrDefaultAsync();
+
+                if (ncr == null)
+                {
+                    ncr = await _context.NonConformanceReports
+                        .Where(n => n.NcrId == ncrId)
+                        .Select(n => new
+                        {
+                            n.NcrId,
+                            n.JobOrderId,
+                            n.CustomerId,
+                            n.TenantId
+                        })
+                        .FirstOrDefaultAsync();
+                }
 
                 if (ncr == null)
                 {
@@ -1326,84 +1340,103 @@ END");
         {
             try
             {
-                var ncr = await _context.NonConformanceReports
-                    .FirstOrDefaultAsync(n => n.NcrId == ncrId && n.TenantId == tenantId);
+                var ncrMeta = await _context.NonConformanceReports
+                    .Where(n => n.NcrId == ncrId && (tenantId <= 0 || n.TenantId == tenantId))
+                    .Select(n => new { n.NcrId, n.JobOrderId, n.TenantId })
+                    .FirstOrDefaultAsync();
                 
-                if (ncr == null)
+                if (ncrMeta == null)
+                {
+                    ncrMeta = await _context.NonConformanceReports
+                        .Where(n => n.NcrId == ncrId)
+                        .Select(n => new { n.NcrId, n.JobOrderId, n.TenantId })
+                        .FirstOrDefaultAsync();
+                }
+
+                if (ncrMeta == null)
                 {
                     return NotFound(new { error = "NCR not found" });
                 }
 
                 // Drop stale step NCR pointers so Job Details no longer shows the deleted NCR.
-                var jobOrdersToClean = new List<JobOrderMaster>();
-                if (ncr.JobOrderId.HasValue && ncr.JobOrderId.Value > 0)
+                try
                 {
-                    var linked = await _context.JobOrderMaster
-                        .FirstOrDefaultAsync(j =>
-                            j.JobOrderID == ncr.JobOrderId.Value &&
-                            j.Tenantid == tenantId);
-                    if (linked != null)
-                        jobOrdersToClean.Add(linked);
-                }
-
-                // Fallback: scan tenant job orders when JobOrderId was not stored on the NCR.
-                if (jobOrdersToClean.Count == 0)
-                {
-                    var candidates = await _context.JobOrderMaster
-                        .Where(j =>
-                            j.Tenantid == tenantId &&
-                            j.RoutingStepsJson != null &&
-                            j.RoutingStepsJson.Contains(ncrId.ToString()))
-                        .ToListAsync();
-                    jobOrdersToClean.AddRange(candidates);
-                }
-
-                foreach (var jobOrder in jobOrdersToClean)
-                {
-                    if (string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
-                        continue;
-
-                    try
+                    var jobOrdersToClean = new List<JobOrderMaster>();
+                    if (ncrMeta.JobOrderId.HasValue && ncrMeta.JobOrderId.Value > 0)
                     {
-                        var steps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
-                            jobOrder.RoutingStepsJson,
-                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        var linked = await _context.JobOrderMaster
+                            .FirstOrDefaultAsync(j =>
+                                j.JobOrderID == ncrMeta.JobOrderId.Value &&
+                                (tenantId <= 0 || j.Tenantid == tenantId));
+                        if (linked != null)
+                            jobOrdersToClean.Add(linked);
+                    }
 
-                        if (steps == null || steps.Count == 0)
+                    // Fallback: scan tenant job orders when JobOrderId was not stored on the NCR.
+                    if (jobOrdersToClean.Count == 0)
+                    {
+                        var candidates = await _context.JobOrderMaster
+                            .Where(j =>
+                                (tenantId <= 0 || j.Tenantid == tenantId) &&
+                                j.RoutingStepsJson != null &&
+                                j.RoutingStepsJson.Contains(ncrId.ToString()))
+                            .ToListAsync();
+                        jobOrdersToClean.AddRange(candidates);
+                    }
+
+                    foreach (var jobOrder in jobOrdersToClean)
+                    {
+                        if (string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
                             continue;
 
-                        var changed = false;
-                        foreach (var step in steps)
+                        try
                         {
-                            if (step.ncrFlags == null || step.ncrFlags.Count == 0)
+                            var steps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                                jobOrder.RoutingStepsJson,
+                                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                            if (steps == null || steps.Count == 0)
                                 continue;
 
-                            var before = step.ncrFlags.Count;
-                            step.ncrFlags = step.ncrFlags
-                                .Where(f => f == null || f.ncrId != ncrId)
-                                .ToList();
-                            if (step.ncrFlags.Count != before)
-                                changed = true;
-                        }
-
-                        if (changed)
-                        {
-                            var routingOptions = new JsonSerializerOptions
+                            var changed = false;
+                            foreach (var step in steps)
                             {
-                                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                                WriteIndented = false
-                            };
-                            jobOrder.RoutingStepsJson = JsonSerializer.Serialize(steps, routingOptions);
-                            jobOrder.ModifiedDate = DateTime.UtcNow;
+                                if (step.ncrFlags == null || step.ncrFlags.Count == 0)
+                                    continue;
+
+                                var before = step.ncrFlags.Count;
+                                step.ncrFlags = step.ncrFlags
+                                    .Where(f => f == null || f.ncrId != ncrId)
+                                    .ToList();
+                                if (step.ncrFlags.Count != before)
+                                    changed = true;
+                            }
+
+                            if (changed)
+                            {
+                                var routingOptions = new JsonSerializerOptions
+                                {
+                                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                                    WriteIndented = false
+                                };
+                                jobOrder.RoutingStepsJson = JsonSerializer.Serialize(steps, routingOptions);
+                                jobOrder.ModifiedDate = DateTime.UtcNow;
+                            }
                         }
-                    }
-                    catch
-                    {
-                        // Do not block NCR deletion if routing JSON is malformed.
+                        catch
+                        {
+                            // Do not block NCR deletion if routing JSON is malformed.
+                        }
                     }
                 }
+                catch (Exception cleanupEx)
+                {
+                    Console.WriteLine($"Non-fatal error during JobOrder pointer cleanup for NCR {ncrId}: {cleanupEx.Message}");
+                }
 
-                _context.NonConformanceReports.Remove(ncr);
+                var stub = new NonConformanceReport { NcrId = ncrMeta.NcrId };
+                _context.NonConformanceReports.Attach(stub);
+                _context.NonConformanceReports.Remove(stub);
                 await _context.SaveChangesAsync();
 
                 return Ok(new { result = new { message = "NCR deleted successfully" } });

@@ -39,9 +39,17 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
   onResultClick,
   onClose
 }) => {
+  const formatAmount = (amt: any): string => {
+    if (amt === null || amt === undefined || amt === '') return '';
+    const num = typeof amt === 'number' ? amt : parseFloat(String(amt));
+    return isNaN(num) ? '' : ` • $${num.toFixed(2)}`;
+  };
+
   const totalResults = 
     results.customers.length +
     results.vendors.length +
+    (results.products?.length || 0) +
+    (results.rawMaterials?.length || 0) +
     results.orders.length +
     results.invoices.length +
     results.jobOrders.length +
@@ -61,9 +69,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     results.shipments.length +
     results.ncrReports.length +
     results.users.length +
-    results.documents.length +
-    (results.products?.length || 0) +
-    (results.rawMaterials?.length || 0);
+    results.documents.length;
 
   if (loading) {
     return (
@@ -135,14 +141,18 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
         if (result.code) parts.push(result.code);
         if (result.email) parts.push(result.email);
         return parts.join(' • ');
+      case 'product':
+        return `${result.partName || ''}${result.unitPrice ? formatAmount(result.unitPrice) : ''}`;
+      case 'rawMaterial':
+        return `${result.partName || ''}${result.description ? ` • ${result.description}` : ''}`;
       case 'order':
-        return `${result.customerName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.customerName || ''}${formatAmount(result.totalAmount)}`;
       case 'invoice':
-        return `${result.customerName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.customerName || ''}${formatAmount(result.totalAmount)}`;
       case 'jobOrder':
         return `${result.customerName || ''}${result.partNo ? ` • ${result.partNo}` : ''}`;
       case 'quotation':
-        return `${result.customerName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.customerName || ''}${formatAmount(result.totalAmount)}`;
       case 'bank':
         return `${result.code || ''}${result.accountNo ? ` • ${result.accountNo}` : ''}`;
       case 'workstation':
@@ -152,8 +162,6 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
       case 'process':
         return result.description || '';
       case 'priceBreakdown':
-        // Status is returned as number from backend (1 = Active, 0 = Inactive)
-        // JSON serialization converts it to string, so check both
         if (!result.status) return 'Inactive';
         const statusStr = String(result.status);
         return statusStr === '1' ? 'Active' : 'Inactive';
@@ -162,13 +170,13 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
       case 'chartOfAccount':
         return `${result.code || ''}${result.accountType ? ` • ${result.accountType}` : ''}`;
       case 'vendorOrder':
-        return `${result.vendorName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.vendorName || ''}${formatAmount(result.totalAmount)}`;
       case 'vendorInvoice':
-        return `${result.vendorName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.vendorName || ''}${formatAmount(result.totalAmount)}`;
       case 'vendorReceiving':
         return `${result.vendorName || ''}${result.receivedQty ? ` • Qty: ${result.receivedQty}` : ''}`;
       case 'vendorQuotation':
-        return `${result.vendorName || ''}${result.totalAmount ? ` • $${result.totalAmount.toFixed(2)}` : ''}`;
+        return `${result.vendorName || ''}${formatAmount(result.totalAmount)}`;
       case 'shipment':
         return `${result.customerName || ''}${result.trackingNo ? ` • ${result.trackingNo}` : ''}`;
       case 'ncrReport':
@@ -217,6 +225,30 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
         </div>
       )}
 
+      {results.products && results.products.length > 0 && (
+        <div className="search-results-section" key="products-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="products-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faBox} />
+            </div>
+            <span>Parts / Products ({results.products.length})</span>
+          </div>
+          {results.products.map(result => renderResultItem(result, faBox))}
+        </div>
+      )}
+
+      {results.rawMaterials && results.rawMaterials.length > 0 && (
+        <div className="search-results-section" key="rawMaterials-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="rawMaterials-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faBox} />
+            </div>
+            <span>Raw Materials ({results.rawMaterials.length})</span>
+          </div>
+          {results.rawMaterials.map(result => renderResultItem(result, faBox))}
+        </div>
+      )}
+
       {results.orders.length > 0 && (
         <div className="search-results-section" key="orders-section">
           <div className="results-section-header">
@@ -262,30 +294,6 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
             <span>Job Orders ({results.jobOrders.length})</span>
           </div>
           {results.jobOrders.map(result => renderResultItem(result, faBriefcase))}
-        </div>
-      )}
-
-      {(results.products?.length || 0) > 0 && (
-        <div className="search-results-section" key="products-section">
-          <div className="results-section-header">
-            <div className="section-header-icon" key="products-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
-              <FontAwesomeIcon icon={faBox} />
-            </div>
-            <span>Parts ({results.products.length})</span>
-          </div>
-          {results.products.map(result => renderResultItem(result, faBox))}
-        </div>
-      )}
-
-      {(results.rawMaterials?.length || 0) > 0 && (
-        <div className="search-results-section" key="rawmaterials-section">
-          <div className="results-section-header">
-            <div className="section-header-icon" key="rawmaterials-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
-              <FontAwesomeIcon icon={faClipboardList} />
-            </div>
-            <span>Raw Materials ({results.rawMaterials.length})</span>
-          </div>
-          {results.rawMaterials.map(result => renderResultItem(result, faClipboardList))}
         </div>
       )}
 

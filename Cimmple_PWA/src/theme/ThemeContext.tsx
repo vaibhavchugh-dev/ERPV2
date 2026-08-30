@@ -32,7 +32,8 @@ function readStoredTheme(): ThemeMode {
 
 function applyThemeClass(theme: ThemeMode) {
   const root = document.documentElement;
-  if (theme === "dark") {
+  const isDark = theme === "dark";
+  if (isDark) {
     root.classList.add("dark");
     root.setAttribute("data-theme", "dark");
   } else {
@@ -40,6 +41,10 @@ function applyThemeClass(theme: ThemeMode) {
     root.setAttribute("data-theme", "light");
   }
   root.style.colorScheme = theme;
+  const metaThemeColors = document.querySelectorAll('meta[name="theme-color"]');
+  metaThemeColors.forEach((meta) => {
+    meta.setAttribute("content", isDark ? "#0f172a" : "#f4f6f9");
+  });
 }
 
 /** While > 0, DOM stays light regardless of stored preference (e.g. login). */

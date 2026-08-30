@@ -233,6 +233,8 @@
 .admin-unlock-modal {
   position: relative;
   width: min(100%, 380px);
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 30px 28px 22px;
   border-radius: 26px;
   background:
@@ -301,6 +303,8 @@
 
 .admin-unlock-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   min-height: 46px;
   padding: 0 14px;
   border-radius: 14px;
@@ -323,6 +327,9 @@
 
 .admin-unlock-submit {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 46px;
   min-height: 46px;
   margin-top: 14px;
   border: 0;
@@ -504,10 +511,14 @@
   flex-direction: column;
   gap: 10px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .punch-search-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 14px;
   border: 1px solid rgba(117, 126, 255, 0.28);
@@ -1500,10 +1511,15 @@
 
 .employee-search-wrapper {
   margin-bottom: 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .employee-search-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 12px 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
@@ -2262,10 +2278,15 @@
 
 .user-search-wrapper {
   margin-bottom: 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .user-search-input {
-  width: 30%;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 10px 14px;
   border: 1px solid #d1d5db;
   border-radius: 8px;

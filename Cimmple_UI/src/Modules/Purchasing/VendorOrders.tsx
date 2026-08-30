@@ -40,6 +40,24 @@ const VendorOrders: React.FC = () => {
     }
   }, [location.search, location.pathname, history]);
 
+  // Listen for custom event from global search
+  useEffect(() => {
+    const handleOpenEntity = (event: CustomEvent) => {
+      if (event.detail.type === 'vendorOrder') {
+        const id = typeof event.detail.id === 'number' ? event.detail.id : parseInt(String(event.detail.id), 10);
+        if (id > 0) {
+          setSelectedOrderId(id);
+          setShowSlideout(true);
+        }
+      }
+    };
+
+    window.addEventListener('openEntity', handleOpenEntity as EventListener);
+    return () => {
+      window.removeEventListener('openEntity', handleOpenEntity as EventListener);
+    };
+  }, []);
+
   const loadOrders = async () => {
     setLoading(true);
     try {
