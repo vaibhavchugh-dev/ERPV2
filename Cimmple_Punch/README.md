@@ -21,7 +21,7 @@ Requires `Cimmple_API` at `http://localhost:5172`.
 
 | Variable | Example |
 |---|---|
-| `VITE_API_ROOT` | `http://localhost:5172/api` |
+| `VITE_API_ROOT` | Local: `http://localhost:5172/api`. Production: `https://api.v2.cimmple.net/api`. If omitted, the app picks local vs production from the page hostname. |
 
 ## Phase 1
 
