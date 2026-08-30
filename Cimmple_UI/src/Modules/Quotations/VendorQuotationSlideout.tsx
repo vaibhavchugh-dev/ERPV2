@@ -314,8 +314,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           }
           return detail;
         });
+        const resAny = result as any;
+        const rawExtDate = result.ExternalOrderDate || resAny.externalOrderDate || resAny.DueDate || resAny.dueDate;
         const formDataWithDetails = {
           ...result,
+          ExternalOrderDate: rawExtDate || "",
           Details: normalizedDetails,
           QuotationType: result.QuotationType || "Material",
         };
@@ -756,7 +759,6 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Function to convert date string to date-only API format (no UTC day-shift)
       const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
       // Convert quotation data to vendor order format

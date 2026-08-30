@@ -63,7 +63,7 @@
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  padding-top: max(var(--login-pad-y), env(safe-area-inset-top, 0px));
+  padding-top: calc(var(--login-pad-y) + env(safe-area-inset-top, 0px) + 0.5rem);
   padding-right: max(var(--login-pad-x), env(safe-area-inset-right, 0px));
   padding-bottom: max(var(--login-pad-y), env(safe-area-inset-bottom, 0px));
   padding-left: max(var(--login-pad-x), env(safe-area-inset-left, 0px));

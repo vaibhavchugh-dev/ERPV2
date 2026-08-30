@@ -65,6 +65,12 @@ namespace CimmpleAPI.Controllers
                         u.City,
                         u.State,
                         u.Zip,
+                        u.Department,
+                        u.EmployeeCategory,
+                        u.Apartment,
+                        u.PrimaryMethod,
+                        u.ContractId,
+                        u.Street,
                         u.ProfilePic,
                         u.DefaultLocationId,
                         u.CanAccessAllLocations,
@@ -151,10 +157,13 @@ namespace CimmpleAPI.Controllers
                         role = u.Role,
                         roleName = u.Role.HasValue && roles.TryGetValue(u.Role.Value, out var rn) ? rn : "",
                         employeeType = u.EmployeeType ?? "",
+                        employeeCategory = u.EmployeeCategory ?? u.ContractId ?? "",
                         empCode = u.EmpCode ?? "",
+                        department = u.Department ?? u.PrimaryMethod ?? "",
                         phone1 = u.Phone1 ?? "",
                         date_of_hire = u.Date_of_hire ?? "",
                         address = u.Address ?? "",
+                        apartment = u.Apartment ?? u.Street ?? "",
                         city = u.City ?? "",
                         state = u.State ?? "",
                         zip = u.Zip ?? "",
@@ -211,14 +220,14 @@ namespace CimmpleAPI.Controllers
                     role = employee.Role,
                     roleName = role != null ? role.RoleName : "",
                     employeeType = employee.EmployeeType ?? "",
-                    employeeCategory = "",
+                    employeeCategory = employee.EmployeeCategory ?? employee.ContractId ?? "",
                     empCode = employee.EmpCode ?? "",
-                    department = "",
+                    department = employee.Department ?? employee.PrimaryMethod ?? "",
                     phone1 = employee.Phone1 ?? "",
                     phone2 = employee.Phone2 ?? "",
                     date_of_hire = employee.Date_of_hire ?? "",
                     address = employee.Address ?? "",
-                    apartment = "",
+                    apartment = employee.Apartment ?? employee.Street ?? "",
                     city = employee.City ?? "",
                     state = employee.State ?? "",
                     zip = employee.Zip ?? "",
@@ -436,15 +445,20 @@ namespace CimmpleAPI.Controllers
                 employee.Status = request.Status ?? "Active";
                 employee.Role = request.Role;
                 employee.EmployeeType = request.EmployeeType ?? "";
+                employee.EmployeeCategory = request.EmployeeCategory ?? "";
+                employee.ContractId = request.EmployeeCategory ?? "";
                 employee.EmpCode = request.EmpCode ?? "";
+                employee.Department = request.Department ?? "";
+                employee.PrimaryMethod = request.Department ?? "";
                 employee.Phone1 = request.Phone1 ?? "";
                 employee.Phone2 = request.Phone2 ?? "";
                 employee.Date_of_hire = request.Date_of_hire ?? "";
                 employee.Address = request.Address ?? "";
+                employee.Apartment = request.Apartment ?? "";
+                employee.Street = request.Apartment ?? "";
                 employee.City = request.City ?? "";
                 employee.State = request.State ?? "";
                 employee.Zip = request.Zip ?? "";
-                employee.Street = "";
                 employee.DOB = request.DOB ?? "";
                 employee.SSN = request.SSN ?? "";
 

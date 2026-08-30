@@ -242,6 +242,47 @@ const AccountsPayable: React.FC = () => {
     loadInvoices();
   }, [filters]);
 
+  const invoiceMatchesDateRange = (dateStr: string, range: string) => {
+    if (!dateStr) return true;
+    const invDate = new Date(dateStr);
+    if (isNaN(invDate.getTime())) return true;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    switch (range) {
+      case "This Week":
+      case "Last 7 Days": {
+        const sevenDaysAgo = new Date(today);
+        sevenDaysAgo.setDate(today.getDate() - 7);
+        return invDate >= sevenDaysAgo;
+      }
+      case "Last 30 Days": {
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        return invDate >= thirtyDaysAgo;
+      }
+      case "Last 90 Days": {
+        const ninetyDaysAgo = new Date(today);
+        ninetyDaysAgo.setDate(today.getDate() - 90);
+        return invDate >= ninetyDaysAgo;
+      }
+      case "This Month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        return invDate >= startOfMonth;
+      }
+      case "Last Month": {
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+        return invDate >= startOfLastMonth && invDate <= endOfLastMonth;
+      }
+      case "All":
+      case "All Dates":
+      default:
+        return true;
+    }
+  };
+
   useEffect(() => {
     setSelectedIds((prev) =>
       prev.filter((id) => invoices.some((inv) => inv.id === id && !isVoid(inv) && !isPaid(inv)))
@@ -274,6 +315,12 @@ const AccountsPayable: React.FC = () => {
                 return true;
             }
           });
+        }
+
+        if (filters.dateRange && filters.dateRange !== "All") {
+          filteredInvoices = filteredInvoices.filter((invoice) =>
+            invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange)
+          );
         }
 
         if (filters.amountRange !== "All") {
@@ -668,6 +715,7 @@ const AccountsPayable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
             style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
           >
+            <option value="All">All Dates</option>
             <option value="This Week">This Week</option>
             <option value="This Month">This Month</option>
             <option value="Last 30 Days">Last 30 Days</option>
@@ -870,6 +918,7 @@ const AccountsPayable: React.FC = () => {
         invoiceId={selectedInvoiceId}
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
 
       {showBulkPayment && bulkPayTargets.length > 1 && (

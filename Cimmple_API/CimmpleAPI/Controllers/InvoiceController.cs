@@ -106,6 +106,11 @@ namespace CimmpleAPI.Controllers
                     var tenantId = GetTenantId();
                     Console.WriteLine($"CreateInvoice called - TenantId: {tenantId}, OrderId: {request.OrderId}, LineItems: {request.LineItems.Count}");
 
+                    if (request.DueDate.HasValue && request.InvoiceDate.HasValue && request.DueDate.Value.Date < request.InvoiceDate.Value.Date)
+                    {
+                        return BadRequest(new { error = "Due Date cannot be earlier than Invoice Date." });
+                    }
+
                     // Validate all line items can be invoiced
                     foreach (var item in request.LineItems)
                     {
@@ -507,6 +512,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string searchTerm = "",
             [FromQuery] int? customerId = null,
             [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] string startDate = null,
+            [FromQuery] string endDate = null,
             [FromQuery] int? locationId = null)
         {
             try
@@ -517,31 +524,32 @@ namespace CimmpleAPI.Controllers
 
                 var now = DateTime.Now;
 
-                DateTime? startDate = null;
-                DateTime? endDate = null;
+                DateTime? reqStartDate = null;
+                DateTime? reqEndDate = null;
                 switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
                     case "this week":
-                        startDate = now.Date.AddDays(-(int)now.DayOfWeek);
-                        endDate = startDate.Value.AddDays(6);
+                        reqStartDate = now.Date.AddDays(-(int)now.DayOfWeek);
+                        reqEndDate = reqStartDate.Value.AddDays(6);
                         break;
                     case "last 7 days":
-                        startDate = now.Date.AddDays(-7);
+                        reqStartDate = now.Date.AddDays(-7);
                         break;
                     case "last 30 days":
-                        startDate = now.Date.AddDays(-30);
+                        reqStartDate = now.Date.AddDays(-30);
                         break;
                     case "last 90 days":
-                        startDate = now.Date.AddDays(-90);
+                        reqStartDate = now.Date.AddDays(-90);
                         break;
                     case "this month":
-                        startDate = new DateTime(now.Year, now.Month, 1);
+                        reqStartDate = new DateTime(now.Year, now.Month, 1);
                         break;
                     case "last month":
-                        startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
-                        endDate = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                        reqStartDate = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                        reqEndDate = new DateTime(now.Year, now.Month, 1).AddDays(-1);
                         break;
                     case "all":
+                    case "all dates":
                         break;
                     default:
                         // Unknown preset: do not silently rewrite to last 30 days
@@ -573,10 +581,24 @@ namespace CimmpleAPI.Controllers
                         agg.ItemCount
                     };
 
-                if (startDate.HasValue)
-                    query = query.Where(x => x.Invoice.InvoiceDate >= startDate.Value);
-                if (endDate.HasValue)
-                    query = query.Where(x => x.Invoice.InvoiceDate <= endDate.Value);
+                if (!string.IsNullOrWhiteSpace(startDate) && DateTime.TryParse(startDate, out var parsedStart))
+                {
+                    query = query.Where(x => x.Invoice.InvoiceDate >= parsedStart.Date);
+                }
+                else if (reqStartDate.HasValue)
+                {
+                    query = query.Where(x => x.Invoice.InvoiceDate >= reqStartDate.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(endDate) && DateTime.TryParse(endDate, out var parsedEnd))
+                {
+                    var endOfDay = parsedEnd.Date.AddDays(1).AddTicks(-1);
+                    query = query.Where(x => x.Invoice.InvoiceDate <= endOfDay);
+                }
+                else if (reqEndDate.HasValue)
+                {
+                    query = query.Where(x => x.Invoice.InvoiceDate <= reqEndDate.Value);
+                }
                 if (filterLocationId.HasValue)
                     query = query.Where(x =>
                         x.CustomerOrder.locationId == filterLocationId.Value);

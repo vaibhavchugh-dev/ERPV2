@@ -249,7 +249,9 @@ export class InvoiceService {
     status: string = "All",
     searchTerm: string = "",
     customerId?: number,
-    dateRange: string = "Last 30 Days"
+    dateRange: string = "Last 30 Days",
+    startDate?: string,
+    endDate?: string
   ): Promise<InvoiceSummary[] | null> => {
     const url = `/Invoice/GetAllInvoices`;
     try {
@@ -258,7 +260,9 @@ export class InvoiceService {
           status,
           searchTerm,
           customerId,
-          dateRange
+          dateRange,
+          startDate,
+          endDate
         }
       });
       const result = response.data.result as InvoiceSummary[];

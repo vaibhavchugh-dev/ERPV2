@@ -305,7 +305,8 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   };
 
   const confirmDeletion = async () => {
-    if (customerId === 0 || !deletionImpact?.canDelete) return;
+    const canDelete = deletionImpact?.canDelete ?? (deletionImpact as any)?.CanDelete ?? true;
+    if (customerId === 0 || !canDelete) return;
 
     setLoading(true);
     try {

@@ -356,8 +356,8 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
 
 interface FilterOptions {
   status: string;
-  dateRange: string;
   customerId?: number;
+  dateRange: string;
   searchTerm: string;
 }
 
@@ -498,6 +498,11 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handlePayInvoice = (invoice: CustomerInvoiceSummary) => {
+    const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    if (isVoided) {
+      toast.error("Cannot record payment for a voided invoice");
+      return;
+    }
     setSelectedInvoiceForPayment(invoice);
     setShowPaymentModal(true);
   };
@@ -653,24 +658,31 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
-          {row.status !== 'Paid' && row.status !== 'Void' && (
-            <button
-              type="button"
-              onClick={() => handlePayInvoice(row)}
-              title="Pay Invoice"
-              style={{
-                padding: "0.25rem 0.5rem",
-                backgroundColor: "#10b981",
-                color: "white",
-                border: "none",
-                borderRadius: "0.25rem",
-                cursor: "pointer",
-                fontSize: "0.75rem",
-              }}
-            >
-              <FontAwesomeIcon icon={faCreditCard} />
-            </button>
-          )}
+          {(() => {
+            const isVoided = !!(row.status && (row.status.toLowerCase().includes("void") || row.status.toLowerCase() === "cancelled"));
+            const isPaid = row.status?.toLowerCase() === 'paid' || (row.balanceDue !== undefined && row.balanceDue <= 0);
+
+            if (isPaid || isVoided) return null;
+
+            return (
+              <button
+                type="button"
+                onClick={() => handlePayInvoice(row)}
+                title="Pay Invoice"
+                style={{
+                  padding: "0.25rem 0.5rem",
+                  backgroundColor: "#10b981",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.25rem",
+                  cursor: "pointer",
+                  fontSize: "0.75rem",
+                }}
+              >
+                <FontAwesomeIcon icon={faCreditCard} />
+              </button>
+            );
+          })()}
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -763,6 +775,7 @@ const CustomerInvoices: React.FC = () => {
         onClose={handleCloseDetailModal}
         invoiceId={selectedInvoiceId}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
 
       {/* Order Slideout */}

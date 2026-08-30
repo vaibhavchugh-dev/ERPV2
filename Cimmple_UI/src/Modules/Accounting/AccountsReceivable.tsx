@@ -17,8 +17,12 @@ interface ARFilterOptions {
   overdueStatus: string;
 }
 
-const canRecordPayment = (invoice: InvoiceSummary) =>
-  invoice.status !== "Paid" && invoice.status !== "Void";
+const canRecordPayment = (invoice: InvoiceSummary) => {
+  const status = (invoice.status || "").toLowerCase();
+  const isVoided = status.includes("void") || status === "cancelled";
+  const isPaid = status === "paid" || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
+  return !isVoided && !isPaid;
+};
 
 interface BulkARPaymentModalProps {
   invoices: InvoiceSummary[];
@@ -303,6 +307,11 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const handleRecordPayment = (invoice: InvoiceSummary) => {
+    const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    if (isVoided) {
+      toast.error("Cannot record payment for a voided invoice");
+      return;
+    }
     openInvoiceDetail(invoice, true);
   };
 
@@ -789,6 +798,7 @@ const AccountsReceivable: React.FC = () => {
         invoiceId={selectedInvoiceId}
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
+        onInvoiceDeleted={loadInvoices}
       />
 
       {showBulkPayment && bulkTargets.length > 1 && (

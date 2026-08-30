@@ -30,6 +30,8 @@ namespace CimmpleAPI.Controllers
                     {
                         customers = new List<object>(),
                         vendors = new List<object>(),
+                        products = new List<object>(),
+                        rawMaterials = new List<object>(),
                         orders = new List<object>(),
                         invoices = new List<object>(),
                         jobOrders = new List<object>(),
@@ -60,6 +62,8 @@ namespace CimmpleAPI.Controllers
                 {
                     customers = await SearchCustomers(searchTerm, tenantId, limit),
                     vendors = await SearchVendors(searchTerm, tenantId, limit),
+                    products = await SearchProducts(searchTerm, tenantId, limit),
+                    rawMaterials = await SearchRawMaterials(searchTerm, tenantId, limit),
                     orders = await SearchOrders(searchTerm, tenantId, limit),
                     invoices = await SearchInvoices(searchTerm, tenantId, limit),
                     jobOrders = await SearchJobOrders(searchTerm, tenantId, limit),
@@ -489,10 +493,61 @@ namespace CimmpleAPI.Controllers
             return accounts.Cast<object>().ToList();
         }
 
+        private async Task<List<object>> SearchProducts(string searchTerm, int tenantId, int limit)
+        {
+            var products = await _context.ProductMaster
+                .Where(p => p.tenantid == tenantId &&
+                    (p.partno != null && p.partno.ToLower().Contains(searchTerm) ||
+                     p.partname != null && p.partname.ToLower().Contains(searchTerm) ||
+                     p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm)))
+                .Take(limit)
+                .Select(p => new
+                {
+                    id = p.Id,
+                    type = "product",
+                    partNo = p.partno ?? "",
+                    partName = p.partname ?? "",
+                    name = p.partname ?? p.partno ?? "",
+                    code = p.partno ?? "",
+                    description = p.pdescription ?? "",
+                    unitPrice = p.UnitPrice,
+                    unit = p.Unit ?? ""
+                })
+                .ToListAsync();
+
+            return products.Cast<object>().ToList();
+        }
+
+        private async Task<List<object>> SearchRawMaterials(string searchTerm, int tenantId, int limit)
+        {
+            var materials = await _context.RawMaterialMaster
+                .Where(r => r.Tenantid == tenantId &&
+                    (r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm) ||
+                     r.PartName != null && r.PartName.ToLower().Contains(searchTerm) ||
+                     r.Description != null && r.Description.ToLower().Contains(searchTerm) ||
+                     r.Sku != null && r.Sku.ToLower().Contains(searchTerm)))
+                .Take(limit)
+                .Select(r => new
+                {
+                    id = r.Id,
+                    type = "rawMaterial",
+                    partNo = r.PartNo ?? "",
+                    partName = r.PartName ?? "",
+                    name = r.PartName ?? r.PartNo ?? "",
+                    code = r.PartNo ?? "",
+                    description = r.Description ?? "",
+                    unitCost = r.UnitCost,
+                    unit = r.Unit ?? ""
+                })
+                .ToListAsync();
+
+            return materials.Cast<object>().ToList();
+        }
+
         // Purchasing Search Methods
         private async Task<List<object>> SearchVendorOrders(string searchTerm, int tenantId, int limit)
         {
-            var cleaned = searchTerm.Replace("vo#", "").Replace("vo", "").Trim();
+            var cleaned = searchTerm.Replace("vo#", "").Replace("vo", "").Replace("#", "").Trim();
             bool isNumeric = int.TryParse(cleaned, out int displayOrPoNumber);
 
             var vendorOrdersQuery = _context.VendorOrders
@@ -587,23 +642,12 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchVendorInvoices(string searchTerm, int tenantId, int limit)
         {
-            bool isNumeric = int.TryParse(searchTerm.Replace("VI#", "").Replace("vi#", ""), out int invoiceNumber);
-
             var vendorInvoicesQuery = _context.VendorInvoiceMaster
                 .Where(v => v.TenantId == tenantId);
 
-            if (isNumeric)
-            {
-                vendorInvoicesQuery = vendorInvoicesQuery.Where(v =>
-                    v.InvoiceNo != null && v.InvoiceNo.ToLower().Contains(searchTerm) ||
-                    v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm));
-            }
-            else
-            {
-                vendorInvoicesQuery = vendorInvoicesQuery.Where(v =>
-                    v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm) ||
-                    v.InvoiceNo != null && v.InvoiceNo.ToLower().Contains(searchTerm));
-            }
+            vendorInvoicesQuery = vendorInvoicesQuery.Where(v =>
+                (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
+                (v.InvoiceNo != null && v.InvoiceNo.ToLower().Contains(searchTerm)));
 
             var vendorInvoices = await vendorInvoicesQuery
                 .OrderByDescending(v => v.InvoiceDate)
@@ -612,7 +656,8 @@ namespace CimmpleAPI.Controllers
                 {
                     id = v.Id,
                     type = "vendorInvoice",
-                    invoiceNumber = v.InvoiceNo ?? "",
+                    invoiceNo = v.InvoiceNo ?? "",
+                    displayNumber = v.InvoiceNo ?? "",
                     vendorName = v.VendorName ?? "",
                     totalAmount = v.TotalAmount,
                     invoiceDate = v.InvoiceDate,
@@ -669,7 +714,9 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchVendorQuotations(string searchTerm, int tenantId, int limit)
         {
-            bool isNumeric = int.TryParse(searchTerm.Replace("VQ#", "").Replace("vq#", ""), out int quotationNumber);
+            var cleanStr = searchTerm.Replace("vq#", "").Replace("vq", "").Replace("#", "").Trim();
+            bool isNumeric = int.TryParse(cleanStr, out int quotationNumber);
+            int offsetNumber = quotationNumber > 999 ? quotationNumber - 999 : quotationNumber;
 
             var vendorQuotationsQuery = _context.VendorQuotations
                 .Where(v => v.Tenantid == tenantId);
@@ -678,8 +725,9 @@ namespace CimmpleAPI.Controllers
             {
                 vendorQuotationsQuery = vendorQuotationsQuery.Where(v =>
                     v.PONumber == quotationNumber ||
-                    v.PONumber.ToString().Contains(searchTerm) ||
-                    v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm));
+                    v.PONumber == offsetNumber ||
+                    v.PONumber.ToString().Contains(cleanStr) ||
+                    (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)));
             }
             else
             {

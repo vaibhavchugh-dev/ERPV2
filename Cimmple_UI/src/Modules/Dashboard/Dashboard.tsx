@@ -182,6 +182,10 @@ const Dashboard: React.FC = () => {
       case "JobOrder":
         history.push(`/job-orders?open=${entityId}`, returnState);
         break;
+      case "Order":
+      case "CustomerOrder":
+        history.push(`/orders/customer?open=${entityId}`);
+        break;
       case "Shipment":
         history.push(`/orders/customer-shipments?open=${entityId}`, returnState);
         break;
@@ -583,36 +587,45 @@ const Dashboard: React.FC = () => {
 
         {/* Upcoming Deadlines - Row 2, Col 2 */}
         <div className="dashboard-widget bottom-widget-right bottom-widget-row-2">
-          <div className="widget-header">
-            <h3>Upcoming Deadlines</h3>
-            <span className="deadline-badge">{upcomingDeadlines.length}</span>
-          </div>
-          <div className="widget-content">
-            {upcomingDeadlines.length > 0 ? (
-              <div className="deadlines-list">
-                {upcomingDeadlines.slice(0, 7).map((deadline, index) => (
-                  <div
-                    key={index}
-                    className="deadline-item"
-                    onClick={() => handleNavigate(deadline.entityType, deadline.entityId)}
-                  >
-                    <div className="deadline-icon">
-                      <FontAwesomeIcon icon={faCalendar} />
+          {(() => {
+            const filteredDeadlines = upcomingDeadlines.filter(
+              (d: any) => !d.isVoided && d.status !== 'Void' && d.status !== 'Voided'
+            );
+            return (
+              <>
+                <div className="widget-header">
+                  <h3>Upcoming Deadlines</h3>
+                  <span className="deadline-badge">{filteredDeadlines.length}</span>
+                </div>
+                <div className="widget-content">
+                  {filteredDeadlines.length > 0 ? (
+                    <div className="deadlines-list">
+                      {filteredDeadlines.slice(0, 7).map((deadline, index) => (
+                        <div
+                          key={index}
+                          className="deadline-item"
+                          onClick={() => handleNavigate(deadline.entityType, deadline.entityId)}
+                        >
+                          <div className="deadline-icon">
+                            <FontAwesomeIcon icon={faCalendar} />
+                          </div>
+                          <div className="deadline-content">
+                            <div className="deadline-title">{deadline.title}</div>
+                            <div className="deadline-description">{deadline.description}</div>
+                            <div className="deadline-date">
+                              Due: {new Date(deadline.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="deadline-content">
-                      <div className="deadline-title">{deadline.title}</div>
-                      <div className="deadline-description">{deadline.description}</div>
-                      <div className="deadline-date">
-                        Due: {new Date(deadline.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="widget-empty">No upcoming deadlines</div>
-            )}
-          </div>
+                  ) : (
+                    <div className="widget-empty">No upcoming deadlines</div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
