@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
@@ -114,6 +115,9 @@ const DEFAULT_HIDDEN_COLUMNS = [
 const COLUMN_PREFERENCE_KEY = "rawMaterialMaster.hiddenColumns";
 
 const RawMaterialMaster: React.FC = () => {
+  const location = useLocation();
+  const history = useHistory();
+  const processedOpenIdRef = useRef<string | null>(null);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
@@ -272,6 +276,23 @@ const RawMaterialMaster: React.FC = () => {
     );
     setShowForm(true);
   };
+
+  // Open edit form from global search (?open=id)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openId = params.get("open");
+    if (!openId || openId === processedOpenIdRef.current || materials.length === 0) {
+      return;
+    }
+    const id = parseInt(openId, 10);
+    if (id <= 0) return;
+    const material = materials.find((m) => m.id === id);
+    if (material) {
+      processedOpenIdRef.current = openId;
+      handleEdit(material);
+      history.replace(location.pathname);
+    }
+  }, [location.search, location.pathname, history, materials]);
 
   const parseOptDecimal = (s: string): number | null | undefined => {
     const t = s.trim();

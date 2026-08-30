@@ -6,12 +6,14 @@ import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import VendorQuotationComparison from "./VendorQuotationComparison";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./VendorQuotations.scss";
 
 const VendorQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
@@ -36,14 +38,17 @@ const VendorQuotations: React.FC = () => {
 
   useEffect(() => {
     loadQuotations();
-  }, []);
+  }, [locationIdParam]);
 
   const loadQuotations = async () => {
     setLoading(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const result = await QuotationService.GetVendorQuotations({ tenantid: tenantID });
+      const result = await QuotationService.GetVendorQuotations({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
 
       if (result && Array.isArray(result)) {
         console.log("[VendorQuotations] Loaded quotations:", result.map(q => ({
@@ -312,6 +317,7 @@ const VendorQuotations: React.FC = () => {
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [

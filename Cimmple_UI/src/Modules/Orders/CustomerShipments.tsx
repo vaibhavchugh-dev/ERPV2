@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faEye, faTrash, faTruck, faPrint } from "@fortawesome/free-solid-svg-icons";
@@ -10,6 +10,7 @@ import { PdfService } from "../../Common/Services/PdfService";
 import CustomerShipmentDetailModal from "./CustomerShipmentDetailModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 interface FilterOptions {
   dateRange: string;
@@ -19,8 +20,10 @@ interface FilterOptions {
 
 const CustomerShipments: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const [shipments, setShipments] = useState<CustomerShipmentSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -35,23 +38,25 @@ const CustomerShipments: React.FC = () => {
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [shipmentToDelete, setShipmentToDelete] = useState<CustomerShipmentSummary | null>(null);
 
-  // Handle URL parameter to open modal (from global search)
+  // Handle URL parameter to open modal (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedShipmentId(id);
         setShowDetailModal(true);
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   useEffect(() => {
     loadShipments();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
   const loadShipments = async () => {
     setLoading(true);
@@ -61,7 +66,8 @@ const CustomerShipments: React.FC = () => {
         "All",
         filters.searchTerm,
         filters.customerId,
-        filters.dateRange
+        filters.dateRange,
+        locationIdParam
       );
 
       console.log("[CustomerShipments] API result:", result);
@@ -86,9 +92,17 @@ const CustomerShipments: React.FC = () => {
     setShowDetailModal(true);
   };
 
-  const handleCloseDetailModal = () => {
+  const handleCloseDetailModal = (refresh?: boolean) => {
     setShowDetailModal(false);
     setSelectedShipmentId(0);
+    if (refresh) {
+      loadShipments();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
+    }
   };
 
   const handlePrintShipment = async (shipment: CustomerShipmentSummary) => {
@@ -298,8 +312,10 @@ const CustomerShipments: React.FC = () => {
 
   const dateRangeOptions = [
     { value: 'All', label: 'All Dates' },
+    { value: 'This Week', label: 'This Week' },
     { value: 'Last 7 Days', label: 'Last 7 Days' },
     { value: 'Last 30 Days', label: 'Last 30 Days' },
+    { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
     { value: 'Last Month', label: 'Last Month' }
   ];
@@ -316,6 +332,7 @@ const CustomerShipments: React.FC = () => {
         searchPlaceholder="Search by shipment #, order #, customer, or tracking #..."
         searchFields={["shipmentNo", "orderNumber", "customerName", "customerCode", "trackingNumber", "courier"]}
         filters={[
+          masterListFilter,
           {
             label: "Date Range",
             options: dateRangeOptions,

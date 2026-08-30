@@ -502,22 +502,37 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetAllInvoices")]
-        public IActionResult GetAllInvoices([FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? customerId = null, [FromQuery] string dateRange = "Last 30 Days")
+        public IActionResult GetAllInvoices(
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? customerId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var now = DateTime.Now;
 
                 DateTime? startDate = null;
                 DateTime? endDate = null;
                 switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
+                    case "this week":
+                        startDate = now.Date.AddDays(-(int)now.DayOfWeek);
+                        endDate = startDate.Value.AddDays(6);
+                        break;
                     case "last 7 days":
                         startDate = now.Date.AddDays(-7);
                         break;
                     case "last 30 days":
                         startDate = now.Date.AddDays(-30);
+                        break;
+                    case "last 90 days":
+                        startDate = now.Date.AddDays(-90);
                         break;
                     case "this month":
                         startDate = new DateTime(now.Year, now.Month, 1);
@@ -529,7 +544,7 @@ namespace CimmpleAPI.Controllers
                     case "all":
                         break;
                     default:
-                        startDate = now.Date.AddDays(-30);
+                        // Unknown preset: do not silently rewrite to last 30 days
                         break;
                 }
 
@@ -562,6 +577,9 @@ namespace CimmpleAPI.Controllers
                     query = query.Where(x => x.Invoice.InvoiceDate >= startDate.Value);
                 if (endDate.HasValue)
                     query = query.Where(x => x.Invoice.InvoiceDate <= endDate.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(x =>
+                        x.CustomerOrder.locationId == filterLocationId.Value);
                 if (customerId.HasValue)
                     query = query.Where(x => x.CustomerOrder.CustomerID == customerId.Value);
                 if (!string.IsNullOrWhiteSpace(searchTerm))
@@ -965,6 +983,9 @@ namespace CimmpleAPI.Controllers
 
                     if (invoice == null)
                         return NotFound(new { error = "Customer invoice not found" });
+
+                    if (invoice.IsVoided)
+                        return BadRequest(new { error = "Cannot record payment on a voided customer invoice." });
 
                     var alreadyPaid = GetEffectivePaidAmount(invoice);
                     var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);

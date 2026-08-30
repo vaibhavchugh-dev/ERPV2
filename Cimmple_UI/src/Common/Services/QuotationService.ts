@@ -764,7 +764,7 @@ export class QuotationService {
   };
 
   public static GetVendorQuotations = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<VendorQuotationMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -782,7 +782,7 @@ export class QuotationService {
 
     const url = `/Quotation/GetVendorQuotations`;
     return Instense.get(url, {
-      params: { tenantid: tenantID },
+      params: { tenantid: tenantID, locationId: request.locationId },
     }).then((response) => {
       const result = response.data.result as VendorQuotationMaster[];
       return result;
@@ -853,9 +853,10 @@ export class QuotationService {
             if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
               return "";
             }
-            // If already in yyyy-MM-dd format, return as is
-            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStrTrimmed)) {
-              return dateStrTrimmed;
+            // If already in yyyy-MM-dd (or ISO datetime), take the date part only — no UTC shift
+            const isoMatch = dateStrTrimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (isoMatch) {
+              return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
             }
             date = new Date(dateStrTrimmed);
             // Check if date is valid
@@ -934,7 +935,9 @@ export class QuotationService {
         Status: result.Status || result.status || "Draft",
         ShippingInstructions: result.ShippingInstructions || result.shippingInstructions || "",
         ExternalVendorPO: result.ExternalVendorPO || result.externalVendorPO || "",
-        ExternalOrderDate: result.ExternalOrderDate ? formatDateForInput(result.ExternalOrderDate) : undefined,
+        ExternalOrderDate: (result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate)
+          ? formatDateForInput(result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate)
+          : undefined,
         BuyerName: result.BuyerName || result.buyerName || "",
         VendorRefNo: result.VendorRefNo || result.vendorRefNo || "",
         QuotationType: result.QuotationType || result.quotationType || "Material",

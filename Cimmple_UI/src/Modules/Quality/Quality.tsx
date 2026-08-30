@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faShieldAlt, faExclamationTriangle, faClock } from "@fortawesome/free-solid-svg-icons";
@@ -30,25 +30,28 @@ const DEFAULT_FILTERS = {
 const Quality: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const [ncrs, setNcrs] = useState<NonConformanceReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedNCRId, setSelectedNCRId] = useState<number>(0);
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
 
-  // Handle URL parameter to open slideout (from global search)
+  // Handle URL parameter to open slideout (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedNCRId(id);
         setShowSlideout(true);
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   const [stats, setStats] = useState({
     totalNCRs: 0,
@@ -143,6 +146,11 @@ const Quality: React.FC = () => {
     if (refreshList) {
       loadNCRs();
       loadStats();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

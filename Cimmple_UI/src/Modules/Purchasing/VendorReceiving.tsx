@@ -4,10 +4,14 @@ import { toast } from "react-toastify";
 import { VendorReceivingService, OrderForReceiving } from "../../Common/Services/VendorReceivingService";
 import VendorReceivingDetail from "./VendorReceivingDetail";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const VendorReceiving: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<OrderForReceiving[]>([]);
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -30,14 +34,14 @@ const VendorReceiving: React.FC = () => {
 
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [locationIdParam]);
 
   const loadOrders = async () => {
     if (!hasLoadedOnceRef.current) {
       setLoading(true);
     }
     try {
-      const result = await VendorReceivingService.GetOrdersForReceiving();
+      const result = await VendorReceivingService.GetOrdersForReceiving(locationIdParam);
 
       if (result && Array.isArray(result)) {
         setOrders(result);
@@ -66,19 +70,6 @@ const VendorReceiving: React.FC = () => {
     setSelectedOrderId(0);
     if (refreshList) {
       loadOrders();
-    }
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
     }
   };
 
@@ -175,6 +166,7 @@ const VendorReceiving: React.FC = () => {
         enablePagination
         searchPlaceholder="Search by PO #, vendor..."
         searchFields={["orderNumber", "vendorName", "vendorCode"]}
+        filters={[masterListFilter]}
       />
       {showDetail && (
         <VendorReceivingDetail

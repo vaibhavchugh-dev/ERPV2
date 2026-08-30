@@ -63,14 +63,15 @@ export class AccountingService {
   };
 
   public static GetRecentTransactions = async (
-    limit: number = 10
+    limit: number = 10,
+    dateRange: string = "This Month"
   ): Promise<RecentTransaction[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
     const url = `/Accounting/GetRecentTransactions`;
     return Instense.get(url, {
-      params: { tenantId: tenantID, limit },
+      params: { tenantId: tenantID, limit, dateRange },
     }).then((response) => {
       const result = response.data.result as RecentTransaction[];
       return result;

@@ -298,7 +298,7 @@ export class QualityService {
       return true;
     } catch (error) {
       console.error("Error deleting NCR:", error);
-      return false;
+      throw new Error(getApiErrorMessage(error, "Failed to delete NCR"));
     }
   }
 

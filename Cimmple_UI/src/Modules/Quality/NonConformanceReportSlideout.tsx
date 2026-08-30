@@ -652,9 +652,14 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      await QualityService.DeleteNCR(ncrId, tenantID);
+      const deleted = await QualityService.DeleteNCR(ncrId, tenantID);
+      if (!deleted) {
+        toast.error("Failed to delete NCR");
+        return;
+      }
       toast.success("NCR deleted successfully");
       setShowDeletionDialog(false);
+      setDeletionImpact(null);
       await Promise.resolve(onDeleted?.(ncrId));
       onClose(true);
     } catch (error: any) {

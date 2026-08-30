@@ -69,13 +69,16 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRecentTransactions")]
-        public IActionResult GetRecentTransactions([FromQuery] int limit = 10)
+        public IActionResult GetRecentTransactions([FromQuery] int limit = 10, [FromQuery] string dateRange = "This Month")
         {
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}");
+                Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}, DateRange: {dateRange}");
                 var safeLimit = Math.Clamp(limit, 1, 200);
+                var dateFilter = GetDateRangeFilter(dateRange);
+                var rangeStart = dateFilter.startDate.Date;
+                var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
 
                 // Get recent transactions from multiple sources
                 var recentTransactions = new List<dynamic>();
@@ -85,7 +88,9 @@ namespace CimmpleAPI.Controllers
                     .Where(t => t.TenantId == tenantId &&
                                 t.isCustomer == 1 &&
                                 t.TransactionType != null &&
-                                EF.Functions.Like(t.TransactionType, "%Payment%"))
+                                EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                                t.TransactionDate >= rangeStart &&
+                                t.TransactionDate <= rangeEnd)
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .Take(safeLimit)
@@ -108,7 +113,9 @@ namespace CimmpleAPI.Controllers
                     .Where(t => t.TenantId == tenantId &&
                                 (t.isCustomer == 0 || t.isCustomer == null) &&
                                 t.TransactionType != null &&
-                                EF.Functions.Like(t.TransactionType, "%Payment%"))
+                                EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                                t.TransactionDate >= rangeStart &&
+                                t.TransactionDate <= rangeEnd)
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .Take(safeLimit)
@@ -131,6 +138,8 @@ namespace CimmpleAPI.Controllers
                     .Where(vim => vim.TenantId == tenantId &&
                                   vim.isPaid == 1 &&
                                   vim.Paydate != null &&
+                                  vim.Paydate >= rangeStart &&
+                                  vim.Paydate <= rangeEnd &&
                                   !_context.Transactions.Any(t =>
                                       t.TenantId == tenantId &&
                                       (t.isCustomer == 0 || t.isCustomer == null) &&
@@ -154,25 +163,37 @@ namespace CimmpleAPI.Controllers
 
                 recentTransactions.AddRange(vendorInvoiceFallbackPayments);
 
-                // 3. Recent invoice creations
+                // 3. Recent open invoices (skip paid/voided so amounts are not duplicated with payments)
                 var recentInvoices = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId)
+                    .Where(im => im.TenantId == tenantId &&
+                                 !im.IsVoided &&
+                                 im.PaymentDate == null &&
+                                 im.InvoiceDate >= rangeStart &&
+                                 im.InvoiceDate <= rangeEnd)
                     .OrderByDescending(im => im.InvoiceDate)
                     .ThenByDescending(im => im.Id)
                     .Take(safeLimit)
-                    .Select(im => new
+                    .AsEnumerable()
+                    .Select(im =>
                     {
-                        id = im.Id,
-                        type = "invoice" as string,
-                        description = $"Invoice {im.InvoiceNo} created",
-                        amount = im.TotalAmount,
-                        date = im.InvoiceDate,
-                        status = (im.PaymentDate != null ? "completed" : "pending") as string,
-                        customerVendor = "Customer" as string
+                        var paid = im.PaidAmount > 0 ? im.PaidAmount : 0m;
+                        var balance = im.TotalAmount - paid;
+                        if (balance <= 0.009m) return null;
+                        return new
+                        {
+                            id = im.Id,
+                            type = "invoice" as string,
+                            description = $"Invoice {im.InvoiceNo} created",
+                            amount = balance,
+                            date = (DateTime?)im.InvoiceDate,
+                            status = (im.DueDate.Date < DateTime.Today ? "overdue" : "pending") as string,
+                            customerVendor = "Customer" as string
+                        };
                     })
+                    .Where(x => x != null)
                     .ToList();
 
-                recentTransactions.AddRange(recentInvoices);
+                recentTransactions.AddRange(recentInvoices!);
 
                 // Sort all transactions by date and take the most recent ones
                 var sortedTransactions = recentTransactions
@@ -1086,53 +1107,69 @@ namespace CimmpleAPI.Controllers
 
         private (decimal totalReceivables, decimal overdueReceivables, decimal receivablesDueThisWeek) CalculateAccountsReceivableMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
         {
-            // Outstanding AR should reflect all currently unpaid invoices (not limited by invoice date range).
-            var unpaidInvoices = _context.InvoiceMaster
-                .Where(im => im.TenantId == tenantId &&
-                            im.PaymentDate == null)
+            // Outstanding AR: exclude voided; use remaining balance due (supports partial payments).
+            var openBalances = _context.InvoiceMaster
+                .Where(im => im.TenantId == tenantId && !im.IsVoided)
+                .ToList()
+                .Select(im =>
+                {
+                    var paid = im.PaidAmount > 0
+                        ? im.PaidAmount
+                        : (im.PaymentDate.HasValue ? im.TotalAmount : 0m);
+                    var balance = im.TotalAmount - paid;
+                    return new { im.DueDate, balance = balance > 0.009m ? balance : 0m };
+                })
+                .Where(x => x.balance > 0)
                 .ToList();
 
-            var totalReceivables = unpaidInvoices.Sum(im => im.TotalAmount);
+            var totalReceivables = openBalances.Sum(x => x.balance);
 
             var today = DateTime.Today;
             var weekFromToday = today.AddDays(7);
 
-            // Overdue means due date before today.
-            var overdueReceivables = unpaidInvoices
-                .Where(im => im.DueDate.Date < today)
-                .Sum(im => im.TotalAmount);
+            var overdueReceivables = openBalances
+                .Where(x => x.DueDate.Date < today)
+                .Sum(x => x.balance);
 
-            // Due this week includes today through next 7 days.
-            var receivablesDueThisWeek = unpaidInvoices
-                .Where(im => im.DueDate.Date >= today && im.DueDate.Date <= weekFromToday)
-                .Sum(im => im.TotalAmount);
+            var receivablesDueThisWeek = openBalances
+                .Where(x => x.DueDate.Date >= today && x.DueDate.Date <= weekFromToday)
+                .Sum(x => x.balance);
 
             return (totalReceivables, overdueReceivables, receivablesDueThisWeek);
         }
 
         private (decimal totalPayables, decimal overduePayables, decimal payablesDueThisWeek) CalculateAccountsPayableMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
         {
-            // Outstanding AP should reflect all currently unpaid invoices (not limited by invoice date range).
-            var unpaidInvoices = _context.VendorInvoiceMaster
+            // Outstanding AP: exclude paid/voided; use remaining balance due.
+            var openBalances = _context.VendorInvoiceMaster
                 .Where(vim => vim.TenantId == tenantId &&
                              vim.isPaid != 1 &&
-                             vim.Paydate == null)
+                             vim.isPaid != 2 &&
+                             vim.voideddate == null)
+                .ToList()
+                .Select(vim =>
+                {
+                    var paid = vim.PaidAmount > 0
+                        ? vim.PaidAmount
+                        : (vim.Paydate.HasValue ? vim.TotalAmount : 0m);
+                    var balance = vim.TotalAmount - paid;
+                    return new { vim.DueDate, balance = balance > 0.009m ? balance : 0m };
+                })
+                .Where(x => x.balance > 0)
                 .ToList();
 
-            var totalPayables = unpaidInvoices.Sum(vim => vim.TotalAmount);
+            var totalPayables = openBalances.Sum(x => x.balance);
 
             var today = DateTime.Today;
             var weekFromToday = today.AddDays(7);
 
-            // Overdue means due date before today.
-            var overduePayables = unpaidInvoices
-                .Where(vim => vim.DueDate.Date < today)
-                .Sum(vim => vim.TotalAmount);
+            var overduePayables = openBalances
+                .Where(x => x.DueDate.Date < today)
+                .Sum(x => x.balance);
 
-            // Due this week includes today through next 7 days.
-            var payablesDueThisWeek = unpaidInvoices
-                .Where(vim => vim.DueDate.Date >= today && vim.DueDate.Date <= weekFromToday)
-                .Sum(vim => vim.TotalAmount);
+            var payablesDueThisWeek = openBalances
+                .Where(x => x.DueDate.Date >= today && x.DueDate.Date <= weekFromToday)
+                .Sum(x => x.balance);
 
             return (totalPayables, overduePayables, payablesDueThisWeek);
         }

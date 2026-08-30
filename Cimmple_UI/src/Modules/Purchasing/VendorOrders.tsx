@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/VendorOrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -9,6 +9,7 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
+  const history = useHistory();
   const processedOrderIdRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
@@ -34,12 +35,10 @@ const VendorOrders: React.FC = () => {
         processedOrderIdRef.current = orderIdParam;
         setSelectedOrderId(orderId);
         setShowSlideout(true);
-        // Clean up URL
-        const history = require('react-router-dom').useHistory();
         history.replace(location.pathname);
       }
     }
-  }, [location.search]);
+  }, [location.search, location.pathname, history]);
 
   const loadOrders = async () => {
     setLoading(true);

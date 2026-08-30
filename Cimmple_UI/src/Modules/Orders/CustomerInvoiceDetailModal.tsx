@@ -8,6 +8,7 @@ import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -17,6 +18,7 @@ interface CustomerPaymentModalProps {
 }
 
 const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -79,25 +81,6 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
       toast.error(error.message || 'Failed to record payment');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string): string => {
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateString;
     }
   };
 
@@ -376,7 +359,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
 
 interface CustomerInvoiceDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (refresh?: boolean) => void;
   invoiceId: number;
   /** When true, opens the payment form after the invoice loads */
   initialShowPayment?: boolean;
@@ -390,6 +373,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   initialShowPayment = false,
   onPaymentComplete
 }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoice, setInvoice] = useState<CustomerInvoiceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -446,26 +430,6 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
       setInvoice(null);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
     }
   };
 
@@ -566,7 +530,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
       toast.success("Invoice deleted successfully");
       setShowDeletionDialog(false);
       setDeletionImpact(null);
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting invoice:", error);
       toast.error(`Error deleting invoice: ${error.message || "Unknown error"}`);
@@ -635,7 +599,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={() => onClose()}
             style={{
               background: 'none',
               border: 'none',

@@ -90,11 +90,18 @@ namespace CimmpleAPI.Controllers
                     DateTime? end = null;
                     switch (dateRange.Trim().ToLowerInvariant())
                     {
+                        case "this week":
+                            start = now.Date.AddDays(-(int)now.DayOfWeek);
+                            end = start.Value.AddDays(6);
+                            break;
                         case "last 7 days":
                             start = now.Date.AddDays(-7);
                             break;
                         case "last 30 days":
                             start = now.Date.AddDays(-30);
+                            break;
+                        case "last 90 days":
+                            start = now.Date.AddDays(-90);
                             break;
                         case "this month":
                             start = new DateTime(now.Year, now.Month, 1);
@@ -812,15 +819,23 @@ namespace CimmpleAPI.Controllers
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
 
-                    // Check if invoice is already paid
+                    // Check if invoice is already paid / partially paid
                     if (invoice.isPaid == 1)
                         return BadRequest(new { error = "Cannot delete a paid invoice" });
 
+                    var paid = GetEffectiveVendorPaidAmount(invoice);
+                    if (paid > 0.009m)
+                        return BadRequest(new { error = "Cannot delete a paid or partially paid invoice. Reverse payments first." });
+
+                    if (invoice.isPaid == 2)
+                        return BadRequest(new { error = "Cannot delete a voided invoice. It is already reversed in GL." });
+
                     var billPostingRef = BuildAutoPostingReference("APBILL", invoice.prefixinvoiceno ?? invoice.InvoiceNo, invoice.Id);
-                    var hasPostedGlEntry = _context.JournalEntries
-                        .Any(je => je.TenantId == tenantId && je.ReferenceNumber == billPostingRef);
-                    if (hasPostedGlEntry)
-                        return BadRequest(new { error = "Cannot delete vendor invoice because a GL entry exists. Reverse/delete the related journal entry first." });
+                    if (!GlWorkflowService.TryReverseJournalByReference(
+                        _context, tenantId, billPostingRef, GetUserId(), "VendorInvoiceDelete", out var reverseError))
+                    {
+                        return BadRequest(new { error = reverseError ?? "Failed to reverse the related journal entry." });
+                    }
 
                     // Remove vendor invoicing records
                     var invoiceDetails = _context.VendorInvoiceDetail.Where(vid => vid.InvoiceId == invoiceId).ToList();

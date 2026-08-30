@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faFileInvoiceDollar, faPlus, faSearch, faFilter, faEye, faPrint, faCreditCard, faBan } from "@fortawesome/free-solid-svg-icons";
@@ -10,6 +10,8 @@ import VendorInvoiceDetailModal from "./VendorInvoiceDetailModal";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -19,6 +21,7 @@ interface PaymentModalProps {
 }
 
 const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -34,26 +37,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [paymentAmount, setPaymentAmount] = useState(
     balanceDue > 0 ? balanceDue.toFixed(2) : invoice.totalAmount.toFixed(2)
   );
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -428,6 +411,9 @@ interface FilterOptions {
 const VendorInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
+  const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -437,19 +423,21 @@ const VendorInvoices: React.FC = () => {
   });
   const [showFilters, setShowFilters] = useState(false);
 
-  // Handle URL parameter to open modal (from global search)
+  // Handle URL parameter to open modal (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedInvoiceId(id);
         setShowDetailModal(true);
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Modal states
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -461,7 +449,7 @@ const VendorInvoices: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, []);
+  }, [locationIdParam]);
 
   const loadInvoices = async () => {
     setLoading(true);
@@ -470,7 +458,8 @@ const VendorInvoices: React.FC = () => {
         "All",
         "",
         undefined,
-        "All"
+        "All",
+        locationIdParam
       );
 
       if (result) {
@@ -493,11 +482,21 @@ const VendorInvoices: React.FC = () => {
     if (Number.isNaN(d.getTime())) return false;
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (range === "This Week") {
+      const startOfWeek = new Date(startOfToday);
+      startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      return d >= startOfWeek && d <= endOfWeek;
+    }
     if (range === "Last 7 Days") {
       return d >= new Date(startOfToday.getTime() - 7 * 86400000);
     }
     if (range === "Last 30 Days") {
       return d >= new Date(startOfToday.getTime() - 30 * 86400000);
+    }
+    if (range === "Last 90 Days") {
+      return d >= new Date(startOfToday.getTime() - 90 * 86400000);
     }
     if (range === "This Month") {
       return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
@@ -520,26 +519,6 @@ const VendorInvoices: React.FC = () => {
       return true;
     });
   }, [invoices, filters.status, filters.dateRange]);
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
-    }
-  };
 
   const getStatusBadge = (status: string, daysOverdue?: number) => {
     const statusLower = status.toLowerCase();
@@ -566,9 +545,17 @@ const VendorInvoices: React.FC = () => {
     setShowDetailModal(true);
   };
 
-  const handleCloseDetailModal = () => {
+  const handleCloseDetailModal = (refresh?: boolean) => {
     setShowDetailModal(false);
     setSelectedInvoiceId(0);
+    if (refresh) {
+      loadInvoices();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
+    }
   };
 
   const handleCloseOrderSlideout = () => {
@@ -843,11 +830,12 @@ const VendorInvoices: React.FC = () => {
 
   const dateRangeOptions = [
     { value: 'All', label: 'All Dates' },
+    { value: 'This Week', label: 'This Week' },
     { value: 'Last 7 Days', label: 'Last 7 Days' },
     { value: 'Last 30 Days', label: 'Last 30 Days' },
+    { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
-    { value: 'Last Month', label: 'Last Month' },
-    { value: 'Custom', label: 'Custom Range' }
+    { value: 'Last Month', label: 'Last Month' }
   ];
 
   return (
@@ -864,6 +852,7 @@ const VendorInvoices: React.FC = () => {
         searchPlaceholder="Search by invoice #, vendor, or order #..."
         searchFields={["invoiceNo", "vendorName", "vendorCode", "orderNumber"]}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: statusOptions,

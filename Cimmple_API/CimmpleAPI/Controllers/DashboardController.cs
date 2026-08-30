@@ -43,6 +43,8 @@ namespace CimmpleAPI.Controllers
                 var dateFilter = GetDateRangeFilter(dateRange);
                 var today = DateTime.Now.Date;
                 var weekStart = today.AddDays(-(int)today.DayOfWeek);
+                var rangeStart = dateFilter.startDate.Date;
+                var rangeEnd = dateFilter.endDate.Date;
 
                 // Production Metrics
                 var activeJobOrders = _context.JobOrderMaster
@@ -53,43 +55,78 @@ namespace CimmpleAPI.Controllers
 
                 var jobsCompletedToday = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId && 
-                               j.Status == "Completed" &&
+                               (j.Status == "Completed" || j.Status == "Shipped") &&
                                j.ModifiedDate.HasValue &&
                                j.ModifiedDate.Value.Date == today)
                     .Count();
 
                 var jobsCompletedThisWeek = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId && 
-                               j.Status == "Completed" &&
+                               (j.Status == "Completed" || j.Status == "Shipped") &&
                                j.ModifiedDate.HasValue &&
-                               j.ModifiedDate.Value.Date >= weekStart)
+                               j.ModifiedDate.Value.Date >= weekStart &&
+                               j.ModifiedDate.Value.Date <= today)
                     .Count();
 
-                var totalJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId)
-                    .Count();
+                // On-time delivery: jobs due in the selected period, completed on/before due date
+                var jobsDueInPeriod = _context.JobOrderMaster
+                    .Where(j => j.Tenantid == tenantId &&
+                               j.DueDate.Date >= rangeStart &&
+                               j.DueDate.Date <= rangeEnd &&
+                               j.Status != null &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Canceled")
+                    .ToList();
 
-                var completedJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId && j.Status == "Completed")
-                    .Count();
+                var onTimeCount = jobsDueInPeriod.Count(j =>
+                {
+                    var isComplete = j.Status == "Completed" || j.Status == "Shipped";
+                    if (!isComplete) return false;
+                    var completedOn = (j.ModifiedDate ?? j.CreatedDate).Date;
+                    return completedOn <= j.DueDate.Date;
+                });
 
-                var onTimeDeliveryRate = totalJobOrders > 0 
-                    ? (decimal)completedJobOrders / totalJobOrders * 100 
+                var onTimeDeliveryRate = jobsDueInPeriod.Count > 0
+                    ? (decimal)onTimeCount / jobsDueInPeriod.Count * 100
                     : 0;
 
-                // Financial Metrics (reuse from AccountingController logic)
-                var totalReceivables = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId &&
-                               im.PaymentDate == null)
-                    .Sum(im => (decimal?)im.TotalAmount) ?? 0;
+                // Financial Metrics — outstanding balances exclude voided; use balance due
+                var unpaidCustomerInvoices = _context.InvoiceMaster
+                    .Where(im => im.TenantId == tenantId && !im.IsVoided)
+                    .ToList()
+                    .Select(im =>
+                    {
+                        var paid = im.PaidAmount > 0
+                            ? im.PaidAmount
+                            : (im.PaymentDate.HasValue ? im.TotalAmount : 0m);
+                        var balance = im.TotalAmount - paid;
+                        return balance > 0.009m ? balance : 0m;
+                    })
+                    .Where(b => b > 0)
+                    .ToList();
+                var totalReceivables = unpaidCustomerInvoices.Sum();
 
-                var totalPayables = _context.VendorInvoiceMaster
+                var unpaidVendorInvoices = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
-                    .Sum(vim => (decimal?)vim.TotalAmount) ?? 0;
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.voideddate == null)
+                    .ToList()
+                    .Select(vim =>
+                    {
+                        var paid = vim.PaidAmount > 0
+                            ? vim.PaidAmount
+                            : (vim.Paydate.HasValue ? vim.TotalAmount : 0m);
+                        var balance = vim.TotalAmount - paid;
+                        return balance > 0.009m ? balance : 0m;
+                    })
+                    .Where(b => b > 0)
+                    .ToList();
+                var totalPayables = unpaidVendorInvoices.Sum();
 
                 var revenueThisMonth = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
+                               !im.IsVoided &&
                                im.PaymentDate != null &&
                                im.InvoiceDate >= dateFilter.startDate &&
                                im.InvoiceDate <= dateFilter.endDate)
@@ -127,15 +164,24 @@ namespace CimmpleAPI.Controllers
                     .Where(n => n.TenantId == tenantId && 
                                n.Status == "Closed" &&
                                n.ClosedDate != null &&
-                               n.ClosedDate.Value.Date >= weekStart)
+                               n.ClosedDate.Value.Date >= rangeStart &&
+                               n.ClosedDate.Value.Date <= rangeEnd)
+                    .Count();
+
+                var totalJobOrdersForDefect = _context.JobOrderMaster
+                    .Where(j => j.Tenantid == tenantId &&
+                               j.OrderDate.Date >= rangeStart &&
+                               j.OrderDate.Date <= rangeEnd)
                     .Count();
 
                 var totalNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId)
+                    .Where(n => n.TenantId == tenantId &&
+                               n.ReportedDate.Date >= rangeStart &&
+                               n.ReportedDate.Date <= rangeEnd)
                     .Count();
 
-                var defectRate = totalJobOrders > 0 
-                    ? (decimal)totalNCRs / totalJobOrders * 100 
+                var defectRate = totalJobOrdersForDefect > 0 
+                    ? (decimal)totalNCRs / totalJobOrdersForDefect * 100 
                     : 0;
 
                 // Operational Metrics
@@ -151,10 +197,12 @@ namespace CimmpleAPI.Controllers
                                (vo.Status == "Pending" || vo.Status == "Draft"))
                     .Count();
 
-                var overdueShipments = _context.Shipping
-                    .Where(s => s.TenantId == tenantId && 
-                               s.ShipmentDate != null &&
-                               s.ShipmentDate.Date < today)
+                // Overdue shipments = unshipped (or under-shipped) lines past promised due date
+                var overdueShipments = _context.CustomerOrderDetails
+                    .Where(d => d.Tenantid == tenantId &&
+                               d.DueDate.Date < today &&
+                               d.ShippedQty < d.QtyOrdered &&
+                               (d.ShippingStatus == null || d.ShippingStatus != "Shipped"))
                     .Count();
 
                 // Sales Metrics
@@ -258,9 +306,12 @@ namespace CimmpleAPI.Controllers
 
                 var overdueJobs = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId &&
-                               j.DueDate < DateTime.Now &&
+                               j.DueDate.Date < DateTime.Now.Date &&
                                j.Status != null &&
-                               j.Status != "Completed")
+                               j.Status != "Completed" &&
+                               j.Status != "Shipped" &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Canceled")
                     .Count();
 
                 var result = new
@@ -792,7 +843,10 @@ namespace CimmpleAPI.Controllers
                                j.DueDate >= today &&
                                j.DueDate <= endDate &&
                                j.Status != null &&
-                               j.Status != "Completed")
+                               j.Status != "Completed" &&
+                               j.Status != "Shipped" &&
+                               j.Status != "Cancelled" &&
+                               j.Status != "Canceled")
                     .Select(j => new
                     {
                         type = "job_order",
@@ -805,9 +859,10 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Invoice due dates (AR)
+                // Invoice due dates (AR) — exclude voided
                 var invoiceDeadlines = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
+                               !im.IsVoided &&
                                im.DueDate >= today &&
                                im.DueDate <= endDate &&
                                im.PaymentDate == null)
@@ -823,12 +878,15 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Vendor Invoice due dates (AP)
+                // Vendor Invoice due dates (AP) — exclude paid and voided
                 var vendorInvoiceDeadlines = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate >= today &&
                                  vim.DueDate <= endDate &&
-                                 (vim.isPaid != 1 && vim.Paydate == null))
+                                 vim.isPaid != 1 &&
+                                 vim.isPaid != 2 &&
+                                 vim.voideddate == null &&
+                                 vim.Paydate == null)
                     .Select(vim => new
                     {
                         type = "invoice_ap",

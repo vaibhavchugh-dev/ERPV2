@@ -61,7 +61,9 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     results.shipments.length +
     results.ncrReports.length +
     results.users.length +
-    results.documents.length;
+    results.documents.length +
+    (results.products?.length || 0) +
+    (results.rawMaterials?.length || 0);
 
   if (loading) {
     return (
@@ -180,6 +182,10 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
           docParts.push(`v${result.currentVersionNumber}`);
         }
         return docParts.join(' • ');
+      case 'product':
+        return result.description || result.unit || 'Finished part';
+      case 'rawMaterial':
+        return result.description || result.unit || 'Raw material';
       default:
         return '';
     }
@@ -256,6 +262,30 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
             <span>Job Orders ({results.jobOrders.length})</span>
           </div>
           {results.jobOrders.map(result => renderResultItem(result, faBriefcase))}
+        </div>
+      )}
+
+      {(results.products?.length || 0) > 0 && (
+        <div className="search-results-section" key="products-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="products-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faBox} />
+            </div>
+            <span>Parts ({results.products.length})</span>
+          </div>
+          {results.products.map(result => renderResultItem(result, faBox))}
+        </div>
+      )}
+
+      {(results.rawMaterials?.length || 0) > 0 && (
+        <div className="search-results-section" key="rawmaterials-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="rawmaterials-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faClipboardList} />
+            </div>
+            <span>Raw Materials ({results.rawMaterials.length})</span>
+          </div>
+          {results.rawMaterials.map(result => renderResultItem(result, faClipboardList))}
         </div>
       )}
 

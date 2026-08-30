@@ -9,7 +9,7 @@ import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Compone
 
 interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (refresh?: boolean) => void;
   shipmentId: number;
 }
 
@@ -156,7 +156,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
         toast.success(`Shipment ${shipment.shipmentNo} deleted successfully`);
         setShowDeletionDialog(false);
         setDeletionImpact(null);
-        onClose();
+        onClose(true);
       } else {
         toast.error(`Failed to delete shipment ${shipment.shipmentNo}`);
       }
@@ -216,7 +216,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={() => onClose()}
             style={{
               background: 'none',
               border: 'none',

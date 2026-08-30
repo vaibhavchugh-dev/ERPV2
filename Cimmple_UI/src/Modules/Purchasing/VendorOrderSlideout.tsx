@@ -309,33 +309,6 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     try {
       const result = await VendorOrderService.GetVendorOrderById(orderId);
       if (result) {
-        // Convert OrderDate from MM/DD/YY to YYYY-MM-DD for date input
-        const convertToDateInputFormat = (dateStr: string): string => {
-          if (!dateStr) return "";
-          try {
-            // Handle MM/DD/YY format
-            const parts = dateStr.split('/');
-            if (parts.length === 3) {
-              const month = parts[0].padStart(2, '0');
-              const day = parts[1].padStart(2, '0');
-              const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-              return `${year}-${month}-${day}`;
-            }
-            // If already in YYYY-MM-DD format, return as is
-            if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-              return dateStr;
-            }
-            // Try parsing as ISO date
-            const date = new Date(dateStr);
-            if (!isNaN(date.getTime())) {
-              return date.toISOString().split('T')[0];
-            }
-          } catch (e) {
-            console.warn("Error converting date:", dateStr, e);
-          }
-          return "";
-        };
-
         const normalizedDetails = (result.Details || []).map((detail: any) => {
           const partNo = detail.PartNo || "";
           const jobNumber = detail.JobNumber || "";
@@ -350,7 +323,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
         const formDataWithDetails = {
           ...result,
-          OrderDate: convertToDateInputFormat(result.OrderDate), // Convert to YYYY-MM-DD format
+          // OrderDate / ExternalOrderDate already yyyy-MM-dd from service
+          OrderDate: result.OrderDate || "",
+          ExternalOrderDate: result.ExternalOrderDate || "",
           Details: normalizedDetails,
           OrderType: "Vendor", // Always "Vendor" for vendor orders
           MaterialType:
@@ -940,9 +915,33 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     setSelectedInvoiceForPrint(null);
   };
 
-  const handleDeleteInvoice = (invoiceId: number) => {
-    // TODO: Implement invoice deletion functionality
-    toast.info('Invoice deletion functionality is not yet implemented. Please contact the administrator.');
+  const handleDeleteInvoice = async (invoiceId: number) => {
+    if (!invoiceId || invoiceId <= 0) return;
+    if (!window.confirm("Delete this vendor invoice? Related AP bill journal entries will be reversed.")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await VendorInvoiceService.DeleteVendorInvoice(invoiceId);
+      toast.success("Vendor invoice deleted successfully");
+      try {
+        const invoiceable = await VendorInvoiceService.GetInvoiceableItems(orderId);
+        setInvoiceableItems(invoiceable || []);
+        const invoicesData = await VendorInvoiceService.GetVendorInvoices(orderId);
+        setInvoices(invoicesData || []);
+        if (orderId > 0) {
+          await loadOrder();
+        }
+      } catch (refreshError) {
+        console.error("Error refreshing data after invoice delete:", refreshError);
+        toast.warning("Invoice deleted, but failed to refresh order data");
+      }
+    } catch (error: any) {
+      console.error("Error deleting vendor invoice:", error);
+      toast.error(error.message || "Failed to delete vendor invoice");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handlePrintInvoiceModal = () => {
@@ -1014,12 +1013,22 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
       const result = await VendorOrderService.SaveVendorOrder(dataToSave);
 
+      const invoicedLineCount = filledDetails.filter(
+        (d) => (d.InvoicedQty || 0) > 0 ||
+          (d.InvoiceStatus && d.InvoiceStatus !== "Not Invoiced")
+      ).length;
+
       if (mode === "draft") {
         toast.success(orderId > 0 ? "Order saved as draft" : "Order created as draft");
       } else if (status === "Sent" && formData.Status !== "Sent") {
         toast.success("Order marked as Sent — available in Receiving");
       } else {
         toast.success(result.message || (orderId > 0 ? "Order updated successfully" : "Order created successfully"));
+      }
+      if (invoicedLineCount > 0) {
+        toast.info(
+          `${invoicedLineCount} invoiced line${invoicedLineCount === 1 ? "" : "s"} left unchanged (qty/price locked after invoicing).`
+        );
       }
       setIsStateChanged(false);
 
@@ -1565,16 +1574,26 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                             </td>
                             {/* Qty, Unit, Unit Price, Discount, Total, Notes, Action columns - Same as VendorQuotationSlideout */}
                             <td style={{ padding: "0.75rem", width: "100px" }}>
+                              {(() => {
+                                const isInvoiced =
+                                  (detail.InvoicedQty || 0) > 0 ||
+                                  (!!detail.InvoiceStatus && detail.InvoiceStatus !== "Not Invoiced");
+                                return (
                               <input
                                 type="text"
                                 inputMode="numeric"
                                 className="form-input no-spinner"
+                                disabled={isInvoiced}
+                                title={isInvoiced ? "Quantity cannot be changed after invoicing" : undefined}
                                 style={{
                                   width: "100%",
-                                  minWidth: "80px"
+                                  minWidth: "80px",
+                                  backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                  cursor: isInvoiced ? "not-allowed" : undefined,
                                 }}
                                 value={numericDisplayValues.get(`qty-${index}`) ?? (detail.QtyOrdered === 0 ? "" : detail.QtyOrdered.toString())}
                                 onChange={(e) => {
+                                  if (isInvoiced) return;
                                   const inputVal = e.target.value.replace(/[^0-9]/g, '');
                                   setNumericDisplayValues(prev => {
                                     const newMap = new Map(prev);
@@ -1592,6 +1611,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   });
                                 }}
                                 onBlur={(e) => {
+                                  if (isInvoiced) return;
                                   const val = e.target.value === "" ? 1 : parseInt(e.target.value) || 1;
                                   handleDetailChange(index, "QtyOrdered", val);
                                   setNumericDisplayValues(prev => {
@@ -1601,6 +1621,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   });
                                 }}
                               />
+                                );
+                              })()}
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative", width: "80px" }}>
                               <div style={{ position: "relative" }}>

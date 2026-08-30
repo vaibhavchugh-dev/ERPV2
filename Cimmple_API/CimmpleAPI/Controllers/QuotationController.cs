@@ -1255,6 +1255,8 @@ namespace CimmpleAPI.Controllers
                     Status = quotation.Status ?? "Draft",
                     ShippingInstructions = quotation.shippingInstructions ?? "",
                     ExternalVendorPO = quotation.VendorPoNumber ?? "",
+                    ExternalOrderDate = quotation.DueDate?.ToString("yyyy-MM-dd"),
+                    DueDate = quotation.DueDate?.ToString("yyyy-MM-dd"),
                     BuyerName = quotation.contactName ?? "",
                     VendorRefNo = "",
                     QuotationType = quotation.VendorOrderType ?? "Material",

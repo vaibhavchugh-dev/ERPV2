@@ -31,6 +31,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
   formatPartHistoryHint,
@@ -755,26 +756,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Function to convert MM/DD/YY date string to ISO format
-      const convertDateToISO = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString();
-
-        // Handle MM/DD/YY format (e.g., "12/25/24")
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1; // JS months are 0-based
-          const day = parseInt(parts[1]);
-          const year = 2000 + parseInt(parts[2]); // Convert YY to YYYY
-          return new Date(year, month, day).toISOString();
-        }
-
-        // If already in ISO format or other format, try to parse
-        try {
-          return new Date(dateStr).toISOString();
-        } catch {
-          return new Date().toISOString();
-        }
-      };
+      // Function to convert date string to date-only API format (no UTC day-shift)
+      const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
       // Convert quotation data to vendor order format
       const quotationNumber = formData.PONumber < 1000
