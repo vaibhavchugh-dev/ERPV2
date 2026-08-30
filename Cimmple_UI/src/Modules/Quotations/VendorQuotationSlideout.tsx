@@ -31,6 +31,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
   formatPartHistoryHint,
@@ -758,27 +759,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     setLoading(true);
     try {
-      // Function to convert MM/DD/YY date string to ISO format without timezone rollback
-      const convertDateToISO = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString();
-        const trimmed = String(dateStr).trim();
-        if (trimmed.includes('T')) return trimmed;
-
-        // Handle MM/DD/YY or MM/DD/YYYY format (e.g., "12/25/24")
-        const parts = trimmed.split('/');
-        if (parts.length === 3) {
-          const month = parts[0].padStart(2, '0');
-          const day = parts[1].padStart(2, '0');
-          const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-          return `${year}-${month}-${day}T00:00:00.000Z`;
-        }
-
-        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-          return `${trimmed}T00:00:00.000Z`;
-        }
-
-        return `${trimmed}T00:00:00.000Z`;
-      };
+      const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
       // Convert quotation data to vendor order format
       const quotationNumber = formData.PONumber < 1000

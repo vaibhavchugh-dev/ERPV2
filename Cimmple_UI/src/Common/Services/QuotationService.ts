@@ -761,7 +761,7 @@ export class QuotationService {
   };
 
   public static GetVendorQuotations = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<VendorQuotationMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -779,7 +779,7 @@ export class QuotationService {
 
     const url = `/Quotation/GetVendorQuotations`;
     return Instense.get(url, {
-      params: { tenantid: tenantID },
+      params: { tenantid: tenantID, locationId: request.locationId },
     }).then((response) => {
       const result = response.data.result as VendorQuotationMaster[];
       return result;
@@ -810,39 +810,38 @@ export class QuotationService {
       const formatDateForInput = (dateStr: string | null | undefined | Date): string => {
         if (!dateStr) return "";
         try {
+          let date: Date;
           if (dateStr instanceof Date) {
-            const year = String(dateStr.getFullYear());
-            const month = String(dateStr.getMonth() + 1).padStart(2, '0');
-            const day = String(dateStr.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          }
-          const str = String(dateStr).trim();
-          if (str === "" || str === "null" || str === "undefined") return "";
-          if (str.includes("T")) {
-            const datePart = str.split("T")[0];
-            if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-              return datePart;
+            date = dateStr;
+          } else if (typeof dateStr === 'string') {
+            const dateStrTrimmed = dateStr.trim();
+            if (dateStrTrimmed === "" || dateStrTrimmed === "null" || dateStrTrimmed === "undefined") {
+              return "";
             }
-          }
-          if (str.includes("/")) {
-            const parts = str.split("/");
-            if (parts.length === 3) {
-              const month = parts[0].padStart(2, '0');
-              const day = parts[1].padStart(2, '0');
-              const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-              return `${year}-${month}-${day}`;
+            const isoMatch = dateStrTrimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (isoMatch) {
+              return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
             }
+            if (dateStrTrimmed.includes("/")) {
+              const parts = dateStrTrimmed.split("/");
+              if (parts.length === 3) {
+                const month = parts[0].padStart(2, '0');
+                const day = parts[1].padStart(2, '0');
+                const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+                return `${year}-${month}-${day}`;
+              }
+            }
+            date = new Date(dateStrTrimmed);
+            if (isNaN(date.getTime())) {
+              return "";
+            }
+          } else {
+            return "";
           }
-          if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-            return str;
-          }
-          const date = new Date(str);
-          if (!isNaN(date.getTime())) {
-            const year = String(date.getUTCFullYear());
-            const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-            const day = String(date.getUTCDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          }
+          const year = String(date.getFullYear());
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
         } catch (e) {
           console.warn("Error formatting date for input:", dateStr, e);
         }

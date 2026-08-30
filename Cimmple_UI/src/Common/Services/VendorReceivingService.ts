@@ -67,13 +67,15 @@ export interface ReceiveLineItemRequest {
 }
 
 export class VendorReceivingService {
-  public static GetOrdersForReceiving = async (): Promise<OrderForReceiving[] | null> => {
+  public static GetOrdersForReceiving = async (
+    locationId?: number
+  ): Promise<OrderForReceiving[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
     const url = `/Order/GetOrdersForReceiving`;
     const response = await Instense.get(url, {
-      params: { tenantId: tenantID },
+      params: { tenantId: tenantID, locationId },
     });
 
     const result = response.data.result as OrderForReceiving[];

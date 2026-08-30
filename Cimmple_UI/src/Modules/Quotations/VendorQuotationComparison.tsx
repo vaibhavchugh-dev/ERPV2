@@ -4,6 +4,7 @@ import { QuotationService } from "../../Common/Services/QuotationService";
 import { deriveOrderMaterialType, lineTypeFromQuotationType } from "../../Common/Constants/vendorOrderLineTypes";
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
 import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
+import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import "./VendorQuotationComparison.scss";
 
@@ -400,26 +401,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
         return;
       }
 
-      // Function to convert MM/DD/YY date string to ISO format
-      const convertDateToISO = (dateStr: string): string => {
-        if (!dateStr) return new Date().toISOString();
-
-        // Handle MM/DD/YY format (e.g., "12/25/24")
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1; // JS months are 0-based
-          const day = parseInt(parts[1]);
-          const year = 2000 + parseInt(parts[2]); // Convert YY to YYYY
-          return new Date(year, month, day).toISOString();
-        }
-
-        // If already in ISO format or other format, try to parse
-        try {
-          return new Date(dateStr).toISOString();
-        } catch {
-          return new Date().toISOString();
-        }
-      };
+      // Function to convert date string to date-only API format (no UTC day-shift)
+      const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
       // Find master quotation to use its quotation number for order reference
       // If this is a response-only quotation, use the master quotation number
@@ -573,26 +556,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           continue;
         }
 
-        // Function to convert date string to ISO format for order details
-        const convertDateToISO = (dateStr: string): string => {
-          if (!dateStr) return new Date().toISOString();
-
-          // Handle MM/DD/YY format (e.g., "12/25/24")
-          const parts = dateStr.split('/');
-          if (parts.length === 3) {
-            const month = parseInt(parts[0]) - 1; // JS months are 0-based
-            const day = parseInt(parts[1]);
-            const year = 2000 + parseInt(parts[2]); // Convert YY to YYYY
-            return new Date(year, month, day).toISOString();
-          }
-
-          // If already in ISO format or other format, try to parse
-          try {
-            return new Date(dateStr).toISOString();
-          } catch {
-            return new Date().toISOString();
-          }
-        };
+        // Function to convert date string to date-only API format (no UTC day-shift)
+        const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
         // Format date for display (MM/DD/YY)
         const formatDateForDetail = (dateStr: string): string => {

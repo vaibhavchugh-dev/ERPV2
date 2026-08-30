@@ -2686,13 +2686,21 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetOrdersForReceiving")]
-        public async Task<IActionResult> GetOrdersForReceiving([FromQuery] int tenantId)
+        public async Task<IActionResult> GetOrdersForReceiving([FromQuery] int tenantId, [FromQuery] int? locationId = null)
         {
             try
             {
-                var orders = await _context.VendorOrders
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var ordersQuery = _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId && (o.Status == "Sent" || o.Status == "Partially Received"))
+                    .Where(o => o.Tenantid == tenantId && (o.Status == "Sent" || o.Status == "Partially Received"));
+
+                if (filterLocationId.HasValue)
+                    ordersQuery = ordersQuery.Where(o => o.LocationId == filterLocationId.Value);
+
+                var orders = await ordersQuery
                     .OrderByDescending(o => o.OrderDate)
                     .Select(o => new
                     {
@@ -3556,16 +3564,31 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetAllVendorInvoices")]
-        public async Task<IActionResult> GetAllVendorInvoices([FromQuery] int tenantId, [FromQuery] string status = "All", [FromQuery] string searchTerm = "", [FromQuery] int? vendorId = null, [FromQuery] string dateRange = "Last 30 Days", [FromQuery] string startDate = null, [FromQuery] string endDate = null)
+        public async Task<IActionResult> GetAllVendorInvoices(
+            [FromQuery] int tenantId,
+            [FromQuery] string status = "All",
+            [FromQuery] string searchTerm = "",
+            [FromQuery] int? vendorId = null,
+            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] string startDate = null,
+            [FromQuery] string endDate = null,
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 Console.WriteLine($"GetAllVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}, StartDate: {startDate}, EndDate: {endDate}");
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
 
                 // Get real vendor invoices from database
-                var invoices = await _context.VendorInvoiceMaster
+                var invoicesQuery = _context.VendorInvoiceMaster
                     .AsNoTracking()
-                    .Where(i => i.TenantId == tenantId)
+                    .Where(i => i.TenantId == tenantId);
+
+                if (filterLocationId.HasValue)
+                    invoicesQuery = invoicesQuery.Where(i => i.locationId == filterLocationId.Value);
+
+                var invoices = await invoicesQuery
                     .Join(_context.VendorInvoiceDetail,
                         master => master.Id,
                         detail => detail.InvoiceId,
@@ -3901,11 +3924,18 @@ namespace CimmpleAPI.Controllers
             {
                 switch (rangeLower)
                 {
+                    case "this week":
+                        start = now.Date.AddDays(-(int)now.DayOfWeek);
+                        end = start.Value.AddDays(6);
+                        break;
                     case "last 7 days":
                         start = now.Date.AddDays(-7);
                         break;
                     case "last 30 days":
                         start = now.Date.AddDays(-30);
+                        break;
+                    case "last 90 days":
+                        start = now.Date.AddDays(-90);
                         break;
                     case "this month":
                         start = new DateTime(now.Year, now.Month, 1);

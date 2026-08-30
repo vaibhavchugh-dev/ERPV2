@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useLocation, useHistory } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/VendorOrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -35,11 +35,10 @@ const VendorOrders: React.FC = () => {
         processedOrderIdRef.current = orderIdParam;
         setSelectedOrderId(orderId);
         setShowSlideout(true);
-        // Clean up URL
         history.replace(location.pathname);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, location.pathname, history]);
 
   // Listen for custom event from global search
   useEffect(() => {
