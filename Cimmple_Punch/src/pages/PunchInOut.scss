@@ -786,6 +786,21 @@
   text-align: center;
 }
 
+.punch-next-action {
+  margin-bottom: 0.5rem;
+  color: #edf1ff;
+  font-size: 13px;
+
+  strong {
+    color: #93c5fd;
+  }
+}
+
+.punch-next-action-note {
+  color: rgba(237, 241, 255, 0.55);
+  font-size: 12px;
+}
+
 .punch-password-block {
   display: flex;
   flex-direction: column;

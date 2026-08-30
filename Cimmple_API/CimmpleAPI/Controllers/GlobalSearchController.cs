@@ -493,9 +493,9 @@ namespace CimmpleAPI.Controllers
         {
             var products = await _context.ProductMaster
                 .Where(p => p.tenantid == tenantId &&
-                    (p.partno != null && p.partno.ToLower().Contains(searchTerm) ||
-                     p.partname != null && p.partname.ToLower().Contains(searchTerm) ||
-                     p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm)))
+                    ((p.partno != null && p.partno.ToLower().Contains(searchTerm)) ||
+                     (p.partname != null && p.partname.ToLower().Contains(searchTerm)) ||
+                     (p.pdescription != null && p.pdescription.ToLower().Contains(searchTerm))))
                 .Take(limit)
                 .Select(p => new
                 {
@@ -517,11 +517,11 @@ namespace CimmpleAPI.Controllers
         private async Task<List<object>> SearchRawMaterials(string searchTerm, int tenantId, int limit)
         {
             var materials = await _context.RawMaterialMaster
-                .Where(r => r.Tenantid == tenantId &&
-                    (r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm) ||
-                     r.PartName != null && r.PartName.ToLower().Contains(searchTerm) ||
-                     r.Description != null && r.Description.ToLower().Contains(searchTerm) ||
-                     r.Sku != null && r.Sku.ToLower().Contains(searchTerm)))
+                .Where(r => r.Tenantid == tenantId && r.IsActive &&
+                    ((r.PartNo != null && r.PartNo.ToLower().Contains(searchTerm)) ||
+                     (r.PartName != null && r.PartName.ToLower().Contains(searchTerm)) ||
+                     (r.Description != null && r.Description.ToLower().Contains(searchTerm)) ||
+                     (r.Sku != null && r.Sku.ToLower().Contains(searchTerm))))
                 .Take(limit)
                 .Select(r => new
                 {
@@ -543,19 +543,20 @@ namespace CimmpleAPI.Controllers
         // Purchasing Search Methods
         private async Task<List<object>> SearchVendorOrders(string searchTerm, int tenantId, int limit)
         {
-            var cleanStr = searchTerm.Replace("vo#", "").Replace("vo", "").Replace("#", "").Trim();
-            bool isNumeric = int.TryParse(cleanStr, out int orderNumber);
-            int offsetNumber = orderNumber > 999 ? orderNumber - 999 : orderNumber;
+            var cleaned = searchTerm.Replace("vo#", "").Replace("vo", "").Replace("#", "").Trim();
+            bool isNumeric = int.TryParse(cleaned, out int displayOrPoNumber);
 
             var vendorOrdersQuery = _context.VendorOrders
                 .Where(v => v.Tenantid == tenantId);
 
             if (isNumeric)
             {
+                // UI display is VO#(PONumber+999) when PONumber < 1000 (e.g. VO#1013 => PONumber 14)
+                var poFromDisplay = displayOrPoNumber >= 1000 ? displayOrPoNumber - 999 : displayOrPoNumber;
                 vendorOrdersQuery = vendorOrdersQuery.Where(v =>
-                    v.PONumber == orderNumber ||
-                    v.PONumber == offsetNumber ||
-                    v.PONumber.ToString().Contains(cleanStr) ||
+                    v.PONumber == displayOrPoNumber ||
+                    v.PONumber == poFromDisplay ||
+                    v.PONumber.ToString().Contains(cleaned) ||
                     (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
                     (v.VendorPoNumber != null && v.VendorPoNumber.ToLower().Contains(searchTerm)));
             }

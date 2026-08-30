@@ -7,6 +7,7 @@ import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -30,6 +31,7 @@ interface PaymentModalProps {
 }
 
 const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
+  const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Check');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -45,13 +47,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [paymentAmount, setPaymentAmount] = useState(
     balanceDue > 0 ? balanceDue.toFixed(2) : invoice.totalAmount.toFixed(2)
   );
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -418,7 +413,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
 
 interface VendorInvoiceDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose: (refresh?: boolean) => void;
   invoiceId: number;
   /** When true, opens the payment form after the invoice loads */
   initialShowPayment?: boolean;
@@ -434,6 +429,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   onPaymentComplete,
   onInvoiceDeleted
 }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -491,26 +487,6 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       setInvoice(null);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
     }
   };
 
@@ -604,7 +580,10 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
         }
       ],
       willBeAffected: [],
-      warnings: ["This action cannot be undone"]
+      warnings: [
+        "This action cannot be undone",
+        "Any related AP bill journal entry will be reversed automatically"
+      ]
     };
     setDeletionImpact(impact);
     setShowDeletionDialog(true);
@@ -620,7 +599,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       setDeletionImpact(null);
       onInvoiceDeleted?.();
       onPaymentComplete?.();
-      onClose();
+      onClose(true);
     } catch (error: any) {
       console.error("Error deleting vendor invoice:", error);
       toast.error(`Error deleting vendor invoice: ${error.message || "Unknown error"}`);
@@ -772,7 +751,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               Delete
             </button>
             <button
-              onClick={onClose}
+              onClick={() => onClose()}
               style={{
                 height: '36px',
                 display: 'inline-flex',

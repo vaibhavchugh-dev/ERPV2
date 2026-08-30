@@ -1,6 +1,6 @@
 import api from "./apiClient";
 
-export type PunchDirection = "IN" | "OUT";
+export type PunchDirection = "IN" | "OUT" | "BREAK_OUT" | "BREAK_IN";
 
 export interface PunchBoardUser {
   userUniqueId: number;
@@ -20,7 +20,9 @@ export interface PunchBoardUser {
   isPunchedInOnly?: number;
   isCompletedPunch?: number;
   isOnBreak?: number;
-  status?: PunchDirection;
+  status?: string;
+  nextDirection?: PunchDirection;
+  nextDirectionLabel?: string;
   lastPunchTime?: string;
   lastPunchMode?: string;
   locationName?: string;
@@ -39,6 +41,7 @@ export interface PunchBoardResponse {
 export interface PunchResult {
   success: boolean;
   message?: string;
+  direction?: PunchDirection;
   faceMatchConfidence?: number;
   confidence?: number;
 }
@@ -48,6 +51,50 @@ const readApiResult = (data: unknown) => {
     return (data as { result: unknown }).result;
   }
   return data;
+};
+
+const normalizeDirection = (value?: string): PunchDirection | undefined => {
+  if (!value) return undefined;
+  const upper = value.toUpperCase();
+  if (upper === "BREAKOUT") return "BREAK_OUT";
+  if (upper === "BREAKIN") return "BREAK_IN";
+  if (upper === "IN" || upper === "OUT" || upper === "BREAK_OUT" || upper === "BREAK_IN") {
+    return upper;
+  }
+  return undefined;
+};
+
+export const getPunchDirectionLabel = (direction?: string): string => {
+  switch ((direction || "").toUpperCase()) {
+    case "OUT":
+      return "Punch Out";
+    case "BREAK_OUT":
+    case "BREAKOUT":
+      return "Break Out";
+    case "BREAK_IN":
+    case "BREAKIN":
+      return "Break In";
+    case "IN":
+    default:
+      return "Punch In";
+  }
+};
+
+/** Client-side fallback mirroring server rules (tenant local time approximated by device clock). */
+export const resolveNextPunchDirection = (employee: PunchBoardUser, now = new Date()): PunchDirection => {
+  if (employee.nextDirection) {
+    return employee.nextDirection;
+  }
+  if (employee.isOnBreak === 1) {
+    return "BREAK_IN";
+  }
+  if (employee.isCompletedPunch === 1) {
+    return "IN";
+  }
+  if (employee.isPunchedInOnly === 1) {
+    return now.getHours() >= 17 ? "OUT" : "BREAK_OUT";
+  }
+  return "IN";
 };
 
 const normalizeBoard = (data: unknown): PunchBoardResponse => {
@@ -61,6 +108,9 @@ const normalizeBoard = (data: unknown): PunchBoardResponse => {
   const availableUsers: PunchBoardUser[] = [];
 
   users.forEach((user) => {
+    const nextDirection = normalizeDirection(
+      (user.nextDirection as string | undefined) || undefined
+    );
     const normalizedUser: PunchBoardUser = {
       userUniqueId: Number(user.user_UniqueID || user.userUniqueId),
       empCode: user.empCode as string | undefined,
@@ -79,11 +129,16 @@ const normalizeBoard = (data: unknown): PunchBoardResponse => {
       isPunchedInOnly: user.isPunchedInOnly as number | undefined,
       isCompletedPunch: user.isCompletedPunch as number | undefined,
       isOnBreak: user.isOnBreak as number | undefined,
-      status: user.status as PunchDirection | undefined,
+      status: user.status as string | undefined,
+      nextDirection,
+      nextDirectionLabel:
+        (user.nextDirectionLabel as string | undefined) ||
+        getPunchDirectionLabel(nextDirection),
       lastPunchTime: user.lastPunchTime as string | undefined,
       lastPunchMode: user.lastPunchMode as string | undefined,
       locationName: user.locationName as string | undefined,
       isProfile: user.isProfile as boolean | undefined,
+      hasPassword: user.hasPassword as boolean | undefined,
     };
 
     if (normalizedUser.isOnBreak === 1) {

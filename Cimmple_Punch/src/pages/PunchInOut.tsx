@@ -1,5 +1,11 @@
 import { toast } from "react-toastify";
-import { PunchDirection, PunchInOutService } from "../services/punchInOutService";
+import {
+  getPunchDirectionLabel,
+  PunchBoardUser as ServicePunchBoardUser,
+  PunchDirection,
+  PunchInOutService,
+  resolveNextPunchDirection,
+} from "../services/punchInOutService";
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { FaCamera, FaLock, FaRightFromBracket, FaUnlock } from "react-icons/fa6";
@@ -38,32 +44,10 @@ const getNormalizedConfidence = (result: any): number | undefined => {
   return undefined;
 };
 
-export interface PunchBoardUser {
-  userUniqueId: number;
-  empCode?: string;
-  firstName?: string;
-  lastName?: string;
-  userName?: string;
-  email?: string;
-  tenantID?: number;
-  empid?: number;
-  role?: number;
-  roleName?: string;
+export type PunchBoardUser = ServicePunchBoardUser & {
   noofusers?: number;
-  todayPunchIn?: string;
-  todayPunchOut?: string;
-  todayBreakOut?: string;
-  isNotPunched?: number;
-  isPunchedInOnly?: number;
-  isCompletedPunch?: number;
-  isOnBreak?: number;
-  status?: PunchDirection;
-  lastPunchTime?: string;
-  lastPunchMode?: string;
-  locationName?: string;
   profilePicUrl?: string;
-  isProfile?: boolean;
-}
+};
 
 const getDisplayName = (user: PunchBoardUser) => {
   const name = `${user.firstName || ""} ${user.lastName || ""}`.trim();
@@ -268,9 +252,14 @@ const PunchWorkflowPanel: React.FC<{
       (FACE_PUNCH_ENABLED
         ? !isNewEmployee || passwordEntry.trim().length > 0
         : passwordEntry.trim().length > 0);
+    const nextDirection = selectedEmployee
+      ? resolveNextPunchDirection(selectedEmployee)
+      : "IN";
+    const nextLabel =
+      selectedEmployee?.nextDirectionLabel || getPunchDirectionLabel(nextDirection);
     const submitLabel = !FACE_PUNCH_ENABLED || isNewEmployee || passwordEntry.trim()
-      ? "Verify Password"
-      : "Capture & Punch";
+      ? `Verify & ${nextLabel}`
+      : `Capture & ${nextLabel}`;
 
     return (
       <div className="punch-workflow-panel">
@@ -440,6 +429,15 @@ const PunchWorkflowPanel: React.FC<{
               </div>
 
               <div className="punch-camera-hint">
+                <div className="punch-next-action">
+                  Next action: <strong>{nextLabel}</strong>
+                  {nextDirection === "BREAK_OUT" && (
+                    <span className="punch-next-action-note"> (before 5:00 PM)</span>
+                  )}
+                  {nextDirection === "OUT" && (
+                    <span className="punch-next-action-note"> (end of day)</span>
+                  )}
+                </div>
                 {isNewEmployee
                   ? "This employee is not enrolled yet. Enter the password to punch, then add a face photo in Employee Master."
                   : passwordEntry.trim()
@@ -1110,13 +1108,12 @@ export const PunchInOut: React.FC = () => {
   }, [boardMembers, employeeSearchQuery]);
 
   const determinePunchDirection = React.useCallback((employee: PunchBoardUser): PunchDirection => {
-    if (employee.isOnBreak === 1) {
-      return "IN";
-    }
-    if (employee.isPunchedInOnly === 1) {
-      return "OUT";
-    }
-    return "IN";
+    return resolveNextPunchDirection(employee);
+  }, []);
+
+  const formatPunchSuccess = React.useCallback((employee: PunchBoardUser, message?: string, direction?: string) => {
+    const label = getPunchDirectionLabel(direction || resolveNextPunchDirection(employee));
+    return message || `${label} successful for ${getDisplayName(employee)}.`;
   }, []);
 
   const findEmployeeByCode = React.useCallback((value: string) => {
@@ -1161,15 +1158,19 @@ export const PunchInOut: React.FC = () => {
     setPunchStage("camera");
   };
 
-  const verifyPasswordPunch = React.useCallback(async (): Promise<boolean> => {
+  const verifyPasswordPunch = React.useCallback(async (): Promise<{
+    success: boolean;
+    message?: string;
+    direction?: string;
+  }> => {
     if (!selectedEmployee) {
       toast.error("Please select an employee first.");
-      return false;
+      return { success: false };
     }
 
     if (!passwordEntry.trim()) {
       toast.error("Please enter your password.");
-      return false;
+      return { success: false };
     }
 
     setCaptureLoading(true);
@@ -1182,15 +1183,19 @@ export const PunchInOut: React.FC = () => {
       );
 
       if (result?.success) {
-        return true;
+        return {
+          success: true,
+          message: result.message,
+          direction: result.direction,
+        };
       }
 
       toast.error(result?.message || "Password verification failed.");
-      return false;
+      return { success: false };
     } catch (err: any) {
       console.error("Password verification error:", err);
       toast.error(`Password verification failed: ${err}`);
-      return false;
+      return { success: false };
     } finally {
       setCaptureLoading(false);
     }
@@ -1205,7 +1210,11 @@ export const PunchInOut: React.FC = () => {
     setPunchStage("select");
   }, []);
 
-  const captureAndPunch = React.useCallback(async (): Promise<{ success: boolean; message?: string }> => {
+  const captureAndPunch = React.useCallback(async (): Promise<{
+    success: boolean;
+    message?: string;
+    direction?: string;
+  }> => {
     if (!selectedEmployee || captureLoading || captureInFlightRef.current) {
       return { success: false, message: "Capture already in progress." };
     }
@@ -1214,12 +1223,11 @@ export const PunchInOut: React.FC = () => {
     setCaptureLoading(true);
 
     try {
-      const imageBlob = capturedImageBlobRef.current || (await captureCurrentFrameBlob());
+      const imageBlob = await captureCurrentFrameBlob();
       if (!imageBlob) {
         return { success: false, message: "Unable to capture the current frame." };
       }
 
-      capturedImageBlobRef.current = imageBlob;
       const result = await PunchInOutService.PunchByCapturedImage(
         imageBlob,
         selectedEmployee.userUniqueId,
@@ -1229,18 +1237,22 @@ export const PunchInOut: React.FC = () => {
       const normalizedConfidence = getNormalizedConfidence(result);
 
       if (result?.success && (normalizedConfidence === undefined || isFaceMatchValid(normalizedConfidence))) {
-        return { success: true, message: result?.message };
+        capturedImageBlobRef.current = null;
+        return { success: true, message: result?.message, direction: result?.direction };
       }
 
+      // Clear cached frame so the next attempt captures a fresh image
+      capturedImageBlobRef.current = null;
       return { success: false, message: result?.message || "No matching user was identified." };
     } catch (err) {
       console.error("Punch capture error:", err);
+      capturedImageBlobRef.current = null;
       return { success: false, message: "Unable to process face punch." };
     } finally {
       captureInFlightRef.current = false;
       setCaptureLoading(false);
     }
-  }, [captureCurrentFrameBlob, captureLoading, selectedEmployee]);
+  }, [captureCurrentFrameBlob, captureLoading, determinePunchDirection, selectedEmployee]);
 
   const handleCameraSubmit = React.useCallback(async () => {
     if (!selectedEmployee || captureLoading || captureInFlightRef.current) {
@@ -1255,9 +1267,9 @@ export const PunchInOut: React.FC = () => {
         toast.error("Enter your password to punch. Face punch is not enabled yet.");
         return;
       }
-      const passwordVerified = await verifyPasswordPunch();
-      if (passwordVerified) {
-        toast.success(`Punched successfully for ${getDisplayName(selectedEmployee)}.`);
+      const passwordResult = await verifyPasswordPunch();
+      if (passwordResult.success) {
+        toast.success(formatPunchSuccess(selectedEmployee, passwordResult.message, passwordResult.direction));
         resetSelection();
         setTimeout(() => loadBoard(), 500);
       }
@@ -1270,9 +1282,9 @@ export const PunchInOut: React.FC = () => {
         return;
       }
 
-      const passwordVerified = await verifyPasswordPunch();
-      if (passwordVerified) {
-        toast.success(`Punched successfully for ${getDisplayName(selectedEmployee)}.`);
+      const passwordResult = await verifyPasswordPunch();
+      if (passwordResult.success) {
+        toast.success(formatPunchSuccess(selectedEmployee, passwordResult.message, passwordResult.direction));
         resetSelection();
         setTimeout(() => loadBoard(), 500);
       }
@@ -1280,9 +1292,9 @@ export const PunchInOut: React.FC = () => {
     }
 
     if (hasPassword) {
-      const passwordVerified = await verifyPasswordPunch();
-      if (passwordVerified) {
-        toast.success(`Password verified for ${getDisplayName(selectedEmployee)}.`);
+      const passwordResult = await verifyPasswordPunch();
+      if (passwordResult.success) {
+        toast.success(formatPunchSuccess(selectedEmployee, passwordResult.message, passwordResult.direction));
         resetSelection();
         setTimeout(() => loadBoard(), 500);
       }
@@ -1291,14 +1303,23 @@ export const PunchInOut: React.FC = () => {
 
     const captureResult = await captureAndPunch();
     if (captureResult.success) {
-      toast.success(`Punched successfully for ${getDisplayName(selectedEmployee)}.`);
+      toast.success(formatPunchSuccess(selectedEmployee, captureResult.message, captureResult.direction));
       resetSelection();
       setTimeout(() => loadBoard(), 500);
       return;
     }
 
     toast.error(captureResult.message || "Unable to process face punch.");
-  }, [captureAndPunch, captureLoading, loadBoard, passwordEntry, resetSelection, selectedEmployee, verifyPasswordPunch]);
+  }, [
+    captureAndPunch,
+    captureLoading,
+    formatPunchSuccess,
+    loadBoard,
+    passwordEntry,
+    resetSelection,
+    selectedEmployee,
+    verifyPasswordPunch,
+  ]);
 
   if (!isPunchAuthorized) {
     return <Navigate to="/login" replace />;

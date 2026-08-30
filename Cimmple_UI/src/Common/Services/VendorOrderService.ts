@@ -1,5 +1,6 @@
 import Instense from "./Axios-config";
 import { defaultLineTypeForOrder } from "../Constants/vendorOrderLineTypes";
+import { toDateOnlyApiString, toHtmlDateInputValue } from "../Utils/Formatting";
 
 export interface VendorOrderMaster {
   orderID: number;
@@ -165,48 +166,45 @@ export class VendorOrderService {
 
     const result = response.data.result as any;
 
+    // Format line DueDate for display (MM/DD/YY) without UTC day-shift
     const formatDate = (dateStr: string | null | undefined | Date): string => {
       if (!dateStr) return "";
       try {
-        if (dateStr instanceof Date) {
-          const month = String(dateStr.getMonth() + 1).padStart(2, '0');
-          const day = String(dateStr.getDate()).padStart(2, '0');
-          const year = String(dateStr.getFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        }
-        const str = String(dateStr).trim();
-        if (!str || str === "null" || str === "undefined") return "";
-        if (str.includes("T")) {
-          const datePart = str.split("T")[0];
-          const parts = datePart.split("-");
-          if (parts.length === 3) {
-            return `${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}/${parts[0].slice(-2)}`;
+        if (typeof dateStr === "string") {
+          const trimmed = dateStr.trim();
+          if (!trimmed || trimmed === "null" || trimmed === "undefined") return "";
+          const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+          if (isoMatch) {
+            return `${isoMatch[2]}/${isoMatch[3]}/${isoMatch[1].slice(-2)}`;
           }
         }
-        if (str.includes("/")) {
-          const parts = str.split("/");
-          if (parts.length === 3) {
-            return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2].slice(-2)}`;
-          }
-        }
-        if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-          const parts = str.split("-");
-          return `${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}/${parts[0].slice(-2)}`;
-        }
-        const date = new Date(str);
-        if (!isNaN(date.getTime())) {
-          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-          const day = String(date.getUTCDate()).padStart(2, '0');
-          const year = String(date.getUTCFullYear()).slice(-2);
-          return `${month}/${day}/${year}`;
-        }
+        const date = dateStr instanceof Date ? dateStr : new Date(String(dateStr));
+        if (isNaN(date.getTime())) return "";
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        const year = String(date.getFullYear()).slice(-2);
+        return `${month}/${day}/${year}`;
       } catch (e) {
         console.warn("Error formatting date:", dateStr, e);
       }
       return "";
     };
 
-    const rawExtDate = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
+    // Header dates must be yyyy-MM-dd for <input type="date">
+    const toDateInput = (raw: string | Date | null | undefined): string => {
+      if (!raw) return "";
+      if (typeof raw === "string") {
+        const isoMatch = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+        const html = toHtmlDateInputValue(raw);
+        if (html) return html;
+      }
+      const display = formatDate(raw);
+      return display ? toHtmlDateInputValue(display) : "";
+    };
+
+    const orderDateRaw = result.OrderDate || result.orderDate;
+    const externalDateRaw = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
 
     return {
       OrderID: result.OrderID || result.orderID || 0,
@@ -217,14 +215,14 @@ export class VendorOrderService {
       VendorName: result.VendorName || result.vendorName || "",
       Address: result.Address || result.address || "",
       VendorPoNumber: result.VendorPoNumber || result.vendorPoNumber || "",
-      OrderDate: formatDate(result.OrderDate || result.orderDate),
+      OrderDate: toDateInput(orderDateRaw),
       TotalAmount: result.TotalAmount || result.totalAmount || 0,
       UserId: result.UserId || result.userId || 0,
       UserToken: result.UserToken || result.userToken || 0,
       Status: result.Status || result.status || "Draft",
       ShippingInstructions: result.ShippingInstructions || result.shippingInstructions || "",
       ExternalVendorPO: result.ExternalVendorPO || result.externalVendorPO || "",
-      ExternalOrderDate: rawExtDate ? formatDate(rawExtDate) : undefined,
+      ExternalOrderDate: externalDateRaw ? toDateInput(externalDateRaw) : undefined,
       BuyerName: result.BuyerName || result.buyerName || "",
       VendorRefNo: result.VendorRefNo || result.vendorRefNo || "",
       OrderType: "Vendor", // Always "Vendor" for vendor orders
@@ -232,6 +230,9 @@ export class VendorOrderService {
       LocationId: result.LocationId || result.locationId,
       convertedOrderId: result.convertedOrderId,
       ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
+      QuotationId: result.QuotationId || result.quotationId || 0,
+      QuotationNo: result.QuotationNo || result.quotationNo || "",
+      AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
       Details: (result.Details || result.details || []).map((d: any) => ({
         ID: d.ID || d.id || 0,
         ItemNo: d.ItemNo || d.itemNo || 0,
@@ -292,35 +293,8 @@ export class VendorOrderService {
       allKeys: Object.keys(request)
     });
 
-    // Convert date strings to ISO format (following OrderService pattern)
-    const convertDate = (dateStr: string): string => {
-      if (!dateStr) return new Date().toISOString();
-      try {
-        // If already ISO format, return as is
-        if (dateStr.includes('T') || dateStr.includes('Z')) {
-          return new Date(dateStr).toISOString();
-        }
-        // Handle YYYY-MM-DD format (from date input)
-        if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-          return new Date(dateStr + 'T00:00:00').toISOString();
-        }
-        // Handle MM/DD/YYYY or MM/DD/YY format
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const month = parseInt(parts[0]) - 1;
-          const day = parseInt(parts[1]);
-          let year = parseInt(parts[2]);
-          // Handle 2-digit year
-          if (year < 100) {
-            year = 2000 + year;
-          }
-          return new Date(year, month, day).toISOString();
-        }
-        return new Date(dateStr).toISOString();
-      } catch {
-        return new Date().toISOString();
-      }
-    };
+    // Date-only strings (yyyy-MM-dd) — avoid toISOString UTC day-shift
+    const convertDate = (dateStr: string): string => toDateOnlyApiString(dateStr);
 
     // Build payload for vendor order endpoint
     const payload: any = {
@@ -355,7 +329,7 @@ export class VendorOrderService {
         ItemNo: d.ItemNo || 0,
         PartName: d.PartName || "",
         PartNo: d.PartNo || "",
-        DueDate: convertDate(d.DueDate || d.LeadTime || new Date().toISOString()),
+        DueDate: convertDate(d.DueDate || d.LeadTime || ""),
         JobNumber: d.JobNumber || "",
         JobDesc: d.JobDesc || "",
         QtyOrdered: d.QtyOrdered || 0,

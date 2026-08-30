@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faDollarSign, faArrowUp, faArrowDown, faClock, faCheckCircle, faExclamationTriangle, faCalendar, faFilter } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -8,6 +9,7 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 // Using interfaces from AccountingService
 
 const PaymentDashboard: React.FC = () => {
+  const history = useHistory();
   const { formatCurrency: formatCurrencySettings, formatDate } = useFormatting();
   const [summary, setSummary] = useState<PaymentDashboardMetrics | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
@@ -31,8 +33,8 @@ const PaymentDashboard: React.FC = () => {
         setSummary(dashboardMetrics);
       }
 
-      // Load recent transactions from real API
-      const transactions = await AccountingService.GetRecentTransactions(100);
+      // Load recent transactions from real API (same date range as metrics)
+      const transactions = await AccountingService.GetRecentTransactions(100, dateRange);
       if (transactions) {
         setRecentTransactions(transactions);
       }
@@ -125,12 +127,18 @@ const PaymentDashboard: React.FC = () => {
           marginBottom: '2rem'
         }}>
           {/* Accounts Receivable */}
-          <div style={{
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => history.push('/accounts/receivable')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') history.push('/accounts/receivable'); }}
+            style={{
             backgroundColor: 'white',
             borderRadius: '0.5rem',
             boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
             padding: '1.5rem',
-            borderLeft: '4px solid #10b981'
+            borderLeft: '4px solid #10b981',
+            cursor: 'pointer'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
@@ -170,12 +178,18 @@ const PaymentDashboard: React.FC = () => {
           </div>
 
           {/* Accounts Payable */}
-          <div style={{
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => history.push('/accounts/payable')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') history.push('/accounts/payable'); }}
+            style={{
             backgroundColor: 'white',
             borderRadius: '0.5rem',
             boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
             padding: '1.5rem',
-            borderLeft: '4px solid #ef4444'
+            borderLeft: '4px solid #ef4444',
+            cursor: 'pointer'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>

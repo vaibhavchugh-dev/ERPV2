@@ -513,11 +513,15 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int? customerId = null,
             [FromQuery] string dateRange = "Last 30 Days",
             [FromQuery] string startDate = null,
-            [FromQuery] string endDate = null)
+            [FromQuery] string endDate = null,
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var now = DateTime.Now;
 
                 DateTime? reqStartDate = null;
@@ -525,6 +529,9 @@ namespace CimmpleAPI.Controllers
                 switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
                     case "this week":
+                        reqStartDate = now.Date.AddDays(-(int)now.DayOfWeek);
+                        reqEndDate = reqStartDate.Value.AddDays(6);
+                        break;
                     case "last 7 days":
                         reqStartDate = now.Date.AddDays(-7);
                         break;
@@ -545,6 +552,7 @@ namespace CimmpleAPI.Controllers
                     case "all dates":
                         break;
                     default:
+                        // Unknown preset: do not silently rewrite to last 30 days
                         break;
                 }
 
@@ -591,6 +599,9 @@ namespace CimmpleAPI.Controllers
                 {
                     query = query.Where(x => x.Invoice.InvoiceDate <= reqEndDate.Value);
                 }
+                if (filterLocationId.HasValue)
+                    query = query.Where(x =>
+                        x.CustomerOrder.locationId == filterLocationId.Value);
                 if (customerId.HasValue)
                     query = query.Where(x => x.CustomerOrder.CustomerID == customerId.Value);
                 if (!string.IsNullOrWhiteSpace(searchTerm))
@@ -994,6 +1005,9 @@ namespace CimmpleAPI.Controllers
 
                     if (invoice == null)
                         return NotFound(new { error = "Customer invoice not found" });
+
+                    if (invoice.IsVoided)
+                        return BadRequest(new { error = "Cannot record payment on a voided customer invoice." });
 
                     var alreadyPaid = GetEffectivePaidAmount(invoice);
                     var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);

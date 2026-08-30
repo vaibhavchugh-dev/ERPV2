@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faEye, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
@@ -12,6 +12,7 @@ import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -363,7 +364,9 @@ interface FilterOptions {
 const CustomerInvoices: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
@@ -386,22 +389,23 @@ const CustomerInvoices: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
-  // Handle URL parameter to open invoice (from global search)
+  // Handle URL parameter to open invoice (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedInvoiceId(id);
         setShowDetailModal(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -425,7 +429,8 @@ const CustomerInvoices: React.FC = () => {
         filters.status,
         filters.searchTerm,
         filters.customerId,
-        filters.dateRange
+        filters.dateRange,
+        locationIdParam
       );
 
       if (result && Array.isArray(result)) {
@@ -467,9 +472,17 @@ const CustomerInvoices: React.FC = () => {
     setShowDetailModal(true);
   };
 
-  const handleCloseDetailModal = () => {
+  const handleCloseDetailModal = (refresh?: boolean) => {
     setShowDetailModal(false);
     setSelectedInvoiceId(0);
+    if (refresh) {
+      loadInvoices();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
+    }
   };
 
   const handleNavigateToOrder = (orderId: number) => {
@@ -719,8 +732,10 @@ const CustomerInvoices: React.FC = () => {
 
   const dateRangeOptions = [
     { value: 'All', label: 'All Dates' },
+    { value: 'This Week', label: 'This Week' },
     { value: 'Last 7 Days', label: 'Last 7 Days' },
     { value: 'Last 30 Days', label: 'Last 30 Days' },
+    { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
     { value: 'Last Month', label: 'Last Month' }
   ];
@@ -737,6 +752,7 @@ const CustomerInvoices: React.FC = () => {
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: statusOptions,

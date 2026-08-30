@@ -87,21 +87,16 @@ namespace CimmpleAPI.Controllers
                 punchesByUser.TryGetValue(u.User_UniqueID, out var logs);
                 logs ??= new List<FaceAttendanceLog>();
 
-                var lastIn = logs.LastOrDefault(p => string.Equals(p.Direction, "IN", StringComparison.OrdinalIgnoreCase));
-                var lastOut = logs.LastOrDefault(p => string.Equals(p.Direction, "OUT", StringComparison.OrdinalIgnoreCase));
-                var lastBreakOut = logs.LastOrDefault(p =>
-                    string.Equals(p.Direction, "BREAK_OUT", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(p.Direction, "BREAKOUT", StringComparison.OrdinalIgnoreCase));
+                var lastIn = logs.FirstOrDefault(p => IsClockIn(p.Direction));
+                var lastOut = logs.LastOrDefault(p => IsDayOut(p.Direction));
+                var lastBreakOut = logs.LastOrDefault(p => IsBreakOut(p.Direction));
                 var last = logs.LastOrDefault();
 
-                var isOnBreak = last != null && (
-                    string.Equals(last.Direction, "BREAK_OUT", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(last.Direction, "BREAKOUT", StringComparison.OrdinalIgnoreCase));
-                var isPunchedInOnly = !isOnBreak && last != null
-                    && string.Equals(last.Direction, "IN", StringComparison.OrdinalIgnoreCase);
-                var isCompletedPunch = last != null
-                    && string.Equals(last.Direction, "OUT", StringComparison.OrdinalIgnoreCase);
+                var isOnBreak = last != null && IsBreakOut(last.Direction);
+                var isPunchedInOnly = last != null && IsOnPremises(last.Direction);
+                var isCompletedPunch = last != null && IsDayOut(last.Direction);
                 var isNotPunched = last == null;
+                var nextDirection = ResolveNextDirection(last?.Direction, nowLocal);
 
                 faces.TryGetValue(u.User_UniqueID, out var face);
                 var isProfile = face != null && (face.AzureFaceRegistered || face.AwsFaceRegistered);
@@ -127,6 +122,8 @@ namespace CimmpleAPI.Controllers
                     isCompletedPunch = isCompletedPunch ? 1 : 0,
                     isOnBreak = isOnBreak ? 1 : 0,
                     status = last?.Direction,
+                    nextDirection,
+                    nextDirectionLabel = GetDirectionLabel(nextDirection),
                     lastPunchTime = last != null ? DateTime.SpecifyKind(last.PunchTime, DateTimeKind.Utc) : (DateTime?)null,
                     lastPunchMode = last?.VerificationType,
                     isProfile,
@@ -242,20 +239,24 @@ namespace CimmpleAPI.Controllers
                         continue;
                     }
 
-                    var firstIn = dayLogs.FirstOrDefault(p => string.Equals(p.Direction, "IN", StringComparison.OrdinalIgnoreCase));
-                    var lastOut = dayLogs.LastOrDefault(p => string.Equals(p.Direction, "OUT", StringComparison.OrdinalIgnoreCase));
+                    var firstIn = dayLogs.FirstOrDefault(p => IsClockIn(p.Direction));
+                    var lastOut = dayLogs.LastOrDefault(p => IsDayOut(p.Direction));
                     var last = dayLogs.LastOrDefault();
-                    var lastInOnly = last != null && string.Equals(last.Direction, "IN", StringComparison.OrdinalIgnoreCase);
+                    var onPremises = last != null && IsOnPremises(last.Direction);
                     string status;
                     if (dayLogs.Count == 0)
                     {
                         status = "noPunch";
                     }
-                    else if (last != null && string.Equals(last.Direction, "OUT", StringComparison.OrdinalIgnoreCase))
+                    else if (last != null && IsDayOut(last.Direction))
                     {
                         status = "completed";
                     }
-                    else if (lastInOnly && day < todayLocal)
+                    else if (last != null && IsBreakOut(last.Direction))
+                    {
+                        status = day < todayLocal ? "missingOut" : "onBreak";
+                    }
+                    else if (onPremises && day < todayLocal)
                     {
                         status = "missingOut";
                     }
@@ -369,12 +370,14 @@ namespace CimmpleAPI.Controllers
             foreach (var punch in dayLogs)
             {
                 var local = ToLocal(tenantId, punch.PunchTime);
-                if (string.Equals(punch.Direction, "IN", StringComparison.OrdinalIgnoreCase))
+                if (IsOnPremises(punch.Direction))
                 {
+                    // Start (or resume) a work segment: IN / BREAK_IN
                     openIn = local;
                 }
-                else if (string.Equals(punch.Direction, "OUT", StringComparison.OrdinalIgnoreCase) && openIn.HasValue)
+                else if ((IsBreakOut(punch.Direction) || IsDayOut(punch.Direction)) && openIn.HasValue)
                 {
+                    // Pause for break or end the day
                     if (local > openIn.Value)
                     {
                         total += local - openIn.Value;
@@ -383,6 +386,7 @@ namespace CimmpleAPI.Controllers
                 }
             }
 
+            // Still on premises (or returned from break): count through now for today
             if (openIn.HasValue && isToday && nowLocal > openIn.Value)
             {
                 total += nowLocal - openIn.Value;
@@ -455,9 +459,7 @@ namespace CimmpleAPI.Controllers
                 return forbid!;
             }
 
-            var direction = string.IsNullOrWhiteSpace(request.Direction)
-                ? await GetNextDirectionAsync(tenantId, employee.User_UniqueID)
-                : request.Direction.Trim().ToUpperInvariant();
+            var direction = await GetNextDirectionAsync(tenantId, employee.User_UniqueID);
 
             var log = new FaceAttendanceLog
             {
@@ -484,7 +486,8 @@ namespace CimmpleAPI.Controllers
                 result = new
                 {
                     success = true,
-                    message = direction == "OUT" ? "Punch Out Successful" : "Punch In Successful",
+                    message = GetSuccessMessage(direction),
+                    direction,
                     verifyConfidence = 100
                 }
             });
@@ -604,9 +607,7 @@ namespace CimmpleAPI.Controllers
             }
 
             var locationId = request.LocationId ?? employee.DefaultLocationId ?? 0;
-            var direction = string.IsNullOrWhiteSpace(request.Direction)
-                ? await GetNextDirectionAsync(tenantId, employee.User_UniqueID)
-                : request.Direction.Trim().ToUpperInvariant();
+            var direction = await GetNextDirectionAsync(tenantId, employee.User_UniqueID);
 
             _db.FaceAttendanceLog.Add(new FaceAttendanceLog
             {
@@ -631,7 +632,8 @@ namespace CimmpleAPI.Controllers
                 result = new
                 {
                     success = true,
-                    message = direction == "OUT" ? "Punch Out Successful" : "Punch In Successful",
+                    message = GetSuccessMessage(direction),
+                    direction,
                     faceMatchConfidence = verify.confidence,
                     confidence = verify.confidence * 100
                 }
@@ -688,13 +690,86 @@ namespace CimmpleAPI.Controllers
                 .OrderByDescending(p => p.PunchTime)
                 .FirstOrDefaultAsync();
 
-            if (last == null)
+            return ResolveNextDirection(last?.Direction, nowLocal);
+        }
+
+        /// <summary>
+        /// Multiple punches/day for breaks:
+        /// - No punch → IN
+        /// - On break (BREAK_OUT) → BREAK_IN
+        /// - On premises (IN / BREAK_IN) before 5:00 PM local → BREAK_OUT
+        /// - On premises at/after 5:00 PM local → OUT (end of day)
+        /// - Already OUT → IN (another session the same day)
+        /// </summary>
+        private static string ResolveNextDirection(string? lastDirection, DateTime nowLocal)
+        {
+            if (string.IsNullOrWhiteSpace(lastDirection))
             {
                 return "IN";
             }
 
-            return string.Equals(last.Direction, "IN", StringComparison.OrdinalIgnoreCase) ? "OUT" : "IN";
+            if (IsBreakOut(lastDirection))
+            {
+                return "BREAK_IN";
+            }
+
+            if (IsDayOut(lastDirection))
+            {
+                return "IN";
+            }
+
+            if (IsOnPremises(lastDirection) || IsClockIn(lastDirection))
+            {
+                return nowLocal.TimeOfDay < EndOfDayPunchTime
+                    ? "BREAK_OUT"
+                    : "OUT";
+            }
+
+            // Unknown legacy direction: treat like a toggle toward IN
+            return "IN";
         }
+
+        private static readonly TimeSpan EndOfDayPunchTime = TimeSpan.FromHours(17);
+
+        private static bool IsClockIn(string? direction) =>
+            string.Equals(direction, "IN", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsBreakIn(string? direction) =>
+            string.Equals(direction, "BREAK_IN", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(direction, "BREAKIN", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsBreakOut(string? direction) =>
+            string.Equals(direction, "BREAK_OUT", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(direction, "BREAKOUT", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsDayOut(string? direction) =>
+            string.Equals(direction, "OUT", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsOnPremises(string? direction) =>
+            IsClockIn(direction) || IsBreakIn(direction);
+
+        private static string GetDirectionLabel(string direction) =>
+            direction.ToUpperInvariant() switch
+            {
+                "IN" => "Punch In",
+                "OUT" => "Punch Out",
+                "BREAK_OUT" => "Break Out",
+                "BREAKOUT" => "Break Out",
+                "BREAK_IN" => "Break In",
+                "BREAKIN" => "Break In",
+                _ => direction
+            };
+
+        private static string GetSuccessMessage(string direction) =>
+            direction.ToUpperInvariant() switch
+            {
+                "OUT" => "Punch Out Successful",
+                "BREAK_OUT" => "Break Out Successful",
+                "BREAKOUT" => "Break Out Successful",
+                "BREAK_IN" => "Break In Successful",
+                "BREAKIN" => "Break In Successful",
+                _ => "Punch In Successful"
+            };
 
         private DateTime GetTenantLocalNow(int tenantId)
         {

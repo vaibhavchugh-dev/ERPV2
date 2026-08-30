@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
@@ -17,6 +17,7 @@ import "./JobOrders.scss";
 const JobOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -34,21 +35,22 @@ const JobOrders: React.FC = () => {
     loadJobOrders();
   }, [locationIdParam]);
 
-  // Handle URL parameter to open slideout (from global search)
+  // Handle URL parameter to open slideout (from global search / dashboard)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedJobOrderId(id);
         setHeaderPreview(null);
         setShowSlideout(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -111,6 +113,11 @@ const JobOrders: React.FC = () => {
     setHeaderPreview(null);
     if (refreshList) {
       loadJobOrders();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

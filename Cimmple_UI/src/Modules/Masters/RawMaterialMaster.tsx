@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useHistory } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
@@ -116,6 +116,7 @@ const COLUMN_PREFERENCE_KEY = "cimmple_raw_material_master_hidden_columns";
 const RawMaterialMaster: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const processedOpenIdRef = useRef<string | null>(null);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
@@ -175,13 +176,17 @@ const RawMaterialMaster: React.FC = () => {
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const openId = params.get('open') || params.get('search');
-    if (openId && materials.length > 0) {
-      const match = materials.find(m => String(m.id) === openId || m.partNo?.toLowerCase() === openId.toLowerCase());
-      if (match) {
-        handleEdit(match);
-        history.replace(location.pathname);
-      }
+    const openId = params.get("open") || params.get("search");
+    if (!openId || openId === processedOpenIdRef.current || materials.length === 0) {
+      return;
+    }
+    const match = materials.find(
+      (m) => String(m.id) === openId || m.partNo?.toLowerCase() === openId.toLowerCase()
+    );
+    if (match) {
+      processedOpenIdRef.current = openId;
+      handleEdit(match);
+      history.replace(location.pathname);
     }
   }, [location.search, materials, history, location.pathname]);
 

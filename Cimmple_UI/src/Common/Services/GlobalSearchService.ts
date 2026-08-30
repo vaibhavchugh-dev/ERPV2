@@ -66,8 +66,8 @@ export interface SearchResult {
 export interface GlobalSearchResults {
   customers: SearchResult[];
   vendors: SearchResult[];
-  products?: SearchResult[];
-  rawMaterials?: SearchResult[];
+  products: SearchResult[];
+  rawMaterials: SearchResult[];
   orders: SearchResult[];
   invoices: SearchResult[];
   jobOrders: SearchResult[];
@@ -90,69 +90,56 @@ export interface GlobalSearchResults {
   documents: SearchResult[];
 }
 
+const emptyResults = (): GlobalSearchResults => ({
+  customers: [],
+  vendors: [],
+  products: [],
+  rawMaterials: [],
+  orders: [],
+  invoices: [],
+  jobOrders: [],
+  quotations: [],
+  banks: [],
+  workstations: [],
+  locations: [],
+  processes: [],
+  jobTemplates: [],
+  priceBreakdowns: [],
+  creditCards: [],
+  chartOfAccounts: [],
+  vendorOrders: [],
+  vendorInvoices: [],
+  vendorReceiving: [],
+  vendorQuotations: [],
+  shipments: [],
+  ncrReports: [],
+  users: [],
+  documents: [],
+});
+
 export class GlobalSearchService {
+  public static emptyResults = emptyResults;
   public static async Search(query: string, tenantId: number, limit: number = 10): Promise<GlobalSearchResults> {
     if (!query || query.trim() === '') {
-      return {
-        customers: [],
-        vendors: [],
-        products: [],
-        rawMaterials: [],
-        orders: [],
-        invoices: [],
-        jobOrders: [],
-        quotations: [],
-        banks: [],
-        workstations: [],
-        locations: [],
-        processes: [],
-        jobTemplates: [],
-        priceBreakdowns: [],
-        creditCards: [],
-        chartOfAccounts: [],
-        vendorOrders: [],
-        vendorInvoices: [],
-        vendorReceiving: [],
-        vendorQuotations: [],
-        shipments: [],
-        ncrReports: [],
-        users: [],
-        documents: []
-      };
+      return emptyResults();
     }
 
     const url = `/GlobalSearch/Search`;
-    return Instense.get(url, {
-      params: { query: query.trim(), tenantId, limit }
-    }).then((response) => {
+    try {
+      const response = await Instense.get(url, {
+        params: { query: query.trim(), tenantId, limit }
+      });
       const data = response.data || {};
       return {
-        customers: data.customers || [],
-        vendors: data.vendors || [],
+        ...emptyResults(),
+        ...data,
         products: data.products || [],
         rawMaterials: data.rawMaterials || [],
-        orders: data.orders || [],
-        invoices: data.invoices || [],
-        jobOrders: data.jobOrders || [],
-        quotations: data.quotations || [],
-        banks: data.banks || [],
-        workstations: data.workstations || [],
-        locations: data.locations || [],
-        processes: data.processes || [],
-        jobTemplates: data.jobTemplates || [],
-        priceBreakdowns: data.priceBreakdowns || [],
-        creditCards: data.creditCards || [],
-        chartOfAccounts: data.chartOfAccounts || [],
-        vendorOrders: data.vendorOrders || [],
-        vendorInvoices: data.vendorInvoices || [],
-        vendorReceiving: data.vendorReceiving || [],
-        vendorQuotations: data.vendorQuotations || [],
-        shipments: data.shipments || [],
-        ncrReports: data.ncrReports || [],
-        users: data.users || [],
-        documents: data.documents || []
       };
-    });
+    } catch (error) {
+      console.error("Error performing global search:", error);
+      return emptyResults();
+    }
   }
 
   public static getResultUrl(result: SearchResult): string {
@@ -260,6 +247,11 @@ export class GlobalSearchService {
         return `${result.firstName || ''} ${result.lastName || ''}`.trim() || result.userName || '';
       case 'document':
         return result.documentNumber || result.name || '';
+      case 'product':
+      case 'rawMaterial':
+        return result.partNo
+          ? `${result.partNo}${result.partName || result.name ? ` — ${result.partName || result.name}` : ''}`
+          : (result.partName || result.name || '');
       default:
         return '';
     }

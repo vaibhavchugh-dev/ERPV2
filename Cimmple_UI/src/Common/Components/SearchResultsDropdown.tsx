@@ -190,6 +190,10 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
           docParts.push(`v${result.currentVersionNumber}`);
         }
         return docParts.join(' • ');
+      case 'product':
+        return result.description || result.unit || 'Finished part';
+      case 'rawMaterial':
+        return result.description || result.unit || 'Raw material';
       default:
         return '';
     }
