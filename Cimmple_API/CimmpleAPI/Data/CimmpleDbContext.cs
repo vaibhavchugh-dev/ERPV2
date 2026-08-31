@@ -118,6 +118,7 @@ namespace CimmpleAPI.Data
         public DbSet<PermissionMaster> PermissionMaster { get; set; }
         public DbSet<PermissionRole> PermissionRole { get; set; }
         public DbSet<SystemSettings> SystemSettings { get; set; }
+        public DbSet<UserPasswordHistory> UserPasswordHistory { get; set; }
 
         public DbSet<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog> FaceAttendanceLog { get; set; }
         public DbSet<CimmpleAPI.Data.Models.Punch.EmployeeFace> EmployeeFace { get; set; }

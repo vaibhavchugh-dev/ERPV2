@@ -24,6 +24,15 @@ const canRecordPayment = (invoice: InvoiceSummary) => {
   return !isVoided && !isPaid;
 };
 
+const getOpenBalance = (invoice: InvoiceSummary) =>
+  Math.max(0, Number(invoice.balanceDue ?? invoice.totalAmount - (invoice.paidAmount ?? 0)));
+
+const isPaidInvoice = (invoice: InvoiceSummary) =>
+  invoice.status === "Paid" || getOpenBalance(invoice) <= 0.009;
+
+const isVoidInvoice = (invoice: InvoiceSummary) =>
+  invoice.status === "Void" || (invoice.status || "").toLowerCase().includes("void");
+
 interface BulkARPaymentModalProps {
   invoices: InvoiceSummary[];
   onClose: () => void;
@@ -427,16 +436,16 @@ const AccountsReceivable: React.FC = () => {
   };
 
   const calculateTotals = () => {
-    const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+    const openInvoices = invoices.filter((invoice) => !isVoidInvoice(invoice) && !isPaidInvoice(invoice));
+
+    const totalAmount = openInvoices.reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
     const paidAmount = invoices
-      .filter((invoice) => invoice.status === "Paid")
+      .filter(isPaidInvoice)
       .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
-    const unpaidAmount = invoices
-      .filter((invoice) => invoice.status !== "Paid" && invoice.status !== "Void")
-      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
-    const overdueAmount = invoices
-      .filter((invoice) => invoice.status !== "Void" && invoice.daysOverdue && invoice.daysOverdue > 0)
-      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
+    const unpaidAmount = totalAmount;
+    const overdueAmount = openInvoices
+      .filter((invoice) => (invoice.daysOverdue ?? 0) > 0)
+      .reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
 
     return { totalAmount, paidAmount, unpaidAmount, overdueAmount };
   };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { OrderService, OrderMaster } from "../../Common/Services/OrderService";
@@ -12,6 +12,7 @@ import "./CustomerOrders.scss";
 const CustomerOrders: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const returnToRef = useRef<string | null>(null);
   const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [orders, setOrders] = useState<OrderMaster[]>([]);
@@ -31,13 +32,14 @@ const CustomerOrders: React.FC = () => {
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedOrderId(id);
         setShowSlideout(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
-  }, [location.search, history, location.pathname]);
+  }, [location.search, history, location.pathname, location.state]);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -94,6 +96,11 @@ const CustomerOrders: React.FC = () => {
     setSelectedOrderId(0);
     if (refreshList) {
       loadOrders();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

@@ -31,6 +31,9 @@ const isPendingApproval = (invoice: VendorInvoiceSummary) =>
   invoice.status !== "Approved" &&
   invoice.status !== "Partially Paid";
 
+const getOpenBalance = (invoice: VendorInvoiceSummary) =>
+  Math.max(0, Number(invoice.balanceDue ?? invoice.totalAmount - (invoice.paidAmount ?? 0)));
+
 interface BulkAPPaymentModalProps {
   invoices: VendorInvoiceSummary[];
   onClose: () => void;
@@ -525,16 +528,18 @@ const AccountsPayable: React.FC = () => {
   };
 
   const calculateTotals = () => {
-    const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
-    const approvedAmount = invoices
-      .filter((invoice) => isApprovedForPay(invoice) || isPaid(invoice))
-      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
+    const openInvoices = invoices.filter((invoice) => !isVoid(invoice) && !isPaid(invoice));
+
+    const totalAmount = openInvoices.reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
+    const approvedAmount = openInvoices
+      .filter(isApprovedForPay)
+      .reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
     const pendingAmount = invoices
       .filter(isPendingApproval)
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
-    const overdueAmount = invoices
-      .filter((invoice) => !isVoid(invoice) && !isPaid(invoice) && (invoice.daysOverdue ?? 0) > 0)
-      .reduce((sum, invoice) => sum + (invoice.balanceDue ?? invoice.totalAmount), 0);
+      .reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
+    const overdueAmount = openInvoices
+      .filter((invoice) => (invoice.daysOverdue ?? 0) > 0)
+      .reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
 
     return { totalAmount, approvedAmount, pendingAmount, overdueAmount };
   };

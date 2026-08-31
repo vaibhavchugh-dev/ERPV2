@@ -180,7 +180,7 @@ const JobOrders: React.FC = () => {
     const joRaw = Number(job.jobOrderNumber) || 0;
     const joDisplay = toDisplayNumber(joRaw);
     const joFormatted = formatJobOrderNumber(joRaw).toLowerCase();
-    const coRaw = Number(job.customerOrderID) || 0;
+    const coRaw = Number(job.customerPONumber || job.customerOrderID) || 0;
     const coDisplay = toDisplayNumber(coRaw);
     const coFormatted = formatCustomerOrderNumber(coRaw).toLowerCase();
 

@@ -198,12 +198,35 @@ namespace CimmpleAPI.Controllers
                     .Count();
 
                 // Overdue shipments = unshipped (or under-shipped) lines past promised due date
+                var activeOrderIds = _context.CustomerOrder
+                    .Where(co => co.Tenantid == tenantId &&
+                                 co.Status != "Cancelled" &&
+                                 co.Status != "Canceled" &&
+                                 co.Status != "Completed" &&
+                                 co.Status != "Shipped" &&
+                                 co.Status != "Fully Invoiced")
+                    .Select(co => co.OrderID)
+                    .ToList();
+
+                var shippedByDetail = _context.ShippingDetails
+                    .Where(sd => sd.OrderDetailID.HasValue)
+                    .Join(_context.Shipping.Where(s => s.TenantId == tenantId),
+                        sd => sd.ShipmentId,
+                        s => s.Id,
+                        (sd, s) => new { DetailId = sd.OrderDetailID!.Value, sd.ShippedQty })
+                    .GroupBy(x => x.DetailId)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
+
                 var overdueShipments = _context.CustomerOrderDetails
                     .Where(d => d.Tenantid == tenantId &&
-                               d.DueDate.Date < today &&
-                               d.ShippedQty < d.QtyOrdered &&
-                               (d.ShippingStatus == null || d.ShippingStatus != "Shipped"))
-                    .Count();
+                                activeOrderIds.Contains(d.OrderID) &&
+                                d.DueDate.Date < today)
+                    .AsEnumerable()
+                    .Count(d =>
+                    {
+                        var shipped = shippedByDetail.TryGetValue(d.ID, out var qty) ? qty : d.ShippedQty;
+                        return shipped < d.QtyOrdered;
+                    });
 
                 // Sales Metrics
                 var quotationsThisMonth = _context.QuotationOrder

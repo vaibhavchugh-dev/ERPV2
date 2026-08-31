@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,102 +20,62 @@ namespace CimmpleAPI.Controllers
             _context = context;
         }
 
+        private static SystemSettings CreateDefaultSettings(int tenantId) => new SystemSettings
+        {
+            TenantId = tenantId,
+            DateFormat = "M/d/yyyy",
+            TimeFormat = "12",
+            Timezone = "America/New_York",
+            Locale = "en-US",
+            DefaultCurrency = "USD",
+            CurrencySymbol = "$",
+            DecimalPlaces = 2,
+            DecimalSeparator = ".",
+            ThousandsSeparator = ",",
+            MinPasswordLength = 8,
+            RequireUppercase = true,
+            RequireLowercase = true,
+            RequireNumbers = true,
+            RequireSpecialChars = false,
+            PasswordExpirationDays = 90,
+            PasswordHistoryCount = 5,
+            SessionTimeoutMinutes = 30,
+            MaxConcurrentSessions = 3,
+            FailedLoginAttempts = 5,
+            AccountLockoutMinutes = 15,
+            SmtpPort = 587,
+            SmtpUseSsl = true,
+            DefaultPageSize = 10,
+            EnableEmailNotifications = true,
+            EnableInAppNotifications = true
+        };
+
         // GET: api/SystemSettings/GetSettings
         [HttpGet("GetSettings")]
         public async Task<IActionResult> GetSettings([FromQuery] int tenantId)
         {
             try
             {
-                // Check if table exists by attempting to query it
-                try
-                {
-                    var settings = await _context.SystemSettings
-                        .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
 
-                    if (settings == null)
-                    {
-                        // Return default settings if none exist
-                        return Ok(new SystemSettings
-                        {
-                            TenantId = tenantId,
-                            DateFormat = "M/d/yyyy",
-                            TimeFormat = "12",
-                            Timezone = "America/New_York",
-                            Locale = "en-US",
-                            DefaultCurrency = "USD",
-                            CurrencySymbol = "$",
-                            DecimalPlaces = 2,
-                            DecimalSeparator = ".",
-                            ThousandsSeparator = ",",
-                            MinPasswordLength = 8,
-                            RequireUppercase = true,
-                            RequireLowercase = true,
-                            RequireNumbers = true,
-                            RequireSpecialChars = false,
-                            PasswordExpirationDays = 90,
-                            PasswordHistoryCount = 5,
-                            SessionTimeoutMinutes = 30,
-                            MaxConcurrentSessions = 3,
-                            FailedLoginAttempts = 5,
-                            AccountLockoutMinutes = 15,
-                            SmtpPort = 587,
-                            SmtpUseSsl = true,
-                            DefaultPageSize = 10,
-                            EnableEmailNotifications = true,
-                            EnableInAppNotifications = true
-                        });
-                    }
+                var settings = await _context.SystemSettings
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId);
 
-                    return Ok(settings);
-                }
-                catch (Exception dbEx)
-                {
-                    // Check if it's a "table doesn't exist" error
-                    if (dbEx.Message.Contains("Invalid object name") || 
-                        dbEx.Message.Contains("SystemSettings") ||
-                        dbEx.Message.Contains("does not exist") ||
-                        (dbEx.InnerException != null && dbEx.InnerException.Message.Contains("Invalid object name")))
-                    {
-                        Console.WriteLine($"[GetSettings] SystemSettings table does not exist. Please run create_systemsettings_table.sql");
-                        // Return default settings even if table doesn't exist
-                        return Ok(new SystemSettings
-                        {
-                            TenantId = tenantId,
-                            DateFormat = "M/d/yyyy",
-                            TimeFormat = "12",
-                            Timezone = "America/New_York",
-                            Locale = "en-US",
-                            DefaultCurrency = "USD",
-                            CurrencySymbol = "$",
-                            DecimalPlaces = 2,
-                            DecimalSeparator = ".",
-                            ThousandsSeparator = ",",
-                            MinPasswordLength = 8,
-                            RequireUppercase = true,
-                            RequireLowercase = true,
-                            RequireNumbers = true,
-                            RequireSpecialChars = false,
-                            PasswordExpirationDays = 90,
-                            PasswordHistoryCount = 5,
-                            SessionTimeoutMinutes = 30,
-                            MaxConcurrentSessions = 3,
-                            FailedLoginAttempts = 5,
-                            AccountLockoutMinutes = 15,
-                            SmtpPort = 587,
-                            SmtpUseSsl = true,
-                            DefaultPageSize = 10,
-                            EnableEmailNotifications = true,
-                            EnableInAppNotifications = true
-                        });
-                    }
-                    throw; // Re-throw if it's a different error
-                }
+                if (settings == null)
+                    return Ok(CreateDefaultSettings(tenantId));
+
+                return Ok(settings);
             }
             catch (Exception ex)
             {
+                if (SystemSettingsSchemaService.IsMissingTableException(ex))
+                {
+                    Console.WriteLine("[GetSettings] SystemSettings table missing; returning defaults.");
+                    return Ok(CreateDefaultSettings(tenantId));
+                }
+
                 Console.WriteLine($"[GetSettings] Error: {ex.Message}");
-                Console.WriteLine($"[GetSettings] StackTrace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "Error retrieving system settings", error = ex.Message, details = ex.StackTrace });
+                return StatusCode(500, new { message = "Error retrieving system settings", error = ex.Message });
             }
         }
 
@@ -125,23 +86,21 @@ namespace CimmpleAPI.Controllers
             try
             {
                 if (settings == null)
-                {
                     return BadRequest(new { message = "Settings data is required" });
-                }
+
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
 
                 var existingSettings = await _context.SystemSettings
                     .FirstOrDefaultAsync(s => s.TenantId == settings.TenantId);
 
                 if (existingSettings == null)
                 {
-                    // Create new settings
                     settings.CreatedDate = DateTime.UtcNow;
                     settings.UpdatedDate = DateTime.UtcNow;
                     _context.SystemSettings.Add(settings);
                 }
                 else
                 {
-                    // Update existing settings
                     existingSettings.DateFormat = settings.DateFormat;
                     existingSettings.TimeFormat = settings.TimeFormat;
                     existingSettings.Timezone = settings.Timezone;
@@ -166,7 +125,8 @@ namespace CimmpleAPI.Controllers
                     existingSettings.SmtpPort = settings.SmtpPort;
                     existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
                     existingSettings.SmtpUsername = settings.SmtpUsername;
-                    existingSettings.SmtpPassword = settings.SmtpPassword;
+                    if (!string.IsNullOrEmpty(settings.SmtpPassword))
+                        existingSettings.SmtpPassword = settings.SmtpPassword;
                     existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
                     existingSettings.SmtpFromName = settings.SmtpFromName;
                     existingSettings.DefaultPageSize = settings.DefaultPageSize;
@@ -176,11 +136,19 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await _context.SaveChangesAsync();
-
                 return Ok(new { message = "System settings saved successfully" });
             }
             catch (Exception ex)
             {
+                if (SystemSettingsSchemaService.IsMissingTableException(ex))
+                {
+                    return StatusCode(503, new
+                    {
+                        message = "System settings table is not available. Contact your administrator.",
+                        error = ex.Message
+                    });
+                }
+
                 Console.WriteLine($"[SaveSettings] Error: {ex.Message}");
                 return StatusCode(500, new { message = "Error saving system settings", error = ex.Message });
             }
@@ -238,21 +206,16 @@ namespace CimmpleAPI.Controllers
             try
             {
                 if (dto == null)
-                {
                     return BadRequest(new { message = "Company information is required" });
-                }
 
                 if (dto.TenantId == 0)
-                {
                     return BadRequest(new { message = "TenantId is required" });
-                }
 
                 var entity = await _context.EntityMaster
                     .FirstOrDefaultAsync(e => e.Tenantid == dto.TenantId);
 
                 if (entity == null)
                 {
-                    // Create new entity
                     entity = new EntityMaster
                     {
                         Tenantid = dto.TenantId,
@@ -266,7 +229,6 @@ namespace CimmpleAPI.Controllers
                         country = dto.Country ?? "",
                         WebAddress = dto.WebAddress ?? "",
                         registration_date = DateTime.UtcNow,
-                        // Set default values for required fields
                         first_name = "",
                         last_name = "",
                         pointofcontact = "",
@@ -287,7 +249,6 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
-                    // Update existing entity
                     entity.company_name = dto.CompanyName ?? entity.company_name ?? "";
                     entity.email = dto.Email ?? entity.email ?? "";
                     entity.phone_number = dto.PhoneNumber ?? entity.phone_number ?? "";
@@ -300,23 +261,16 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await _context.SaveChangesAsync();
-
                 return Ok(new { message = "Company information saved successfully" });
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[SaveCompanyInfo] Error: {ex.Message}");
-                Console.WriteLine($"[SaveCompanyInfo] StackTrace: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"[SaveCompanyInfo] InnerException: {ex.InnerException.Message}");
-                }
-                return StatusCode(500, new { message = "Error saving company information", error = ex.Message, details = ex.StackTrace });
+                return StatusCode(500, new { message = "Error saving company information", error = ex.Message });
             }
         }
     }
 
-    // DTOs
     public class CompanyInfoDto
     {
         public int TenantId { get; set; }
@@ -331,4 +285,3 @@ namespace CimmpleAPI.Controllers
         public string WebAddress { get; set; } = "";
     }
 }
-

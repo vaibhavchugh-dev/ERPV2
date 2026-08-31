@@ -199,19 +199,25 @@ export const todayDateOnlyDisplay = (): string => {
   return `${month}/${day}/${year}`;
 };
 
-/** API/ISO/date string → MM/DD/YY (or MM/DD/YYYY) using calendar parts only */
+/** API/ISO/date string → display date using system settings (calendar parts only, no TZ shift) */
 export const formatDateOnlyFromApi = (
   dateStr: string | null | undefined,
-  fullYear = false
+  fullYear = false,
+  settings?: SystemSettings | null
 ): string => {
   if (!dateStr) return '';
   try {
     const raw = String(dateStr).trim();
+    const resolved = resolveSettings(settings);
+    const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+    let momentFormat = fullYear ? dateFormat : dateFormat.replace(/YYYY/g, 'YY');
+
     const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (isoMatch) {
-      const year = fullYear ? isoMatch[1] : isoMatch[1].slice(-2);
-      return `${isoMatch[2]}/${isoMatch[3]}/${year}`;
+      const parsed = moment(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`);
+      return parsed.isValid() ? parsed.format(momentFormat) : '';
     }
+
     const slashParts = raw.split('/');
     if (slashParts.length === 3) {
       const month = slashParts[0].padStart(2, '0');
@@ -219,7 +225,8 @@ export const formatDateOnlyFromApi = (
       let year = slashParts[2];
       if (year.length === 2 && fullYear) year = `20${year}`;
       if (year.length > 2 && !fullYear) year = year.slice(-2);
-      return `${month}/${day}/${year}`;
+      const parsed = moment(`${year.length === 2 ? `20${year}` : year}-${month}-${day}`);
+      return parsed.isValid() ? parsed.format(momentFormat) : `${month}/${day}/${year}`;
     }
     return '';
   } catch {

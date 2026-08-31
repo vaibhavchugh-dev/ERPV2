@@ -438,6 +438,22 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                var empCode = (request.EmpCode ?? "").Trim();
+                if (!string.IsNullOrEmpty(empCode))
+                {
+                    var excludeId = isNew ? 0 : request.User_UniqueID;
+                    var codeConflict = _context.UserDetails
+                        .Any(u => u.TenantID == request.TenantID &&
+                                  u.User_UniqueID != excludeId &&
+                                  !string.IsNullOrEmpty(u.EmpCode) &&
+                                  string.Equals(u.EmpCode.Trim(), empCode, StringComparison.OrdinalIgnoreCase));
+
+                    if (codeConflict)
+                    {
+                        return BadRequest(new { error = "Employee Code already exists" });
+                    }
+                }
+
                 employee.FirstName = request.FirstName;
                 employee.LastName = request.LastName;
                 employee.Email = request.Email ?? "";
@@ -447,7 +463,7 @@ namespace CimmpleAPI.Controllers
                 employee.EmployeeType = request.EmployeeType ?? "";
                 employee.EmployeeCategory = request.EmployeeCategory ?? "";
                 employee.ContractId = request.EmployeeCategory ?? "";
-                employee.EmpCode = request.EmpCode ?? "";
+                employee.EmpCode = empCode;
                 employee.Department = request.Department ?? "";
                 employee.PrimaryMethod = request.Department ?? "";
                 employee.Phone1 = request.Phone1 ?? "";
@@ -465,6 +481,7 @@ namespace CimmpleAPI.Controllers
                 var loginAccessEnabled = !string.IsNullOrWhiteSpace(request.UserName);
                 var passwordProvided = !string.IsNullOrWhiteSpace(request.Password);
                 var hasExistingPassword = !isNew && !string.IsNullOrEmpty(employee.Password);
+                SystemSettings? passwordSettings = null;
 
                 if (!loginAccessEnabled)
                 {
@@ -478,17 +495,20 @@ namespace CimmpleAPI.Controllers
                 }
                 else if (passwordProvided)
                 {
-                    var settings = await _context.SystemSettings
+                    passwordSettings = await _context.SystemSettings
                         .FirstOrDefaultAsync(s => s.TenantId == request.TenantID)
                         ?? new SystemSettings { TenantId = request.TenantID };
 
-                    if (!_authService.ValidatePasswordAgainstPolicy(request.Password!, settings, out var policyError))
+                    if (!_authService.ValidatePasswordAgainstPolicy(request.Password!, passwordSettings, out var policyError))
                     {
                         return BadRequest(new { error = policyError ?? "Password does not meet policy requirements" });
                     }
 
-                    await _authService.EnsurePasswordHashedAsync(employee, request.Password!);
-                    employee.PwdResetDate = DateTime.UtcNow;
+                    var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
+                        employee, request.Password!, passwordSettings);
+                    if (!applied)
+                        return BadRequest(new { error = applyError ?? "Password could not be applied" });
+
                     employee.ChangePassword = "N";
                     employee.FailedLoginCount = 0;
                     employee.LockoutEndUtc = null;
@@ -508,6 +528,12 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await _context.SaveChangesAsync();
+
+                if (passwordProvided && employee.User_UniqueID > 0 && passwordSettings != null)
+                {
+                    await _authService.TrimPasswordHistoryAsync(
+                        employee.User_UniqueID, passwordSettings.PasswordHistoryCount);
+                }
 
                 // Handle Location Mapping — supports multi-location (LocationIds) or legacy single LocationId
                 var locationIds = (request.LocationIds != null && request.LocationIds.Count > 0)

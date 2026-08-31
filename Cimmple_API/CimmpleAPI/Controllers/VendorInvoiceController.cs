@@ -807,6 +807,7 @@ namespace CimmpleAPI.Controllers
                     var vendorInvoicingRecords = _context.VendorInvoicing
                         .Where(vi => detailIds.Contains(vi.VendorInvoiceDetailID))
                         .ToList();
+                    ReverseVendorOrderInvoicedQuantities(vendorInvoicingRecords, tenantId);
                     _context.VendorInvoicing.RemoveRange(vendorInvoicingRecords);
 
                     invoice.isPaid = 2;
@@ -869,6 +870,7 @@ namespace CimmpleAPI.Controllers
                         .Where(vi => detailIds.Contains(vi.VendorInvoiceDetailID))
                         .ToList();
 
+                    ReverseVendorOrderInvoicedQuantities(vendorInvoicingRecords, tenantId);
                     _context.VendorInvoicing.RemoveRange(vendorInvoicingRecords);
                     _context.VendorInvoiceDetail.RemoveRange(invoiceDetails);
                     _context.VendorInvoiceMaster.Remove(invoice);
@@ -883,6 +885,26 @@ namespace CimmpleAPI.Controllers
                     transaction.Rollback();
                     return StatusCode(500, new { error = ex.Message });
                 }
+            }
+        }
+
+        private void ReverseVendorOrderInvoicedQuantities(IEnumerable<VendorInvoicing> vendorInvoicingRecords, int tenantId)
+        {
+            foreach (var vi in vendorInvoicingRecords)
+            {
+                var orderDetail = _context.VendorOrderDetails
+                    .FirstOrDefault(d => d.ID == vi.VendorOrderDetailID && d.Tenantid == tenantId);
+
+                if (orderDetail == null) continue;
+
+                orderDetail.InvoicedQty = Math.Max(0, orderDetail.InvoicedQty - vi.InvoicedQty);
+
+                if (orderDetail.InvoicedQty == 0)
+                    orderDetail.InvoiceStatus = "Not Invoiced";
+                else if (orderDetail.InvoicedQty < orderDetail.QtyOrdered)
+                    orderDetail.InvoiceStatus = "Partially Invoiced";
+                else
+                    orderDetail.InvoiceStatus = "Fully Invoiced";
             }
         }
 
