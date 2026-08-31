@@ -327,8 +327,11 @@ namespace CimmpleAPI.Controllers
                     return (false, policyError ?? "Password does not meet policy requirements", null);
                 }
 
-                await _authService.EnsurePasswordHashedAsync(portalUser, newPassword!);
-                portalUser.PwdResetDate = DateTime.UtcNow;
+                var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
+                    portalUser, newPassword!, settings);
+                if (!applied)
+                    return (false, applyError ?? "Password could not be applied", null);
+
                 portalUser.ChangePassword = "N";
                 portalUser.FailedLoginCount = 0;
                 portalUser.LockoutEndUtc = null;
@@ -339,6 +342,15 @@ namespace CimmpleAPI.Controllers
             }
 
             await _context.SaveChangesAsync();
+
+            if (passwordProvided && portalUser.User_UniqueID > 0)
+            {
+                var trimSettings = await _context.SystemSettings
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId)
+                    ?? new SystemSettings { TenantId = tenantId };
+                await _authService.TrimPasswordHistoryAsync(
+                    portalUser.User_UniqueID, trimSettings.PasswordHistoryCount);
+            }
 
             return (true, null, new
             {

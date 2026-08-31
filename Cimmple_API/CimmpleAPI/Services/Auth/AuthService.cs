@@ -15,6 +15,8 @@ namespace CimmpleAPI.Services.Auth
         Task LogoutAsync(int userId);
         Task<AuthUserDto?> GetCurrentUserAsync(int userId);
         Task<(bool ok, string? error)> ChangePasswordAsync(int userId, ChangePasswordRequest request);
+        Task<(bool ok, string? error)> ValidateAndApplyPasswordAsync(UserDetail user, string newPassword, SystemSettings settings);
+        Task TrimPasswordHistoryAsync(int userId, int keepCount);
         bool ValidatePasswordAgainstPolicy(string password, SystemSettings settings, out string? error);
         Task EnsurePasswordHashedAsync(UserDetail user, string plaintextPassword);
     }
@@ -210,19 +212,77 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var settings = await GetSettingsAsync(user.TenantID);
-            if (!ValidatePasswordAgainstPolicy(request.NewPassword, settings, out var policyError))
-            {
-                return (false, policyError);
-            }
+            var (applied, applyError) = await ValidateAndApplyPasswordAsync(user, request.NewPassword, settings);
+            if (!applied)
+                return (false, applyError);
 
-            var (hash, salt) = PasswordHasher.HashPassword(request.NewPassword);
-            user.Password = hash;
-            user.PasswordSalt = salt;
-            user.PwdResetDate = DateTime.UtcNow;
             user.ChangePassword = "N";
             user.PwdChangeStatus = "Changed";
             await _db.SaveChangesAsync();
+            await TrimPasswordHistoryAsync(user.User_UniqueID, settings.PasswordHistoryCount);
             return (true, null);
+        }
+
+        public async Task<(bool ok, string? error)> ValidateAndApplyPasswordAsync(
+            UserDetail user, string newPassword, SystemSettings settings)
+        {
+            if (!ValidatePasswordAgainstPolicy(newPassword, settings, out var policyError))
+                return (false, policyError);
+
+            if (user.User_UniqueID > 0 && settings.PasswordHistoryCount > 0)
+            {
+                if (!string.IsNullOrEmpty(user.Password)
+                    && PasswordHasher.Verify(newPassword, user.Password, user.PasswordSalt, out _))
+                {
+                    return (false, "Cannot reuse your current password");
+                }
+
+                var recentHistory = await _db.UserPasswordHistory
+                    .Where(h => h.UserId == user.User_UniqueID)
+                    .OrderByDescending(h => h.CreatedDate)
+                    .Take(settings.PasswordHistoryCount)
+                    .ToListAsync();
+
+                foreach (var entry in recentHistory)
+                {
+                    if (PasswordHasher.Verify(newPassword, entry.PasswordHash, entry.PasswordSalt, out _))
+                        return (false, "Cannot reuse a recent password");
+                }
+
+                if (!string.IsNullOrEmpty(user.Password))
+                {
+                    _db.UserPasswordHistory.Add(new UserPasswordHistory
+                    {
+                        UserId = user.User_UniqueID,
+                        TenantId = user.TenantID,
+                        PasswordHash = user.Password,
+                        PasswordSalt = user.PasswordSalt ?? "",
+                        CreatedDate = DateTime.UtcNow
+                    });
+                }
+            }
+
+            await EnsurePasswordHashedAsync(user, newPassword);
+            user.PwdResetDate = DateTime.UtcNow;
+            return (true, null);
+        }
+
+        public async Task TrimPasswordHistoryAsync(int userId, int keepCount)
+        {
+            if (userId <= 0 || keepCount <= 0)
+                return;
+
+            var staleEntries = await _db.UserPasswordHistory
+                .Where(h => h.UserId == userId)
+                .OrderByDescending(h => h.CreatedDate)
+                .Skip(keepCount)
+                .ToListAsync();
+
+            if (staleEntries.Count == 0)
+                return;
+
+            _db.UserPasswordHistory.RemoveRange(staleEntries);
+            await _db.SaveChangesAsync();
         }
 
         public bool ValidatePasswordAgainstPolicy(string password, SystemSettings settings, out string? error)

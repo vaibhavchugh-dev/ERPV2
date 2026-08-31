@@ -1,5 +1,12 @@
 import { useSettingsSafe } from '../Contexts/SettingsContext';
-import { formatCurrency, formatDate, formatDateTime, formatNumber, formatUtcToTimezone } from '../Utils/Formatting';
+import {
+  formatCurrency,
+  formatDate,
+  formatDateOnlyFromApi,
+  formatDateTime,
+  formatNumber,
+  formatUtcToTimezone,
+} from '../Utils/Formatting';
 
 /**
  * Hook that provides formatting functions with settings automatically applied
@@ -18,6 +25,10 @@ export const useFormatting = () => {
      * Format date using system settings
      */
     formatDate: (date: string | Date | null | undefined) => formatDate(date, settings),
+
+    /** Format API date-only strings using system date format */
+    formatDateOnlyFromApi: (dateStr: string | null | undefined, fullYear = false) =>
+      formatDateOnlyFromApi(dateStr, fullYear, settings),
     
     /**
      * Format date and time using system settings

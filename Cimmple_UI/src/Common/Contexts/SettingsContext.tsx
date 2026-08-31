@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { SystemSettingsService, SystemSettings } from '../Services/SystemSettingsService';
 import { applyRuntimeSettings } from '../Utils/settingsRuntime';
+import { getDefaultSystemSettings } from '../Utils/defaultSystemSettings';
 
 interface SettingsContextType {
   settings: SystemSettings | null;
@@ -12,39 +13,7 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 // Default settings matching current hardcoded values
-const getDefaultSettings = (tenantId: number): SystemSettings => ({
-  tenantId,
-  dateFormat: 'M/d/yyyy',
-  timeFormat: '12',
-  timezone: 'America/New_York',
-  locale: 'en-US',
-  defaultCurrency: 'USD',
-  currencySymbol: '$',
-  decimalPlaces: 2,
-  decimalSeparator: '.',
-  thousandsSeparator: ',',
-  minPasswordLength: 8,
-  requireUppercase: true,
-  requireLowercase: true,
-  requireNumbers: true,
-  requireSpecialChars: false,
-  passwordExpirationDays: 90,
-  passwordHistoryCount: 5,
-  sessionTimeoutMinutes: 30,
-  maxConcurrentSessions: 3,
-  failedLoginAttempts: 5,
-  accountLockoutMinutes: 15,
-  smtpServer: '',
-  smtpPort: 587,
-  smtpUseSsl: true,
-  smtpUsername: '',
-  smtpPassword: '',
-  smtpFromEmail: '',
-  smtpFromName: '',
-  defaultPageSize: 10,
-  enableEmailNotifications: true,
-  enableInAppNotifications: true,
-});
+const getDefaultSettings = getDefaultSystemSettings;
 
 interface SettingsProviderProps {
   children: ReactNode;

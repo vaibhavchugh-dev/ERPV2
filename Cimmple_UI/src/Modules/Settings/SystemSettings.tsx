@@ -8,6 +8,7 @@ import { AuthService } from "../../Common/Services/AuthService";
 import { notifyLocationChanged } from "../../Common/Hooks/useActiveLocation";
 import { useSettings } from "../../Common/Contexts/SettingsContext";
 import { toastAlwaysSuccess } from "../../Common/Utils/settingsRuntime";
+import { getDefaultSystemSettings, SYSTEM_TIMEZONE_OPTIONS } from "../../Common/Utils/defaultSystemSettings";
 import { useHistory } from "react-router-dom";
 import "./SystemSettings.scss";
 
@@ -23,6 +24,7 @@ const SystemSettingsComponent: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tenantId, setTenantId] = useState(1);
+  const [usingDefaults, setUsingDefaults] = useState(false);
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -48,9 +50,14 @@ const SystemSettingsComponent: React.FC = () => {
       const tid = storage?.tenantID || 1;
       const settingsData = await SystemSettingsService.GetSettings(tid);
       setSettings(settingsData);
+      setUsingDefaults(false);
     } catch (error) {
       console.error('Error loading system settings:', error);
-      toast.error('Failed to load system settings');
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const tid = storage?.tenantID || tenantId || 1;
+      setSettings(getDefaultSystemSettings(tid));
+      setUsingDefaults(true);
+      toast.error('Failed to load system settings — showing defaults. Save to persist once the database is ready.');
     } finally {
       setLoading(false);
     }
@@ -73,13 +80,29 @@ const SystemSettingsComponent: React.FC = () => {
     }
   };
 
-  const loadDefaultLocation = () => {
-    const storedDefaultLocationId = localStorage.getItem('defaultLocationId');
-    if (storedDefaultLocationId) {
-      const locationId = parseInt(storedDefaultLocationId, 10);
-      if (!isNaN(locationId) && locationId > 0) {
+  const loadDefaultLocation = async () => {
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const fromStorage = Number(storage?.defaultLocationId || 0);
+      const fromLegacy = parseInt(localStorage.getItem("defaultLocationId") || "0", 10);
+      let locationId = fromStorage > 0 ? fromStorage : fromLegacy;
+
+      if (locationId <= 0) {
+        try {
+          const user = await AuthService.me();
+          if (user.defaultLocationId && user.defaultLocationId > 0) {
+            locationId = user.defaultLocationId;
+          }
+        } catch {
+          // ignore — user may not be fully authenticated yet
+        }
+      }
+
+      if (locationId > 0) {
         setDefaultLocationId(locationId);
       }
+    } catch {
+      // ignore malformed storage
     }
   };
 
@@ -107,10 +130,16 @@ const SystemSettingsComponent: React.FC = () => {
         tenantId
       });
       await refreshSettings();
+      setUsingDefaults(false);
       toastAlwaysSuccess('System settings saved successfully');
     } catch (error: any) {
       console.error('Error saving settings:', error);
-      toast.error(`Failed to save settings: ${error.message || 'Unknown error'}`);
+      const apiMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Unknown error';
+      toast.error(`Failed to save settings: ${apiMessage}`);
     } finally {
       setSaving(false);
     }
@@ -149,6 +178,10 @@ const SystemSettingsComponent: React.FC = () => {
     setDefaultLocationId(locationId);
   };
 
+  const handleOpenAccountingSetup = () => {
+    history.push('/accounts/setup');
+  };
+
   const handleOpenLocationMaster = () => {
     history.push('/masters/location');
   };
@@ -168,7 +201,7 @@ const SystemSettingsComponent: React.FC = () => {
     { id: 'general', label: 'General', icon: faCog }
   ];
 
-  if (loading || !settings) {
+  if (loading) {
     return (
       <div className="system-settings-page" style={{ padding: '1.5rem', width: '100%' }}>
         <div className="page-loading">
@@ -177,6 +210,10 @@ const SystemSettingsComponent: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  if (!settings) {
+    return null;
   }
 
   return (
@@ -189,12 +226,12 @@ const SystemSettingsComponent: React.FC = () => {
               System Settings
             </h1>
             <p style={{ margin: '0.5rem 0 0 0', color: '#6b7280' }}>
-              Configure application-wide settings, company information, and system preferences
+              Configure application-wide preferences — date, currency, security, notifications, and default location
             </p>
           </div>
           <button
             onClick={activeTab === 'company' ? handleSaveDefaultLocation : handleSaveSettings}
-            disabled={saving || loading || (activeTab === 'company' && loadingLocations)}
+            disabled={saving || (activeTab === 'company' && loadingLocations)}
             style={{
               padding: '0.75rem 1.5rem',
               backgroundColor: saving ? '#9ca3af' : '#10b981',
@@ -213,6 +250,18 @@ const SystemSettingsComponent: React.FC = () => {
             {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
+        {usingDefaults && (
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: '#fef3c7',
+            border: '1px solid #fbbf24',
+            borderRadius: '0.375rem',
+            color: '#92400e',
+            fontSize: '0.875rem',
+          }}>
+            Settings could not be loaded from the server. Defaults are shown — click Save Settings to create your tenant configuration.
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -259,9 +308,28 @@ const SystemSettingsComponent: React.FC = () => {
               <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
                 Default Location
               </h3>
-              <p style={{ color: '#6b7280', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+              <p style={{ color: '#6b7280', marginBottom: '1rem', fontSize: '0.875rem' }}>
                 Select the default location to use for new documents. This location will be automatically selected when you log in.
                 You can change your current working location anytime using the location switcher in the top bar.
+              </p>
+              <p style={{ color: '#6b7280', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+                Company name, address, and tax details are managed in{' '}
+                <button
+                  type="button"
+                  onClick={handleOpenAccountingSetup}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: '#3b82f6',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  Accounting Setup
+                </button>
+                .
               </p>
               
               <div style={{ marginBottom: '1.5rem' }}>
@@ -472,14 +540,12 @@ const SystemSettingsComponent: React.FC = () => {
                       fontSize: '0.875rem'
                     }}
                   >
-                    <option value="America/New_York">Eastern Time (ET)</option>
-                    <option value="America/Chicago">Central Time (CT)</option>
-                    <option value="America/Denver">Mountain Time (MT)</option>
-                    <option value="America/Los_Angeles">Pacific Time (PT)</option>
-                    <option value="America/Phoenix">Arizona Time</option>
-                    <option value="America/Anchorage">Alaska Time</option>
-                    <option value="Pacific/Honolulu">Hawaii Time</option>
-                    <option value="UTC">UTC</option>
+                    {SYSTEM_TIMEZONE_OPTIONS.map((tz) => (
+                      <option key={tz.value} value={tz.value}>{tz.label}</option>
+                    ))}
+                    {!SYSTEM_TIMEZONE_OPTIONS.some((tz) => tz.value === settings.timezone) && settings.timezone ? (
+                      <option value={settings.timezone}>{settings.timezone}</option>
+                    ) : null}
                   </select>
                 </div>
                 <div>
@@ -697,7 +763,7 @@ const SystemSettingsComponent: React.FC = () => {
                       fontSize: '0.875rem'
                     }}
                   />
-                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>Number of previous passwords to remember</small>
+                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>Previous passwords users cannot reuse (0 = disabled). Enforced on change and reset.</small>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
@@ -840,9 +906,14 @@ const SystemSettingsComponent: React.FC = () => {
           {/* Email Settings */}
           {activeTab === 'email' && (
             <div>
-              <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
+              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
                 Email/SMTP Configuration
               </h3>
+              <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
+                SMTP credentials are saved for your tenant. Outbound email delivery is not yet wired to all modules —
+                enable &quot;Email notifications&quot; under General to gate reminder actions. Company letterhead details
+                are maintained in Accounting Setup.
+              </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
@@ -999,7 +1070,7 @@ const SystemSettingsComponent: React.FC = () => {
                     <option value="100">100 items per page</option>
                   </select>
                   <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.5rem' }}>
-                    Applied immediately after save to paginated list views (Master lists).
+                    Applied after save to paginated transaction lists (orders, invoices, job orders, etc.).
                   </small>
                 </div>
                 <div style={{ gridColumn: '1 / -1', marginTop: '1rem' }}>

@@ -288,14 +288,18 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { message = policyError });
                 }
 
-                await _authService.EnsurePasswordHashedAsync(user, resetDto.NewPassword);
-                user.PwdResetDate = DateTime.UtcNow;
+                var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
+                    user, resetDto.NewPassword, settings);
+                if (!applied)
+                    return BadRequest(new { message = applyError });
+
                 user.ChangePassword = "Y";
                 user.FailedLoginCount = 0;
                 user.LockoutEndUtc = null;
                 user.UserToken = ""; // invalidate refresh sessions
 
                 await _context.SaveChangesAsync();
+                await _authService.TrimPasswordHistoryAsync(user.User_UniqueID, settings.PasswordHistoryCount);
 
                 return Ok(new { message = "Password reset successfully. User must change password on next login." });
             }

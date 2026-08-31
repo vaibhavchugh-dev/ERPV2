@@ -265,10 +265,17 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                int offsetNumber = orderId > 999 ? orderId - 999 : orderId;
+                // Prefer exact OrderID match (JO links, dashboard, global search pass OrderID)
                 var order = _context.CustomerOrder
-                    .Where(o => (o.OrderID == orderId || o.PONumber == orderId || o.OrderID == offsetNumber || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
-                    .FirstOrDefault();
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+
+                if (order == null)
+                {
+                    int offsetNumber = orderId > 999 ? orderId - 999 : orderId;
+                    order = _context.CustomerOrder
+                        .Where(o => (o.PONumber == orderId || o.PONumber == offsetNumber) && o.Tenantid == tenantId)
+                        .FirstOrDefault();
+                }
 
                 if (order == null)
                 {
@@ -3259,7 +3266,7 @@ namespace CimmpleAPI.Controllers
 
                 var invoiceableItems = detailsList.Select(d => {
                     var receivedQty = receivedTotals.ContainsKey(d.ID) ? receivedTotals[d.ID] : (d.ReceivedQty ?? 0);
-                    var invoicedQty = invoicedTotals.ContainsKey(d.ID) ? invoicedTotals[d.ID] : d.InvoicedQty;
+                    var invoicedQty = invoicedTotals.ContainsKey(d.ID) ? invoicedTotals[d.ID] : 0;
                     var availableToInvoice = receivedQty - invoicedQty;
 
                     return new

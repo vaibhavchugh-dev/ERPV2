@@ -5,6 +5,7 @@ export interface JobOrderMaster {
   jobOrderID: number;
   jobOrderNumber: number;
   customerOrderID: number;
+  customerPONumber?: number;
   customerOrderDetailID: number;
   customerID: number;
   customerName: string;

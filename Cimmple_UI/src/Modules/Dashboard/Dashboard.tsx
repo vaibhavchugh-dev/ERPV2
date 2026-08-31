@@ -177,14 +177,14 @@ const Dashboard: React.FC = () => {
   };
 
   const handleNavigate = (entityType: string, entityId: number) => {
-    const returnState = { returnTo: "/dashboard" };
+    const returnState = { returnTo: "/home" };
     switch (entityType) {
       case "JobOrder":
         history.push(`/job-orders?open=${entityId}`, returnState);
         break;
       case "Order":
       case "CustomerOrder":
-        history.push(`/orders/customer?open=${entityId}`);
+        history.push(`/orders/customer?open=${entityId}`, returnState);
         break;
       case "Shipment":
         history.push(`/orders/customer-shipments?open=${entityId}`, returnState);
