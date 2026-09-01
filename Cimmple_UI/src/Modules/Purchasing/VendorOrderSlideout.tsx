@@ -38,6 +38,7 @@ import {
 import { RawMaterial } from "../../Common/Services/InventoryService";
 import { toHtmlDateInputValue } from "../../Common/Utils/Formatting";
 import "./VendorOrderSlideout.scss";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 interface VendorOrderSlideoutProps {
   orderId: number;
@@ -48,6 +49,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   orderId,
   onClose,
 }) => {
+  const { formatCurrency, currencySymbol, discountColumnLabel, settings } = useFormatting();
 
   const [formData, setFormData] = useState<VendorOrderMasterReq & { MaterialType?: string }>({
     OrderID: 0,
@@ -1323,7 +1325,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "80px" }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "120px" }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>Discount % / $</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>{discountColumnLabel}</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "180px" }}>Account</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
@@ -1874,7 +1876,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   title="Discount type"
                                 >
                                   <option value="Percent">%</option>
-                                  <option value="Amount">$</option>
+                                  <option value="Amount">{currencySymbol}</option>
                                 </select>
                                 <input
                                   type="text"
@@ -1916,7 +1918,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                              ${lineTotal.toFixed(2)}
+                              {formatCurrency(lineTotal)}
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
@@ -2014,7 +2016,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
                         <td colSpan={9} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                          ${formData.TotalAmount.toFixed(2)}
+                          {formatCurrency(formData.TotalAmount)}
                         </td>
                         <td colSpan={2} style={{ padding: "0.75rem" }}></td>
                       </tr>
@@ -2179,7 +2181,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.5rem" }}>
                             <div style={{ fontSize: "0.875rem", color: "#374151", fontWeight: "500" }}>
-                              Amount: ${invoice.totalAmount.toFixed(2)}
+                              Amount: {formatCurrency(invoice.totalAmount)}
                             </div>
                             <div style={{ display: "flex", gap: "0.5rem" }}>
                               <button
@@ -2242,7 +2244,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 fontWeight: "500",
                                 color: "#374151"
                               }}>
-                                {item.description}: {item.qtyInvoiced} units (${item.amount.toFixed(2)})
+                                {item.description}: {item.qtyInvoiced} units ({formatCurrency(item.amount)})
                               </span>
                             ))}
                           </div>
@@ -2469,15 +2471,15 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                         <tr key={index}>
                           <td>{item.description}</td>
                           <td>{item.qtyInvoiced}</td>
-                          <td>${(item.amount / item.qtyInvoiced).toFixed(2)}</td>
-                          <td>${item.amount.toFixed(2)}</td>
+                          <td>{formatCurrency(item.amount / item.qtyInvoiced)}</td>
+                          <td>{formatCurrency(item.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr>
                         <td colSpan={3} style={{ textAlign: 'right', fontWeight: 'bold' }}>Total Amount:</td>
-                        <td style={{ fontWeight: 'bold' }}>${selectedInvoiceForPrint.totalAmount.toFixed(2)}</td>
+                        <td style={{ fontWeight: 'bold' }}>{formatCurrency(selectedInvoiceForPrint.totalAmount)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -2486,6 +2488,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                 {/* Footer */}
                 <div className="invoice-footer">
                   <p><strong>Payment Terms:</strong> Net 30 days</p>
+                  <p><strong>Currency:</strong> {settings.defaultCurrency}</p>
                   <p><strong>Please make checks payable to:</strong> Cimmple ERP</p>
                   <p>Thank you for your business!</p>
                 </div>

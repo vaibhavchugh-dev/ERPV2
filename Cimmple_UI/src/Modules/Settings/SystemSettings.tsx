@@ -9,6 +9,7 @@ import { notifyLocationChanged } from "../../Common/Hooks/useActiveLocation";
 import { useSettings } from "../../Common/Contexts/SettingsContext";
 import { toastAlwaysSuccess } from "../../Common/Utils/settingsRuntime";
 import { getDefaultSystemSettings, SYSTEM_TIMEZONE_OPTIONS } from "../../Common/Utils/defaultSystemSettings";
+import { deriveCurrencySymbol } from "../../Common/Utils/Formatting";
 import { useHistory } from "react-router-dom";
 import "./SystemSettings.scss";
 
@@ -589,7 +590,18 @@ const SystemSettingsComponent: React.FC = () => {
                   </label>
                   <select
                     value={settings.defaultCurrency}
-                    onChange={(e) => updateSetting('defaultCurrency', e.target.value)}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              defaultCurrency: code,
+                              currencySymbol: deriveCurrencySymbol(code, prev.locale),
+                            }
+                          : null
+                      );
+                    }}
                     style={{
                       width: '100%',
                       padding: '0.75rem',

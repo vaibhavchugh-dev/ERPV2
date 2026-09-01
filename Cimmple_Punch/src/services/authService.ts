@@ -55,6 +55,33 @@ export const PUNCH_ADMIN_UNLOCK_KEY = "punchAdminUnlocked";
 export const PUNCH_SESSION_DAYS = 30;
 const PUNCH_SESSION_MAX_AGE_MS = PUNCH_SESSION_DAYS * 24 * 60 * 60 * 1000;
 
+/** Read timezone from session storage (ERP `storage` key, then punchStorage). */
+export function getSessionTimeZone(): string {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const storage = JSON.parse(raw) as Record<string, unknown>;
+      const fromStorage =
+        storage.timeZone || storage.timezone || storage.timezoneui || storage.currentUtcTime;
+      if (typeof fromStorage === "string" && fromStorage.trim()) {
+        return fromStorage.trim();
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  const punch = AuthService.getPunchStorage();
+  if (punch?.timeZone?.trim()) {
+    return punch.timeZone.trim();
+  }
+  if (punch?.currentUtcTime?.trim()) {
+    return punch.currentUtcTime.trim();
+  }
+
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 export function isAdminRole(roleId?: number, roleName?: string): boolean {
   if (roleId === 1) return true;
   const name = (roleName || "").toLowerCase();
@@ -68,6 +95,11 @@ export class AuthService {
       [user.firstName, user.lastName].filter(Boolean).join(" ") || user.userName;
     const expiresAt = Date.now() + PUNCH_SESSION_MAX_AGE_MS;
     const rolId = user.roleId || 0;
+    const resolvedTimeZone =
+      user.timeZone ||
+      user.timezone ||
+      user.timezoneui ||
+      Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     const storage = {
       userName: user.userName,
@@ -83,6 +115,8 @@ export class AuthService {
       portalType: user.portalType || "erp",
       sessionTimeoutMinutes: response.sessionTimeoutMinutes,
       expiresAtUtc: response.expiresAtUtc,
+      timezone: resolvedTimeZone,
+      timeZone: resolvedTimeZone,
     };
 
     const punchStorage: PunchStorage = {
@@ -93,8 +127,8 @@ export class AuthService {
       role: user.roleName,
       companyName: displayName,
       name: displayName,
-      timeZone: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
-      currentUtcTime: user.timeZone || user.timezone || user.timezoneui || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeZone: resolvedTimeZone,
+      currentUtcTime: resolvedTimeZone,
       expiresAt,
     };
 

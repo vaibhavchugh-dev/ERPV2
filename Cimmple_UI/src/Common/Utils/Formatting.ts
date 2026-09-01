@@ -1,6 +1,7 @@
 import moment from 'moment-timezone';
 import { SystemSettings } from '../Services/SystemSettingsService';
 import { getCachedSettings } from './settingsRuntime';
+import { getDefaultSystemSettings } from './defaultSystemSettings';
 
 /** UI / .NET-style date formats → moment tokens (d≠day-of-week in moment). */
 const MOMENT_DATE_FORMATS: Record<string, string> = {
@@ -24,8 +25,82 @@ export const toMomentDateFormat = (dateFormat?: string | null): string => {
     .replace(/(^|[^D])d([^D]|$)/g, '$1D$2');
 };
 
-const resolveSettings = (settings?: SystemSettings | null): SystemSettings | null =>
-  settings ?? getCachedSettings();
+const resolveSettings = (settings?: SystemSettings | null): SystemSettings | null => {
+  if (settings) return settings;
+
+  const cached = getCachedSettings();
+  if (cached) return cached;
+
+  try {
+    const storage = JSON.parse(localStorage.getItem('storage') || '{}');
+    if (
+      storage.defaultCurrency ||
+      storage.currencySymbol ||
+      storage.locale ||
+      storage.decimalPlaces != null
+    ) {
+      const tenantId = storage.tenantID || 1;
+      return {
+        ...getDefaultSystemSettings(tenantId),
+        defaultCurrency: storage.defaultCurrency || 'USD',
+        currencySymbol: storage.currencySymbol || '$',
+        locale: storage.locale || 'en-US',
+        decimalPlaces: storage.decimalPlaces ?? 2,
+      };
+    }
+  } catch {
+    // ignore storage parse failures
+  }
+
+  return null;
+};
+
+/** Derive display symbol for a currency code (e.g. EUR → €). */
+export const deriveCurrencySymbol = (
+  currencyCode: string,
+  locale = 'en-US'
+): string => {
+  try {
+    const parts = new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: currencyCode,
+    }).formatToParts(1);
+    const symbol = parts.find((p) => p.type === 'currency')?.value;
+    if (symbol) return symbol;
+  } catch {
+    // Intl may reject unknown codes
+  }
+
+  const fallback: Record<string, string> = {
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    JPY: '¥',
+    CNY: '¥',
+    INR: '₹',
+    CAD: 'C$',
+    AUD: 'A$',
+  };
+  return fallback[currencyCode] || currencyCode;
+};
+
+/** Symbol from system settings (e.g. $, €). */
+export const getCurrencySymbol = (settings?: SystemSettings | null): string => {
+  const resolved = resolveSettings(settings);
+  const currency = resolved?.defaultCurrency || 'USD';
+  const locale = resolved?.locale || 'en-US';
+  const configured = (resolved?.currencySymbol || '').trim();
+  const derived = deriveCurrencySymbol(currency, locale);
+
+  if (!configured) return derived;
+  // Common mismatch: currency changed to EUR but symbol field still $
+  if (configured === '$' && currency !== 'USD') return derived;
+  return configured;
+};
+
+/** Column header for discount type picker (percent vs flat amount). */
+export const formatDiscountColumnLabel = (settings?: SystemSettings | null): string =>
+  `Discount % / ${getCurrencySymbol(settings)}`;
 
 /**
  * Format currency using system settings

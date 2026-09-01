@@ -109,7 +109,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
                     .FontSize(9)
                     .FontColor(MediumText);
                 
-                column.Item().PaddingTop(4).Text("Payment terms: Net 30 days. All prices are in USD unless otherwise stated.")
+                column.Item().PaddingTop(4).Text($"Payment terms: Net 30 days. All prices are in {CurrencyLabelForFooter()} unless otherwise stated.")
                     .FontSize(9)
                     .FontColor(MediumText);
                 

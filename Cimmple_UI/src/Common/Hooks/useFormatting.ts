@@ -6,6 +6,8 @@ import {
   formatDateTime,
   formatNumber,
   formatUtcToTimezone,
+  getCurrencySymbol,
+  formatDiscountColumnLabel,
 } from '../Utils/Formatting';
 
 /**
@@ -46,6 +48,12 @@ export const useFormatting = () => {
     formatUtcToTimezone: (utcDateTime: any, customTimezone?: string) => 
       formatUtcToTimezone(utcDateTime, settings, customTimezone),
     
+  /** Currency symbol from system settings (e.g. $, €). */
+  currencySymbol: getCurrencySymbol(settings),
+
+  /** Table header: Discount % / {symbol} */
+  discountColumnLabel: formatDiscountColumnLabel(settings),
+
     /**
      * Get settings for direct access if needed
      */

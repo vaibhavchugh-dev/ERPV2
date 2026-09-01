@@ -58,6 +58,7 @@ namespace CimmpleAPI.Services.Auth
         public int? VendorId { get; set; }
         public string? VendorCode { get; set; }
         public string PortalType { get; set; } = "erp"; // erp | vendor
+        public string? TimeZone { get; set; }
         public List<LocationClaimDto> Locations { get; set; } = new();
         public List<PermissionClaimDto> Permissions { get; set; } = new();
     }

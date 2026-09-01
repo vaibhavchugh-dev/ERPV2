@@ -5,6 +5,7 @@ import { deriveOrderMaterialType, lineTypeFromQuotationType } from "../../Common
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
 import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
 import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import "./VendorQuotationComparison.scss";
 
@@ -54,6 +55,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   onClose,
   onQuotationSelected,
 }) => {
+  const { formatCurrency } = useFormatting();
   const listNeedsRefreshRef = useRef(false);
   const [quotations, setQuotations] = useState<QuotationData[]>([]);
   const [details, setDetails] = useState<DetailData[]>([]);
@@ -154,14 +156,6 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
   };
 
   const formatDate = (dateStr: string): string => {

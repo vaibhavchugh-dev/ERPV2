@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { SystemSettingsService, SystemSettings } from '../Services/SystemSettingsService';
-import { applyRuntimeSettings } from '../Utils/settingsRuntime';
+import { applyRuntimeSettings, getCachedSettings } from '../Utils/settingsRuntime';
 import { getDefaultSystemSettings } from '../Utils/defaultSystemSettings';
 
 interface SettingsContextType {
@@ -102,13 +102,38 @@ export const useSettings = (): SettingsContextType => {
 export const useSettingsSafe = (): SystemSettings => {
   // Always call useContext - hooks must be called unconditionally
   const context = useContext(SettingsContext);
-  
-  // If context is undefined or settings are null, return defaults
-  if (!context || !context.settings) {
-    const storage = JSON.parse(localStorage.getItem('storage') || '{}');
-    const tenantId = storage?.tenantID || 1;
-    return getDefaultSettings(tenantId);
+
+  if (context?.settings) {
+    return context.settings;
   }
-  
-  return context.settings;
+
+  const cached = getCachedSettings();
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const storage = JSON.parse(localStorage.getItem('storage') || '{}');
+    if (
+      storage.defaultCurrency ||
+      storage.currencySymbol ||
+      storage.locale ||
+      storage.decimalPlaces != null
+    ) {
+      const tenantId = storage.tenantID || 1;
+      return {
+        ...getDefaultSettings(tenantId),
+        defaultCurrency: storage.defaultCurrency || 'USD',
+        currencySymbol: storage.currencySymbol || '$',
+        locale: storage.locale || 'en-US',
+        decimalPlaces: storage.decimalPlaces ?? 2,
+      };
+    }
+  } catch {
+    // ignore storage parse failures
+  }
+
+  const storage = JSON.parse(localStorage.getItem('storage') || '{}');
+  const tenantId = storage?.tenantID || 1;
+  return getDefaultSettings(tenantId);
 };
