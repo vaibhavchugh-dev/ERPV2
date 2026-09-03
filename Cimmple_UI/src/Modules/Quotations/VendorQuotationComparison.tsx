@@ -443,7 +443,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             (d) => d.LineType || lineTypeFromQuotationType(quotationData.QuotationType)
           )
         ),
-        QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
+        QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
         QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
         Details: quotationData.Details.map(detail => {
           // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)
@@ -618,7 +618,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                 lineTypeFromQuotationType(quotationData.QuotationType)
             )
           ),
-          QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
+          QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
           QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
           Details: items.map((item, idx) => {
             // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)

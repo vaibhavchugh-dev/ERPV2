@@ -234,6 +234,39 @@ export const formatDateOnlyFromApi = (
   }
 };
 
+/**
+ * Parse API/ISO/slash date-only strings as a local calendar Date (no UTC day-shift).
+ * Prefer this over `new Date("yyyy-MM-dd")` when comparing to local month/week bounds.
+ */
+export const parseDateOnlyLocal = (dateStr: string | null | undefined): Date | null => {
+  if (!dateStr) return null;
+  try {
+    const raw = String(dateStr).trim();
+    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10) - 1;
+      const d = parseInt(isoMatch[3], 10);
+      const date = new Date(y, m, d);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const slashParts = raw.split('/');
+    if (slashParts.length === 3) {
+      let year = parseInt(slashParts[2], 10);
+      if (Number.isNaN(year)) return null;
+      if (slashParts[2].length <= 2) year += 2000;
+      const month = parseInt(slashParts[0], 10) - 1;
+      const day = parseInt(slashParts[1], 10);
+      const date = new Date(year, month, day);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  } catch {
+    return null;
+  }
+};
+
 /** MM/DD/YY (or ISO) → yyyy-MM-dd for API payloads (no time / no Z) */
 export const toDateOnlyApiString = (dateStr: string): string => {
   const padToday = () => {

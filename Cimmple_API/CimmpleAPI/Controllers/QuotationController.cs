@@ -1337,7 +1337,9 @@ namespace CimmpleAPI.Controllers
 
                 var isVendorPortal = IsVendorPortal();
                 var tokenVendorId = GetVendorId();
-                if (isVendorPortal)
+                // Fail closed: any authenticated vendor account must use the patch-only path
+                // (never ERP delete/recreate), even if portalType claim is missing after refresh.
+                if (isVendorPortal || (tokenVendorId.HasValue && tokenVendorId.Value > 0))
                 {
                     return SaveVendorPortalQuotationResponse(request);
                 }
@@ -2088,8 +2090,14 @@ namespace CimmpleAPI.Controllers
                     continue;
                 }
 
-                detail.UnitPrice = ReadDecimalProperty(detailElem, "UnitPrice", "unitPrice");
-                detail.Discount = ReadDecimalProperty(detailElem, "Discount", "discount");
+                if (TryReadDecimalProperty(detailElem, "UnitPrice", "unitPrice", out var unitPrice))
+                {
+                    detail.UnitPrice = unitPrice;
+                }
+                if (TryReadDecimalProperty(detailElem, "Discount", "discount", out var discount))
+                {
+                    detail.Discount = discount;
+                }
 
                 var discountType = ReadStringJson(detailElem, "DiscountType", "discountType");
                 if (!string.IsNullOrWhiteSpace(discountType))
@@ -2172,6 +2180,12 @@ namespace CimmpleAPI.Controllers
 
         private static decimal ReadDecimalProperty(JsonElement elem, string pascal, string camel)
         {
+            return TryReadDecimalProperty(elem, pascal, camel, out var value) ? value : 0m;
+        }
+
+        private static bool TryReadDecimalProperty(JsonElement elem, string pascal, string camel, out decimal value)
+        {
+            value = 0m;
             foreach (var name in new[] { pascal, camel })
             {
                 if (!elem.TryGetProperty(name, out var prop))
@@ -2181,15 +2195,17 @@ namespace CimmpleAPI.Controllers
 
                 if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDecimal(out var d))
                 {
-                    return d;
+                    value = d;
+                    return true;
                 }
                 if (prop.ValueKind == JsonValueKind.String && decimal.TryParse(prop.GetString(), out var parsed))
                 {
-                    return parsed;
+                    value = parsed;
+                    return true;
                 }
             }
 
-            return 0;
+            return false;
         }
 
         private static string? ReadStringJson(JsonElement elem, string pascal, string camel)

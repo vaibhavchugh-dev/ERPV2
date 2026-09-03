@@ -249,7 +249,7 @@ export class InvoiceService {
     status: string = "All",
     searchTerm: string = "",
     customerId?: number,
-    dateRange: string = "Last 30 Days",
+    dateRange: string = "All",
     startDate?: string,
     endDate?: string
   ): Promise<InvoiceSummary[] | null> => {

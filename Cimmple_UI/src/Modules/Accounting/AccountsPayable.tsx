@@ -4,6 +4,7 @@ import { faCheckCircle, faTimesCircle, faDollarSign, faBuilding, faCalendar, faF
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoiceSummary } from "../../Common/Services/VendorInvoiceService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
@@ -230,7 +231,7 @@ const AccountsPayable: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<APFilterOptions>({
     status: "All",
-    dateRange: "This Month",
+    dateRange: "All",
     amountRange: "All",
     approvalStatus: "All",
   });
@@ -246,9 +247,9 @@ const AccountsPayable: React.FC = () => {
   }, [filters]);
 
   const invoiceMatchesDateRange = (dateStr: string, range: string) => {
-    if (!dateStr) return true;
-    const invDate = new Date(dateStr);
-    if (isNaN(invDate.getTime())) return true;
+    if (!dateStr || !range || range === "All" || range === "All Dates") return true;
+    const invDate = parseDateOnlyLocal(dateStr);
+    if (!invDate) return true;
 
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -271,16 +272,12 @@ const AccountsPayable: React.FC = () => {
         return invDate >= ninetyDaysAgo;
       }
       case "This Month": {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        return invDate >= startOfMonth;
+        return invDate.getFullYear() === now.getFullYear() && invDate.getMonth() === now.getMonth();
       }
       case "Last Month": {
-        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-        return invDate >= startOfLastMonth && invDate <= endOfLastMonth;
+        const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        return invDate.getFullYear() === last.getFullYear() && invDate.getMonth() === last.getMonth();
       }
-      case "All":
-      case "All Dates":
       default:
         return true;
     }

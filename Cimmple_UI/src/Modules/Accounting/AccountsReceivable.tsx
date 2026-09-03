@@ -219,7 +219,7 @@ const AccountsReceivable: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ARFilterOptions>({
     status: "All",
-    dateRange: "This Month",
+    dateRange: "All",
     amountRange: "All",
     overdueStatus: "All",
   });
@@ -621,6 +621,7 @@ const AccountsReceivable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
             style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
           >
+            <option value="All">All Dates</option>
             <option value="This Week">This Week</option>
             <option value="This Month">This Month</option>
             <option value="Last 30 Days">Last 30 Days</option>
