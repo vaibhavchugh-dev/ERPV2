@@ -198,7 +198,10 @@ namespace CimmpleAPI.Services.Auth
         {
             var user = await _db.UserDetails.FirstOrDefaultAsync(u => u.User_UniqueID == userId);
             if (user == null) return null;
-            return await BuildAuthUserDtoAsync(user, user.VendorId.HasValue && user.VendorId > 0 ? "vendor" : "erp");
+            var dto = await BuildAuthUserDtoAsync(user, user.VendorId.HasValue && user.VendorId > 0 ? "vendor" : "erp");
+            var settings = await GetSettingsAsync(user.TenantID);
+            dto.TimeZone = settings.Timezone;
+            return dto;
         }
 
         public async Task<(bool ok, string? error)> ChangePasswordAsync(int userId, ChangePasswordRequest request)
@@ -464,6 +467,7 @@ namespace CimmpleAPI.Services.Auth
         private async Task<LoginResponse> BuildLoginResponseAsync(UserDetail user, string portalType, SystemSettings settings)
         {
             var authUser = await BuildAuthUserDtoAsync(user, portalType);
+            authUser.TimeZone = settings.Timezone;
             var refresh = _jwt.CreateRefreshToken();
             user.UserToken = refresh;
 

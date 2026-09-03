@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { InvoiceableItemForVendor, CreateVendorInvoiceRequest, VendorInvoiceService } from '../../Common/Services/VendorInvoiceService';
 import { AccountingService } from '../../Common/Services/AccountingService';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 interface VendorInvoiceModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
   selectedItems = [],
   onInvoiceCreated
 }) => {
+  const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -429,7 +431,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                     fontWeight: 600,
                     fontSize: '0.875rem'
                   }}>
-                    ${invoiceTotal.toFixed(2)}
+                    {formatCurrency(invoiceTotal)}
                   </div>
                 </div>
               </div>
@@ -457,7 +459,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
             {/* Items to Invoice */}
             <div style={{ marginBottom: '1.5rem' }}>
               <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600' }}>
-                Items to Invoice ({totalItems} items, Subtotal: ${subtotal.toFixed(2)})
+                Items to Invoice ({totalItems} items, Subtotal: {formatCurrency(subtotal)})
               </h4>
               <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.375rem' }}>
                 {selectedItems.map((item) => (
@@ -478,7 +480,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                         </div>
                       </div>
                       <div style={{ fontSize: '0.875rem', fontWeight: '600', color: '#1f2937' }}>
-                        ${calculateLineTotal(item).toFixed(2)}
+                        {formatCurrency(calculateLineTotal(item))}
                       </div>
                     </div>
 
@@ -614,7 +616,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                           fontWeight: '600',
                           textAlign: 'right'
                         }}>
-                          ${calculateLineTotal(item).toFixed(2)}
+                          {formatCurrency(calculateLineTotal(item))}
                         </div>
                       </div>
                     </div>
@@ -662,7 +664,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                 fontWeight: '500'
               }}
             >
-              {loading ? 'Creating...' : `Create Invoice ($${invoiceTotal.toFixed(2)})`}
+              {loading ? 'Creating...' : `Create Invoice (${formatCurrency(invoiceTotal)})`}
             </button>
           </div>
         </form>

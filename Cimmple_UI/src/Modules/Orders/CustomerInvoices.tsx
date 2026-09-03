@@ -53,7 +53,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
     }
 
     if (amount > balanceDue + 0.009) {
-      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      toast.error(`Payment amount cannot exceed remaining balance of ${formatCurrency(balanceDue)}`);
       return;
     }
 
@@ -76,7 +76,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
 
       await InvoiceService.RecordCustomerPayment(invoice.id, paymentData);
 
-      toast.success(`Payment of $${amount.toFixed(2)} recorded for invoice ${invoice.invoiceNo}`);
+      toast.success(`Payment of ${formatCurrency(amount)} recorded for invoice ${invoice.invoiceNo}`);
       onPaymentComplete();
     } catch (error: any) {
       console.error('Payment recording failed:', error);

@@ -6,6 +6,7 @@ import { CustomerShipmentsService, CustomerShipmentDetail } from '../../Common/S
 import { ShippingService } from '../../Common/Services/ShippingService';
 import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
+import { useFormatting } from '../../Common/Hooks/useFormatting';
 
 interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
   shipmentId,
   onShipmentDeleted
 }) => {
+  const { formatCurrency, formatDate } = useFormatting();
   const [shipment, setShipment] = useState<CustomerShipmentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -50,26 +52,6 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
       setShipment(null);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(amount);
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    try {
-      return new Date(dateStr).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return dateStr;
     }
   };
 

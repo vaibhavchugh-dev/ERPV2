@@ -111,6 +111,10 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 column.Item().PaddingTop(4).Text("Please provide your best quotation for the items listed above. This quotation request is valid for 30 days from the date of issue.")
                     .FontSize(9)
                     .FontColor(MediumText);
+
+                column.Item().PaddingTop(4).Text($"All amounts are in {CurrencyLabelForFooter()}.")
+                    .FontSize(9)
+                    .FontColor(MediumText);
                 
                 column.Item().PaddingTop(8).Text("We look forward to your response.")
                     .FontSize(9)

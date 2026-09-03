@@ -255,10 +255,16 @@ export class EmployeeService {
     request.TenantID = tenantID;
 
     const url = `/Employee/SaveEmployee`;
-    return Instense.post(url, request).then((response) => {
-      const result = response.data.result;
-      return result;
-    });
+    return Instense.post(url, request)
+      .then((response) => response.data.result)
+      .catch((error: any) => {
+        throw new Error(
+          error.response?.data?.error ||
+            error.response?.data?.message ||
+            error.message ||
+            "Failed to save employee"
+        );
+      });
   };
 
   public static SaveEmployeeData = async (
@@ -281,9 +287,16 @@ export class EmployeeService {
     }
     formData.append("formField", JSON.stringify(request));
 
-    return Instense.post(url, formData).then((response) => {
-      return response.data.result;
-    });
+    return Instense.post(url, formData)
+      .then((response) => response.data.result)
+      .catch((error: any) => {
+        throw new Error(
+          error.response?.data?.error ||
+            error.response?.data?.message ||
+            error.message ||
+            "Failed to save employee"
+        );
+      });
   };
 
   public static GetProfilePic = async (

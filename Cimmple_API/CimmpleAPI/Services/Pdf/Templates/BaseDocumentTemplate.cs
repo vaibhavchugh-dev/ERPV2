@@ -3,6 +3,7 @@ using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using System.IO;
 using CimmpleAPI.Services.Pdf.Models;
+using CimmpleAPI.Utilities;
 
 namespace CimmpleAPI.Services.Pdf.Templates
 {
@@ -388,7 +389,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
                     if (index == 2) displayText = "Date"; // Est. Date / Due Date — keep single line
                     if (index == 3) displayText = "Unit"; // Unit column
                     if (index == 4) displayText = "Qty"; // Qty column
-                    if (index == 6) displayText = "Disc."; // Discount column
+                    if (index == 6) displayText = DiscountColumnShortLabel(); // Discount column
 
                     if (isNumeric)
                     {
@@ -474,9 +475,36 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 .PaddingHorizontal(2);
         }
 
+        protected string DiscountColumnShortLabel()
+        {
+            return $"Disc. ({ResolvedCurrencySymbol()})";
+        }
+
+        protected string CurrencyLabelForFooter()
+        {
+            if (!string.IsNullOrWhiteSpace(DocumentData.DefaultCurrency))
+                return DocumentData.DefaultCurrency;
+            return "USD";
+        }
+
+        protected string ResolvedCurrencySymbol()
+        {
+            return CurrencyFormattingHelper.ResolveCurrencySymbol(
+                DocumentData.DefaultCurrency,
+                DocumentData.CurrencySymbol,
+                DocumentData.Locale);
+        }
+
         protected string FormatCurrency(decimal amount)
         {
-            return amount.ToString("C2", System.Globalization.CultureInfo.CreateSpecificCulture("en-US"));
+            return CurrencyFormattingHelper.FormatAmount(
+                amount,
+                DocumentData.DefaultCurrency,
+                DocumentData.CurrencySymbol,
+                DocumentData.Locale,
+                DocumentData.DecimalPlaces,
+                DocumentData.DecimalSeparator,
+                DocumentData.ThousandsSeparator);
         }
 
         protected string FormatDate(DateTime? date)

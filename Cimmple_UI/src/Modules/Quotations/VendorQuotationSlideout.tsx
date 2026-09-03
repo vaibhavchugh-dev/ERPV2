@@ -38,6 +38,7 @@ import {
   looksLikeJobPartNo,
 } from "../../Common/Components/CustomerPartCombobox";
 import "./VendorQuotationSlideout.scss";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 interface VendorQuotationSlideoutProps {
   quotationId: number;
@@ -48,6 +49,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   quotationId,
   onClose,
 }) => {
+  const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
 
   const [formData, setFormData] = useState<VendorQuotationMasterReq & { QuotationType?: string }>({
     OrderID: 0,
@@ -1440,7 +1442,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "100px" }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "80px" }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "120px" }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>Discount % / $</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "140px" }}>{discountColumnLabel}</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, minWidth: "180px" }}>Account</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
@@ -1932,7 +1934,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   title="Discount type"
                                 >
                                   <option value="Percent">%</option>
-                                  <option value="Amount">$</option>
+                                  <option value="Amount">{currencySymbol}</option>
                                 </select>
                                 <input
                                   type="text"
@@ -1972,7 +1974,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               </div>
                             </td>
                             <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                              ${lineTotal.toFixed(2)}
+                              {formatCurrency(lineTotal)}
                             </td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
@@ -2043,7 +2045,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
                         <td colSpan={8} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", fontWeight: 600 }}>
-                          ${formData.TotalAmount.toFixed(2)}
+                          {formatCurrency(formData.TotalAmount)}
                         </td>
                         <td colSpan={2} style={{ padding: "0.75rem" }}></td>
                       </tr>
@@ -2294,131 +2296,122 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       )}
 
       {/* Multi-Vendor Selection Dialog */}
-      {showMultiVendorDialog && (
-        <div className="text-editor-popup-overlay" onClick={() => setShowMultiVendorDialog(false)}>
-          <div className="text-editor-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "600px" }}>
-            <div className="text-editor-popup-header">
-              <h3>Send to Multiple Vendors</h3>
-              <button type="button" className="btn-close" onClick={() => setShowMultiVendorDialog(false)}>
-                ×
-              </button>
-            </div>
-            <div style={{ padding: "1.5rem" }}>
-              <p style={{ marginBottom: "1rem", color: "#6b7280" }}>
-                Select additional vendors to send this quotation to. The current vendor ({formData.VendorName}) is already included in the comparison.
-              </p>
-              
-              {/* Attachment Toggle */}
-              <div style={{ 
-                marginBottom: "1rem", 
-                padding: "0.75rem 1rem", 
-                backgroundColor: "#f9fafb", 
-                border: "1px solid #e5e7eb", 
-                borderRadius: "0.375rem",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.75rem"
-              }}>
-                <input
-                  type="checkbox"
-                  id="includeAttachments"
-                  checked={includeAttachments}
-                  onChange={(e) => setIncludeAttachments(e.target.checked)}
-                  style={{ cursor: "pointer" }}
-                />
-                <label 
-                  htmlFor="includeAttachments" 
-                  style={{ cursor: "pointer", flex: 1, fontSize: "0.875rem", margin: 0 }}
+      {showMultiVendorDialog &&
+        createPortal(
+          <div
+            className="text-editor-popup-overlay multi-vendor-dialog-overlay"
+            onClick={() => setShowMultiVendorDialog(false)}
+          >
+            <div
+              className="text-editor-popup multi-vendor-dialog"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-editor-popup-header">
+                <h3>Send to Multiple Vendors</h3>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowMultiVendorDialog(false)}
                 >
-                  Include attachments from master quotation
-                </label>
+                  ×
+                </button>
               </div>
-              
-              {/* Show master vendor as already included */}
-              {formData.VendorID > 0 && (
-                <div style={{ marginBottom: "1rem", padding: "0.75rem 1rem", backgroundColor: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "0.375rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={true}
-                      disabled
-                      style={{ cursor: "not-allowed", opacity: 0.6 }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 500, fontSize: "0.875rem", color: "#0369a1" }}>
-                        {formData.VendorName} (Current - Will be reset to blank pricing)
+              <div className="text-editor-popup-content">
+                <p className="multi-vendor-dialog-intro">
+                  Select additional vendors to send this quotation to. The current vendor (
+                  {formData.VendorName}) is already included in the comparison.
+                </p>
+
+                <div className="multi-vendor-dialog-attachments">
+                  <input
+                    type="checkbox"
+                    id="includeAttachments"
+                    checked={includeAttachments}
+                    onChange={(e) => setIncludeAttachments(e.target.checked)}
+                    style={{ cursor: "pointer" }}
+                  />
+                  <label
+                    htmlFor="includeAttachments"
+                    style={{ cursor: "pointer", flex: 1, fontSize: "0.875rem", margin: 0 }}
+                  >
+                    Include attachments from master quotation
+                  </label>
+                </div>
+
+                {formData.VendorID > 0 && (
+                  <div className="multi-vendor-dialog-current">
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        disabled
+                        style={{ cursor: "not-allowed", opacity: 0.6 }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 500, fontSize: "0.875rem", color: "#0369a1" }}>
+                          {formData.VendorName} (Current - Will be reset to blank pricing)
+                        </div>
+                        {formData.VendorCode && (
+                          <div style={{ fontSize: "0.75rem", color: "#0284c7" }}>
+                            {formData.VendorCode}
+                          </div>
+                        )}
                       </div>
-                      {formData.VendorCode && (
-                        <div style={{ fontSize: "0.75rem", color: "#0284c7" }}>{formData.VendorCode}</div>
-                      )}
                     </div>
                   </div>
-                </div>
-              )}
-
-              <div style={{ maxHeight: "400px", overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: "0.375rem" }}>
-                {vendors
-                  .filter((v) => v.vendor_id !== formData.VendorID) // Exclude current vendor
-                  .map((vendor) => {
-                    const isSelected = selectedVendorIds.has(vendor.vendor_id);
-                    return (
-                      <div
-                        key={vendor.vendor_id}
-                        onClick={() => {
-                          const newSet = new Set(selectedVendorIds);
-                          if (isSelected) {
-                            newSet.delete(vendor.vendor_id);
-                          } else {
-                            newSet.add(vendor.vendor_id);
-                          }
-                          setSelectedVendorIds(newSet);
-                        }}
-                        style={{
-                          padding: "0.75rem 1rem",
-                          cursor: "pointer",
-                          backgroundColor: isSelected ? "#e0e7ff" : "white",
-                          borderBottom: "1px solid #f3f4f6",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.75rem",
-                          transition: "background-color 0.15s",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) e.currentTarget.style.backgroundColor = "#f9fafb";
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected) e.currentTarget.style.backgroundColor = "white";
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          readOnly
-                          style={{ cursor: "pointer" }}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{vendor.company_name}</div>
-                          {vendor.vendorcode && (
-                            <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{vendor.vendorcode}</div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                {vendors.filter((v) => v.vendor_id !== formData.VendorID).length === 0 && (
-                  <div style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
-                    No other vendors available
-                  </div>
                 )}
+
+                <div className="multi-vendor-dialog-list">
+                  {vendors
+                    .filter((v) => v.vendor_id !== formData.VendorID)
+                    .map((vendor) => {
+                      const isSelected = selectedVendorIds.has(vendor.vendor_id);
+                      return (
+                        <div
+                          key={vendor.vendor_id}
+                          className={`multi-vendor-dialog-list-item${isSelected ? " is-selected" : ""}`}
+                          onClick={() => {
+                            const newSet = new Set(selectedVendorIds);
+                            if (isSelected) {
+                              newSet.delete(vendor.vendor_id);
+                            } else {
+                              newSet.add(vendor.vendor_id);
+                            }
+                            setSelectedVendorIds(newSet);
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            readOnly
+                            style={{ cursor: "pointer" }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
+                              {vendor.company_name}
+                            </div>
+                            {vendor.vendorcode && (
+                              <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                                {vendor.vendorcode}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {vendors.filter((v) => v.vendor_id !== formData.VendorID).length === 0 && (
+                    <div className="multi-vendor-dialog-list-empty">No other vendors available</div>
+                  )}
+                </div>
               </div>
-              <div style={{ marginTop: "1rem", display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <div className="text-editor-popup-footer">
                 <button
                   type="button"
                   className="btn-cancel"
                   onClick={() => {
                     setShowMultiVendorDialog(false);
                     setSelectedVendorIds(new Set());
-                    setIncludeAttachments(true); // Reset to default
+                    setIncludeAttachments(true);
                   }}
                 >
                   Cancel
@@ -2429,13 +2422,15 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   onClick={handleMultiVendorSave}
                   disabled={selectedVendorIds.size === 0 || loading}
                 >
-                  {loading ? "Creating..." : `Send to ${Array.from(selectedVendorIds).filter(id => id !== formData.VendorID).length} Additional Vendor(s)`}
+                  {loading
+                    ? "Creating..."
+                    : `Send to ${Array.from(selectedVendorIds).filter((id) => id !== formData.VendorID).length} Additional Vendor(s)`}
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog

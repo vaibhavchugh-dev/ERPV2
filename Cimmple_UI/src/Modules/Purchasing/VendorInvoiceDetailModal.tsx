@@ -63,7 +63,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
     }
 
     if (amount > balanceDue + 0.009) {
-      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      toast.error(`Payment amount cannot exceed remaining balance of ${formatCurrency(balanceDue)}`);
       return;
     }
 
@@ -90,7 +90,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
 
       toast.success(
         amount + 0.009 < balanceDue
-          ? `Partial payment of $${amount.toFixed(2)} recorded for invoice ${invoice.invoiceNo}`
+          ? `Partial payment of ${formatCurrency(amount)} recorded for invoice ${invoice.invoiceNo}`
           : `Payment recorded for invoice ${invoice.invoiceNo}`
       );
       onPaymentComplete();
