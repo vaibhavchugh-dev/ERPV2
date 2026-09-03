@@ -31,6 +31,7 @@ import {
   toHtmlDateInputValue,
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerQuotationSlideout.scss";
 
 interface CustomerQuotationSlideoutProps {
@@ -44,6 +45,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   onClose,
   onSaved,
 }) => {
+  const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
+
   const [formData, setFormData] = useState<QuotationMasterReq>({
     OrderID: 0,
     Tenantid: 0,
@@ -1744,7 +1747,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount % / $</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>{discountColumnLabel}</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Price Breakdown</th>
@@ -2183,7 +2186,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                   title="Discount type"
                                 >
                                   <option value="Percent">%</option>
-                                  <option value="Amount">$</option>
+                                  <option value="Amount">{currencySymbol}</option>
                                 </select>
                                 <input
                                   type="text"
@@ -2233,7 +2236,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                   whiteSpace: "nowrap",
                                 }}
                               >
-                                ${lineTotal.toFixed(2)}
+                                {formatCurrency(lineTotal)}
                               </div>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
@@ -2329,7 +2332,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
                         <td colSpan={8} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", textAlign: "left", fontWeight: 600 }}>
-                          ${formData.TotalAmount.toFixed(2)}
+                          {formatCurrency(formData.TotalAmount)}
                         </td>
                         <td colSpan={4} style={{ padding: "0.75rem" }}></td>
                       </tr>
@@ -2707,10 +2710,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                           <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{getFirstLine(detail.PartName) || "-"}</td>
                           <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem" }}>{detail.QtyOrdered}</td>
                           <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem" }}>
-                            ${detail.UnitPrice.toFixed(2)}
+                            {formatCurrency(detail.UnitPrice)}
                           </td>
                           <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem", fontWeight: 600 }}>
-                            ${lineTotal.toFixed(2)}
+                            {formatCurrency(lineTotal)}
                           </td>
                         </tr>
                       );
@@ -2720,17 +2723,18 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600, borderTop: "2px solid #e5e7eb" }}>
                       <td colSpan={6} style={{ padding: "0.75rem", textAlign: "right" }}>Selected Items Total:</td>
                       <td style={{ padding: "0.75rem", textAlign: "right" }}>
-                        ${formData.Details
-                          .filter(d => selectedLineItems.has(d.ItemNo))
-                          .reduce((sum, detail) => {
-                            const subtotal = detail.QtyOrdered * detail.UnitPrice;
-                            const discountAmount =
-                              detail.DiscountType === "Amount"
-                                ? Math.min(detail.Discount || 0, subtotal)
-                                : (subtotal * (detail.Discount || 0)) / 100;
-                            return sum + (subtotal - discountAmount);
-                          }, 0)
-                          .toFixed(2)}
+                        {formatCurrency(
+                          formData.Details
+                            .filter((d) => selectedLineItems.has(d.ItemNo))
+                            .reduce((sum, detail) => {
+                              const subtotal = detail.QtyOrdered * detail.UnitPrice;
+                              const discountAmount =
+                                detail.DiscountType === "Amount"
+                                  ? Math.min(detail.Discount || 0, subtotal)
+                                  : (subtotal * (detail.Discount || 0)) / 100;
+                              return sum + (subtotal - discountAmount);
+                            }, 0)
+                        )}
                       </td>
                     </tr>
                   </tfoot>
@@ -2909,6 +2913,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   onSave,
   onClose,
 }) => {
+  const { formatCurrency } = useFormatting();
   const [priceBreakdowns, setPriceBreakdowns] = useState<PriceBreakdownMaster[]>([]);
   const [loading, setLoading] = useState(false);
   // Default quantities: [1, 3, 5, 10, 20] - first one (1) is non-editable
@@ -3157,7 +3162,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
         <div className="price-breakdown-popup-content">
           <div style={{ marginBottom: "1rem", padding: "0.75rem", backgroundColor: "#f0f9ff", borderRadius: "0.5rem" }}>
             <p style={{ margin: 0, fontSize: "0.875rem" }}>
-              <strong>Default Unit Price:</strong> ${detail.UnitPrice.toFixed(2)} (used when no matrix is defined)
+              <strong>Default Unit Price:</strong> {formatCurrency(detail.UnitPrice)} (used when no matrix is defined)
             </p>
           </div>
 
@@ -3478,7 +3483,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                         .map(({ qty: quantity, idx: originalIndex }) => {
                           return (
                             <td key={originalIndex} style={{ padding: "0.75rem", textAlign: "right", color: "#6366f1" }}>
-                              <strong>${columnTotals[originalIndex]?.toFixed(2) || "0.00"}</strong>
+                              <strong>{formatCurrency(columnTotals[originalIndex] || 0)}</strong>
                             </td>
                           );
                         })}

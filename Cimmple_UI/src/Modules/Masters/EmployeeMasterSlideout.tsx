@@ -405,6 +405,17 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         }
         return newErrors;
       });
+    } else if (field === "EmpCode") {
+      const trimmed = (value || "").trim();
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        if (!trimmed) {
+          newErrors.EmpCode = "Employee code is required";
+        } else {
+          delete newErrors.EmpCode;
+        }
+        return newErrors;
+      });
     } else if (field === "Phone1" && value) {
       const phoneError = validatePhone(value);
       setErrors((prev) => {
@@ -447,6 +458,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
     if (!formData.LastName || formData.LastName.trim() === "") {
       newErrors.LastName = "Last Name is required";
+    }
+
+    const empCode = (formData.EmpCode || "").trim();
+    if (!empCode) {
+      newErrors.EmpCode = "Employee code is required";
     }
 
     // UserName validation: if toggle is enabled (UserName === "enabled"), we'll auto-generate it in handleSubmit
@@ -563,6 +579,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     setLoading(true);
     try {
       const submitData: EmployeeMasterReq = { ...formData };
+      submitData.EmpCode = (submitData.EmpCode || "").trim();
       delete submitData.HasPassword;
       delete submitData.CanLogin;
       if (loginAccessEnabled) {
@@ -595,11 +612,21 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     } catch (error: any) {
       console.error("Error saving employee:", error);
       const apiError =
+        error?.message ||
         error?.response?.data?.error ||
         error?.response?.data?.message ||
-        error?.message ||
         "Unknown error";
-      toast.error(`Error saving employee: ${apiError}`);
+      const duplicateCode =
+        /employee code/i.test(apiError) && /already/i.test(apiError);
+      if (duplicateCode) {
+        setErrors((prev) => ({
+          ...prev,
+          EmpCode: apiError.replace(/^Error saving employee:\s*/i, ""),
+        }));
+      }
+      toast.error(
+        duplicateCode ? apiError : `Error saving employee: ${apiError}`
+      );
     } finally {
       setLoading(false);
     }
@@ -896,6 +923,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                         onChange={(e) => handleInputChange("EmpCode", e.target.value)}
                       />
                     </div>
+                    {errors.EmpCode && (
+                      <span className="error-message">{errors.EmpCode}</span>
+                    )}
                   </div>
                   <div className="form-group">
                     <label htmlFor="Date_of_hire">Date of Hire</label>

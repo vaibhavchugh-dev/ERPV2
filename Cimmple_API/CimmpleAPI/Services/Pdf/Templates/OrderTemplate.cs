@@ -54,6 +54,9 @@ namespace CimmpleAPI.Services.Pdf.Templates
                             }));
 
                         column.Item().PaddingTop(12).Element(ComposeTotals);
+                        column.Item().PaddingTop(8).Text($"All amounts are in {CurrencyLabelForFooter()}.")
+                            .FontSize(9)
+                            .FontColor(MediumText);
                     });
 
                     page.Footer().Element(ComposePageFooter);

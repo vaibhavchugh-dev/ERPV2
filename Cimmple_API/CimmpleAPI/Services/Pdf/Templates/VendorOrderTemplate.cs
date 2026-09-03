@@ -131,6 +131,10 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 column.Item().PaddingTop(4).Text("Please confirm receipt of this purchase order. Delivery terms and payment terms as agreed.")
                     .FontSize(9)
                     .FontColor(MediumText);
+
+                column.Item().PaddingTop(4).Text($"All amounts are in {CurrencyLabelForFooter()}.")
+                    .FontSize(9)
+                    .FontColor(MediumText);
                 
                 column.Item().PaddingTop(8).Text("Thank you for your service!")
                     .FontSize(9)

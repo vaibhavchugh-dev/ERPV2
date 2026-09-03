@@ -4,6 +4,7 @@ import {
   CustomerPartOption,
   ProductMasterService,
 } from "../Services/ProductMasterService";
+import { formatCurrency } from "../Utils/Formatting";
 
 export type PartHistoryParty = "customer" | "vendor";
 
@@ -28,7 +29,7 @@ export interface CustomerPartComboboxProps {
 
 const formatMoney = (n?: number | null) => {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
-  return `$${Number(n).toFixed(2)}`;
+  return formatCurrency(Number(n));
 };
 
 const DEBOUNCE_MS = 300;

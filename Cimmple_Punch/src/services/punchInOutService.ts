@@ -1,4 +1,5 @@
 import api from "./apiClient";
+import { getSessionTimeZone } from "./authService";
 
 export type PunchDirection = "IN" | "OUT" | "BREAK_OUT" | "BREAK_IN";
 
@@ -36,7 +37,35 @@ export interface PunchBoardResponse {
   outUsers: PunchBoardUser[];
   availableUsers?: PunchBoardUser[];
   lastUpdated?: string;
+  tenantTimezone?: string;
+  tenantLocalNow?: string;
+  endOfDayPunchHour?: number;
 }
+
+const END_OF_DAY_PUNCH_HOUR = 17;
+
+/** Hour (0–23) for a date in the given IANA timezone (defaults to session storage). */
+export const getHourInTimeZone = (date: Date, timeZone?: string): number => {
+  const tz = timeZone?.trim() || getSessionTimeZone();
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const hourPart = parts.find((p) => p.type === "hour");
+    return hourPart ? parseInt(hourPart.value, 10) : date.getHours();
+  } catch {
+    return date.getHours();
+  }
+};
+
+/** At or after 5:00 PM tenant-local → end-of-day out; before → break out. */
+export const isAtOrAfterEndOfDay = (
+  date: Date,
+  timeZone?: string,
+  endHour = END_OF_DAY_PUNCH_HOUR
+): boolean => getHourInTimeZone(date, timeZone) >= endHour;
 
 export interface PunchResult {
   success: boolean;
@@ -80,11 +109,13 @@ export const getPunchDirectionLabel = (direction?: string): string => {
   }
 };
 
-/** Client-side fallback mirroring server rules (tenant local time approximated by device clock). */
-export const resolveNextPunchDirection = (employee: PunchBoardUser, now = new Date()): PunchDirection => {
-  if (employee.nextDirection) {
-    return employee.nextDirection;
-  }
+/** Client-side fallback mirroring server rules (tenant local time). */
+export const resolveNextPunchDirection = (
+  employee: PunchBoardUser,
+  now = new Date(),
+  timeZone?: string,
+  endOfDayHour = END_OF_DAY_PUNCH_HOUR
+): PunchDirection => {
   if (employee.isOnBreak === 1) {
     return "BREAK_IN";
   }
@@ -92,7 +123,10 @@ export const resolveNextPunchDirection = (employee: PunchBoardUser, now = new Da
     return "IN";
   }
   if (employee.isPunchedInOnly === 1) {
-    return now.getHours() >= 17 ? "OUT" : "BREAK_OUT";
+    return isAtOrAfterEndOfDay(now, timeZone, endOfDayHour) ? "OUT" : "BREAK_OUT";
+  }
+  if (employee.nextDirection) {
+    return employee.nextDirection;
   }
   return "IN";
 };
@@ -158,6 +192,10 @@ const normalizeBoard = (data: unknown): PunchBoardResponse => {
     outUsers,
     availableUsers,
     lastUpdated: source.lastUpdated as string | undefined,
+    tenantTimezone: (source.tenantTimezone as string | undefined) || undefined,
+    tenantLocalNow: (source.tenantLocalNow as string | undefined) || undefined,
+    endOfDayPunchHour:
+      typeof source.endOfDayPunchHour === "number" ? source.endOfDayPunchHour : END_OF_DAY_PUNCH_HOUR,
   };
 };
 

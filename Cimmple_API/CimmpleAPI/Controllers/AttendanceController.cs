@@ -3,6 +3,7 @@ using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Models.Punch;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
+using CimmpleAPI.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -131,7 +132,17 @@ namespace CimmpleAPI.Controllers
                 };
             }).ToList();
 
-            return Ok(new { result = new { users, lastUpdated = DateTime.UtcNow } });
+            return Ok(new
+            {
+                result = new
+                {
+                    users,
+                    lastUpdated = DateTime.UtcNow,
+                    tenantTimezone = GetTenantTimeZoneId(tenantId),
+                    tenantLocalNow = nowLocal,
+                    endOfDayPunchHour = TenantTimeZoneHelper.EndOfDayPunchHour,
+                }
+            });
         }
 
         [HttpGet("GetRegister")]
@@ -720,16 +731,15 @@ namespace CimmpleAPI.Controllers
 
             if (IsOnPremises(lastDirection) || IsClockIn(lastDirection))
             {
-                return nowLocal.TimeOfDay < EndOfDayPunchTime
-                    ? "BREAK_OUT"
-                    : "OUT";
+                // Before 5:00 PM tenant-local → break out; at/after 5:00 PM → end-of-day out.
+                return TenantTimeZoneHelper.IsAtOrAfterEndOfDay(nowLocal)
+                    ? "OUT"
+                    : "BREAK_OUT";
             }
 
             // Unknown legacy direction: treat like a toggle toward IN
             return "IN";
         }
-
-        private static readonly TimeSpan EndOfDayPunchTime = TimeSpan.FromHours(17);
 
         private static bool IsClockIn(string? direction) =>
             string.Equals(direction, "IN", StringComparison.OrdinalIgnoreCase);
@@ -777,6 +787,24 @@ namespace CimmpleAPI.Controllers
             return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
         }
 
+        private string GetTenantTimeZoneId(int tenantId)
+        {
+            var id = _db.SystemSettings.AsNoTracking()
+                .Where(s => s.TenantId == tenantId)
+                .Select(s => s.Timezone)
+                .FirstOrDefault();
+
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                id = _db.EntityMaster.AsNoTracking()
+                    .Where(e => e.Tenantid == tenantId)
+                    .Select(e => e.timezone ?? e.timezoneui)
+                    .FirstOrDefault();
+            }
+
+            return string.IsNullOrWhiteSpace(id) ? TimeZoneInfo.Local.Id : id.Trim();
+        }
+
         private static DateTime ParseDay(string? value, DateTime fallback)
         {
             if (!string.IsNullOrWhiteSpace(value)
@@ -806,32 +834,7 @@ namespace CimmpleAPI.Controllers
 
         private TimeZoneInfo GetTenantTimeZone(int tenantId)
         {
-            var id = _db.SystemSettings.AsNoTracking()
-                .Where(s => s.TenantId == tenantId)
-                .Select(s => s.Timezone)
-                .FirstOrDefault();
-
-            if (string.IsNullOrWhiteSpace(id))
-            {
-                id = _db.EntityMaster.AsNoTracking()
-                    .Where(e => e.Tenantid == tenantId)
-                    .Select(e => e.timezone ?? e.timezoneui)
-                    .FirstOrDefault();
-            }
-
-            if (string.IsNullOrWhiteSpace(id))
-            {
-                return TimeZoneInfo.Utc;
-            }
-
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById(id);
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                return TimeZoneInfo.Utc;
-            }
+            return TenantTimeZoneHelper.Resolve(GetTenantTimeZoneId(tenantId));
         }
     }
 

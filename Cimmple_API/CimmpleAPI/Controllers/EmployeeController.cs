@@ -442,15 +442,19 @@ namespace CimmpleAPI.Controllers
                 if (!string.IsNullOrEmpty(empCode))
                 {
                     var excludeId = isNew ? 0 : request.User_UniqueID;
+                    var empCodeLower = empCode.ToLower();
                     var codeConflict = _context.UserDetails
                         .Any(u => u.TenantID == request.TenantID &&
                                   u.User_UniqueID != excludeId &&
-                                  !string.IsNullOrEmpty(u.EmpCode) &&
-                                  string.Equals(u.EmpCode.Trim(), empCode, StringComparison.OrdinalIgnoreCase));
+                                  u.EmpCode != null &&
+                                  u.EmpCode.Trim().ToLower() == empCodeLower);
 
                     if (codeConflict)
                     {
-                        return BadRequest(new { error = "Employee Code already exists" });
+                        return BadRequest(new
+                        {
+                            error = $"Employee code '{empCode}' is already assigned to another employee."
+                        });
                     }
                 }
 

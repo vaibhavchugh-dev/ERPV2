@@ -138,6 +138,10 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 column.Item().PaddingTop(4).Text($"Payment due by {DueDate}.")
                     .FontSize(9)
                     .FontColor(MediumText);
+
+                column.Item().PaddingTop(4).Text($"All amounts are in {CurrencyLabelForFooter()}.")
+                    .FontSize(9)
+                    .FontColor(MediumText);
             });
         }
 
