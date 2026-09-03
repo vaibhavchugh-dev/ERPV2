@@ -48,7 +48,7 @@ export interface ReconciliationFilters {
 
 export class AccountingService {
   public static GetPaymentDashboardMetrics = async (
-    dateRange: string = "This Month"
+    dateRange: string = "All"
   ): Promise<PaymentDashboardMetrics | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
@@ -64,7 +64,7 @@ export class AccountingService {
 
   public static GetRecentTransactions = async (
     limit: number = 10,
-    dateRange: string = "This Month"
+    dateRange: string = "All"
   ): Promise<RecentTransaction[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;

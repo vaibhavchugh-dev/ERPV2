@@ -511,7 +511,7 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string status = "All",
             [FromQuery] string searchTerm = "",
             [FromQuery] int? customerId = null,
-            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] string dateRange = "All",
             [FromQuery] string startDate = null,
             [FromQuery] string endDate = null,
             [FromQuery] int? locationId = null)

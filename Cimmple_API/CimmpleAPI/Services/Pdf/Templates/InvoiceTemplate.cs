@@ -144,6 +144,10 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 column.Item().PaddingTop(4).Text($"Payment is due by {DueDate}. Please remit payment to the address shown above.")
                     .FontSize(9)
                     .FontColor(MediumText);
+
+                column.Item().PaddingTop(4).Text($"All amounts are in {CurrencyLabelForFooter()}.")
+                    .FontSize(9)
+                    .FontColor(MediumText);
                 
                 column.Item().PaddingTop(6).Text("Thank you for your business!")
                     .FontSize(9)

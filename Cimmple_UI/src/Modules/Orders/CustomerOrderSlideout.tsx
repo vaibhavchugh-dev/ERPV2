@@ -23,6 +23,7 @@ import {
   toHtmlDateInputValue,
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "./CustomerOrderSlideout.scss";
 
 const JobOrderSlideout = lazy(() => import("../JobOrders/JobOrderSlideout"));
@@ -38,6 +39,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   onClose,
   onSaved,
 }) => {
+  const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
+
   const [formData, setFormData] = useState<OrderMasterReq>({
     OrderID: 0,
     Tenantid: 0,
@@ -1502,7 +1505,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
-                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Discount % / $</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>{discountColumnLabel}</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Notes</th>
                         <th style={{ padding: "0.75rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600 }}>Job Order</th>
@@ -1944,7 +1947,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   title="Discount type"
                                 >
                                   <option value="Percent">%</option>
-                                  <option value="Amount">$</option>
+                                  <option value="Amount">{currencySymbol}</option>
                                 </select>
                                 <input
                                   type="text"
@@ -1995,7 +1998,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   whiteSpace: "nowrap",
                                 }}
                               >
-                                ${lineTotal.toFixed(2)}
+                                {formatCurrency(lineTotal)}
                               </div>
                             </td>
                             <td style={{ padding: "0.75rem" }}>
@@ -2205,7 +2208,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
                         <td colSpan={8} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
                         <td style={{ padding: "0.75rem", textAlign: "left", fontWeight: 600 }}>
-                          ${formData.TotalAmount.toFixed(2)}
+                          {formatCurrency(formData.TotalAmount)}
                         </td>
                         <td colSpan={5} style={{ padding: "0.75rem" }}></td>
                       </tr>
@@ -2399,7 +2402,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start" }}>
                           <div style={{ textAlign: "right" }}>
                             <div style={{ fontSize: "0.875rem", color: "#374151", fontWeight: "500" }}>
-                              Amount: ${invoice.totalAmount.toFixed(2)}
+                              Amount: {formatCurrency(invoice.totalAmount)}
                             </div>
                           </div>
                           <button
@@ -2441,7 +2444,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               fontWeight: "500",
                               color: "#374151"
                             }}>
-                              {item.description.split(' - ')[1] || item.description}: {item.qtyInvoiced} units (${item.amount.toFixed(2)})
+                              {item.description.split(' - ')[1] || item.description}: {item.qtyInvoiced} units ({formatCurrency(item.amount)})
                             </span>
                           ))}
                         </div>

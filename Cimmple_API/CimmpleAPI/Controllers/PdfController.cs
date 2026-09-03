@@ -7,6 +7,7 @@ using System.Text.Json;
 using CimmpleAPI.Services.Pdf;
 using CimmpleAPI.Services.Pdf.Models;
 using CimmpleAPI.Services.Pdf.Templates;
+using CimmpleAPI.Utilities;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 
@@ -89,6 +90,8 @@ namespace CimmpleAPI.Controllers
                     ? $"CQ#{quotation.PONumber + 999}" 
                     : $"CQ#{quotation.PONumber}";
 
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateQuotationPdf(
                     pdfData,
                     quotationNumber,
@@ -164,6 +167,8 @@ namespace CimmpleAPI.Controllers
                 var orderNumber = order.PONumber < 1000 
                     ? $"CO#{order.PONumber + 999}" 
                     : $"CO#{order.PONumber}";
+
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
 
                 var pdfBytes = _pdfService.GenerateOrderPdf(
                     pdfData,
@@ -300,6 +305,8 @@ namespace CimmpleAPI.Controllers
                     ? (order.PONumber < 1000 ? $"CO#{order.PONumber + 999}" : $"CO#{order.PONumber}")
                     : "";
 
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateInvoicePdf(
                     pdfData,
                     invoiceNumber,
@@ -390,6 +397,8 @@ namespace CimmpleAPI.Controllers
                 // Calculate tax amount if available (TotalAmount - Amount)
                 var taxAmount = invoice.TotalAmount > invoice.Amount ? invoice.TotalAmount - invoice.Amount : (decimal?)null;
 
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateVendorInvoicePdf(
                     pdfData,
                     invoiceNumber,
@@ -465,6 +474,8 @@ namespace CimmpleAPI.Controllers
                     ? $"VO#{order.PONumber + 999}" 
                     : $"VO#{order.PONumber}";
 
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateVendorOrderPdf(
                     pdfData,
                     orderNumber,
@@ -536,6 +547,8 @@ namespace CimmpleAPI.Controllers
                 var quotationNumber = quotation.PONumber < 1000 
                     ? $"VQ#{quotation.PONumber + 999}" 
                     : $"VQ#{quotation.PONumber}";
+
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
 
                 var pdfBytes = _pdfService.GenerateVendorQuotationPdf(
                     pdfData,
@@ -616,6 +629,8 @@ namespace CimmpleAPI.Controllers
                 var orderNumber = order != null
                     ? (order.PONumber < 1000 ? $"CO#{order.PONumber + 999}" : $"CO#{order.PONumber}")
                     : "";
+
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
 
                 var pdfBytes = _pdfService.GenerateShipmentPdf(
                     pdfData,
@@ -733,6 +748,8 @@ namespace CimmpleAPI.Controllers
                     ? (!string.IsNullOrEmpty(order.QuotationNo) ? order.QuotationNo : order.CustomerPoNumber ?? "")
                     : "";
 
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateJobOrderPdf(
                     pdfData,
                     jobOrderNumber,
@@ -833,6 +850,8 @@ namespace CimmpleAPI.Controllers
                 };
 
                 var ncrNumber = string.IsNullOrWhiteSpace(ncr.NcrNumber) ? $"NCR-{ncr.NcrId}" : ncr.NcrNumber;
+                await ApplyCurrencySettingsAsync(pdfData, tenantId);
+
                 var pdfBytes = _pdfService.GenerateNcrPdf(pdfData, new NcrPdfContent
                 {
                     NcrNumber = ncrNumber,
@@ -863,7 +882,16 @@ namespace CimmpleAPI.Controllers
                     ImmediateAction = ncr.ImmediateAction,
                     CorrectiveAction = ncr.CorrectiveAction,
                     PreventiveAction = ncr.PreventiveAction,
-                    CostImpact = ncr.CostImpact.HasValue ? ncr.CostImpact.Value.ToString("0.00") : "",
+                    CostImpact = ncr.CostImpact.HasValue
+                        ? CurrencyFormattingHelper.FormatAmount(
+                            ncr.CostImpact.Value,
+                            pdfData.DefaultCurrency,
+                            pdfData.CurrencySymbol,
+                            pdfData.Locale,
+                            pdfData.DecimalPlaces,
+                            pdfData.DecimalSeparator,
+                            pdfData.ThousandsSeparator)
+                        : "",
                     Notes = ncr.Notes
                 });
 
@@ -1069,6 +1097,24 @@ END");
                 CostImpact = ReadDecimal(reader, "CostImpact"),
                 Notes = ReadString(reader, "Notes")
             };
+        }
+
+        private async Task ApplyCurrencySettingsAsync(PdfDocumentData pdfData, int tenantId)
+        {
+            var settings = await _context.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+            if (settings == null)
+                return;
+
+            pdfData.DefaultCurrency = string.IsNullOrWhiteSpace(settings.DefaultCurrency) ? "USD" : settings.DefaultCurrency;
+            pdfData.Locale = string.IsNullOrWhiteSpace(settings.Locale) ? "en-US" : settings.Locale;
+            pdfData.DecimalPlaces = settings.DecimalPlaces > 0 ? settings.DecimalPlaces : 2;
+            pdfData.DecimalSeparator = string.IsNullOrWhiteSpace(settings.DecimalSeparator) ? "." : settings.DecimalSeparator;
+            pdfData.ThousandsSeparator = string.IsNullOrWhiteSpace(settings.ThousandsSeparator) ? "," : settings.ThousandsSeparator;
+            pdfData.CurrencySymbol = CurrencyFormattingHelper.ResolveCurrencySymbol(
+                pdfData.DefaultCurrency,
+                settings.CurrencySymbol,
+                pdfData.Locale);
         }
 
         private async Task<(string CompanyName, string CompanyAddress, string CompanyCityStateZip, string CompanyEmail, string CompanyPhone, string CompanyWebAddress, string LogoPath)> GetCompanyInfo(int tenantId, int? locationId)

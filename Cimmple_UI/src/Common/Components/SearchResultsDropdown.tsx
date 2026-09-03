@@ -22,6 +22,7 @@ import {
   faFile
 } from '@fortawesome/free-solid-svg-icons';
 import { SearchResult, GlobalSearchResults, GlobalSearchService } from '../Services/GlobalSearchService';
+import { formatCurrency } from '../Utils/Formatting';
 import './SearchResultsDropdown.scss';
 
 interface SearchResultsDropdownProps {
@@ -42,7 +43,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
   const formatAmount = (amt: any): string => {
     if (amt === null || amt === undefined || amt === '') return '';
     const num = typeof amt === 'number' ? amt : parseFloat(String(amt));
-    return isNaN(num) ? '' : ` • $${num.toFixed(2)}`;
+    return isNaN(num) ? '' : ` • ${formatCurrency(num)}`;
   };
 
   const totalResults = 

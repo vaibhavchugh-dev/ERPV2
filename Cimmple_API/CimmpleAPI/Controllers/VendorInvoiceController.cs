@@ -26,7 +26,7 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string status = "All",
             [FromQuery] string searchTerm = "",
             [FromQuery] int? vendorId = null,
-            [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] string dateRange = "All",
             [FromQuery] int? locationId = null,
             [FromQuery] string startDate = null,
             [FromQuery] string endDate = null)
@@ -85,7 +85,11 @@ namespace CimmpleAPI.Controllers
                         .ToList();
                 }
 
-                if (!string.IsNullOrWhiteSpace(dateRange) && !dateRange.Equals("All", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(startDate) || !string.IsNullOrWhiteSpace(endDate))
+                if ((!string.IsNullOrWhiteSpace(dateRange) &&
+                     !dateRange.Equals("All", StringComparison.OrdinalIgnoreCase) &&
+                     !dateRange.Equals("All Dates", StringComparison.OrdinalIgnoreCase)) ||
+                    !string.IsNullOrWhiteSpace(startDate) ||
+                    !string.IsNullOrWhiteSpace(endDate))
                 {
                     var now = DateTime.Now;
                     DateTime? start = null;

@@ -14,7 +14,7 @@ const PaymentDashboard: React.FC = () => {
   const [summary, setSummary] = useState<PaymentDashboardMetrics | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState('This Month');
+  const [dateRange, setDateRange] = useState('All');
   const [showFilters, setShowFilters] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<'all' | 'money-in' | 'money-out' | 'invoice'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending' | 'overdue'>('all');
@@ -109,6 +109,7 @@ const PaymentDashboard: React.FC = () => {
                 fontSize: '0.875rem'
               }}
             >
+              <option value="All">All Dates</option>
               <option value="This Week">This Week</option>
               <option value="This Month">This Month</option>
               <option value="Last 30 Days">Last 30 Days</option>

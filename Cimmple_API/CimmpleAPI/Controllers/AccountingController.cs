@@ -23,7 +23,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
-        public IActionResult GetPaymentDashboardMetrics([FromQuery] string dateRange = "This Month")
+        public IActionResult GetPaymentDashboardMetrics([FromQuery] string dateRange = "All")
         {
             try
             {
@@ -69,7 +69,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRecentTransactions")]
-        public IActionResult GetRecentTransactions([FromQuery] int limit = 10, [FromQuery] string dateRange = "This Month")
+        public IActionResult GetRecentTransactions([FromQuery] int limit = 10, [FromQuery] string dateRange = "All")
         {
             try
             {
@@ -1212,13 +1212,16 @@ namespace CimmpleAPI.Controllers
 
         private (decimal cashIn, decimal cashOut) CalculateCashFlowMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
         {
+            var rangeStart = dateFilter.startDate.Date;
+            var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
+
             // Calculate cash inflows (customer payments received)
             var cashIn = _context.Transactions
                 .Where(t => t.TenantId == tenantId &&
                            t.isCustomer == 1 &&
                            t.TransactionType == "Payment" &&
-                           t.TransactionDate >= dateFilter.startDate &&
-                           t.TransactionDate <= dateFilter.endDate)
+                           t.TransactionDate >= rangeStart &&
+                           t.TransactionDate <= rangeEnd)
                 .Sum(t => t.Amount ?? 0);
 
             // Calculate cash outflows (vendor payments made)
@@ -1226,8 +1229,8 @@ namespace CimmpleAPI.Controllers
                 .Where(t => t.TenantId == tenantId &&
                            t.isCustomer == 0 &&
                            t.TransactionType == "Payment" &&
-                           t.TransactionDate >= dateFilter.startDate &&
-                           t.TransactionDate <= dateFilter.endDate)
+                           t.TransactionDate >= rangeStart &&
+                           t.TransactionDate <= rangeEnd)
                 .Sum(t => t.Amount ?? 0);
 
             return (cashIn, cashOut);
@@ -1250,8 +1253,13 @@ namespace CimmpleAPI.Controllers
                 return (custStart.Date, custEnd.Date);
             }
 
-            switch (dateRange.ToLower())
+            switch ((dateRange ?? "").ToLower())
             {
+                case "all":
+                case "all dates":
+                    startDate = new DateTime(2000, 1, 1);
+                    endDate = now.Date.AddYears(1);
+                    break;
                 case "this week":
                     startDate = now.AddDays(-(int)now.DayOfWeek);
                     endDate = startDate.AddDays(6);
@@ -1304,13 +1312,13 @@ namespace CimmpleAPI.Controllers
                     endDate = new DateTime(now.Year - 1, 12, 31);
                     break;
                 default:
-                    // Default to this month
-                    startDate = new DateTime(now.Year, now.Month, 1);
-                    endDate = startDate.AddMonths(1).AddDays(-1);
+                    // Default to all dates for payment activity screens
+                    startDate = new DateTime(2000, 1, 1);
+                    endDate = now.Date.AddYears(1);
                     break;
             }
 
-            return (startDate, endDate);
+            return (startDate.Date, endDate.Date);
         }
 
         // Transaction Deletion Endpoints

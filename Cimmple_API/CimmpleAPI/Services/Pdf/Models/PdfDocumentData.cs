@@ -18,6 +18,14 @@ namespace CimmpleAPI.Services.Pdf.Models
         
         public List<PdfLineItem> LineItems { get; set; } = new();
         public decimal TotalAmount { get; set; }
+
+        // Currency formatting (from SystemSettings)
+        public string DefaultCurrency { get; set; } = "USD";
+        public string CurrencySymbol { get; set; } = "$";
+        public string Locale { get; set; } = "en-US";
+        public int DecimalPlaces { get; set; } = 2;
+        public string DecimalSeparator { get; set; } = ".";
+        public string ThousandsSeparator { get; set; } = ",";
         
         public List<PdfRoutingStep> RoutingSteps { get; set; } = new();
         public string RoutingTemplateCode { get; set; } = "";

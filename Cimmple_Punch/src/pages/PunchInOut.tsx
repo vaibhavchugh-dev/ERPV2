@@ -12,6 +12,7 @@ import { FaCamera, FaLock, FaRightFromBracket, FaUnlock } from "react-icons/fa6"
 import { login as apiLogin } from "../services/apiClient";
 import {
   AuthService,
+  getSessionTimeZone,
   PUNCH_ADMIN_UNLOCK_KEY,
   PUNCH_SESSION_COOKIE,
   PUNCH_STORAGE_KEY,
@@ -20,6 +21,7 @@ import {
   isAdminRole,
   isPunchSessionExpired,
 } from "../services/authService";
+import { formatTimeInSessionZone, getSessionDateTimeParts } from "../utils/timeZone";
 import "./PunchInOut.scss";
 
 /** Face punch uses Azure against CimmplePunch.EmployeeFace. Password remains a fallback. */
@@ -74,20 +76,7 @@ const formatPunchTime = (value?: string, timeZone?: string) => {
   if (!date) {
     return value;
   }
-  const resolvedTimeZone = timeZone && timeZone.trim() ? timeZone.trim() : Intl.DateTimeFormat().resolvedOptions().timeZone;
-  try {
-    return new Intl.DateTimeFormat([], {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: resolvedTimeZone,
-    }).format(date);
-  } catch {
-    const hours = date.getHours() % 12 || 12;
-    const minutes = date.getMinutes().toString().padStart(2, "0");
-    const ampm = date.getHours() >= 12 ? "PM" : "AM";
-    return `${hours}:${minutes} ${ampm}`;
-  }
+  return formatTimeInSessionZone(date.toISOString(), timeZone);
 };
 
 const normalizeEmployeeCode = (value?: string) => (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -101,37 +90,8 @@ const getUserInitials = (user: PunchBoardUser) => {
   return (initials || "U").toUpperCase();
 };
 
-const getReadableDateTime = (value: Date) => {
-  const time = value.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const date = value.toLocaleDateString([], {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-  return { time, date };
-};
-
-const getTimezoneDateTime = (value: Date, timeZone?: string) => {
-  const resolvedTimeZone = timeZone && timeZone.trim() ? timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const time = new Intl.DateTimeFormat([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-    timeZone: resolvedTimeZone,
-  }).format(value);
-
-  const date = new Intl.DateTimeFormat([], {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: resolvedTimeZone,
-  }).format(value);
-
-  return { time, date };
-};
+const getTimezoneDateTime = (value: Date, timeZone?: string) =>
+  getSessionDateTimeParts(value, timeZone);
 
 const clearPunchSession = () => {
   AuthService.clearSession();
@@ -207,6 +167,8 @@ const PunchWorkflowPanel: React.FC<{
   cameraError: string | null;
   captureLoading: boolean;
   passwordLoading: boolean;
+  tenantTimezone?: string;
+  endOfDayPunchHour?: number;
   onModeChange: (mode: PunchEntryMode) => void;
   onEmployeeCodeChange: (value: string) => void;
   onEmployeeSearchChange: (value: string) => void;
@@ -232,6 +194,8 @@ const PunchWorkflowPanel: React.FC<{
   cameraError,
   captureLoading,
   passwordLoading,
+  tenantTimezone,
+  endOfDayPunchHour = 17,
   onModeChange,
   onEmployeeCodeChange,
   onEmployeeSearchChange,
@@ -253,7 +217,7 @@ const PunchWorkflowPanel: React.FC<{
         ? !isNewEmployee || passwordEntry.trim().length > 0
         : passwordEntry.trim().length > 0);
     const nextDirection = selectedEmployee
-      ? resolveNextPunchDirection(selectedEmployee)
+      ? resolveNextPunchDirection(selectedEmployee, new Date(), tenantTimezone, endOfDayPunchHour)
       : "IN";
     const nextLabel =
       selectedEmployee?.nextDirectionLabel || getPunchDirectionLabel(nextDirection);
@@ -746,6 +710,8 @@ export const PunchInOut: React.FC = () => {
   const capturedImageBlobRef = React.useRef<Blob | null>(null);
 
   const [boardMembers, setBoardMembers] = React.useState<PunchBoardUser[]>([]);
+  const [sessionTimeZone, setSessionTimeZone] = React.useState(() => getSessionTimeZone());
+  const [endOfDayPunchHour, setEndOfDayPunchHour] = React.useState(17);
   const [entryMode, setEntryMode] = React.useState<PunchEntryMode>("code");
   const [punchStage, setPunchStage] = React.useState<PunchStage>("select");
   const [selectedEmployee, setSelectedEmployee] = React.useState<PunchBoardUser | null>(null);
@@ -831,7 +797,7 @@ export const PunchInOut: React.FC = () => {
   const isAdminPunch = isAdminRole(Number(punchStorage?.rolId), punchStorage?.role);
   const showAttendancePanel = isAdminPunch && adminModeUnlocked;
   const punchDisplayName = punchStorage?.companyName || punchStorage?.name || punchStorage?.userName || "Main Entrance";
-  const punchTimeZone = punchStorage?.timeZone || punchStorage?.currentUtcTime || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const punchTimeZone = sessionTimeZone;
   const punchAdminUserName =
     punchStorage?.userName || JSON.parse(localStorage.getItem("storage") || "{}")?.userName || "";
 
@@ -975,6 +941,10 @@ export const PunchInOut: React.FC = () => {
     setLoading(true);
     PunchInOutService.GetPunchBoard()
       .then((board) => {
+        if (board.endOfDayPunchHour != null) {
+          setEndOfDayPunchHour(board.endOfDayPunchHour);
+        }
+        setSessionTimeZone(getSessionTimeZone());
         const allUsersList = [
           ...(board.inUsers || []),
           ...(board.breakUsers || []),
@@ -1087,6 +1057,10 @@ export const PunchInOut: React.FC = () => {
 
   // Initial board load
   React.useEffect(() => {
+    setSessionTimeZone(getSessionTimeZone());
+  }, []);
+
+  React.useEffect(() => {
     if (!isPunchAuthorized) return;
     loadBoard();
   }, [isPunchAuthorized, loadBoard]);
@@ -1108,13 +1082,15 @@ export const PunchInOut: React.FC = () => {
   }, [boardMembers, employeeSearchQuery]);
 
   const determinePunchDirection = React.useCallback((employee: PunchBoardUser): PunchDirection => {
-    return resolveNextPunchDirection(employee);
-  }, []);
+    return resolveNextPunchDirection(employee, new Date(), punchTimeZone, endOfDayPunchHour);
+  }, [punchTimeZone, endOfDayPunchHour]);
 
   const formatPunchSuccess = React.useCallback((employee: PunchBoardUser, message?: string, direction?: string) => {
-    const label = getPunchDirectionLabel(direction || resolveNextPunchDirection(employee));
+    const label = getPunchDirectionLabel(
+      direction || resolveNextPunchDirection(employee, new Date(), punchTimeZone, endOfDayPunchHour)
+    );
     return message || `${label} successful for ${getDisplayName(employee)}.`;
-  }, []);
+  }, [punchTimeZone, endOfDayPunchHour]);
 
   const findEmployeeByCode = React.useCallback((value: string) => {
     const normalizedInput = normalizeEmployeeCode(value);
@@ -1399,6 +1375,8 @@ export const PunchInOut: React.FC = () => {
           cameraError={cameraError}
           captureLoading={captureLoading}
           passwordLoading={captureLoading}
+          tenantTimezone={punchTimeZone}
+          endOfDayPunchHour={endOfDayPunchHour}
           onModeChange={handleModeChange}
           onEmployeeCodeChange={setEmployeeCodeEntry}
           onEmployeeSearchChange={setEmployeeSearchQuery}

@@ -251,7 +251,7 @@ export class VendorInvoiceService {
     status: string = "All",
     searchTerm: string = "",
     vendorId?: number,
-    dateRange: string = "Last 30 Days",
+    dateRange: string = "All",
     locationId?: number
   ): Promise<VendorInvoiceSummary[] | null> => {
     const url = `/VendorInvoice/GetVendorInvoices`;

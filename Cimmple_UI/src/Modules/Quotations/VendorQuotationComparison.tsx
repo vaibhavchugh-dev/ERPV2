@@ -5,6 +5,7 @@ import { deriveOrderMaterialType, lineTypeFromQuotationType } from "../../Common
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
 import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
 import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
+import { useFormatting } from "../../Common/Hooks/useFormatting";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import "./VendorQuotationComparison.scss";
 
@@ -54,6 +55,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   onClose,
   onQuotationSelected,
 }) => {
+  const { formatCurrency } = useFormatting();
   const listNeedsRefreshRef = useRef(false);
   const [quotations, setQuotations] = useState<QuotationData[]>([]);
   const [details, setDetails] = useState<DetailData[]>([]);
@@ -154,14 +156,6 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
   };
 
   const formatDate = (dateStr: string): string => {
@@ -443,7 +437,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             (d) => d.LineType || lineTypeFromQuotationType(quotationData.QuotationType)
           )
         ),
-        QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
+        QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
         QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
         Details: quotationData.Details.map(detail => {
           // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)
@@ -618,7 +612,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                 lineTypeFromQuotationType(quotationData.QuotationType)
             )
           ),
-          QuotationId: masterQuotationId, // Link to master quotation (not the response-only quotation)
+          QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
           QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
           Details: items.map((item, idx) => {
             // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)

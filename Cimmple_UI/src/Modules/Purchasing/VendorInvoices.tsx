@@ -11,6 +11,7 @@ import VendorOrderSlideout from "./VendorOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Payment Modal Component
@@ -53,7 +54,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
     }
 
     if (amount > balanceDue + 0.009) {
-      toast.error(`Payment amount cannot exceed remaining balance of $${balanceDue.toFixed(2)}`);
+      toast.error(`Payment amount cannot exceed remaining balance of ${formatCurrency(balanceDue)}`);
       return;
     }
 
@@ -80,7 +81,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
 
       toast.success(
         amount + 0.009 < balanceDue
-          ? `Partial payment of $${amount.toFixed(2)} recorded for invoice ${invoice.invoiceNo}`
+          ? `Partial payment of ${formatCurrency(amount)} recorded for invoice ${invoice.invoiceNo}`
           : `Payment recorded for invoice ${invoice.invoiceNo}`
       );
       onPaymentComplete();
@@ -481,19 +482,19 @@ const VendorInvoices: React.FC = () => {
   };
 
   const invoiceMatchesDateRange = (invoiceDate: string, range: string, startDate?: string, endDate?: string): boolean => {
-    if (!range || range === "All") return true;
-    const d = new Date(invoiceDate);
-    if (Number.isNaN(d.getTime())) return false;
+    if (!range || range === "All" || range === "All Dates") return true;
+    const d = parseDateOnlyLocal(invoiceDate);
+    if (!d) return false;
 
     if (range === "Custom") {
       const invTime = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       if (startDate) {
-        const sTime = new Date(startDate).getTime();
-        if (!isNaN(sTime) && invTime < sTime) return false;
+        const s = parseDateOnlyLocal(startDate);
+        if (s && invTime < s.getTime()) return false;
       }
       if (endDate) {
-        const eTime = new Date(endDate).getTime();
-        if (!isNaN(eTime) && invTime > eTime) return false;
+        const e = parseDateOnlyLocal(endDate);
+        if (e && invTime > e.getTime()) return false;
       }
       return true;
     }

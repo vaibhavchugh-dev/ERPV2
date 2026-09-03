@@ -2537,7 +2537,7 @@ namespace CimmpleAPI.Controllers
                     var quotationsToRevert = new List<VendorQuotations>();
                     foreach (var quotation in linkedQuotations)
                     {
-                        if (!await VendorQuotationHasOtherConvertedOrdersAsync(quotation, order.OrderID, tenantId))
+                        if (await GetRemainingConvertedOrderAsync(quotation, order.OrderID, tenantId) == null)
                         {
                             quotationsToRevert.Add(quotation);
                         }
@@ -2662,13 +2662,28 @@ namespace CimmpleAPI.Controllers
                 .ToListAsync();
         }
 
-        private async Task<bool> VendorQuotationHasOtherConvertedOrdersAsync(VendorQuotations quotation, int deletedOrderId, int tenantId)
+        private async Task<VendorOrder?> GetRemainingConvertedOrderAsync(VendorQuotations quotation, int deletedOrderId, int tenantId)
         {
-            return await _context.VendorOrders.AnyAsync(o =>
-                o.Tenantid == tenantId &&
-                o.OrderID != deletedOrderId &&
-                o.QuotationId.HasValue &&
-                o.QuotationId.Value == quotation.OrderID);
+            return await _context.VendorOrders
+                .Where(o => o.Tenantid == tenantId &&
+                            o.OrderID != deletedOrderId &&
+                            o.QuotationId.HasValue &&
+                            (o.QuotationId.Value == quotation.OrderID ||
+                             (quotation.ParentQuotationID.HasValue &&
+                              quotation.ParentQuotationID.Value > 0 &&
+                              o.QuotationId.Value == quotation.ParentQuotationID.Value)))
+                .OrderByDescending(o => o.OrderID)
+                .FirstOrDefaultAsync();
+        }
+
+        private static string ResolveVendorQuotationStatusAfterUnconvert(VendorQuotations quotation)
+        {
+            // Child/response quotations were typically Responded before convert
+            if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
+                return "Responded";
+            if (quotation.isSent)
+                return "Sent";
+            return "Draft";
         }
 
         private async Task RevertVendorQuotationsForDeletedOrderAsync(VendorOrder order, int tenantId)
@@ -2676,8 +2691,15 @@ namespace CimmpleAPI.Controllers
             var linkedQuotations = await GetVendorQuotationsLinkedToOrderAsync(order, tenantId);
             foreach (var quotation in linkedQuotations)
             {
-                if (await VendorQuotationHasOtherConvertedOrdersAsync(quotation, order.OrderID, tenantId))
+                var remainingOrder = await GetRemainingConvertedOrderAsync(quotation, order.OrderID, tenantId);
+                if (remainingOrder != null)
                 {
+                    // Keep Converted but retarget display link to a still-existing order
+                    quotation.isconverted = 1;
+                    quotation.Status = "Converted";
+                    quotation.convertedOrderId = remainingOrder.PONumber > 0
+                        ? remainingOrder.PONumber
+                        : remainingOrder.OrderID;
                     continue;
                 }
 
@@ -2687,7 +2709,7 @@ namespace CimmpleAPI.Controllers
                 quotation.isconverted = 0;
                 if (wasConverted)
                 {
-                    quotation.Status = quotation.isSent ? "Sent" : "Draft";
+                    quotation.Status = ResolveVendorQuotationStatusAfterUnconvert(quotation);
                 }
             }
         }
