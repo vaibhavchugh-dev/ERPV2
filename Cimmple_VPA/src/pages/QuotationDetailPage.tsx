@@ -485,41 +485,66 @@ export function QuotationDetailPage() {
 
                       <label className="field">
                         Discount
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className="field-input"
-                          disabled={isReadOnly}
-                          value={
-                            numericDisplayValues.get(`discount-${index}`) ??
-                            (detail.Discount === 0 ? "" : detail.Discount.toString())
-                          }
-                          onChange={(e) => {
-                            const inputVal = sanitizeDecimal(e.target.value);
-                            setNumericDisplayValues((prev) => {
-                              const next = new Map(prev);
-                              next.set(`discount-${index}`, inputVal);
-                              return next;
-                            });
-                            if (inputVal === "" || inputVal === ".") {
-                              handleDetailChange(index, "Discount", 0);
-                            } else {
-                              const val = parseFloat(inputVal);
-                              if (!Number.isNaN(val) && val >= 0) {
-                                handleDetailChange(index, "Discount", val);
-                              }
+                        <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+                          <select
+                            className="field-input"
+                            style={{ width: "4.5rem", flexShrink: 0 }}
+                            disabled={isReadOnly}
+                            value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                            onChange={(e) =>
+                              handleDetailChange(
+                                index,
+                                "DiscountType",
+                                e.target.value === "Amount" ? "Amount" : "Percent"
+                              )
                             }
-                          }}
-                          onBlur={(e) => {
-                            const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                            handleDetailChange(index, "Discount", val);
-                            setNumericDisplayValues((prev) => {
-                              const next = new Map(prev);
-                              next.delete(`discount-${index}`);
-                              return next;
-                            });
-                          }}
-                        />
+                            title="Discount type"
+                          >
+                            <option value="Percent">%</option>
+                            <option value="Amount">$</option>
+                          </select>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="field-input"
+                            disabled={isReadOnly}
+                            value={
+                              numericDisplayValues.get(`discount-${index}`) ??
+                              (detail.Discount === 0 ? "" : detail.Discount.toString())
+                            }
+                            onChange={(e) => {
+                              const inputVal = sanitizeDecimal(e.target.value);
+                              setNumericDisplayValues((prev) => {
+                                const next = new Map(prev);
+                                next.set(`discount-${index}`, inputVal);
+                                return next;
+                              });
+                              if (inputVal === "" || inputVal === ".") {
+                                handleDetailChange(index, "Discount", 0);
+                              } else {
+                                const val = parseFloat(inputVal);
+                                const isAmount = detail.DiscountType === "Amount";
+                                if (!Number.isNaN(val) && val >= 0 && (isAmount || val <= 100)) {
+                                  handleDetailChange(index, "Discount", val);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              let val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                              if (detail.DiscountType !== "Amount") {
+                                val = Math.min(Math.max(val, 0), 100);
+                              } else {
+                                val = Math.max(val, 0);
+                              }
+                              handleDetailChange(index, "Discount", val);
+                              setNumericDisplayValues((prev) => {
+                                const next = new Map(prev);
+                                next.delete(`discount-${index}`);
+                                return next;
+                              });
+                            }}
+                          />
+                        </div>
                       </label>
                     </div>
 

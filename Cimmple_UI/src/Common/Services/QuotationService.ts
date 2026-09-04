@@ -1017,7 +1017,7 @@ export class QuotationService {
     sourceQuotationId: number,
     vendorIDs: number[],
     includeAttachments: boolean = false
-  ): Promise<{ quotationIds: number[]; message: string }> => {
+  ): Promise<{ quotationIds: number[]; message: string; skippedVendorIds?: number[] }> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     

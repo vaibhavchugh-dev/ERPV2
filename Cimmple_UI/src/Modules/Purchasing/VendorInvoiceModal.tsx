@@ -110,7 +110,13 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
     const qty = quantities[item.id] || 0;
     const price = unitPrices[item.id] || 0;
     const discount = discounts[item.id] || 0;
-    return (price * qty) * (1 - discount / 100);
+    const subtotal = price * qty;
+    if (subtotal <= 0) return 0;
+    const isAmount = (item.discountType || "Percent") === "Amount";
+    const discountAmount = isAmount
+      ? Math.min(Math.max(discount, 0), subtotal)
+      : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+    return Math.max(0, subtotal - discountAmount);
   };
 
   const calculateSubtotal = (): number => {
@@ -143,7 +149,8 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
         orderDetailId: item.id,
         qtyToInvoice: quantities[item.id] || 0,
         unitPrice: unitPrices[item.id] || 0,
-        discount: discounts[item.id] || 0
+        discount: discounts[item.id] || 0,
+        discountType: item.discountType === "Amount" ? "Amount" : "Percent"
       })).filter(item => item.qtyToInvoice > 0);
 
       if (lineItems.length === 0) {
@@ -305,11 +312,9 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
                     Payment Method
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={paymentMethod}
                     onChange={(e) => setPaymentMethod(e.target.value)}
-                    placeholder="e.g., Check, Wire Transfer"
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -317,7 +322,14 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                       borderRadius: '0.25rem',
                       fontSize: '0.875rem'
                     }}
-                  />
+                  >
+                    <option value="">Select method</option>
+                    <option value="Check">Check</option>
+                    <option value="Wire Transfer">Wire Transfer</option>
+                    <option value="ACH">ACH</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Credit Card">Credit Card</option>
+                  </select>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
@@ -568,7 +580,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
 
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '500', marginBottom: '0.25rem' }}>
-                          Discount %
+                          Discount {(item.discountType || "Percent") === "Amount" ? "$" : "%"}
                         </label>
                         <input
                           type="text"
@@ -581,7 +593,8 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                               handleDiscountChange(item.id, 0);
                             } else {
                               const numVal = parseFloat(val);
-                              if (!isNaN(numVal) && numVal >= 0 && numVal <= 100) {
+                              const isAmount = (item.discountType || "Percent") === "Amount";
+                              if (!isNaN(numVal) && numVal >= 0 && (isAmount || numVal <= 100)) {
                                 handleDiscountChange(item.id, numVal);
                               }
                             }
@@ -589,7 +602,10 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                           onBlur={(e) => {
                             const val = e.target.value;
                             const numVal = parseFloat(val) || 0;
-                            const clampedVal = Math.max(0, Math.min(numVal, 100));
+                            const isAmount = (item.discountType || "Percent") === "Amount";
+                            const clampedVal = isAmount
+                              ? Math.max(0, numVal)
+                              : Math.max(0, Math.min(numVal, 100));
                             handleDiscountChange(item.id, clampedVal);
                             setDiscountInputs(prev => ({ ...prev, [item.id]: clampedVal.toString() }));
                           }}

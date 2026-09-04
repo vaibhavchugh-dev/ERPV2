@@ -265,13 +265,42 @@ export const formatUtcToTimezone = (
  * Avoid Date/toISOString timezone shifts that move the calendar day.
  */
 
-/** Local today as MM/DD/YY */
+/** Local today in system display format (short year) */
 export const todayDateOnlyDisplay = (): string => {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const year = String(now.getFullYear()).slice(-2);
-  return `${month}/${day}/${year}`;
+  const resolved = resolveSettings();
+  const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+  return moment().format(dateFormat.replace(/YYYY/g, 'YY'));
+};
+
+/** Parse display/API date strings into a moment using system dateFormat (plus ISO). */
+const parseDateOnlyMoment = (dateStr: string, settings?: SystemSettings | null) => {
+  const raw = String(dateStr).trim();
+  if (!raw) return moment.invalid();
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return moment(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`, 'YYYY-MM-DD', true);
+  }
+
+  const resolved = resolveSettings(settings);
+  const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+  const shortFormat = dateFormat.replace(/YYYY/g, 'YY');
+  const formats = Array.from(
+    new Set([
+      dateFormat,
+      shortFormat,
+      'YYYY-MM-DD',
+      'M/D/YYYY',
+      'MM/DD/YYYY',
+      'M/D/YY',
+      'MM/DD/YY',
+      'D/M/YYYY',
+      'DD/MM/YYYY',
+      'D/M/YY',
+      'DD/MM/YY',
+    ])
+  );
+  return moment(raw, formats, true);
 };
 
 /** API/ISO/date string → display date using system settings (calendar parts only, no TZ shift) */
@@ -282,28 +311,11 @@ export const formatDateOnlyFromApi = (
 ): string => {
   if (!dateStr) return '';
   try {
-    const raw = String(dateStr).trim();
     const resolved = resolveSettings(settings);
     const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
-    let momentFormat = fullYear ? dateFormat : dateFormat.replace(/YYYY/g, 'YY');
-
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) {
-      const parsed = moment(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`);
-      return parsed.isValid() ? parsed.format(momentFormat) : '';
-    }
-
-    const slashParts = raw.split('/');
-    if (slashParts.length === 3) {
-      const month = slashParts[0].padStart(2, '0');
-      const day = slashParts[1].padStart(2, '0');
-      let year = slashParts[2];
-      if (year.length === 2 && fullYear) year = `20${year}`;
-      if (year.length > 2 && !fullYear) year = year.slice(-2);
-      const parsed = moment(`${year.length === 2 ? `20${year}` : year}-${month}-${day}`);
-      return parsed.isValid() ? parsed.format(momentFormat) : `${month}/${day}/${year}`;
-    }
-    return '';
+    const momentFormat = fullYear ? dateFormat : dateFormat.replace(/YYYY/g, 'YY');
+    const parsed = parseDateOnlyMoment(String(dateStr), settings);
+    return parsed.isValid() ? parsed.format(momentFormat) : '';
   } catch {
     return '';
   }
@@ -316,33 +328,15 @@ export const formatDateOnlyFromApi = (
 export const parseDateOnlyLocal = (dateStr: string | null | undefined): Date | null => {
   if (!dateStr) return null;
   try {
-    const raw = String(dateStr).trim();
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) {
-      const y = parseInt(isoMatch[1], 10);
-      const m = parseInt(isoMatch[2], 10) - 1;
-      const d = parseInt(isoMatch[3], 10);
-      const date = new Date(y, m, d);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-    const slashParts = raw.split('/');
-    if (slashParts.length === 3) {
-      let year = parseInt(slashParts[2], 10);
-      if (Number.isNaN(year)) return null;
-      if (slashParts[2].length <= 2) year += 2000;
-      const month = parseInt(slashParts[0], 10) - 1;
-      const day = parseInt(slashParts[1], 10);
-      const date = new Date(year, month, day);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-    const fallback = new Date(raw);
-    return Number.isNaN(fallback.getTime()) ? null : fallback;
+    const parsed = parseDateOnlyMoment(String(dateStr));
+    if (!parsed.isValid()) return null;
+    return new Date(parsed.year(), parsed.month(), parsed.date());
   } catch {
     return null;
   }
 };
 
-/** MM/DD/YY (or ISO) → yyyy-MM-dd for API payloads (no time / no Z) */
+/** Display/ISO date → yyyy-MM-dd for API payloads (no time / no Z) */
 export const toDateOnlyApiString = (dateStr: string): string => {
   const padToday = () => {
     const now = new Date();
@@ -350,54 +344,33 @@ export const toDateOnlyApiString = (dateStr: string): string => {
   };
   if (!dateStr) return padToday();
   try {
-    const raw = String(dateStr).trim();
-    const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-
-    const parts = raw.split('/');
-    if (parts.length === 3) {
-      const month = parts[0].padStart(2, '0');
-      const day = parts[1].padStart(2, '0');
-      let year = parseInt(parts[2], 10);
-      if (Number.isNaN(year)) return padToday();
-      if (parts[2].length <= 2) year += 2000;
-      return `${year}-${month}-${day}`;
-    }
-    return padToday();
+    const parsed = parseDateOnlyMoment(String(dateStr));
+    return parsed.isValid() ? parsed.format('YYYY-MM-DD') : padToday();
   } catch {
     return padToday();
   }
 };
 
-/** MM/DD/YY → yyyy-MM-dd for HTML date inputs */
+/** Display/ISO date → yyyy-MM-dd for HTML date inputs */
 export const toHtmlDateInputValue = (dateStr: string): string => {
   if (!dateStr) return '';
   try {
-    const parts = dateStr.split('/');
-    if (parts.length === 3) {
-      const month = parts[0].padStart(2, '0');
-      const day = parts[1].padStart(2, '0');
-      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-      return `${year}-${month}-${day}`;
-    }
-    const isoMatch = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-    return dateStr;
+    const parsed = parseDateOnlyMoment(String(dateStr));
+    return parsed.isValid() ? parsed.format('YYYY-MM-DD') : '';
   } catch {
     return '';
   }
 };
 
-/** HTML date input yyyy-MM-dd → MM/DD/YY */
+/** HTML date input yyyy-MM-dd → system display format (short year) */
 export const fromHtmlDateInputValue = (dateStr: string): string => {
   if (!dateStr) return '';
   try {
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-      const [year, month, day] = parts;
-      return `${month}/${day}/${year.slice(-2)}`;
-    }
-    return dateStr;
+    const parsed = moment(String(dateStr).trim(), 'YYYY-MM-DD', true);
+    if (!parsed.isValid()) return dateStr;
+    const resolved = resolveSettings();
+    const dateFormat = toMomentDateFormat(resolved?.dateFormat || 'M/d/yyyy');
+    return parsed.format(dateFormat.replace(/YYYY/g, 'YY'));
   } catch {
     return dateStr;
   }

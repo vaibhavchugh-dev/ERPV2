@@ -12,6 +12,7 @@ export interface InvoiceableItem {
   invoiceStatus: string;
   unitPrice: number;
   discount: number;
+  discountType?: "Percent" | "Amount" | string;
   hasJobOrder: boolean;
   jobOrderStatus: string;
 }
@@ -21,6 +22,7 @@ export interface InvoiceLineItem {
   qtyToInvoice: number;
   unitPrice: number;
   discount: number;
+  discountType?: "Percent" | "Amount" | string;
 }
 
 export interface CreateInvoiceRequest {
@@ -85,6 +87,8 @@ export interface InvoiceDetail {
     qtyInvoiced: number;
     unitPrice: number;
     discount: number;
+    discountType?: "Percent" | "Amount" | string;
+    discountAmount?: number;
     lineTotal: number;
   }>;
 }
