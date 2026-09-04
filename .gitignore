@@ -6,6 +6,7 @@ _coa_build_out/
 _pl_build_out/
 _seed_build_out/
 _tmp_build*/
+_audit_build_api/
 .vs/
 *.user
 *.suo

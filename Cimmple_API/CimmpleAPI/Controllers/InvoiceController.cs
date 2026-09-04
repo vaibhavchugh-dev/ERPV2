@@ -83,6 +83,7 @@ namespace CimmpleAPI.Controllers
                         invoiceStatus = d.InvoiceStatus ?? "Not Invoiced",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         hasJobOrder,
                         jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order"
                     };
@@ -139,7 +140,11 @@ namespace CimmpleAPI.Controllers
                     decimal subtotal = 0;
                     foreach (var item in request.LineItems)
                     {
-                        var lineTotal = (item.UnitPrice * item.QtyToInvoice) * (1 - item.Discount / 100);
+                        var detail = _context.CustomerOrderDetails
+                            .AsNoTracking()
+                            .FirstOrDefault(d => d.ID == item.OrderDetailId && d.Tenantid == tenantId);
+                        var discountType = ResolveDiscountType(item.DiscountType, detail?.DiscountType);
+                        var lineTotal = ComputeLineNet(item.QtyToInvoice, item.UnitPrice, item.Discount, discountType);
                         subtotal += lineTotal;
                     }
                     subtotal = Math.Round(subtotal, 2);
@@ -214,7 +219,8 @@ namespace CimmpleAPI.Controllers
                         var detail = _context.CustomerOrderDetails
                             .First(d => d.ID == item.OrderDetailId && d.Tenantid == tenantId);
 
-                        var lineTotal = (item.UnitPrice * item.QtyToInvoice) * (1 - item.Discount / 100);
+                        var discountType = ResolveDiscountType(item.DiscountType, detail.DiscountType);
+                        var lineTotal = ComputeLineNet(item.QtyToInvoice, item.UnitPrice, item.Discount, discountType);
 
                         // Get order information (do this once per invoice, not per line item)
                         var orderInfo = _context.CustomerOrder
@@ -395,16 +401,24 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.CustomerOrderDetails,
                         id => id.OrderDetailID,
                         cod => cod.ID,
-                        (id, cod) => new
+                        (id, cod) =>
                         {
-                            orderDetailId = id.OrderDetailID,
-                            partNo = cod.PartNo,
-                            partName = cod.partname,
-                            description = id.Description,
-                            qtyInvoiced = id.qty,
-                            unitPrice = id.price,
-                            discount = id.discount,
-                            lineTotal = (id.price - id.discount) * id.qty
+                            var discountType = string.IsNullOrWhiteSpace(cod.DiscountType) ? "Percent" : cod.DiscountType;
+                            var gross = id.price * id.qty;
+                            var lineTotal = id.Amount;
+                            return new
+                            {
+                                orderDetailId = id.OrderDetailID,
+                                partNo = cod.PartNo,
+                                partName = cod.partname,
+                                description = id.Description,
+                                qtyInvoiced = id.qty,
+                                unitPrice = id.price,
+                                discount = id.discount,
+                                discountType,
+                                discountAmount = Math.Max(0, gross - lineTotal),
+                                lineTotal
+                            };
                         })
                     .ToList();
 
@@ -1223,6 +1237,30 @@ namespace CimmpleAPI.Controllers
         }
 
         private string GetInvoiceStatus(InvoiceMaster invoice) => ResolveCustomerInvoiceStatus(invoice);
+
+        private static string ResolveDiscountType(string? requestType, string? orderDetailType)
+        {
+            if (string.Equals(requestType, "Amount", StringComparison.OrdinalIgnoreCase))
+                return "Amount";
+            if (string.Equals(requestType, "Percent", StringComparison.OrdinalIgnoreCase))
+                return "Percent";
+            if (string.Equals(orderDetailType, "Amount", StringComparison.OrdinalIgnoreCase))
+                return "Amount";
+            return "Percent";
+        }
+
+        private static decimal ComputeLineNet(int qty, decimal unitPrice, decimal discount, string? discountType)
+        {
+            var subtotal = qty * unitPrice;
+            if (subtotal <= 0)
+                return 0;
+
+            var discountAmount = string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase)
+                ? Math.Min(Math.Max(discount, 0), subtotal)
+                : subtotal * (Math.Min(Math.Max(discount, 0), 100m) / 100m);
+
+            return Math.Round(Math.Max(0, subtotal - discountAmount), 2);
+        }
     }
 
     // DTOs
@@ -1249,6 +1287,8 @@ namespace CimmpleAPI.Controllers
         public int QtyToInvoice { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal Discount { get; set; }
+        /// <summary>Percent or Amount. When omitted, taken from the order line.</summary>
+        public string DiscountType { get; set; }
     }
 
     public class RecordCustomerPaymentRequest

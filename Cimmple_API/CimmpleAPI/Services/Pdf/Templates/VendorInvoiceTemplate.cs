@@ -59,7 +59,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
                             .Table(table =>
                             {
                                 ComposeTableContent(table, DocumentData.LineItems,
-                                    new[] { "Description", "Qty", "Unit Price", "Amount", "Notes" });
+                                    new[] { "Part No", "Part Description", "Due Date", "Unit", "Qty", "Unit Price", "Discount", "Amount", "Notes" });
                             }));
 
                         column.Item().PaddingTop(12).Element(ComposeTotals);

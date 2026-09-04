@@ -24,7 +24,18 @@ interface PaymentModalProps {
 const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
   const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('Check');
+  const normalizePaymentMethod = (method?: string): string => {
+    const raw = (method || '').trim();
+    if (!raw) return 'Check';
+    const lower = raw.toLowerCase();
+    if (lower === 'wire' || lower === 'wire transfer') return 'Wire Transfer';
+    if (lower === 'ach') return 'ACH';
+    if (lower === 'cash') return 'Cash';
+    if (lower === 'credit card' || lower === 'card') return 'Credit Card';
+    if (lower === 'check' || lower === 'cheque') return 'Check';
+    return raw;
+  };
+  const [paymentMethod, setPaymentMethod] = useState(normalizePaymentMethod(invoice.paymentMethod));
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [checkNo, setCheckNo] = useState('');
   const [checkDate, setCheckDate] = useState(new Date().toISOString().split('T')[0]);

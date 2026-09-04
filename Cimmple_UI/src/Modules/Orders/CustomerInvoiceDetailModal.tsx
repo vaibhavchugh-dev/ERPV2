@@ -881,7 +881,9 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                             {formatCurrency(item.unitPrice)}
                           </td>
                           <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
-                            {formatCurrency(item.discount)}
+                            {(item.discountType || "Percent") === "Amount"
+                              ? formatCurrency(item.discount)
+                              : `${Number(item.discount || 0)}%`}
                           </td>
                           <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827', fontWeight: '500' }}>
                             {formatCurrency(item.lineTotal)}

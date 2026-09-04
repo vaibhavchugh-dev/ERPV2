@@ -71,6 +71,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const listNeedsRefreshRef = useRef(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -1096,7 +1097,10 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       toast.error("Please ensure the quotation has a customer and at least one line item before printing");
       return;
     }
+    if (printing) return;
 
+    setPrinting(true);
+    const toastId = toast.info("Generating Quotation PDF…", { autoClose: false });
     try {
       const quotationNumber = formData.PONumber < 1000 
         ? `CQ#${formData.PONumber + 999}` 
@@ -1111,10 +1115,20 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       link.click();
       window.URL.revokeObjectURL(url);
       
-      toast.success("Quotation PDF generated successfully");
+      toast.update(toastId, {
+        render: "Quotation PDF ready",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error("Error generating PDF:", error);
-      toast.error(`Error generating PDF: ${error.message || "Unknown error"}`);
+      toast.update(toastId, {
+        render: `Error generating PDF: ${error.message || "Unknown error"}`,
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -1235,18 +1249,19 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   const handleDuplicate = async () => {
     const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
-    if (id > 0) {
-      setLoading(true);
-      try {
-        await QuotationService.DuplicateQuotation(id);
-        toast.success("Quotation duplicated successfully (including file copies)");
-        onClose(true);
-      } catch (error: any) {
-        console.error("Error duplicating quotation:", error);
-        toast.error(`Error duplicating quotation: ${error.message || "Unknown error"}`);
-      } finally {
-        setLoading(false);
-      }
+    if (id <= 0) return;
+    if (!window.confirm("Create a duplicate of this quotation?")) return;
+
+    setLoading(true);
+    try {
+      await QuotationService.DuplicateQuotation(id);
+      toast.success("Quotation duplicated successfully (including file copies)");
+      onClose(true);
+    } catch (error: any) {
+      console.error("Error duplicating quotation:", error);
+      toast.error(`Error duplicating quotation: ${error.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1481,8 +1496,9 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                   type="button"
                   className="btn-icon"
                   onClick={handlePrint}
-                  title="Print"
-                  style={{ color: "#6366f1" }}
+                  disabled={printing}
+                  title={printing ? "Generating PDF…" : "Print"}
+                  style={{ color: "#6366f1", opacity: printing ? 0.6 : 1 }}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
@@ -3209,15 +3225,12 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                       <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, position: "sticky", left: 0, backgroundColor: "#f3f4f6" }}>
                         Price Breakdown Item
                       </th>
-                      {quantities
-                        .map((qty, idx) => ({ qty, idx }))
-                        .sort((a, b) => a.qty - b.qty)
-                        .map(({ qty: quantity, idx: originalIndex }, quantityIndex) => {
-                          const isFirstColumn = quantity === 1 && quantityIndex === 0;
+                      {quantities.map((quantity, originalIndex) => {
+                          const isFirstColumn = originalIndex === 0 && quantity === 1;
                           // Can remove columns after the 5th (originalIndex >= 5)
                           const canRemove = quantities.length > 5 && originalIndex >= 5;
                           return (
-                            <th key={quantityIndex} style={{ padding: "0.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600, minWidth: "140px", position: "relative" }}>
+                            <th key={originalIndex} style={{ padding: "0.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600, minWidth: "140px", position: "relative" }}>
                               {canRemove && (
                                 <button
                                   type="button"
@@ -3254,6 +3267,9 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                                 </button>
                               )}
                               <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                                <div style={{ fontSize: "0.7rem", fontWeight: 500, color: "#6b7280", textAlign: "right" }}>
+                                  Qty
+                                </div>
                                 {/* Quantity input/display - all at same height */}
                                 <div style={{ height: "2.5rem", display: "flex", alignItems: "center" }}>
                                   {isFirstColumn ? (
@@ -3366,10 +3382,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                           <td style={{ padding: "0.75rem", fontWeight: 600, position: "sticky", left: 0, backgroundColor: "#ffffff" }}>
                             {item.itemName}
                           </td>
-                          {quantities
-                            .map((qty, idx) => ({ qty, idx }))
-                            .sort((a, b) => a.qty - b.qty)
-                            .map(({ qty: quantity, idx: originalIndex }, sortedIndex) => {
+                          {quantities.map((quantity, originalIndex) => {
                               const currentBreakdownIndex = breakdownPrices.findIndex(bp => bp.priceBreakdownId === item.id);
                               const currentPrice = currentBreakdownIndex >= 0 
                                 ? (breakdownPrices[currentBreakdownIndex].prices[originalIndex] || 0)
@@ -3477,10 +3490,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                       <td style={{ padding: "0.75rem", position: "sticky", left: 0, backgroundColor: "#f9fafb" }}>
                         <strong>Total Unit Price</strong>
                       </td>
-                      {quantities
-                        .map((qty, idx) => ({ qty, idx }))
-                        .sort((a, b) => a.qty - b.qty)
-                        .map(({ qty: quantity, idx: originalIndex }) => {
+                      {quantities.map((quantity, originalIndex) => {
                           return (
                             <td key={originalIndex} style={{ padding: "0.75rem", textAlign: "right", color: "#6366f1" }}>
                               <strong>{formatCurrency(columnTotals[originalIndex] || 0)}</strong>

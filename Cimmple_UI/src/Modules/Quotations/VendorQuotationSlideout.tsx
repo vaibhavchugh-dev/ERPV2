@@ -31,7 +31,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
-import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
+import { toDateOnlyApiString, toHtmlDateInputValue } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
   formatPartHistoryHint,
@@ -89,7 +89,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   const [showTextEditorPopup, setShowTextEditorPopup] = useState(false);
-  const [editingField, setEditingField] = useState<{ index: number; field: "PartName"; value: string } | null>(null);
+  const [editingField, setEditingField] = useState<{ index: number; field: "PartName" | "Notes"; value: string } | null>(null);
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [jobOrderDropdownOpen, setJobOrderDropdownOpen] = useState<Map<number, boolean>>(new Map());
   const [jobOrderDropdownPositions, setJobOrderDropdownPositions] = useState<Map<number, { top: number; left: number; width: number }>>(new Map());
@@ -491,7 +491,17 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const next: any = { ...prev, [field]: value };
+      if (field === "OrderDate") {
+        const orderDate = toHtmlDateInputValue(value || "");
+        const dueDate = toHtmlDateInputValue(prev.ExternalOrderDate || "");
+        if (orderDate && dueDate && dueDate < orderDate) {
+          next.ExternalOrderDate = orderDate;
+        }
+      }
+      return next;
+    });
     setIsStateChanged(true);
 
     if (errors[field]) {
@@ -756,6 +766,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
     if (formData.Status === "Converted") {
       toast.warning("This quotation has already been converted to an order");
+      return;
+    }
+
+    if (!window.confirm("Convert this vendor quotation to an order?")) {
       return;
     }
 
@@ -1104,6 +1118,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       return;
     }
 
+    const orderDateHtml = toHtmlDateInputValue(formData.OrderDate);
+    const dueDateHtml = toHtmlDateInputValue(formData.ExternalOrderDate || "");
+    if (dueDateHtml && orderDateHtml && dueDateHtml < orderDateHtml) {
+      toast.error("Due date cannot be before quotation date");
+      return;
+    }
+
     const filledDetails = (formData.Details || []).filter(
       (d) => !isBlankQuoteOrOrderLine(d)
     );
@@ -1357,6 +1378,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     id="ExternalOrderDate"
                     name="ExternalOrderDate"
                     className="form-input"
+                    min={toHtmlDateInputValue(formData.OrderDate)}
                     value={formData.ExternalOrderDate || ""}
                     onChange={(e) => handleInputChange("ExternalOrderDate", e.target.value)}
                   />
@@ -1577,6 +1599,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   className="form-input"
                                   style={{ width: "100%", minWidth: "150px", cursor: "pointer" }}
                                   value={displayText}
+                                  title={displayText}
                                   ref={(el) => {
                                     if (el) {
                                       jobOrderInputRefs.current.set(index, el);
@@ -1623,7 +1646,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                       }}
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                    {jobOrders.map((jobOrder) => {
+                                    {[...jobOrders]
+                                      .sort((a, b) => {
+                                        const aSel = selectedJobOrderIds.has(a.jobOrderID) ? 0 : 1;
+                                        const bSel = selectedJobOrderIds.has(b.jobOrderID) ? 0 : 1;
+                                        return aSel - bSel;
+                                      })
+                                      .map((jobOrder) => {
                                       const isSelected = selectedJobOrderIds.has(jobOrder.jobOrderID);
                                       return (
                                         <div
@@ -1996,10 +2025,22 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               <input
                                 type="text"
                                 className="form-input"
-                                style={{ width: "100%", minWidth: "150px" }}
-                                value={detail.Notes}
-                                onChange={(e) => handleDetailChange(index, "Notes", e.target.value)}
-                                placeholder="Notes"
+                                style={{
+                                  width: "100%",
+                                  minWidth: "120px",
+                                  cursor: "pointer",
+                                  textOverflow: "ellipsis",
+                                  overflow: "hidden",
+                                  whiteSpace: "nowrap"
+                                }}
+                                value={getFirstLine(detail.Notes || "")}
+                                onClick={() => {
+                                  setEditingField({ index, field: "Notes", value: detail.Notes || "" });
+                                  setShowTextEditorPopup(true);
+                                }}
+                                placeholder="Click to edit notes"
+                                readOnly
+                                title={detail.Notes || "Click to edit notes"}
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
@@ -2272,7 +2313,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               disabled={loading}
               onClick={() => handleSave("submit")}
             >
-              {savingAction === "submit" ? "Saving..." : "Sent"}
+              {savingAction === "submit" ? "Saving..." : "Mark as Sent"}
             </button>
           </div>
         </form>
@@ -2281,7 +2322,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       {/* Text Editor Popup */}
       {showTextEditorPopup && editingField && (
         <TextEditorPopup
-          title="Item Name"
+          title={editingField.field === "PartName" ? "Item Name" : "Notes"}
           value={editingField.value}
           onSave={(value) => {
             handleDetailChange(editingField.index, editingField.field, value);
