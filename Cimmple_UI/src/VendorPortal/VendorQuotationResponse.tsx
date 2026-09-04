@@ -447,42 +447,67 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                               />
                             </td>
                             <td>
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                className="form-input no-spinner"
-                                style={{ width: "100%", minWidth: "100px" }}
-                                value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
-                                onChange={(e) => {
-                                  const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
-                                    return string.indexOf('.') === offset ? match : '';
-                                  });
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    if (inputVal === "" || inputVal === ".") {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      handleDetailChange(index, "Discount", 0);
-                                    } else {
-                                      newMap.set(`discount-${index}`, inputVal);
-                                      const val = parseFloat(inputVal);
-                                      if (!isNaN(val) && val >= 0) {
-                                        handleDetailChange(index, "Discount", val);
+                              <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
+                                <select
+                                  className="form-input"
+                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
+                                  onChange={(e) =>
+                                    handleDetailChange(
+                                      index,
+                                      "DiscountType",
+                                      e.target.value === "Amount" ? "Amount" : "Percent"
+                                    )
+                                  }
+                                  disabled={isReadOnlyResponse}
+                                  title="Discount type"
+                                >
+                                  <option value="Percent">%</option>
+                                  <option value="Amount">$</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-input no-spinner"
+                                  style={{ width: "100%", minWidth: "70px" }}
+                                  value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
+                                  onChange={(e) => {
+                                    const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
+                                      return string.indexOf('.') === offset ? match : '';
+                                    });
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      if (inputVal === "" || inputVal === ".") {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        handleDetailChange(index, "Discount", 0);
+                                      } else {
+                                        newMap.set(`discount-${index}`, inputVal);
+                                        const val = parseFloat(inputVal);
+                                        const isAmount = detail.DiscountType === "Amount";
+                                        if (!isNaN(val) && val >= 0 && (isAmount || val <= 100)) {
+                                          handleDetailChange(index, "Discount", val);
+                                        }
                                       }
+                                      return newMap;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    let val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
+                                    if (detail.DiscountType !== "Amount") {
+                                      val = Math.min(Math.max(val, 0), 100);
+                                    } else {
+                                      val = Math.max(val, 0);
                                     }
-                                    return newMap;
-                                  });
-                                }}
-                                onBlur={(e) => {
-                                  const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
-                                  handleDetailChange(index, "Discount", val);
-                                  setNumericDisplayValues(prev => {
-                                    const newMap = new Map(prev);
-                                    newMap.delete(`discount-${index}`);
-                                    return newMap;
-                                  });
-                                }}
-                                disabled={isReadOnlyResponse}
-                              />
+                                    handleDetailChange(index, "Discount", val);
+                                    setNumericDisplayValues(prev => {
+                                      const newMap = new Map(prev);
+                                      newMap.delete(`discount-${index}`);
+                                      return newMap;
+                                    });
+                                  }}
+                                  disabled={isReadOnlyResponse}
+                                />
+                              </div>
                             </td>
                             <td style={{ fontWeight: 600 }}>{formatCurrency(lineTotal)}</td>
                             <td>

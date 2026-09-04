@@ -6,6 +6,8 @@ import {
   VendorContact,
 } from "../../Common/Services/VendorService";
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
+import { getCachedSettings } from "../../Common/Utils/settingsRuntime";
+import { getDefaultSystemSettings } from "../../Common/Utils/defaultSystemSettings";
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
@@ -485,8 +487,19 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         if (enablingFirstTime && !portalPassword.trim()) {
           newErrors.portalPassword = "Password is required to enable portal access";
         } else if (portalPassword.trim() || portalPasswordConfirm.trim() || enablingFirstTime) {
-          if (portalPassword.length < 8) {
-            newErrors.portalPassword = "Password must be at least 8 characters";
+          const settings = getCachedSettings() || getDefaultSystemSettings(1);
+          const minLen = settings.minPasswordLength > 0 ? settings.minPasswordLength : 8;
+          const pwd = portalPassword;
+          if (pwd.length < minLen) {
+            newErrors.portalPassword = `Password must be at least ${minLen} characters`;
+          } else if (settings.requireUppercase && !/[A-Z]/.test(pwd)) {
+            newErrors.portalPassword = "Password must contain an uppercase letter";
+          } else if (settings.requireLowercase && !/[a-z]/.test(pwd)) {
+            newErrors.portalPassword = "Password must contain a lowercase letter";
+          } else if (settings.requireNumbers && !/[0-9]/.test(pwd)) {
+            newErrors.portalPassword = "Password must contain a number";
+          } else if (settings.requireSpecialChars && /^[A-Za-z0-9]*$/.test(pwd)) {
+            newErrors.portalPassword = "Password must contain a special character";
           }
           if (portalPassword !== portalPasswordConfirm) {
             newErrors.portalPasswordConfirm = "Passwords do not match";
@@ -923,6 +936,19 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                       />
                       {errors.portalPassword && (
                         <span className="error-message">{errors.portalPassword}</span>
+                      )}
+                      {!errors.portalPassword && (
+                        <span style={{ fontSize: "0.75rem", color: "#6b7280", display: "block", marginTop: "0.25rem" }}>
+                          {(() => {
+                            const s = getCachedSettings() || getDefaultSystemSettings(1);
+                            const parts = [`at least ${s.minPasswordLength || 8} characters`];
+                            if (s.requireUppercase) parts.push("uppercase");
+                            if (s.requireLowercase) parts.push("lowercase");
+                            if (s.requireNumbers) parts.push("a number");
+                            if (s.requireSpecialChars) parts.push("a special character");
+                            return `Must include ${parts.join(", ")}.`;
+                          })()}
+                        </span>
                       )}
                     </div>
                     <div className="form-group">

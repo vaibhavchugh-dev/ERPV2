@@ -2489,8 +2489,22 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "At least one vendor ID is required" });
                 }
 
+                // Deduplicate vendor IDs from the request
+                vendorIds = vendorIds.Where(id => id > 0).Distinct().ToList();
+
                 // Use the source quotation ID as the parent ID for all related quotations
                 int parentQuotationId = sourceQuotationId;
+
+                // Vendors that already have a response-copy under this master (skip on re-send)
+                var existingChildVendorIds = _context.VendorQuotations
+                    .AsNoTracking()
+                    .Where(q =>
+                        q.Tenantid == tenantid &&
+                        q.ParentQuotationID == parentQuotationId &&
+                        q.OrderID != parentQuotationId)
+                    .Select(q => q.VendorID)
+                    .Distinct()
+                    .ToHashSet();
 
                 // Get next PO Number
                 var existingQuotations = _context.VendorQuotations
@@ -2502,21 +2516,19 @@ namespace CimmpleAPI.Controllers
                     : 1000;
 
                 var createdQuotationIds = new List<int>();
+                var skippedVendorIds = new List<int>();
 
-                // Handle each vendor - reset master vendor pricing, create new quotations for additional vendors
+                // Handle each vendor — keep master pricing; create blank-price copies for additional vendors
                 foreach (var vendorId in vendorIds)
                 {
                     if (sourceQuotation.VendorID == vendorId)
                     {
-                        // This is the master vendor - reset their pricing to blank for competitive bidding
-                        sourceQuotation.TotalAmount = 0;
+                        // Master vendor: mark Sent for bidding, but keep existing line prices / totals
                         sourceQuotation.Status = "Sent";
                         sourceQuotation.isSent = true;
                         sourceQuotation.sentDate = DateTime.Now;
-                        // Ensure master quotation has ParentQuotationID set to itself for consistency
                         sourceQuotation.ParentQuotationID = sourceQuotationId;
 
-                        // Copy attachments if includeAttachments is true
                         if (includeAttachments && sourceAttachments != null && sourceAttachments.Count > 0)
                         {
                             var attachmentOptions = new JsonSerializerOptions
@@ -2528,19 +2540,15 @@ namespace CimmpleAPI.Controllers
                             sourceQuotation.AttachmentsJson = JsonSerializer.Serialize(sourceAttachments, attachmentOptions);
                         }
 
-                        // Reset all line item pricing to blank
-                        var masterDetails = _context.VendorQuotationsDetails
-                            .Where(d => d.OrderID == sourceQuotationId && d.Tenantid == tenantid)
-                            .ToList();
-
-                        foreach (var detail in masterDetails)
-                        {
-                            detail.UnitPrice = 0;
-                            detail.Discount = 0;
-                        }
-
                         _context.SaveChanges();
                         createdQuotationIds.Add(sourceQuotationId);
+                        continue;
+                    }
+
+                    // Already has a child RFQ under this master — do not create another
+                    if (existingChildVendorIds.Contains(vendorId))
+                    {
+                        skippedVendorIds.Add(vendorId);
                         continue;
                     }
 
@@ -2597,7 +2605,7 @@ namespace CimmpleAPI.Controllers
                     _context.VendorQuotations.Add(newQuotation);
                     _context.SaveChanges();
 
-                    // Copy details
+                    // Copy details (blank unit price/discount so vendors enter their bid)
                     foreach (var sourceDetail in sourceDetails)
                     {
                         var newDetail = new VendorQuotationsDetails
@@ -2614,7 +2622,9 @@ namespace CimmpleAPI.Controllers
                             UnitPrice = 0, // Start with 0 - vendors enter actual pricing
                             JobPriority = sourceDetail.JobPriority,
                             Discount = 0, // Start with 0 - vendors enter actual discounts
-                            DiscountType = "Percent",
+                            DiscountType = string.IsNullOrWhiteSpace(sourceDetail.DiscountType)
+                                ? "Percent"
+                                : sourceDetail.DiscountType,
                             Tenantid = tenantid,
                             productid = sourceDetail.productid,
                             RawMaterialId = sourceDetail.RawMaterialId,
@@ -2630,9 +2640,34 @@ namespace CimmpleAPI.Controllers
 
                     _context.SaveChanges();
                     createdQuotationIds.Add(newQuotation.OrderID);
+                    existingChildVendorIds.Add(vendorId);
                 }
 
-                return Ok(new { result = new { quotationIds = createdQuotationIds, message = $"Created {createdQuotationIds.Count} quotation(s) for selected vendors" } });
+                // If only additional vendors were selected (master not in list), still link/mark master as Sent
+                if (!vendorIds.Contains(sourceQuotation.VendorID))
+                {
+                    sourceQuotation.Status = "Sent";
+                    sourceQuotation.isSent = true;
+                    sourceQuotation.sentDate = DateTime.Now;
+                    sourceQuotation.ParentQuotationID = sourceQuotationId;
+                    _context.SaveChanges();
+                    if (!createdQuotationIds.Contains(sourceQuotationId))
+                        createdQuotationIds.Add(sourceQuotationId);
+                }
+
+                var message = skippedVendorIds.Count > 0
+                    ? $"Created {createdQuotationIds.Count} quotation(s); skipped {skippedVendorIds.Count} vendor(s) that already have a copy"
+                    : $"Created {createdQuotationIds.Count} quotation(s) for selected vendors";
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        quotationIds = createdQuotationIds,
+                        skippedVendorIds,
+                        message
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -2662,61 +2697,11 @@ namespace CimmpleAPI.Controllers
                 // Get all quotations in the family:
                 // 1. The master quotation (OrderID == actualParentId)
                 // 2. All child quotations (ParentQuotationID == actualParentId)
-                var masterQuotation = _context.VendorQuotations
-                    .Where(q => q.OrderID == actualParentId && q.Tenantid == tenantId)
-                    .FirstOrDefault();
-
+                // Family is defined by ParentQuotationID only (no fuzzy date/line matching —
+                // that was pulling unrelated same-day quotes and inflating duplicates).
                 var quotations = _context.VendorQuotations
                     .Where(q => (q.ParentQuotationID == actualParentId || q.OrderID == actualParentId) && q.Tenantid == tenantId)
                     .ToList();
-
-                // Materialize the quotation IDs to use in subsequent queries
-                var existingQuotationIds = quotations.Select(q => q.OrderID).ToList();
-
-                // If master quotation exists, also find related quotations by matching key attributes
-                // This handles cases where ParentQuotationID might be null or incorrect
-                if (masterQuotation != null)
-                {
-                    // Get master quotation's line items to match by part numbers and quantities
-                    var masterDetails = _context.VendorQuotationsDetails
-                        .Where(d => d.OrderID == actualParentId && d.Tenantid == tenantId)
-                        .Select(d => new { d.PartNo, d.QtyOrdered })
-                        .ToList();
-
-                    // Find quotations that match by:
-                    // 1. Same order date
-                    // 2. Same quotation type
-                    // 3. Not already in the quotations list
-                    var candidateQuotations = _context.VendorQuotations
-                        .Where(q => 
-                            q.Tenantid == tenantId &&
-                            q.OrderID != actualParentId &&
-                            !existingQuotationIds.Contains(q.OrderID) &&
-                            (q.OrderDate.HasValue && masterQuotation.OrderDate.HasValue && q.OrderDate.Value.Date == masterQuotation.OrderDate.Value.Date) &&
-                            q.VendorOrderType == masterQuotation.VendorOrderType
-                        )
-                        .ToList();
-
-                    // Filter candidates by matching line items
-                    var relatedByAttributes = new List<VendorQuotations>();
-                    foreach (var candidate in candidateQuotations)
-                    {
-                        var candidateDetails = _context.VendorQuotationsDetails
-                            .Where(d => d.OrderID == candidate.OrderID && d.Tenantid == tenantId)
-                            .Select(d => new { d.PartNo, d.QtyOrdered })
-                            .ToList();
-
-                        // Check if line items match (same part numbers and quantities)
-                        if (candidateDetails.Count == masterDetails.Count &&
-                            candidateDetails.All(cd => masterDetails.Any(md => 
-                                md.PartNo == cd.PartNo && md.QtyOrdered == cd.QtyOrdered)))
-                        {
-                            relatedByAttributes.Add(candidate);
-                        }
-                    }
-
-                    quotations.AddRange(relatedByAttributes);
-                }
 
                 var quotationsResult = quotations
                     .OrderBy(q => q.VendorName)

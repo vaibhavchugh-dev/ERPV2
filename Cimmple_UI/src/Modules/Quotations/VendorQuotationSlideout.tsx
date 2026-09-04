@@ -83,6 +83,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
   const [showMultiVendorDialog, setShowMultiVendorDialog] = useState(false);
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<number>>(new Set());
+  const [alreadySentVendorIds, setAlreadySentVendorIds] = useState<Set<number>>(new Set());
   const [includeAttachments, setIncludeAttachments] = useState(true);
   const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
@@ -1033,7 +1034,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
-  const handleSendToMultipleVendors = () => {
+  const handleSendToMultipleVendors = async () => {
     if (quotationId === 0) {
       toast.error("Please save the quotation first before sending to multiple vendors");
       return;
@@ -1042,17 +1043,33 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       toast.error("Please add at least one line item before sending to multiple vendors");
       return;
     }
-    // Pre-select the master quotation's vendor (will be reset to blank pricing along with others)
+    // Pre-select the master quotation's vendor (master pricing is kept; additional vendors get blank RFQ copies)
     const initialSelection = new Set<number>();
     if (formData.VendorID > 0) {
       initialSelection.add(formData.VendorID);
     }
     setSelectedVendorIds(initialSelection);
+
+    // Load vendors that already have a child RFQ so we don't re-send duplicates
+    const alreadySent = new Set<number>();
+    try {
+      const comparison = await QuotationService.GetVendorQuotationComparison(quotationId);
+      (comparison?.quotations || []).forEach((q: any) => {
+        const vendorId = Number(q.vendorID ?? q.VendorID ?? 0);
+        const orderId = Number(q.orderID ?? q.OrderID ?? 0);
+        if (vendorId > 0 && orderId !== quotationId && orderId !== (formData.OrderID || quotationId)) {
+          alreadySent.add(vendorId);
+        }
+      });
+    } catch {
+      // Non-fatal — API still skips duplicates on save
+    }
+    setAlreadySentVendorIds(alreadySent);
     setShowMultiVendorDialog(true);
   };
 
   const handleMultiVendorSave = async () => {
-    // Include ALL selected vendors (including the master vendor) - the API will handle resetting master pricing
+    // Include ALL selected vendors (including the master vendor) - API keeps master prices, blanks only new copies
     const allSelectedVendors = Array.from(selectedVendorIds);
 
     if (allSelectedVendors.length < 2) {
@@ -1067,9 +1084,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         allSelectedVendors,
         includeAttachments
       );
-      toast.success(`Quotation sent to ${allSelectedVendors.length} vendor(s) for competitive bidding. All vendors start with blank pricing for fair comparison.`);
+      const skipped = (result as any)?.skippedVendorIds?.length || 0;
+      const baseMsg =
+        result?.message ||
+        `Quotation sent to ${allSelectedVendors.length} vendor(s). Master pricing kept; additional vendors start with blank pricing.`;
+      toast.success(
+        skipped > 0
+          ? `${baseMsg}`
+          : `Quotation sent to ${allSelectedVendors.length} vendor(s). Master pricing kept; additional vendors start with blank pricing for bidding.`
+      );
       setShowMultiVendorDialog(false);
       setSelectedVendorIds(new Set());
+      setAlreadySentVendorIds(new Set());
       setIncludeAttachments(true); // Reset to default
       onClose(true); // Close slideout to refresh the list
     } catch (error: any) {
@@ -2390,7 +2416,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 500, fontSize: "0.875rem", color: "#0369a1" }}>
-                          {formData.VendorName} (Current - Will be reset to blank pricing)
+                          {formData.VendorName} (Current — master pricing kept)
                         </div>
                         {formData.VendorCode && (
                           <div style={{ fontSize: "0.75rem", color: "#0284c7" }}>
@@ -2406,12 +2432,15 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   {vendors
                     .filter((v) => v.vendor_id !== formData.VendorID)
                     .map((vendor) => {
+                      const isAlreadySent = alreadySentVendorIds.has(vendor.vendor_id);
                       const isSelected = selectedVendorIds.has(vendor.vendor_id);
                       return (
                         <div
                           key={vendor.vendor_id}
                           className={`multi-vendor-dialog-list-item${isSelected ? " is-selected" : ""}`}
+                          style={isAlreadySent ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
                           onClick={() => {
+                            if (isAlreadySent) return;
                             const newSet = new Set(selectedVendorIds);
                             if (isSelected) {
                               newSet.delete(vendor.vendor_id);
@@ -2420,16 +2449,19 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                             }
                             setSelectedVendorIds(newSet);
                           }}
+                          title={isAlreadySent ? "Already sent — a quotation copy exists for this vendor" : undefined}
                         >
                           <input
                             type="checkbox"
-                            checked={isSelected}
+                            checked={isSelected || isAlreadySent}
+                            disabled={isAlreadySent}
                             readOnly
-                            style={{ cursor: "pointer" }}
+                            style={{ cursor: isAlreadySent ? "not-allowed" : "pointer" }}
                           />
                           <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
                               {vendor.company_name}
+                              {isAlreadySent ? " (Already sent)" : ""}
                             </div>
                             {vendor.vendorcode && (
                               <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
@@ -2452,6 +2484,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   onClick={() => {
                     setShowMultiVendorDialog(false);
                     setSelectedVendorIds(new Set());
+                    setAlreadySentVendorIds(new Set());
                     setIncludeAttachments(true);
                   }}
                 >
