@@ -12,6 +12,7 @@ export interface InvoiceableItemForVendor {
   invoiceStatus: string;
   unitPrice: number;
   discount: number;
+  discountType?: "Percent" | "Amount" | string;
 }
 
 export interface VendorInvoiceLineItem {
@@ -19,6 +20,7 @@ export interface VendorInvoiceLineItem {
   qtyToInvoice: number;
   unitPrice: number;
   discount: number;
+  discountType?: "Percent" | "Amount" | string;
 }
 
 export interface CreateVendorInvoiceRequest {

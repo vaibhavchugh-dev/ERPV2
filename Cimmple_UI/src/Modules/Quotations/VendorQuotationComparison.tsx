@@ -386,6 +386,10 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       return;
     }
 
+    if (!window.confirm("Convert this vendor quotation to an order?")) {
+      return;
+    }
+
     setConvertingQuotationId(quotationId);
     try {
       // Get the full quotation data

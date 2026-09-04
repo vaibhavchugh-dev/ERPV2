@@ -89,7 +89,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
   const [showTextEditorPopup, setShowTextEditorPopup] = useState(false);
-  const [editingField, setEditingField] = useState<{ index: number; field: "PartName"; value: string } | null>(null);
+  const [editingField, setEditingField] = useState<{ index: number; field: "PartName" | "Notes"; value: string } | null>(null);
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [jobOrderDropdownOpen, setJobOrderDropdownOpen] = useState<Map<number, boolean>>(new Map());
   const [jobOrderDropdownPositions, setJobOrderDropdownPositions] = useState<Map<number, { top: number; left: number; width: number }>>(new Map());
@@ -494,7 +494,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   };
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const next: any = { ...prev, [field]: value };
+      if (field === "OrderDate") {
+        const orderDate = toHtmlDateInputValue(value || "");
+        const dueDate = toHtmlDateInputValue(prev.ExternalOrderDate || "");
+        if (orderDate && dueDate && dueDate < orderDate) {
+          next.ExternalOrderDate = orderDate;
+        }
+      }
+      return next;
+    });
     setIsStateChanged(true);
 
     if (errors[field]) {
@@ -1012,6 +1022,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       return;
     }
 
+    const orderDateHtml = toHtmlDateInputValue(formData.OrderDate);
+    const dueDateHtml = toHtmlDateInputValue(formData.ExternalOrderDate || "");
+    if (dueDateHtml && orderDateHtml && dueDateHtml < orderDateHtml) {
+      toast.error("Due date cannot be before order date");
+      return;
+    }
+
     const filledDetails = (formData.Details || []).filter(
       (d) => !isBlankQuoteOrOrderLine(d)
     );
@@ -1240,6 +1257,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     id="ExternalOrderDate"
                     name="ExternalOrderDate"
                     className="form-input"
+                    min={toHtmlDateInputValue(formData.OrderDate)}
                     value={formData.ExternalOrderDate || ""}
                     onChange={(e) => handleInputChange("ExternalOrderDate", e.target.value)}
                   />
@@ -1499,6 +1517,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
                                   }}
                                   value={displayText}
+                                  title={displayText}
                                   ref={(el) => {
                                     if (el) {
                                       jobOrderInputRefs.current.set(index, el);
@@ -1545,7 +1564,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                       }}
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                    {jobOrders.map((jobOrder) => {
+                                    {[...jobOrders]
+                                      .sort((a, b) => {
+                                        const aSel = selectedJobOrderIds.has(a.jobOrderID) ? 0 : 1;
+                                        const bSel = selectedJobOrderIds.has(b.jobOrderID) ? 0 : 1;
+                                        return aSel - bSel;
+                                      })
+                                      .map((jobOrder) => {
                                       const isSelected = selectedJobOrderIds.has(jobOrder.jobOrderID);
                                       return (
                                         <div
@@ -1942,10 +1967,24 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                 type="text"
                                 className="form-input"
                                 disabled={isInvoiced}
-                                style={{ width: "100%", minWidth: "150px", backgroundColor: isInvoiced ? "#f3f4f6" : undefined, cursor: isInvoiced ? "not-allowed" : undefined }}
-                                value={detail.Notes}
-                                onChange={(e) => handleDetailChange(index, "Notes", e.target.value)}
-                                placeholder="Notes"
+                                style={{
+                                  width: "100%",
+                                  minWidth: "120px",
+                                  cursor: isInvoiced ? "not-allowed" : "pointer",
+                                  backgroundColor: isInvoiced ? "#f3f4f6" : undefined,
+                                  textOverflow: "ellipsis",
+                                  overflow: "hidden",
+                                  whiteSpace: "nowrap"
+                                }}
+                                value={getFirstLine(detail.Notes || "")}
+                                onClick={() => {
+                                  if (isInvoiced) return;
+                                  setEditingField({ index, field: "Notes", value: detail.Notes || "" });
+                                  setShowTextEditorPopup(true);
+                                }}
+                                placeholder="Click to edit notes"
+                                readOnly
+                                title={detail.Notes || "Click to edit notes"}
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
@@ -2500,7 +2539,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         {/* Text Editor Popup - Same as VendorQuotationSlideout */}
         {showTextEditorPopup && editingField && (
           <TextEditorPopup
-            title="Item Name"
+            title={editingField.field === "PartName" ? "Item Name" : "Notes"}
             value={editingField.value}
             onSave={(value) => {
               handleDetailChange(editingField.index, editingField.field, value);

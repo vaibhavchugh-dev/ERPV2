@@ -66,6 +66,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -1053,7 +1054,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       toast.error("Please ensure the order has a customer and at least one line item before printing");
       return;
     }
+    if (printing) return;
 
+    setPrinting(true);
+    const toastId = toast.info("Generating Order PDF…", { autoClose: false });
     try {
       const orderNumber = formData.PONumber < 1000 
         ? `CO#${formData.PONumber + 999}` 
@@ -1068,10 +1072,20 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       link.click();
       window.URL.revokeObjectURL(url);
       
-      toast.success("Order PDF generated successfully");
+      toast.update(toastId, {
+        render: "Order PDF ready",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error("Error generating PDF:", error);
-      toast.error(`Error generating PDF: ${error.message || "Unknown error"}`);
+      toast.update(toastId, {
+        render: `Error generating PDF: ${error.message || "Unknown error"}`,
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -1209,18 +1223,19 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   const handleDuplicate = async () => {
     const id = formData.OrderID > 0 ? formData.OrderID : orderId;
-    if (id > 0) {
-      setLoading(true);
-      try {
-        await OrderService.DuplicateOrder(id);
-        toast.success("Order duplicated successfully (including file copies)");
-        onClose(true);
-      } catch (error: any) {
-        console.error("Error duplicating order:", error);
-        toast.error(`Error duplicating order: ${error.message || "Unknown error"}`);
-      } finally {
-        setLoading(false);
-      }
+    if (id <= 0) return;
+    if (!window.confirm("Create a duplicate of this order?")) return;
+
+    setLoading(true);
+    try {
+      await OrderService.DuplicateOrder(id);
+      toast.success("Order duplicated successfully (including file copies)");
+      onClose(true);
+    } catch (error: any) {
+      console.error("Error duplicating order:", error);
+      toast.error(`Error duplicating order: ${error.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1274,8 +1289,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                   type="button"
                   className="btn-icon"
                   onClick={handlePrint}
-                  title="Print"
-                  style={{ color: "#6366f1" }}
+                  disabled={printing}
+                  title={printing ? "Generating PDF…" : "Print"}
+                  style={{ color: "#6366f1", opacity: printing ? 0.6 : 1 }}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
