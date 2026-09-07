@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { NavLink, useLocation, useHistory } from "react-router-dom";
+import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { QuotationService, VendorQuotationMaster } from "../../Common/Services/QuotationService";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import VendorQuotationComparison from "./VendorQuotationComparison";
+import VendorOrderSlideout from "../Purchasing/VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -17,6 +18,8 @@ const VendorQuotations: React.FC = () => {
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
+  const [showOrderSlideout, setShowOrderSlideout] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [showComparison, setShowComparison] = useState(false);
   const [comparisonParentId, setComparisonParentId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -204,21 +207,30 @@ const VendorQuotations: React.FC = () => {
       label: "Order #",
       sortable: false,
       align: "left" as const,
-      render: (value: any) => {
-        if (value) {
-          const orderNum = value < 1000 ? value + 999 : value;
+      render: (value: any, row: any) => {
+        const displayPo = row.convertedOrderNumber ?? value;
+        const orderIdForSlideout = row.convertedOrderOrderId;
+        if (displayPo) {
+          const orderNum = displayPo < 1000 ? displayPo + 999 : displayPo;
           return (
-            <NavLink
-              to={`/purchasing/vendor-orders`}
+            <span
               style={{
-                color: "#6366f1",
-                textDecoration: "none",
+                color: "#10b981",
+                textDecoration: "underline",
+                cursor: orderIdForSlideout ? "pointer" : "default",
                 fontWeight: 500,
               }}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (orderIdForSlideout) {
+                  setSelectedOrderId(orderIdForSlideout);
+                  setShowOrderSlideout(true);
+                }
+              }}
+              title={orderIdForSlideout ? "Click to view order" : undefined}
             >
               VO#{orderNum}
-            </NavLink>
+            </span>
           );
         }
         return <span style={{ color: "#9ca3af" }}>-</span>;
@@ -341,6 +353,19 @@ const VendorQuotations: React.FC = () => {
         <VendorQuotationSlideout
           quotationId={selectedQuotationId}
           onClose={handleCloseSlideout}
+        />
+      )}
+
+      {showOrderSlideout && (
+        <VendorOrderSlideout
+          orderId={selectedOrderId}
+          onClose={(refreshList = false) => {
+            setShowOrderSlideout(false);
+            setSelectedOrderId(0);
+            if (refreshList) {
+              loadQuotations();
+            }
+          }}
         />
       )}
 

@@ -572,7 +572,8 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         portalAccessEnabled !== initialPortalAccessEnabled ||
         (portalAccessEnabled && portalPassword.trim() !== "");
 
-      // Keep dedicated portal call as fallback for older API builds / explicit password reset
+      // Dedicated portal call covers older API builds / enable toggle.
+      // When SaveVendorData already applied the new password, a reuse error is expected — ignore it.
       if (savedVendorId > 0 && portalChanged) {
         try {
           await VendorService.SaveVendorPortalAccess({
@@ -581,9 +582,18 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
             newPassword: portalPassword.trim() || undefined,
           });
         } catch (portalError: any) {
-          // If SaveVendorData already applied portalAccessEnabled, a 404 here is fine on older partial deploys
           const status = portalError?.response?.status;
-          if (status && status !== 404) {
+          const message = String(
+            portalError?.response?.data?.error ||
+              portalError?.response?.data?.message ||
+              portalError?.message ||
+              ""
+          );
+          const passwordAlreadyApplied =
+            /cannot reuse/i.test(message) && portalPassword.trim() !== "";
+          if (status === 404 || passwordAlreadyApplied) {
+            // Older API without endpoint, or password already set by SaveVendorData
+          } else {
             throw portalError;
           }
         }

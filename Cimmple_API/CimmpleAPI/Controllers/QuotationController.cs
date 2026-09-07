@@ -970,7 +970,77 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                return Ok(new { result = quotations });
+                // Roll up child (response-only) conversions onto master rows for Order # display
+                var masterIds = quotations.Select(q => q.orderID).ToList();
+                var childConversions = _context.VendorQuotations
+                    .AsNoTracking()
+                    .Where(q => q.Tenantid == tenantid
+                        && q.ParentQuotationID.HasValue
+                        && masterIds.Contains(q.ParentQuotationID.Value)
+                        && q.convertedOrderId.HasValue
+                        && q.convertedOrderId.Value > 0)
+                    .Select(q => new { ParentId = q.ParentQuotationID!.Value, q.convertedOrderId, isConverted = q.isconverted ?? 0 })
+                    .ToList()
+                    .GroupBy(c => c.ParentId)
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.convertedOrderId).First());
+
+                var poNumbers = quotations
+                    .Where(q => q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0)
+                    .Select(q => q.convertedOrderId!.Value)
+                    .Concat(childConversions.Values.Select(c => c.convertedOrderId!.Value))
+                    .Distinct()
+                    .ToList();
+
+                var ordersByPo = poNumbers.Count == 0
+                    ? new Dictionary<int, int>()
+                    : _context.VendorOrders
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == tenantid && poNumbers.Contains(o.PONumber))
+                        .Select(o => new { o.PONumber, o.OrderID })
+                        .ToList()
+                        .GroupBy(o => o.PONumber)
+                        .ToDictionary(g => g.Key, g => g.First().OrderID);
+
+                var result = quotations.Select(q =>
+                {
+                    var convertedPo = q.convertedOrderId;
+                    var isConverted = q.isConverted;
+                    if ((!convertedPo.HasValue || convertedPo.Value <= 0) &&
+                        childConversions.TryGetValue(q.orderID, out var childConv))
+                    {
+                        convertedPo = childConv.convertedOrderId;
+                        isConverted = childConv.isConverted > 0 ? childConv.isConverted : 1;
+                    }
+
+                    int? convertedOrderOrderId = null;
+                    if (convertedPo.HasValue && convertedPo.Value > 0 &&
+                        ordersByPo.TryGetValue(convertedPo.Value, out var orderId))
+                    {
+                        convertedOrderOrderId = orderId;
+                    }
+
+                    return new
+                    {
+                        q.orderID,
+                        q.quotationNumber,
+                        q.vendorID,
+                        q.vendorCode,
+                        q.vendorName,
+                        q.orderDate,
+                        q.totalAmount,
+                        q.status,
+                        q.vendorRefNo,
+                        isConverted,
+                        convertedOrderId = convertedPo,
+                        convertedOrderNumber = convertedPo,
+                        convertedOrderOrderId,
+                        q.locationId,
+                        q.QuotationType,
+                        q.parentQuotationID
+                    };
+                }).ToList();
+
+                return Ok(new { result });
             }
             catch (Exception ex)
             {
@@ -1478,7 +1548,10 @@ namespace CimmpleAPI.Controllers
                         UserToken = request.TryGetProperty("UserToken", out JsonElement userTokenElem) ? userTokenElem.GetInt32() : 0,
                         ship_via = "",
                         VendorOrderType = request.TryGetProperty("QuotationType", out JsonElement quotationTypeElem) ? quotationTypeElem.GetString() ?? "Material" : "Material",
-                        isSent = false
+                        isSent = false,
+                        isconverted = 0,
+                        convertedOrderId = null,
+                        IsResponseOnly = false
                     };
                     _context.VendorQuotations.Add(quotation);
                 }
@@ -2380,6 +2453,20 @@ namespace CimmpleAPI.Controllers
                 quotation.Status = "Converted";
                 quotation.convertedOrderId = vendorOrder.PONumber; // Store PONumber instead of OrderID for display consistency
                 quotation.isconverted = 1;
+
+                // Roll conversion up to master RFQ so the listing Order # column populates
+                if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
+                {
+                    var masterQuotation = _context.VendorQuotations
+                        .FirstOrDefault(q => q.OrderID == quotation.ParentQuotationID.Value && q.Tenantid == quotation.Tenantid);
+                    if (masterQuotation != null &&
+                        (!masterQuotation.convertedOrderId.HasValue || masterQuotation.convertedOrderId.Value <= 0))
+                    {
+                        masterQuotation.convertedOrderId = vendorOrder.PONumber;
+                        masterQuotation.isconverted = 1;
+                    }
+                }
+
                 _context.SaveChanges();
                 Console.WriteLine($"ConvertVendorQuotationToOrder: After update - quotation.Status: '{quotation.Status}', convertedOrderId: {vendorOrder.PONumber}");
 

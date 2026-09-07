@@ -47,6 +47,7 @@ namespace CimmpleAPI.Data.Models
         public decimal Amount { get; set; }
         public decimal price { get; set; }
         public decimal discount { get; set; }
+        public string? DiscountType { get; set; }
         public int qty { get; set; }
         public int QtyInvoiced { get; set; } = 0;
         public string ReconcileCL { get; set; }

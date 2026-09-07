@@ -1946,6 +1946,21 @@ namespace CimmpleAPI.Controllers
                                     
                                     // Force EF to update this entity
                                     _context.VendorQuotations.Update(quotation);
+
+                                    // Roll conversion up to master RFQ so listing Order # populates
+                                    if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
+                                    {
+                                        var masterQuotation = await _context.VendorQuotations
+                                            .FirstOrDefaultAsync(q => q.OrderID == quotation.ParentQuotationID.Value && q.Tenantid == order.Tenantid);
+                                        if (masterQuotation != null &&
+                                            (!masterQuotation.convertedOrderId.HasValue || masterQuotation.convertedOrderId.Value <= 0))
+                                        {
+                                            masterQuotation.convertedOrderId = poNumberToStore;
+                                            masterQuotation.isconverted = 1;
+                                            _context.VendorQuotations.Update(masterQuotation);
+                                        }
+                                    }
+
                                     await _context.SaveChangesAsync();
                                     
                                     Console.WriteLine($"SaveVendorOrder: Successfully updated quotation {quotation.OrderID} status to 'Converted' with order PONumber {poNumberToStore}");

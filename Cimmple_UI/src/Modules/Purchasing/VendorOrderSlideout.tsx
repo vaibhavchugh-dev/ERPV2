@@ -754,29 +754,42 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
-    if (orderId > 0) {
-      setLoading(true);
-      try {
-        const order = await VendorOrderService.GetVendorOrderById(orderId);
-        if (order) {
-          const duplicatedOrder: VendorOrderMasterReq = {
-            ...order,
+    if (orderId <= 0) return;
+    if (!window.confirm("Create a duplicate of this order?")) return;
+
+    setLoading(true);
+    try {
+      const order = await VendorOrderService.GetVendorOrderById(orderId);
+      if (order) {
+        const duplicatedOrder: VendorOrderMasterReq = {
+          ...order,
+          OrderID: 0,
+          PONumber: 0,
+          Status: "Draft",
+          VendorRefNo: "",
+          ParentQuotationID: undefined,
+          QuotationId: 0,
+          QuotationNo: "",
+          Details: (order.Details || []).map((d) => ({
+            ...d,
+            ID: 0,
             OrderID: 0,
-            PONumber: 0,
-            Status: "Draft",
-            VendorRefNo: "",
-            ParentQuotationID: undefined, // Clear parent quotation reference
-          };
-          await VendorOrderService.SaveVendorOrder(duplicatedOrder);
-          toast.success("Order duplicated successfully");
-          onClose(true);
-        }
-      } catch (error: any) {
-        console.error("Error duplicating order:", error);
-        toast.error("Error duplicating order");
-      } finally {
-        setLoading(false);
+            ShippedQty: 0,
+            ShippingStatus: "Not Started",
+            InvoicedQty: 0,
+            InvoiceStatus: "Not Invoiced",
+            Received: "No",
+          })),
+        };
+        await VendorOrderService.SaveVendorOrder(duplicatedOrder);
+        toast.success("Order duplicated successfully");
+        onClose(true);
       }
+    } catch (error: any) {
+      console.error("Error duplicating order:", error);
+      toast.error("Error duplicating order");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -2439,8 +2452,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           />
         )}
 
-        {/* Print Invoice Modal */}
-        {showPrintModal && selectedInvoiceForPrint && (
+        {/* Print Invoice Modal — portal to body so print CSS is not clipped by slideout overflow */}
+        {showPrintModal && selectedInvoiceForPrint && createPortal(
           <div className="vendor-invoice-print-overlay" onClick={handleClosePrintModal}>
             <div className="vendor-invoice-print-modal" onClick={(e) => e.stopPropagation()}>
               <div className="print-header">
@@ -2533,7 +2546,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                 </div>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
 
         {/* Text Editor Popup - Same as VendorQuotationSlideout */}

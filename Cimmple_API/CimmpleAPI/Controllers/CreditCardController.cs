@@ -15,10 +15,41 @@ namespace CimmpleAPI.Controllers
     public class CreditCardController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private static bool _coaColumnEnsured;
 
         public CreditCardController(CimmpleDbContext context)
         {
             _context = context;
+        }
+
+        /// <summary>
+        /// CreditCardMaster lives in CimmpleFlow; older DBs were created without COA.
+        /// Ensure the column exists before any EF query that maps it.
+        /// </summary>
+        private void EnsureCoaColumnExists()
+        {
+            if (_coaColumnEnsured) return;
+            try
+            {
+                _context.Database.ExecuteSqlRaw(@"
+IF COL_LENGTH('CimmpleFlow.CreditCardMaster', 'COA') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.CreditCardMaster ADD COA nvarchar(100) NULL;
+END
+IF COL_LENGTH('dbo.CreditCardMaster', 'COA') IS NULL
+   AND OBJECT_ID(N'dbo.CreditCardMaster', N'U') IS NOT NULL
+BEGIN
+    ALTER TABLE dbo.CreditCardMaster ADD COA nvarchar(100) NULL;
+END
+");
+                _coaColumnEnsured = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"EnsureCoaColumnExists: {ex.Message}");
+                // Still mark attempted so we don't loop; subsequent query may surface the real error
+                _coaColumnEnsured = true;
+            }
         }
 
         [HttpGet("GetCreditCards")]
@@ -26,13 +57,14 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                EnsureCoaColumnExists();
                 var creditCards = _context.CreditCardMaster
                     .Where(c => c.TenantId == tenantid)
                     .Select(c => new
                     {
                         id = c.Id,
-                        cardNumber = c.LastFourDigits != null && c.LastFourDigits.Length > 0 
-                            ? "****" + c.LastFourDigits 
+                        cardNumber = c.LastFourDigits != null && c.LastFourDigits.Length > 0
+                            ? "****" + c.LastFourDigits
                             : "****",
                         cardholderName = c.CardholderName ?? "",
                         cardType = c.CardType ?? "",
@@ -58,6 +90,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                EnsureCoaColumnExists();
                 var creditCard = _context.CreditCardMaster
                     .Where(c => c.Id == creditCardId && c.TenantId == tenantId)
                     .FirstOrDefault();
@@ -90,7 +123,7 @@ namespace CimmpleAPI.Controllers
                     tenantId = creditCard.TenantId,
                     nickName = creditCard.NickName ?? "",
                     isPrimary = creditCard.IsPrimary ?? false,
-                    coa = "" // COA column doesn't exist in database table yet
+                    coa = creditCard.COA ?? ""
                 };
 
                 return Ok(new { result = result });
@@ -122,6 +155,7 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Card Number is required" });
                 }
 
+                EnsureCoaColumnExists();
                 CreditCardMaster creditCard;
 
                 if (request.Id > 0)
@@ -182,8 +216,7 @@ namespace CimmpleAPI.Controllers
                 creditCard.Status = request.Status == "Active" ? 1 : 0;
                 creditCard.NickName = request.NickName ?? "";
                 creditCard.IsPrimary = request.IsPrimary;
-                // COA column doesn't exist in database table yet, so skip setting it
-                // creditCard.COA = request.COA ?? "";
+                creditCard.COA = request.COA ?? "";
 
                 _context.SaveChanges();
 
@@ -206,6 +239,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                EnsureCoaColumnExists();
                 var creditCard = _context.CreditCardMaster
                     .FirstOrDefault(c => c.Id == creditCardId && c.TenantId == tenantId);
 
@@ -246,6 +280,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                EnsureCoaColumnExists();
                 var creditCard = _context.CreditCardMaster
                     .FirstOrDefault(c => c.Id == creditCardId && c.TenantId == tenantId);
 
@@ -291,4 +326,3 @@ namespace CimmpleAPI.Controllers
         public string COA { get; set; } = "";
     }
 }
-
