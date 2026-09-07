@@ -115,6 +115,10 @@ export interface VendorQuotationMaster {
   vendorRefNo: string;
   isConverted: number;
   convertedOrderId?: number;
+  /** Display VO# — VendorOrder.PONumber */
+  convertedOrderNumber?: number | null;
+  /** VendorOrder.OrderID for opening slideout */
+  convertedOrderOrderId?: number | null;
   locationId?: number;
   quotationType?: string;
   parentQuotationID?: number;
@@ -1006,8 +1010,8 @@ export class QuotationService {
     request.UserId = storage?.userId || 0;
     request.UserToken = storage?.userToken || 0;
 
-    const url = `/Quotation/ConvertVendorQuotationToOrder`;
-    return Instense.post(url, { quotationId, ...request }).then((response) => {
+    const url = `/Quotation/ConvertVendorQuotationToOrder?quotationId=${quotationId}`;
+    return Instense.post(url, request).then((response) => {
       const result = response.data.result;
       return result;
     });

@@ -243,6 +243,7 @@ namespace CimmpleAPI.Controllers
                             Amount = lineTotal,
                             price = item.UnitPrice,
                             discount = item.Discount,
+                            DiscountType = discountType,
                             qty = item.QtyToInvoice,
                             QtyInvoiced = item.QtyToInvoice,
                             ReconcileCL = "" // Initialize required string field
@@ -403,7 +404,9 @@ namespace CimmpleAPI.Controllers
                         cod => cod.ID,
                         (id, cod) =>
                         {
-                            var discountType = string.IsNullOrWhiteSpace(cod.DiscountType) ? "Percent" : cod.DiscountType;
+                            var discountType = !string.IsNullOrWhiteSpace(id.DiscountType)
+                                ? id.DiscountType
+                                : (string.IsNullOrWhiteSpace(cod.DiscountType) ? "Percent" : cod.DiscountType);
                             var gross = id.price * id.qty;
                             var lineTotal = id.Amount;
                             return new

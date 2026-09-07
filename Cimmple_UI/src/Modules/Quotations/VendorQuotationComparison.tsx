@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
-import { QuotationService } from "../../Common/Services/QuotationService";
+import { QuotationService, DiscountType } from "../../Common/Services/QuotationService";
 import { deriveOrderMaterialType, lineTypeFromQuotationType } from "../../Common/Constants/vendorOrderLineTypes";
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
 import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
@@ -42,6 +42,7 @@ interface DetailData {
   unit: string;
   unitPrice: number;
   discount: number;
+  discountType?: string;
   dueDate: string;
   notes: string;
   glcode?: string;
@@ -49,6 +50,28 @@ interface DetailData {
   rawMaterialId?: number;
   attachments?: Array<{id: number; name: string; size: number; fileUrl?: string}>;
 }
+
+const calculateCompareLineTotal = (detail: DetailData): number => {
+  const qty = Number(detail.qtyOrdered) || 0;
+  const unitPrice = Number(detail.unitPrice) || 0;
+  const discount = Number(detail.discount) || 0;
+  const subtotal = qty * unitPrice;
+  if (subtotal <= 0) return 0;
+  const isAmount = (detail.discountType || "Percent") === "Amount";
+  const discountAmount = isAmount
+    ? Math.min(Math.max(discount, 0), subtotal)
+    : subtotal * (Math.min(Math.max(discount, 0), 100) / 100);
+  return Math.max(0, subtotal - discountAmount);
+};
+
+const formatCompareDiscount = (
+  detail: DetailData,
+  formatCurrency: (n: number) => string
+): string => {
+  if (!detail.discount || detail.discount <= 0) return "-";
+  const isAmount = (detail.discountType || "Percent") === "Amount";
+  return isAmount ? formatCurrency(detail.discount) : `${detail.discount}%`;
+};
 
 const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   parentQuotationId,
@@ -112,6 +135,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             unit: d.unit || d.Unit || "EA",
             unitPrice: d.unitPrice || d.UnitPrice || 0,
             discount: d.discount || d.Discount || 0,
+            discountType: d.discountType || d.DiscountType || "Percent",
             dueDate: d.dueDate || d.DueDate || "",
             notes: d.notes || d.Notes || "",
             glcode: d.glcode || d.Glcode || "",
@@ -299,7 +323,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           }
           const entry = summary.get(selectedQuotationId)!;
           entry.items.push({lineItem, detail: matchedDetail});
-          entry.total += (matchedDetail.qtyOrdered * matchedDetail.unitPrice - matchedDetail.discount);
+          entry.total += calculateCompareLineTotal(matchedDetail);
         }
       }
     });
@@ -323,7 +347,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       const matched = matchVendorDetailToMaster(masterItem, vendorDetails, lineIndex);
       
       if (matched && matched.unitPrice > 0) {
-        const total = (matched.qtyOrdered * matched.unitPrice) - matched.discount;
+        const total = calculateCompareLineTotal(matched);
         matchedDetails.push({
           orderID: quotation.orderID,
           detail: matched,
@@ -469,6 +493,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             UnitPrice: detail.UnitPrice,
             JobPriority: detail.JobPriority || 0,
             Discount: detail.Discount || 0,
+            DiscountType: (detail.DiscountType === "Amount" ? "Amount" : "Percent") as DiscountType,
             ProductId: detail.ProductId,
             LeadTime: detail.LeadTime || "",
             Notes: detail.Notes || "",
@@ -485,7 +510,10 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       };
 
       // Call the conversion service
-      const result = await QuotationService.ConvertVendorQuotationToOrder(quotationId, vendorOrderData);
+      const result = await QuotationService.ConvertVendorQuotationToOrder(
+        quotationId,
+        vendorOrderData as any
+      );
       
       if (result && result.id) {
         toast.success(`Successfully converted quotation to order (Order #${result.poNumber || result.PONumber || result.id})`);
@@ -572,8 +600,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
         };
 
         // Calculate total amount from selected items
-        const totalAmount = items.reduce((sum, item) => 
-          sum + (item.detail.qtyOrdered * item.detail.unitPrice - item.detail.discount), 0
+        const totalAmount = items.reduce((sum, item) =>
+          sum + calculateCompareLineTotal(item.detail), 0
         );
 
         // Find master quotation to use its quotation number for order reference
@@ -646,6 +674,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
               UnitPrice: item.detail.unitPrice,
               JobPriority: 0,
               Discount: item.detail.discount || 0,
+              DiscountType: (item.detail.discountType === "Amount" ? "Amount" : "Percent") as DiscountType,
               ProductId: undefined,
               LeadTime: "",
               Notes: item.detail.notes || "",
@@ -941,7 +970,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                 
                                 const isBest = bestPrice && bestPrice.orderID === quotation.orderID;
                                 const lineTotal = quotationDetail
-                                  ? quotationDetail.qtyOrdered * quotationDetail.unitPrice - quotationDetail.discount
+                                  ? calculateCompareLineTotal(quotationDetail)
                                   : 0;
 
                                 const isSelected = lineItemSelections.get(lineItemKey) === quotation.orderID;
@@ -1016,7 +1045,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
                                     {/* Discount Column */}
                                     <td style={{ padding: "0.75rem", textAlign: "right", verticalAlign: "middle", color: "#1f2937", width: "12%" }}>
-                                      {quotationDetail && quotationDetail.discount > 0 ? formatCurrency(quotationDetail.discount) : "-"}
+                                      {quotationDetail ? formatCompareDiscount(quotationDetail, formatCurrency) : "-"}
                                     </td>
 
                                     {/* Total Column */}
@@ -1153,7 +1182,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                               
                               const isBest = bestPrice && bestPrice.orderID === quotation.orderID;
                               const lineTotal = quotationDetail
-                                ? quotationDetail.qtyOrdered * quotationDetail.unitPrice - quotationDetail.discount
+                                ? calculateCompareLineTotal(quotationDetail)
                                 : 0;
 
                               const lineItemKey = `${lineItem.itemNo}-${lineItem.partNo}`;
@@ -1302,7 +1331,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                               
                               const isBest = bestPrice && bestPrice.orderID === quotation.orderID;
                               const lineTotal = quotationDetail
-                                ? quotationDetail.qtyOrdered * quotationDetail.unitPrice - quotationDetail.discount
+                                ? calculateCompareLineTotal(quotationDetail)
                                 : 0;
 
                               const lineItemKey = `${lineItem.itemNo}-${lineItem.partNo}`;

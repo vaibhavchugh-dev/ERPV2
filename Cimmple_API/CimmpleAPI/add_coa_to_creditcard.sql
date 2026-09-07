@@ -1,7 +1,23 @@
--- Add COA column to CreditCardMaster table if it doesn't exist
-IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[CreditCardMaster]') AND name = 'COA')
-BEGIN
-    ALTER TABLE [dbo].[CreditCardMaster]
-    ADD [COA] nvarchar(max) NOT NULL DEFAULT '';
-END
+-- Add COA column to CreditCardMaster if missing.
+-- Live ERP tables use CimmpleFlow schema (not dbo).
 
+IF COL_LENGTH('CimmpleFlow.CreditCardMaster', 'COA') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.CreditCardMaster
+    ADD COA nvarchar(100) NULL;
+    PRINT 'COA column added to CimmpleFlow.CreditCardMaster';
+END
+ELSE
+BEGIN
+    PRINT 'COA column already exists on CimmpleFlow.CreditCardMaster';
+END
+GO
+
+IF OBJECT_ID(N'dbo.CreditCardMaster', N'U') IS NOT NULL
+   AND COL_LENGTH('dbo.CreditCardMaster', 'COA') IS NULL
+BEGIN
+    ALTER TABLE dbo.CreditCardMaster
+    ADD COA nvarchar(100) NULL;
+    PRINT 'COA column added to dbo.CreditCardMaster';
+END
+GO

@@ -25,7 +25,7 @@ namespace CimmpleAPI.Data.Models
         public int TenantId { get; set; }
         public string NickName { get; set; } = "";
         public bool? IsPrimary { get; set; } = false;
-        public string COA { get; set; } = "";
+        public string? COA { get; set; } = "";
     }
 }
 
