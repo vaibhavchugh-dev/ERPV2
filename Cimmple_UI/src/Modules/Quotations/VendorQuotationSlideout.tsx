@@ -727,28 +727,35 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
-    if (quotationId > 0) {
-      setLoading(true);
-      try {
-        const quotation = await QuotationService.GetVendorQuotationById(quotationId);
-        if (quotation) {
-          const duplicatedQuotation: VendorQuotationMasterReq = {
-            ...quotation,
-            OrderID: 0,
-            PONumber: 0,
-            Status: "Draft",
-            VendorRefNo: "",
-          };
-          await QuotationService.SaveVendorQuotation(duplicatedQuotation);
-          toast.success("Quotation duplicated successfully");
-          onClose(true);
-        }
-      } catch (error: any) {
-        console.error("Error duplicating quotation:", error);
-        toast.error("Error duplicating quotation");
-      } finally {
-        setLoading(false);
+    if (quotationId <= 0) return;
+    if (!window.confirm("Create a duplicate of this quotation?")) return;
+
+    setLoading(true);
+    try {
+      const quotation = await QuotationService.GetVendorQuotationById(quotationId);
+      if (quotation) {
+        const duplicatedQuotation: VendorQuotationMasterReq = {
+          ...quotation,
+          OrderID: 0,
+          PONumber: 0,
+          Status: "Draft",
+          VendorRefNo: "",
+          convertedOrderId: undefined,
+          ParentQuotationID: undefined,
+          Details: (quotation.Details || []).map((d) => ({
+            ...d,
+            ID: 0,
+          })),
+        };
+        await QuotationService.SaveVendorQuotation(duplicatedQuotation);
+        toast.success("Quotation duplicated successfully");
+        onClose(true);
       }
+    } catch (error: any) {
+      console.error("Error duplicating quotation:", error);
+      toast.error("Error duplicating quotation");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -2494,11 +2501,22 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   type="button"
                   className="btn-submit"
                   onClick={handleMultiVendorSave}
-                  disabled={selectedVendorIds.size === 0 || loading}
+                  disabled={
+                    loading ||
+                    Array.from(selectedVendorIds).filter((id) => id !== formData.VendorID).length < 1
+                  }
                 >
                   {loading
                     ? "Creating..."
-                    : `Send to ${Array.from(selectedVendorIds).filter((id) => id !== formData.VendorID).length} Additional Vendor(s)`}
+                    : (() => {
+                        const additionalCount = Array.from(selectedVendorIds).filter(
+                          (id) => id !== formData.VendorID
+                        ).length;
+                        if (additionalCount === 0) {
+                          return "Select additional vendor(s)";
+                        }
+                        return `Send to ${additionalCount} Additional Vendor(s)`;
+                      })()}
                 </button>
               </div>
             </div>

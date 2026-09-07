@@ -586,7 +586,7 @@
   font-size: 0.875rem;
 }
 
-/* Print-specific styles — isolate invoice content from the Vendor Order slideout */
+/* Print-specific styles — print overlay is portaled to document.body */
 @media print {
   body * {
     visibility: hidden !important;
@@ -607,6 +607,7 @@
     padding: 0 !important;
     margin: 0 !important;
     z-index: 99999 !important;
+    overflow: visible !important;
   }
 
   .vendor-invoice-print-modal {
@@ -624,6 +625,7 @@
 
   .invoice-content {
     padding: 0 !important;
+    overflow: visible !important;
   }
 
   .company-header {

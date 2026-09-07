@@ -304,8 +304,7 @@ namespace CimmpleAPI.Data
             modelBuilder.Entity<CreditCardMaster>(entity =>
             {
                 entity.ToTable("CreditCardMaster");
-                // Ignore COA property since the column doesn't exist in the database
-                entity.Ignore(e => e.COA);
+                entity.Property(e => e.COA).HasMaxLength(100).IsRequired(false);
             });
             
             // Configure model relationships and constraints here

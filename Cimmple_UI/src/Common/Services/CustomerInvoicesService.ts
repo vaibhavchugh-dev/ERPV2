@@ -51,6 +51,8 @@ export interface CustomerInvoiceDetail {
     qtyInvoiced: number;
     unitPrice: number;
     discount: number;
+    discountType?: "Percent" | "Amount" | string;
+    discountAmount?: number;
     lineTotal: number;
   }>;
 }

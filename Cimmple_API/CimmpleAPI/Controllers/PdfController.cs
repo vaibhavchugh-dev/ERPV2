@@ -275,7 +275,12 @@ namespace CimmpleAPI.Controllers
                         Unit = x.OrderDetail.Unit ?? "EA",
                         Qty = x.InvoiceDetail.QtyInvoiced,
                         UnitPrice = x.InvoiceDetail.price,
-                        DiscountAmount = (x.InvoiceDetail.QtyInvoiced * x.InvoiceDetail.price) * (x.InvoiceDetail.discount / 100),
+                        DiscountAmount = CalculateDiscountAmount(
+                            x.InvoiceDetail.QtyInvoiced * x.InvoiceDetail.price,
+                            x.InvoiceDetail.discount,
+                            !string.IsNullOrWhiteSpace(x.InvoiceDetail.DiscountType)
+                                ? x.InvoiceDetail.DiscountType
+                                : x.OrderDetail.DiscountType),
                         Amount = x.InvoiceDetail.Amount,
                         Notes = x.OrderDetail.notes ?? ""
                     })
