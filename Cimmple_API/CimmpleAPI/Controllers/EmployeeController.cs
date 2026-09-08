@@ -442,12 +442,14 @@ namespace CimmpleAPI.Controllers
                 if (!string.IsNullOrEmpty(empCode))
                 {
                     var excludeId = isNew ? 0 : request.User_UniqueID;
-                    var empCodeLower = empCode.ToLower();
-                    var codeConflict = _context.UserDetails
-                        .Any(u => u.TenantID == request.TenantID &&
-                                  u.User_UniqueID != excludeId &&
-                                  u.EmpCode != null &&
-                                  u.EmpCode.Trim().ToLower() == empCodeLower);
+                    // Load candidate codes in-memory — EF may not translate Trim()+ToLower() on EmpCode
+                    var existingCodes = _context.UserDetails
+                        .AsNoTracking()
+                        .Where(u => u.TenantID == request.TenantID && u.User_UniqueID != excludeId && u.EmpCode != null && u.EmpCode != "")
+                        .Select(u => u.EmpCode)
+                        .ToList();
+                    var codeConflict = existingCodes.Any(c =>
+                        string.Equals((c ?? "").Trim(), empCode, StringComparison.OrdinalIgnoreCase));
 
                     if (codeConflict)
                     {

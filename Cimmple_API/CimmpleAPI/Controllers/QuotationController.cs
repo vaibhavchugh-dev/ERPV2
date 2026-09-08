@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -2048,6 +2049,18 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    var childCount = _context.VendorQuotations
+                        .Count(q => q.ParentQuotationID == quotationId && q.Tenantid == tenantId);
+                    if (childCount > 0)
+                    {
+                        impact.WillBeDeleted.Add(new ImpactedEntity
+                        {
+                            EntityType = "Vendor Portal Quotations",
+                            Count = childCount,
+                            Description = $"{childCount} multi-vendor child quotation(s) will also be removed from vendor portals"
+                        });
+                    }
+
                     impact.Warnings.Add("This action cannot be undone");
                 }
 
@@ -2072,16 +2085,29 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
-                // Delete details first
+                // Multi-vendor RFQ: deleting the parent must also remove child vendor copies from portals
+                var childQuotations = _context.VendorQuotations
+                    .Where(q => q.ParentQuotationID == quotationId && q.Tenantid == tenantId)
+                    .ToList();
+                var quotationIdsToDelete = childQuotations.Select(q => q.OrderID).Append(quotationId).ToList();
+
                 var details = _context.VendorQuotationsDetails
-                    .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
+                    .Where(d => quotationIdsToDelete.Contains(d.OrderID) && d.Tenantid == tenantId)
                     .ToList();
 
                 _context.VendorQuotationsDetails.RemoveRange(details);
+                if (childQuotations.Count > 0)
+                {
+                    _context.VendorQuotations.RemoveRange(childQuotations);
+                }
                 _context.VendorQuotations.Remove(quotation);
                 _context.SaveChanges();
 
-                return Ok(new { result = "Vendor quotation deleted successfully" });
+                return Ok(new
+                {
+                    result = "Vendor quotation deleted successfully",
+                    deletedChildCount = childQuotations.Count
+                });
             }
             catch (Exception ex)
             {
@@ -2343,6 +2369,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Converting quotation {quotationId} to vendor order");
 
                 // Get the quotation data

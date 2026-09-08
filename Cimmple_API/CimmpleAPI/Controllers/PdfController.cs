@@ -10,6 +10,7 @@ using CimmpleAPI.Services.Pdf.Templates;
 using CimmpleAPI.Utilities;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 
 namespace CimmpleAPI.Controllers
 {
@@ -347,13 +348,27 @@ namespace CimmpleAPI.Controllers
                     .OrderBy(vid => vid.Id)
                     .ToListAsync();
 
+                var vendorOrderDetailIds = invoiceDetails
+                    .Where(d => d.VendorOrderDetailID.HasValue && d.VendorOrderDetailID.Value > 0)
+                    .Select(d => d.VendorOrderDetailID!.Value)
+                    .Distinct()
+                    .ToList();
+
+                var vendorOrderDetails = vendorOrderDetailIds.Count > 0
+                    ? await _context.VendorOrderDetails
+                        .Where(vod => vendorOrderDetailIds.Contains(vod.ID) && vod.Tenantid == tenantId)
+                        .ToListAsync()
+                    : new List<VendorOrderDetail>();
+
+                var orderDetailById = vendorOrderDetails.ToDictionary(d => d.ID);
+
                 var vendor = await _context.VendorMaster
                     .FirstOrDefaultAsync(v => v.vendor_id == invoice.vid && v.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
-                // Build PDF data
+                // Build PDF data — join vendor order lines for PartNo / Unit / Date / Discount
                 var pdfData = new PdfDocumentData
                 {
                     CompanyName = companyInfo.CompanyName,
@@ -368,17 +383,29 @@ namespace CimmpleAPI.Controllers
                     ShippingAddress = BuildVendorShippingAddress(vendor),
                     BuyerName = "",
                     PhoneNumber = vendor?.phone_number ?? "",
-                    LineItems = invoiceDetails.Select(d => new PdfLineItem
+                    LineItems = invoiceDetails.Select(d =>
                     {
-                        PartNo = "",
-                        PartDescription = d.Description ?? "",
-                        Date = "",
-                        Unit = "",
-                        Qty = d.qty ?? 0,
-                        UnitPrice = d.price ?? 0,
-                        DiscountAmount = 0,
-                        Amount = d.Amount,
-                        Notes = ""
+                        orderDetailById.TryGetValue(d.VendorOrderDetailID ?? 0, out var orderDetail);
+                        var qty = d.qty ?? 0;
+                        var unitPrice = d.price ?? 0m;
+                        var discount = orderDetail?.Discount ?? 0m;
+                        var discountType = orderDetail?.DiscountType;
+                        var discountAmount = CalculateDiscountAmount(qty * unitPrice, discount, discountType);
+                        var partDescription = !string.IsNullOrWhiteSpace(orderDetail?.PartName)
+                            ? orderDetail!.PartName
+                            : StripTrailingPartNo(d.Description, orderDetail?.PartNo);
+                        return new PdfLineItem
+                        {
+                            PartNo = orderDetail?.PartNo ?? "",
+                            PartDescription = partDescription ?? "",
+                            Date = FormatDate(orderDetail?.DueDateDateTime),
+                            Unit = string.IsNullOrWhiteSpace(orderDetail?.Unit) ? "EA" : orderDetail!.Unit,
+                            Qty = qty,
+                            UnitPrice = unitPrice,
+                            DiscountAmount = discountAmount,
+                            Amount = d.Amount,
+                            Notes = orderDetail?.Notes ?? ""
+                        };
                     }).ToList(),
                     TotalAmount = invoice.TotalAmount
                 };
@@ -1106,6 +1133,15 @@ END");
 
         private async Task ApplyCurrencySettingsAsync(PdfDocumentData pdfData, int tenantId)
         {
+            try
+            {
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+            }
+            catch
+            {
+                // Continue with defaults if schema ensure fails
+            }
+
             var settings = await _context.SystemSettings.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.TenantId == tenantId);
             if (settings == null)
@@ -1120,6 +1156,23 @@ END");
                 pdfData.DefaultCurrency,
                 settings.CurrencySymbol,
                 pdfData.Locale);
+        }
+
+        /// <summary>
+        /// Older vendor invoices stored Description as "PartName - PartNo". Prefer description-only.
+        /// </summary>
+        private static string StripTrailingPartNo(string? description, string? partNo)
+        {
+            if (string.IsNullOrWhiteSpace(description))
+                return "";
+            var desc = description.Trim();
+            if (!string.IsNullOrWhiteSpace(partNo))
+            {
+                var suffix = $" - {partNo.Trim()}";
+                if (desc.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    return desc.Substring(0, desc.Length - suffix.Length).Trim();
+            }
+            return desc;
         }
 
         private async Task<(string CompanyName, string CompanyAddress, string CompanyCityStateZip, string CompanyEmail, string CompanyPhone, string CompanyWebAddress, string LogoPath)> GetCompanyInfo(int tenantId, int? locationId)

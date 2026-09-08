@@ -255,7 +255,8 @@ export class InvoiceService {
     customerId?: number,
     dateRange: string = "All",
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    locationId?: number
   ): Promise<InvoiceSummary[] | null> => {
     const url = `/Invoice/GetAllInvoices`;
     try {
@@ -266,7 +267,8 @@ export class InvoiceService {
           customerId,
           dateRange,
           startDate,
-          endDate
+          endDate,
+          locationId
         }
       });
       const result = response.data.result as InvoiceSummary[];

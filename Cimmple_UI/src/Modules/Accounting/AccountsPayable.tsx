@@ -8,6 +8,7 @@ import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 interface APFilterOptions {
   status: string;
@@ -227,6 +228,7 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
 
 const AccountsPayable: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<APFilterOptions>({
@@ -244,7 +246,7 @@ const AccountsPayable: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
   const invoiceMatchesDateRange = (dateStr: string, range: string) => {
     if (!dateStr || !range || range === "All" || range === "All Dates") return true;
@@ -296,7 +298,8 @@ const AccountsPayable: React.FC = () => {
         filters.status === "All" ? "All" : filters.status.toLowerCase(),
         "",
         filters.vendorId,
-        filters.dateRange
+        filters.dateRange,
+        locationIdParam
       );
 
       if (result) {
@@ -722,6 +725,19 @@ const AccountsPayable: React.FC = () => {
             <option value="This Month">This Month</option>
             <option value="Last 30 Days">Last 30 Days</option>
             <option value="Last 90 Days">Last 90 Days</option>
+          </select>
+
+          <select
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            title="Site"
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>

@@ -5,15 +5,21 @@ namespace CimmpleAPI.Services
 {
     /// <summary>
     /// Ensures optional settings-related tables exist (for DBs created before migrations included them).
+    /// Tables must live in CimmpleFlow to match EF HasDefaultSchema(DbSchema.Flow).
     /// </summary>
     public static class SystemSettingsSchemaService
     {
         public static async Task EnsureTablesAsync(CimmpleDbContext context)
         {
             await context.Database.ExecuteSqlRawAsync(@"
-IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[SystemSettings]') AND type in (N'U'))
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'CimmpleFlow')
 BEGIN
-    CREATE TABLE [dbo].[SystemSettings] (
+    EXEC('CREATE SCHEMA CimmpleFlow');
+END
+
+IF OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.SystemSettings (
         [Id] int IDENTITY(1,1) NOT NULL,
         [TenantId] int NOT NULL,
         [DateFormat] nvarchar(50) NOT NULL DEFAULT 'M/d/yyyy',
@@ -50,13 +56,39 @@ BEGIN
         [UpdatedDate] datetime2 NULL,
         CONSTRAINT [PK_SystemSettings] PRIMARY KEY ([Id])
     );
-    CREATE INDEX [IX_SystemSettings_TenantId] ON [dbo].[SystemSettings] ([TenantId]);
-END");
+    CREATE INDEX [IX_SystemSettings_TenantId] ON CimmpleFlow.SystemSettings ([TenantId]);
+END
 
-            await context.Database.ExecuteSqlRawAsync(@"
-IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[UserPasswordHistory]') AND type in (N'U'))
+-- Copy/sync from legacy dbo table when CimmpleFlow is missing tenant rows
+IF OBJECT_ID(N'dbo.SystemSettings', N'U') IS NOT NULL
+   AND OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NOT NULL
 BEGIN
-    CREATE TABLE [dbo].[UserPasswordHistory] (
+    INSERT INTO CimmpleFlow.SystemSettings (
+        [TenantId], [DateFormat], [TimeFormat], [Timezone], [Locale],
+        [DefaultCurrency], [CurrencySymbol], [DecimalPlaces], [DecimalSeparator], [ThousandsSeparator],
+        [MinPasswordLength], [RequireUppercase], [RequireLowercase], [RequireNumbers], [RequireSpecialChars],
+        [PasswordExpirationDays], [PasswordHistoryCount], [SessionTimeoutMinutes], [MaxConcurrentSessions],
+        [FailedLoginAttempts], [AccountLockoutMinutes],
+        [SmtpServer], [SmtpPort], [SmtpUseSsl], [SmtpUsername], [SmtpPassword], [SmtpFromEmail], [SmtpFromName],
+        [DefaultPageSize], [EnableEmailNotifications], [EnableInAppNotifications], [CreatedDate], [UpdatedDate]
+    )
+    SELECT
+        [TenantId], [DateFormat], [TimeFormat], [Timezone], [Locale],
+        [DefaultCurrency], [CurrencySymbol], [DecimalPlaces], [DecimalSeparator], [ThousandsSeparator],
+        [MinPasswordLength], [RequireUppercase], [RequireLowercase], [RequireNumbers], [RequireSpecialChars],
+        [PasswordExpirationDays], [PasswordHistoryCount], [SessionTimeoutMinutes], [MaxConcurrentSessions],
+        [FailedLoginAttempts], [AccountLockoutMinutes],
+        [SmtpServer], [SmtpPort], [SmtpUseSsl], [SmtpUsername], [SmtpPassword], [SmtpFromEmail], [SmtpFromName],
+        [DefaultPageSize], [EnableEmailNotifications], [EnableInAppNotifications], [CreatedDate], [UpdatedDate]
+    FROM dbo.SystemSettings s
+    WHERE NOT EXISTS (
+        SELECT 1 FROM CimmpleFlow.SystemSettings t WHERE t.TenantId = s.TenantId
+    );
+END
+
+IF OBJECT_ID(N'CimmpleFlow.UserPasswordHistory', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.UserPasswordHistory (
         [Id] int IDENTITY(1,1) NOT NULL,
         [UserId] int NOT NULL,
         [TenantId] int NOT NULL,
@@ -66,7 +98,21 @@ BEGIN
         CONSTRAINT [PK_UserPasswordHistory] PRIMARY KEY ([Id])
     );
     CREATE INDEX [IX_UserPasswordHistory_UserId_CreatedDate]
-        ON [dbo].[UserPasswordHistory] ([UserId], [CreatedDate] DESC);
+        ON CimmpleFlow.UserPasswordHistory ([UserId], [CreatedDate] DESC);
+END
+
+IF OBJECT_ID(N'dbo.UserPasswordHistory', N'U') IS NOT NULL
+   AND OBJECT_ID(N'CimmpleFlow.UserPasswordHistory', N'U') IS NOT NULL
+BEGIN
+    INSERT INTO CimmpleFlow.UserPasswordHistory (
+        [UserId], [TenantId], [PasswordHash], [PasswordSalt], [CreatedDate]
+    )
+    SELECT d.[UserId], d.[TenantId], d.[PasswordHash], d.[PasswordSalt], d.[CreatedDate]
+    FROM dbo.UserPasswordHistory d
+    WHERE NOT EXISTS (
+        SELECT 1 FROM CimmpleFlow.UserPasswordHistory t
+        WHERE t.UserId = d.UserId AND t.CreatedDate = d.CreatedDate AND t.PasswordHash = d.PasswordHash
+    );
 END");
         }
 
