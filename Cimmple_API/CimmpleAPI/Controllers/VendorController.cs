@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using System;
 using System.Collections.Generic;
@@ -221,6 +222,15 @@ namespace CimmpleAPI.Controllers
         private async Task<(bool ok, string? error, object? result)> ApplyVendorPortalAccessAsync(
             int vendorId, int tenantId, bool enabled, string? newPassword)
         {
+            try
+            {
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+            }
+            catch
+            {
+                // Continue; password history table may already exist
+            }
+
             var vendor = await _context.VendorMaster
                 .FirstOrDefaultAsync(v => v.vendor_id == vendorId && v.Tenantid == tenantId);
 

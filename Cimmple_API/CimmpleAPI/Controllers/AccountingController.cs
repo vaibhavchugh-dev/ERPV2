@@ -23,23 +23,28 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
-        public IActionResult GetPaymentDashboardMetrics([FromQuery] string dateRange = "All")
+        public IActionResult GetPaymentDashboardMetrics(
+            [FromQuery] string dateRange = "All",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetPaymentDashboardMetrics called - TenantId: {tenantId}, DateRange: {dateRange}");
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                Console.WriteLine($"GetPaymentDashboardMetrics called - TenantId: {tenantId}, DateRange: {dateRange}, LocationId: {filterLocationId}");
 
                 var dateFilter = GetDateRangeFilter(dateRange);
 
                 // Calculate Accounts Receivable metrics
-                var arMetrics = CalculateAccountsReceivableMetrics(tenantId, dateFilter);
+                var arMetrics = CalculateAccountsReceivableMetrics(tenantId, dateFilter, filterLocationId);
 
                 // Calculate Accounts Payable metrics
-                var apMetrics = CalculateAccountsPayableMetrics(tenantId, dateFilter);
+                var apMetrics = CalculateAccountsPayableMetrics(tenantId, dateFilter, filterLocationId);
 
                 // Calculate Cash Flow metrics
-                var cashFlowMetrics = CalculateCashFlowMetrics(tenantId, dateFilter);
+                var cashFlowMetrics = CalculateCashFlowMetrics(tenantId, dateFilter, filterLocationId);
 
                 var dashboardData = new
                 {
@@ -69,12 +74,18 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRecentTransactions")]
-        public IActionResult GetRecentTransactions([FromQuery] int limit = 10, [FromQuery] string dateRange = "All")
+        public IActionResult GetRecentTransactions(
+            [FromQuery] int limit = 10,
+            [FromQuery] string dateRange = "All",
+            [FromQuery] int? locationId = null)
         {
             try
             {
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}, DateRange: {dateRange}");
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}, DateRange: {dateRange}, LocationId: {filterLocationId}");
                 var safeLimit = Math.Clamp(limit, 1, 200);
                 var dateFilter = GetDateRangeFilter(dateRange);
                 var rangeStart = dateFilter.startDate.Date;
@@ -84,13 +95,17 @@ namespace CimmpleAPI.Controllers
                 var recentTransactions = new List<dynamic>();
 
                 // 1. Recent customer payments (from Transactions table)
-                var customerPayments = _context.Transactions
+                var customerPaymentsQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                 t.isCustomer == 1 &&
                                 t.TransactionType != null &&
                                 EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                 t.TransactionDate >= rangeStart &&
-                                t.TransactionDate <= rangeEnd)
+                                t.TransactionDate <= rangeEnd);
+                if (filterLocationId.HasValue)
+                    customerPaymentsQuery = customerPaymentsQuery.Where(t => t.locationId == filterLocationId.Value);
+
+                var customerPayments = customerPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .Take(safeLimit)
@@ -109,13 +124,17 @@ namespace CimmpleAPI.Controllers
                 recentTransactions.AddRange(customerPayments);
 
                 // 2. Recent vendor payments (from Transactions table)
-                var vendorPayments = _context.Transactions
+                var vendorPaymentsQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                 (t.isCustomer == 0 || t.isCustomer == null) &&
                                 t.TransactionType != null &&
                                 EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                 t.TransactionDate >= rangeStart &&
-                                t.TransactionDate <= rangeEnd)
+                                t.TransactionDate <= rangeEnd);
+                if (filterLocationId.HasValue)
+                    vendorPaymentsQuery = vendorPaymentsQuery.Where(t => t.locationId == filterLocationId.Value);
+
+                var vendorPayments = vendorPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .Take(safeLimit)
@@ -134,7 +153,7 @@ namespace CimmpleAPI.Controllers
                 recentTransactions.AddRange(vendorPayments);
 
                 // 2b. Fallback vendor payments from invoice table (for historical rows without Transactions entries)
-                var vendorInvoiceFallbackPayments = _context.VendorInvoiceMaster
+                var vendorInvoiceFallbackQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                   vim.isPaid == 1 &&
                                   vim.Paydate != null &&
@@ -145,7 +164,11 @@ namespace CimmpleAPI.Controllers
                                       (t.isCustomer == 0 || t.isCustomer == null) &&
                                       t.TransactionType != null &&
                                       EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                                      t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo)))
+                                      t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo)));
+                if (filterLocationId.HasValue)
+                    vendorInvoiceFallbackQuery = vendorInvoiceFallbackQuery.Where(vim => vim.locationId == filterLocationId.Value);
+
+                var vendorInvoiceFallbackPayments = vendorInvoiceFallbackQuery
                     .OrderByDescending(vim => vim.Paydate)
                     .ThenByDescending(vim => vim.Id)
                     .Take(safeLimit)
@@ -165,12 +188,25 @@ namespace CimmpleAPI.Controllers
 
                 var today = DateTime.Now.Date;
                 // 3. Recent open invoices (skip paid/voided so amounts are not duplicated with payments)
-                var recentInvoices = _context.InvoiceMaster
+                var recentInvoicesQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                  !im.IsVoided &&
                                  im.PaymentDate == null &&
                                  im.InvoiceDate >= rangeStart &&
-                                 im.InvoiceDate <= rangeEnd)
+                                 im.InvoiceDate <= rangeEnd);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    recentInvoicesQuery = recentInvoicesQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var recentInvoices = recentInvoicesQuery
                     .OrderByDescending(im => im.InvoiceDate)
                     .ThenByDescending(im => im.Id)
                     .Take(safeLimit)
@@ -1141,11 +1177,28 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private (decimal totalReceivables, decimal overdueReceivables, decimal receivablesDueThisWeek) CalculateAccountsReceivableMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
+        private (decimal totalReceivables, decimal overdueReceivables, decimal receivablesDueThisWeek) CalculateAccountsReceivableMetrics(
+            int tenantId,
+            (DateTime startDate, DateTime endDate) dateFilter,
+            int? locationId = null)
         {
             // Outstanding AR: exclude voided; use remaining balance due (supports partial payments).
-            var openBalances = _context.InvoiceMaster
-                .Where(im => im.TenantId == tenantId && !im.IsVoided)
+            var invoiceQuery = _context.InvoiceMaster
+                .Where(im => im.TenantId == tenantId && !im.IsVoided);
+
+            if (locationId.HasValue)
+            {
+                var locId = locationId.Value;
+                invoiceQuery = invoiceQuery.Where(im =>
+                    _context.InvoiceDetail.Any(id =>
+                        id.InvoiceId == im.Id &&
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == id.OrderId &&
+                            co.Tenantid == tenantId &&
+                            co.locationId == locId)));
+            }
+
+            var openBalances = invoiceQuery
                 .ToList()
                 .Select(im =>
                 {
@@ -1174,14 +1227,21 @@ namespace CimmpleAPI.Controllers
             return (totalReceivables, overdueReceivables, receivablesDueThisWeek);
         }
 
-        private (decimal totalPayables, decimal overduePayables, decimal payablesDueThisWeek) CalculateAccountsPayableMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
+        private (decimal totalPayables, decimal overduePayables, decimal payablesDueThisWeek) CalculateAccountsPayableMetrics(
+            int tenantId,
+            (DateTime startDate, DateTime endDate) dateFilter,
+            int? locationId = null)
         {
             // Outstanding AP: exclude paid/voided; use remaining balance due.
-            var openBalances = _context.VendorInvoiceMaster
+            var vendorInvoiceQuery = _context.VendorInvoiceMaster
                 .Where(vim => vim.TenantId == tenantId &&
                              vim.isPaid != 1 &&
                              vim.isPaid != 2 &&
-                             vim.voideddate == null)
+                             vim.voideddate == null);
+            if (locationId.HasValue)
+                vendorInvoiceQuery = vendorInvoiceQuery.Where(vim => vim.locationId == locationId.Value);
+
+            var openBalances = vendorInvoiceQuery
                 .ToList()
                 .Select(vim =>
                 {
@@ -1210,28 +1270,35 @@ namespace CimmpleAPI.Controllers
             return (totalPayables, overduePayables, payablesDueThisWeek);
         }
 
-        private (decimal cashIn, decimal cashOut) CalculateCashFlowMetrics(int tenantId, (DateTime startDate, DateTime endDate) dateFilter)
+        private (decimal cashIn, decimal cashOut) CalculateCashFlowMetrics(
+            int tenantId,
+            (DateTime startDate, DateTime endDate) dateFilter,
+            int? locationId = null)
         {
             var rangeStart = dateFilter.startDate.Date;
             var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
 
             // Calculate cash inflows (customer payments received)
-            var cashIn = _context.Transactions
+            var cashInQuery = _context.Transactions
                 .Where(t => t.TenantId == tenantId &&
                            t.isCustomer == 1 &&
                            t.TransactionType == "Payment" &&
                            t.TransactionDate >= rangeStart &&
-                           t.TransactionDate <= rangeEnd)
-                .Sum(t => t.Amount ?? 0);
+                           t.TransactionDate <= rangeEnd);
+            if (locationId.HasValue)
+                cashInQuery = cashInQuery.Where(t => t.locationId == locationId.Value);
+            var cashIn = cashInQuery.Sum(t => t.Amount ?? 0);
 
             // Calculate cash outflows (vendor payments made)
-            var cashOut = _context.Transactions
+            var cashOutQuery = _context.Transactions
                 .Where(t => t.TenantId == tenantId &&
                            t.isCustomer == 0 &&
                            t.TransactionType == "Payment" &&
                            t.TransactionDate >= rangeStart &&
-                           t.TransactionDate <= rangeEnd)
-                .Sum(t => t.Amount ?? 0);
+                           t.TransactionDate <= rangeEnd);
+            if (locationId.HasValue)
+                cashOutQuery = cashOutQuery.Where(t => t.locationId == locationId.Value);
+            var cashOut = cashOutQuery.Sum(t => t.Amount ?? 0);
 
             return (cashIn, cashOut);
         }

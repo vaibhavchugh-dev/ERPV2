@@ -1,36 +1,20 @@
--- Add DiscountType column (Percent | Amount) to vendor quotation and vendor order detail tables.
--- Default NULL is treated as Percent for backward compatibility.
+-- Add DiscountType (Percent | Amount) to vendor quotation/order details.
+-- EF maps tables under CimmpleFlow (not dbo).
 
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.columns
-    WHERE object_id = OBJECT_ID(N'[dbo].[VendorQuotationsDetails]')
-    AND name = 'DiscountType'
-)
+IF OBJECT_ID(N'CimmpleFlow.VendorQuotationsDetails', N'U') IS NOT NULL
+   AND COL_LENGTH(N'CimmpleFlow.VendorQuotationsDetails', N'DiscountType') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[VendorQuotationsDetails]
+    ALTER TABLE CimmpleFlow.VendorQuotationsDetails
     ADD [DiscountType] NVARCHAR(20) NULL;
-    PRINT 'DiscountType column added to VendorQuotationsDetails table';
-END
-ELSE
-BEGIN
-    PRINT 'DiscountType column already exists in VendorQuotationsDetails table';
+    PRINT 'DiscountType column added to CimmpleFlow.VendorQuotationsDetails';
 END
 GO
 
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.columns
-    WHERE object_id = OBJECT_ID(N'[dbo].[VendorOrderDetails]')
-    AND name = 'DiscountType'
-)
+IF OBJECT_ID(N'CimmpleFlow.VendorOrderDetails', N'U') IS NOT NULL
+   AND COL_LENGTH(N'CimmpleFlow.VendorOrderDetails', N'DiscountType') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[VendorOrderDetails]
+    ALTER TABLE CimmpleFlow.VendorOrderDetails
     ADD [DiscountType] NVARCHAR(20) NULL;
-    PRINT 'DiscountType column added to VendorOrderDetails table';
-END
-ELSE
-BEGIN
-    PRINT 'DiscountType column already exists in VendorOrderDetails table';
+    PRINT 'DiscountType column added to CimmpleFlow.VendorOrderDetails';
 END
 GO

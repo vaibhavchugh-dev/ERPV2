@@ -104,6 +104,7 @@ namespace CimmpleAPI.Controllers
             {
                 try
                 {
+                    DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                     var tenantId = GetTenantId();
                     Console.WriteLine($"CreateInvoice called - TenantId: {tenantId}, OrderId: {request.OrderId}, LineItems: {request.LineItems.Count}");
 

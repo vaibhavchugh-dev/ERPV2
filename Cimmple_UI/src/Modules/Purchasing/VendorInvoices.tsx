@@ -626,6 +626,9 @@ const VendorInvoices: React.FC = () => {
   };
 
   const handlePrintInvoice = async (invoice: VendorInvoiceSummary) => {
+    const toastId = toast.info("Generating vendor invoice PDF… this may take a moment.", {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateVendorInvoice(invoice.id);
       const url = window.URL.createObjectURL(blob);
@@ -636,10 +639,18 @@ const VendorInvoices: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success("Vendor invoice PDF generated successfully");
+      toast.update(toastId, {
+        render: "Vendor invoice PDF generated successfully",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error("Error generating vendor invoice PDF:", error);
-      toast.error(error.response?.data?.error || "Failed to generate vendor invoice PDF");
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate vendor invoice PDF",
+        type: "error",
+        autoClose: 5000,
+      });
     }
   };
 

@@ -48,14 +48,15 @@ export interface ReconciliationFilters {
 
 export class AccountingService {
   public static GetPaymentDashboardMetrics = async (
-    dateRange: string = "All"
+    dateRange: string = "All",
+    locationId?: number
   ): Promise<PaymentDashboardMetrics | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
     const url = `/Accounting/GetPaymentDashboardMetrics`;
     return Instense.get(url, {
-      params: { tenantId: tenantID, dateRange },
+      params: { tenantId: tenantID, dateRange, locationId },
     }).then((response) => {
       const result = response.data.result as PaymentDashboardMetrics;
       return result;
@@ -64,14 +65,15 @@ export class AccountingService {
 
   public static GetRecentTransactions = async (
     limit: number = 10,
-    dateRange: string = "All"
+    dateRange: string = "All",
+    locationId?: number
   ): Promise<RecentTransaction[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
     const url = `/Accounting/GetRecentTransactions`;
     return Instense.get(url, {
-      params: { tenantId: tenantID, limit, dateRange },
+      params: { tenantId: tenantID, limit, dateRange, locationId },
     }).then((response) => {
       const result = response.data.result as RecentTransaction[];
       return result;
