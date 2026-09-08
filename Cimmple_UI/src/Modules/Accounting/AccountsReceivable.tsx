@@ -8,6 +8,7 @@ import { isEmailNotificationsEnabled } from "../../Common/Utils/settingsRuntime"
 import CustomerInvoiceDetailModal from "../Orders/CustomerInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 interface ARFilterOptions {
   status: string;
@@ -215,6 +216,7 @@ const BulkARPaymentModal: React.FC<BulkARPaymentModalProps> = ({ invoices, onClo
 
 const AccountsReceivable: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ARFilterOptions>({
@@ -231,7 +233,7 @@ const AccountsReceivable: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
   useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => invoices.some((inv) => inv.id === id && canRecordPayment(inv))));
@@ -244,7 +246,10 @@ const AccountsReceivable: React.FC = () => {
         filters.status === "All" ? "All" : filters.status.toLowerCase(),
         "",
         filters.customerId,
-        filters.dateRange
+        filters.dateRange,
+        undefined,
+        undefined,
+        locationIdParam
       );
 
       if (result) {
@@ -626,6 +631,19 @@ const AccountsReceivable: React.FC = () => {
             <option value="This Month">This Month</option>
             <option value="Last 30 Days">Last 30 Days</option>
             <option value="Last 90 Days">Last 90 Days</option>
+          </select>
+
+          <select
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            title="Site"
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>

@@ -1102,19 +1102,79 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     setPrinting(true);
     const toastId = toast.info("Generating Quotation PDF…", { autoClose: false });
     try {
-      const quotationNumber = formData.PONumber < 1000 
-        ? `CQ#${formData.PONumber + 999}` 
+      let printQuotationId = formData.OrderID > 0 ? formData.OrderID : quotationId;
+
+      // PDF reads Include-in-Print flags from DB — persist matrix changes first
+      if (isStateChanged || printQuotationId <= 0) {
+        if (!validateForm()) {
+          toast.update(toastId, {
+            render: "Please fix validation errors before printing",
+            type: "error",
+            autoClose: 4000,
+          });
+          return;
+        }
+
+        const pendingFiles = getPendingFiles(attachments);
+        const persistedAttachments = (attachments || [])
+          .filter((a) => !a.isPending)
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+            pageNo: a.pageNo || "0",
+            createdBy: a.createdBy || 0,
+          }));
+
+        const formDataWithMatrix: QuotationMasterReq = {
+          ...formData,
+          Details: formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d)).map((detail) => ({
+            ...detail,
+            PriceBreakdownMatrix: priceBreakdownMatrixData.get(detail.ItemNo) || undefined,
+          })),
+          Attachments: persistedAttachments,
+          DeletedAttachmentIds: deletedAttachmentIds,
+          Comments: comments || [],
+        };
+
+        const result = await QuotationService.SaveQuotation(formDataWithMatrix, pendingFiles);
+        const savedId = result.id > 0 ? result.id : formDataWithMatrix.OrderID;
+        if (savedId > 0) {
+          printQuotationId = savedId;
+          listNeedsRefreshRef.current = true;
+          setFormData((prev) => ({
+            ...prev,
+            OrderID: savedId,
+            ...(result.poNumber ? { PONumber: result.poNumber } : {}),
+          }));
+          setIsStateChanged(false);
+        }
+      }
+
+      if (printQuotationId <= 0) {
+        toast.update(toastId, {
+          render: "Save the quotation before printing",
+          type: "error",
+          autoClose: 4000,
+        });
+        return;
+      }
+
+      const quotationNumber = formData.PONumber < 1000
+        ? `CQ#${formData.PONumber + 999}`
         : `CQ#${formData.PONumber}`;
 
-      // Generate PDF using API
-      const blob = await PdfService.GenerateQuotation(formData.OrderID > 0 ? formData.OrderID : quotationId);
+      const blob = await PdfService.GenerateQuotation(printQuotationId);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       link.download = `Quotation_${quotationNumber}_${new Date().toISOString().split('T')[0]}.pdf`;
       link.click();
       window.URL.revokeObjectURL(url);
-      
+
       toast.update(toastId, {
         render: "Quotation PDF ready",
         type: "success",

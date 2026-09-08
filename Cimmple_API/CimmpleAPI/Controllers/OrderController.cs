@@ -3490,7 +3490,7 @@ namespace CimmpleAPI.Controllers
                             OrderId = request.OrderId,
                             VendorOrderDetailID = item.OrderDetailId,
                             OrderDate = vendorOrder.OrderDate,
-                            Description = $"{detail.PartName ?? ""} - {detail.PartNo ?? ""}".Trim(' ', '-'),
+                            Description = detail.PartName ?? "",
                             VendorPoNumber = vendorOrder.VendorPoNumber ?? "",
                             Amount = lineTotal,
                             qty = item.QtyToInvoice,

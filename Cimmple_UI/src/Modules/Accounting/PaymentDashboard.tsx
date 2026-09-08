@@ -5,12 +5,14 @@ import { faDollarSign, faArrowUp, faArrowDown, faClock, faCheckCircle, faExclama
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, PaymentDashboardMetrics, RecentTransaction } from "../../Common/Services/AccountingService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Using interfaces from AccountingService
 
 const PaymentDashboard: React.FC = () => {
   const history = useHistory();
   const { formatCurrency: formatCurrencySettings, formatDate } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [summary, setSummary] = useState<PaymentDashboardMetrics | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,19 +24,19 @@ const PaymentDashboard: React.FC = () => {
 
   useEffect(() => {
     loadDashboardData();
-  }, [dateRange]);
+  }, [dateRange, locationIdParam]);
 
   const loadDashboardData = async () => {
     setLoading(true);
     try {
       // Load dashboard metrics from real API
-      const dashboardMetrics = await AccountingService.GetPaymentDashboardMetrics(dateRange);
+      const dashboardMetrics = await AccountingService.GetPaymentDashboardMetrics(dateRange, locationIdParam);
       if (dashboardMetrics) {
         setSummary(dashboardMetrics);
       }
 
       // Load recent transactions from real API (same date range as metrics)
-      const transactions = await AccountingService.GetRecentTransactions(100, dateRange);
+      const transactions = await AccountingService.GetRecentTransactions(100, dateRange, locationIdParam);
       if (transactions) {
         setRecentTransactions(transactions);
       }
@@ -114,6 +116,23 @@ const PaymentDashboard: React.FC = () => {
               <option value="This Month">This Month</option>
               <option value="Last 30 Days">Last 30 Days</option>
               <option value="Last 90 Days">Last 90 Days</option>
+            </select>
+            <select
+              value={masterListFilter.value}
+              onChange={(e) => masterListFilter.onChange(e.target.value)}
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                fontSize: '0.875rem'
+              }}
+              title="Site"
+            >
+              {masterListFilter.options.map((opt) => (
+                <option key={opt.value || "all"} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
