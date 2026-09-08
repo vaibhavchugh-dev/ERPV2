@@ -1,11 +1,21 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
+import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
 
 export interface OrderAttachment {
   id: number;
   name: string;
   size: number;
   fileUrl?: string;
+  fileUniqueno?: number;
+  uploadFile?: string;
+  pageNo?: string;
+  createdBy?: number;
+  isPending?: boolean;
+  localUrl?: string;
+  file?: File;
+  fileCode?: string;
+  contentType?: string;
 }
 
 export interface OrderComment {
@@ -76,6 +86,7 @@ export interface OrderMasterReq {
   LocationId?: number;
   Details: OrderDetailReq[];
   Attachments?: OrderAttachment[];
+  DeletedAttachmentIds?: number[];
   Comments?: OrderComment[];
 }
 
@@ -181,6 +192,10 @@ export class OrderService {
               name: a.name || a.Name || "",
               size: a.size || a.Size || 0,
               fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+              fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+              uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+              pageNo: a.pageNo || a.PageNo || "0",
+              createdBy: a.createdBy || a.CreatedBy || 0,
             }));
           } else if (Array.isArray(result.Attachments) && result.Attachments.length > 0) {
             return result.Attachments.map((a: any) => ({
@@ -188,6 +203,10 @@ export class OrderService {
               name: a.name || a.Name || "",
               size: a.size || a.Size || 0,
               fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+              fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+              uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+              pageNo: a.pageNo || a.PageNo || "0",
+              createdBy: a.createdBy || a.CreatedBy || 0,
             }));
           }
           return [];
@@ -292,8 +311,13 @@ export class OrderService {
         Id: Math.floor(a.id || 0),
         Name: a.name || "",
         Size: a.size || 0,
-        FileUrl: a.fileUrl || ""
+        FileUrl: a.fileUrl || a.uploadFile || "",
+        FileUniqueno: a.fileUniqueno || 0,
+        UploadFile: a.uploadFile || a.fileUrl || "",
+        PageNo: a.pageNo || "0",
+        CreatedBy: a.createdBy || 0,
       })),
+      DeletedAttachmentIds: request.DeletedAttachmentIds || [],
       Comments: (request.Comments || []).map(c => ({
         Id: Math.floor(c.id || 0),
         Text: c.text || "",
@@ -324,6 +348,124 @@ export class OrderService {
         };
       }
       return { id: request.OrderID || 0, message: "Order saved successfully" };
+    });
+  };
+
+  public static OrderSaveFile = async (
+    orderId: number,
+    files: File[]
+  ): Promise<OrderAttachment[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const formData = new FormData();
+    appendFilesToFormData(formData, files);
+    formData.append(
+      "formField",
+      JSON.stringify({
+        OrderId: orderId,
+        OrderID: orderId,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("orderId", String(orderId));
+    formData.append("tenantId", String(tenantID));
+
+    const url = `/Order/OrderSaveFile`;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
+      const attachments = result?.attachments || [];
+      return attachments.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || "0",
+        createdBy: a.createdBy || a.CreatedBy || 0,
+      }));
+    });
+  };
+
+  public static OrderGetFile = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    signal?: AbortSignal;
+  }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/OrderGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+      signal: request.signal,
+    }).then((response: any) => {
+      const blob: Blob = response.data;
+      const headerType =
+        (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) ||
+        "";
+      const contentType =
+        (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+        blob.type ||
+        "application/octet-stream";
+      const fileNameHeader =
+        response.headers?.["x-file-name"] || response.headers?.["X-File-Name"] || undefined;
+      return { blob, contentType, fileName: fileNameHeader };
+    });
+  };
+
+  public static DownloadOrderAttachment = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    name: string;
+    uploadFile?: string;
+    cachedBlobUrl?: string;
+  }): Promise<void> => {
+    if (request.cachedBlobUrl) {
+      const link = document.createElement("a");
+      link.href = request.cachedBlobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      return;
+    }
+
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Order/OrderGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: true,
+      },
+      responseType: "blob",
+    }).then((response: any) => {
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
     });
   };
 

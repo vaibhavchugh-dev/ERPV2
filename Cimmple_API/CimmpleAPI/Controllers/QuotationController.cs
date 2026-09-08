@@ -120,6 +120,12 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
+                if (quotation.Locationid.HasValue && quotation.Locationid.Value > 0 &&
+                    !CanAccessLocation(quotation.Locationid.Value))
+                {
+                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                }
+
                 // Query details - handle QuantityTiers column gracefully if it doesn't exist
                 var detailsList = _context.QuotationOrderDetails
                     .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
@@ -273,6 +279,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
                 QuotationReq? request = null;
                 List<IFormFile> newFiles = new List<IFormFile>();
 
@@ -402,8 +409,8 @@ namespace CimmpleAPI.Controllers
                 // Persist quotation first so new attachments can use OrderID.
                 _context.SaveChanges();
 
-                // Handle quotation details
-                if (request.Details != null && request.Details.Count > 0)
+                // Handle quotation details — empty list clears existing lines on update
+                if (request.Details != null)
                 {
                     var existingDetails = _context.QuotationOrderDetails
                         .Where(d => d.OrderID == quotation.OrderID && d.Tenantid == request.Tenantid)
@@ -888,6 +895,31 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
+                // Enforce same rules as CheckQuotationDeletionImpact
+                var referencedOrders = _context.CustomerOrder
+                    .Where(co => co.quotationId == quotationId && co.Tenantid == tenantId)
+                    .Select(o => o.PONumber)
+                    .ToList();
+                if (referencedOrders.Count > 0)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot delete quotation: referenced by customer order(s) CO#{string.Join(", CO#", referencedOrders)}."
+                    });
+                }
+                if (quotation.isConverted == 1 && quotation.convertedOrderId.HasValue)
+                {
+                    var convertedOrder = _context.CustomerOrder
+                        .FirstOrDefault(co => co.OrderID == quotation.convertedOrderId.Value && co.Tenantid == tenantId);
+                    if (convertedOrder != null)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Cannot delete quotation: converted to Customer Order CO#{convertedOrder.PONumber}. Delete the order first."
+                        });
+                    }
+                }
+
                 // Delete associated attachments (Azure blobs + DB rows)
                 var attachments = _context.QuotationOrderAttachment
                     .Where(a => a.orderid == quotationId && a.TenantID == tenantId)
@@ -1203,6 +1235,14 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found", quotationId = quotationId, tenantId = tenantId });
                 }
 
+                if (!IsVendorPortal() &&
+                    quotation.locationid.HasValue &&
+                    quotation.locationid.Value > 0 &&
+                    !CanAccessLocation(quotation.locationid.Value))
+                {
+                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                }
+
                 if (IsVendorPortal())
                 {
                     var tokenVendorId = GetVendorId();
@@ -1372,10 +1412,11 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SaveVendorQuotation")]
-        public IActionResult SaveVendorQuotation([FromBody] JsonElement request)
+        public async Task<IActionResult> SaveVendorQuotation([FromBody] JsonElement request)
         {
             try
             {
+                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 if (request.ValueKind == JsonValueKind.Null || request.ValueKind == JsonValueKind.Undefined)
                 {
                     return BadRequest(new { error = "Request is null" });
@@ -1663,7 +1704,21 @@ namespace CimmpleAPI.Controllers
                 quotation.ParentQuotationID = parentQuotationIDFromRequest;
                 Console.WriteLine($"[SaveVendorQuotation] ParentQuotationID set to: {quotation.ParentQuotationID}");
 
-                // Save attachments as JSON
+                // Delete Azure blobs for attachments removed in the UI (JSON-only storage).
+                if (request.TryGetProperty("DeletedAttachmentIds", out JsonElement deletedIdsElem)
+                    && deletedIdsElem.ValueKind == JsonValueKind.Array
+                    && deletedIdsElem.GetArrayLength() > 0)
+                {
+                    var deletedIds = deletedIdsElem.EnumerateArray()
+                        .Where(e => e.ValueKind == JsonValueKind.Number)
+                        .Select(e => e.GetInt32())
+                        .Where(id => id > 0)
+                        .Distinct()
+                        .ToList();
+                    await ProcessDeletedVendorQuotationAttachments(quotation, tenantid, deletedIds);
+                }
+
+                // Save attachments as JSON (persisted metadata; new blobs uploaded via VendorQuotationSaveFile).
                 if (request.TryGetProperty("Attachments", out JsonElement attachmentsElem) && attachmentsElem.ValueKind == JsonValueKind.Array && attachmentsElem.GetArrayLength() > 0)
                 {
                     var attachmentOptions = new JsonSerializerOptions
@@ -2085,9 +2140,36 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
+                // Enforce same rules as CheckVendorQuotationDeletionImpact
+                var referencedOrders = _context.VendorOrders
+                    .Where(vo => (vo.ParentQuotationID == quotationId || vo.QuotationId == quotationId) && vo.Tenantid == tenantId)
+                    .Select(o => o.PONumber)
+                    .ToList();
+                if (referencedOrders.Count > 0)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot delete vendor quotation: referenced by vendor order(s) VO#{string.Join(", VO#", referencedOrders)}."
+                    });
+                }
+                if (quotation.isconverted == 1 && quotation.convertedOrderId.HasValue)
+                {
+                    var convertedOrder = _context.VendorOrders
+                        .FirstOrDefault(vo =>
+                            (vo.PONumber == quotation.convertedOrderId.Value || vo.OrderID == quotation.convertedOrderId.Value) &&
+                            vo.Tenantid == tenantId);
+                    if (convertedOrder != null)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Cannot delete vendor quotation: converted to Vendor Order VO#{convertedOrder.PONumber}. Delete the order first."
+                        });
+                    }
+                }
+
                 // Multi-vendor RFQ: deleting the parent must also remove child vendor copies from portals
                 var childQuotations = _context.VendorQuotations
-                    .Where(q => q.ParentQuotationID == quotationId && q.Tenantid == tenantId)
+                    .Where(q => q.ParentQuotationID == quotationId && q.OrderID != quotationId && q.Tenantid == tenantId)
                     .ToList();
                 var quotationIdsToDelete = childQuotations.Select(q => q.OrderID).Append(quotationId).ToList();
 
@@ -2365,8 +2447,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("ConvertVendorQuotationToOrder")]
-        public IActionResult ConvertVendorQuotationToOrder([FromQuery] int quotationId, [FromBody] dynamic requestData)
+        public IActionResult ConvertVendorQuotationToOrder([FromQuery] int quotationId, [FromBody] JsonElement requestData)
         {
+            using var transaction = _context.Database.BeginTransaction();
             try
             {
                 DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
@@ -2385,9 +2468,16 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Found quotation - OrderID: {quotation.OrderID}, PONumber: {quotation.PONumber}, Status: {quotation.Status}, convertedOrderId: {quotation.convertedOrderId}");
 
-                if (quotation == null)
+                var alreadyConverted =
+                    quotation.isconverted == 1 ||
+                    (quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0) ||
+                    string.Equals(quotation.Status, "Converted", StringComparison.OrdinalIgnoreCase);
+                if (alreadyConverted)
                 {
-                    return NotFound(new { error = "Vendor quotation not found" });
+                    return BadRequest(new
+                    {
+                        error = $"Vendor quotation VQ#{quotation.PONumber} is already converted. Open the existing vendor order instead of converting again."
+                    });
                 }
 
                 // Get quotation details
@@ -2395,6 +2485,15 @@ namespace CimmpleAPI.Controllers
                     .Where(d => d.OrderID == quotationId)
                     .OrderBy(d => d.ItemNo)
                     .ToList();
+
+                var userId = GetUserId() ?? 0;
+                var userToken = 0;
+                if (requestData.ValueKind == JsonValueKind.Object)
+                {
+                    if (userId <= 0)
+                        userId = ReadInt32Property(requestData, "UserId", "userId");
+                    userToken = ReadInt32Property(requestData, "UserToken", "userToken");
+                }
 
                 // Create vendor order from quotation data
                 var vendorOrder = new VendorOrder
@@ -2407,8 +2506,8 @@ namespace CimmpleAPI.Controllers
                     VendorPoNumber = quotation.VendorPoNumber ?? "",
                     OrderDate = DateTime.Now,
                     TotalAmount = quotation.TotalAmount,
-                    UserId = requestData?.UserId ?? 0,
-                    UserToken = requestData?.UserToken ?? 0,
+                    UserId = userId,
+                    UserToken = userToken,
                     Status = "Draft",
                     ShippingInstructions = quotation.shippingInstructions ?? "",
                     ExternalVendorPO = "",
@@ -2495,13 +2594,8 @@ namespace CimmpleAPI.Controllers
                 }
 
                 _context.SaveChanges();
+                transaction.Commit();
                 Console.WriteLine($"ConvertVendorQuotationToOrder: After update - quotation.Status: '{quotation.Status}', convertedOrderId: {vendorOrder.PONumber}");
-
-                // Verify the update by re-querying
-                var verifyQuotation = _context.VendorQuotations
-                    .Where(q => q.OrderID == quotationId)
-                    .FirstOrDefault();
-                Console.WriteLine($"ConvertVendorQuotationToOrder: Verification - quotation.Status: '{verifyQuotation?.Status}', convertedOrderId: {verifyQuotation?.convertedOrderId}");
 
                 return Ok(new
                 {
@@ -2510,19 +2604,22 @@ namespace CimmpleAPI.Controllers
                         id = vendorOrder.OrderID,
                         message = "Vendor quotation converted to order successfully",
                         quotationId = quotationId,
-                        orderId = vendorOrder.OrderID
+                        orderId = vendorOrder.OrderID,
+                        poNumber = vendorOrder.PONumber
                     }
                 });
             }
             catch (Exception ex)
             {
+                try { transaction.Rollback(); } catch { /* ignore */ }
+                var inner = ex.InnerException?.Message ?? ex.Message;
                 Console.WriteLine($"ConvertVendorQuotationToOrder: EXCEPTION - {ex.Message}");
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Stack trace: {ex.StackTrace}");
                 if (ex.InnerException != null)
                 {
                     Console.WriteLine($"ConvertVendorQuotationToOrder: Inner exception: {ex.InnerException.Message}");
                 }
-                return StatusCode(500, new { error = ex.Message });
+                return StatusCode(500, new { error = inner, message = ex.Message });
             }
         }
 
@@ -2641,7 +2738,7 @@ namespace CimmpleAPI.Controllers
                         sourceQuotation.Status = "Sent";
                         sourceQuotation.isSent = true;
                         sourceQuotation.sentDate = DateTime.Now;
-                        sourceQuotation.ParentQuotationID = sourceQuotationId;
+                        sourceQuotation.ParentQuotationID = null;
 
                         if (includeAttachments && sourceAttachments != null && sourceAttachments.Count > 0)
                         {
@@ -2763,7 +2860,7 @@ namespace CimmpleAPI.Controllers
                     sourceQuotation.Status = "Sent";
                     sourceQuotation.isSent = true;
                     sourceQuotation.sentDate = DateTime.Now;
-                    sourceQuotation.ParentQuotationID = sourceQuotationId;
+                    sourceQuotation.ParentQuotationID = null;
                     _context.SaveChanges();
                     if (!createdQuotationIds.Contains(sourceQuotationId))
                         createdQuotationIds.Add(sourceQuotationId);
@@ -2893,6 +2990,306 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Upload vendor quotation attachments to Azure Blob Storage and update VendorQuotations.AttachmentsJson.
+        /// Requires an existing vendor quotation (orderId). No separate attachment table — metadata lives in JSON.
+        /// </summary>
+        [HttpPost("VendorQuotationSaveFile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> VendorQuotationSaveFile(IFormCollection form)
+        {
+            try
+            {
+                var files = form.Files;
+                if (files == null || files.Count == 0)
+                {
+                    return BadRequest(new { error = "At least one file is required" });
+                }
+
+                if (!form.ContainsKey("orderId") && !form.ContainsKey("OrderId") && !form.ContainsKey("formField"))
+                {
+                    return BadRequest(new { error = "orderId or formField is required" });
+                }
+
+                int orderId = 0;
+                int tenantId = GetTenantId();
+                int createdBy = GetUserId() ?? 0;
+
+                if (form.ContainsKey("formField") && !string.IsNullOrWhiteSpace(form["formField"]))
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var request = JsonSerializer.Deserialize<QuotationAttachmentUploadContext>(form["formField"]!, options);
+                    if (request != null)
+                    {
+                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.TenantId > 0) tenantId = request.TenantId;
+                        if (request.TenantID > 0) tenantId = request.TenantID;
+                        if (request.Tenantid > 0) tenantId = request.Tenantid;
+                    }
+                }
+
+                if (orderId <= 0)
+                {
+                    var orderIdValue = form.ContainsKey("orderId") ? form["orderId"].ToString()
+                        : form.ContainsKey("OrderId") ? form["OrderId"].ToString() : "";
+                    int.TryParse(orderIdValue, out orderId);
+                }
+
+                if (form.ContainsKey("tenantId") && int.TryParse(form["tenantId"], out var formTenant) && formTenant > 0)
+                {
+                    tenantId = formTenant;
+                }
+
+                if (orderId <= 0)
+                {
+                    return BadRequest(new { error = "A saved vendor quotation (orderId) is required before uploading attachments" });
+                }
+
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var quotation = _context.VendorQuotations
+                    .FirstOrDefault(q => q.OrderID == orderId && q.Tenantid == tenantId);
+                if (quotation == null)
+                {
+                    return NotFound(new { error = "Vendor quotation not found" });
+                }
+
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true
+                };
+
+                var existing = new List<QuotationAttachmentDto>();
+                if (!string.IsNullOrEmpty(quotation.AttachmentsJson))
+                {
+                    try
+                    {
+                        existing = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(
+                                       quotation.AttachmentsJson, jsonOptions)
+                                   ?? new List<QuotationAttachmentDto>();
+                    }
+                    catch
+                    {
+                        existing = new List<QuotationAttachmentDto>();
+                    }
+                }
+
+                int nextFileUniqueNo = existing.Count > 0
+                    ? Math.Max(existing.Max(a => a.FileUniqueno), existing.Max(a => a.Id)) + 1
+                    : 1;
+                if (nextFileUniqueNo <= 0) nextFileUniqueNo = 1;
+
+                var uploaded = new List<QuotationAttachmentDto>();
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length <= 0)
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                    var displayName = Path.GetFileName(file.FileName);
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.VendorQuotationsFolder,
+                        blobName,
+                        createdBy);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
+                    {
+                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                    }
+
+                    var dto = new QuotationAttachmentDto
+                    {
+                        Id = nextFileUniqueNo,
+                        Name = displayName,
+                        Size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                        FileUrl = blobName,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        PageNo = "0",
+                        CreatedBy = createdBy
+                    };
+                    existing.Add(dto);
+                    uploaded.Add(dto);
+                    nextFileUniqueNo++;
+                }
+
+                var writeOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true,
+                    WriteIndented = false
+                };
+                quotation.AttachmentsJson = existing.Count > 0
+                    ? JsonSerializer.Serialize(existing, writeOptions)
+                    : null;
+                _context.SaveChanges();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        orderId,
+                        attachments = uploaded,
+                        message = "Files uploaded successfully"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Single-file binary download for vendor quotation attachments (from AttachmentsJson + Azure).
+        /// </summary>
+        [HttpGet("VendorQuotationGetFile")]
+        public IActionResult VendorQuotationGetFile(
+            [FromQuery] int orderId,
+            [FromQuery] int fileUniqueno,
+            [FromQuery] int tenantId = 0,
+            [FromQuery] bool download = false)
+        {
+            try
+            {
+                if (orderId <= 0 || fileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "orderId and fileUniqueno are required" });
+                }
+
+                if (tenantId <= 0) tenantId = GetTenantId();
+
+                var quotation = _context.VendorQuotations
+                    .AsNoTracking()
+                    .FirstOrDefault(q => q.OrderID == orderId && q.Tenantid == tenantId);
+                if (quotation == null || string.IsNullOrEmpty(quotation.AttachmentsJson))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                List<QuotationAttachmentDto>? attachments;
+                try
+                {
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        PropertyNameCaseInsensitive = true
+                    };
+                    attachments = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(
+                        quotation.AttachmentsJson, options);
+                }
+                catch
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var attachment = attachments?.FirstOrDefault(a =>
+                    a.FileUniqueno == fileUniqueno || a.Id == fileUniqueno);
+                if (attachment == null || string.IsNullOrEmpty(attachment.UploadFile ?? attachment.FileUrl))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.VendorQuotationsFolder,
+                    blobName);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? blobName);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.Name);
+
+                if (download)
+                {
+                    return File(bytes, contentType, fileName);
+                }
+
+                Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName}\"";
+                Response.Headers["X-Attachment-Id"] = attachment.Id.ToString();
+                Response.Headers["X-File-Name"] = fileName;
+                return File(bytes, contentType);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private async Task ProcessDeletedVendorQuotationAttachments(
+            VendorQuotations quotation,
+            int tenantId,
+            List<int> deletedAttachmentIds)
+        {
+            if (deletedAttachmentIds == null || deletedAttachmentIds.Count == 0
+                || string.IsNullOrEmpty(quotation.AttachmentsJson))
+            {
+                return;
+            }
+
+            List<QuotationAttachmentDto>? existing;
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true
+                };
+                existing = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(
+                    quotation.AttachmentsJson, options);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (existing == null || existing.Count == 0)
+            {
+                return;
+            }
+
+            var idSet = deletedAttachmentIds.ToHashSet();
+            var toDelete = existing
+                .Where(a => idSet.Contains(a.Id) || idSet.Contains(a.FileUniqueno))
+                .ToList();
+
+            foreach (var attachment in toDelete)
+            {
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+                if (string.IsNullOrEmpty(blobName))
+                {
+                    continue;
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.VendorQuotationsFolder,
+                    blobName);
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
             }
         }
 

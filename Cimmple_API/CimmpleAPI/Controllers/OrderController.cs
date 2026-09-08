@@ -282,6 +282,11 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order not found" });
                 }
 
+                if (order.locationId > 0 && !CanAccessLocation(order.locationId))
+                {
+                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                }
+
                 int actualOrderId = order.OrderID;
 
                 // Query details
@@ -339,25 +344,9 @@ namespace CimmpleAPI.Controllers
                     invoiceStatus = d.InvoiceStatus ?? "Not Invoiced"
                 }).ToList();
 
-                // Load attachments from JSON
-                List<OrderAttachmentDto> attachments = null;
-                try
-                {
-                    if (!string.IsNullOrEmpty(order.AttachmentsJson))
-                    {
-                        var options = new JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                            PropertyNameCaseInsensitive = true
-                        };
-                        attachments = JsonSerializer.Deserialize<List<OrderAttachmentDto>>(order.AttachmentsJson, options);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error deserializing attachments: {ex.Message}");
-                    attachments = null;
-                }
+                // Prefer OrderAttachment rows; fall back to AttachmentsJson for legacy metadata-only rows.
+                List<OrderAttachmentDto> attachments = GetOrderAttachmentDtos(
+                    order.OrderID, order.Tenantid, order.AttachmentsJson);
 
                 // Load comments from JSON
                 List<OrderCommentDto> comments = null;
@@ -464,10 +453,11 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SaveOrder")]
-        public IActionResult SaveOrder([FromBody] OrderReq request)
+        public async Task<IActionResult> SaveOrder([FromBody] OrderReq request)
         {
             try
             {
+                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 if (request == null)
                 {
                     var errors = ModelState
@@ -490,6 +480,30 @@ namespace CimmpleAPI.Controllers
                 if (request.Details == null)
                 {
                     return BadRequest(new { error = "Details cannot be null" });
+                }
+
+                // Block creating a second CO from an already-converted CQ
+                if (request.OrderID <= 0 && request.QuotationId.HasValue && request.QuotationId.Value > 0)
+                {
+                    var sourceCq = _context.QuotationOrder
+                        .AsNoTracking()
+                        .FirstOrDefault(q => q.OrderID == request.QuotationId.Value && q.Tenantid == request.Tenantid);
+                    if (sourceCq != null &&
+                        sourceCq.isConverted == 1 &&
+                        sourceCq.convertedOrderId.HasValue &&
+                        sourceCq.convertedOrderId.Value > 0)
+                    {
+                        var existingCo = _context.CustomerOrder
+                            .AsNoTracking()
+                            .FirstOrDefault(o => o.OrderID == sourceCq.convertedOrderId.Value && o.Tenantid == request.Tenantid);
+                        if (existingCo != null)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Customer quotation CQ#{sourceCq.PONumber} is already converted to CO#{existingCo.PONumber}."
+                            });
+                        }
+                    }
                 }
 
                 CustomerOrder order;
@@ -558,9 +572,25 @@ namespace CimmpleAPI.Controllers
                     return forbidLoc!;
                 order.locationId = resolvedLocationId;
 
-                // Save attachments as JSON
-                if (request.Attachments != null && request.Attachments.Count > 0)
+                // Remove Azure blobs + OrderAttachment rows queued for deletion in the UI.
+                if (request.DeletedAttachmentIds != null && request.DeletedAttachmentIds.Count > 0)
                 {
+                    await ProcessDeletedOrderAttachments(
+                        order.OrderID,
+                        request.Tenantid,
+                        request.DeletedAttachmentIds);
+                }
+
+                // Prefer DB-backed sync when OrderAttachment rows exist (after uploads / deletes).
+                var hasDbAttachments = _context.OrderAttachment
+                    .Any(a => a.orderid == order.OrderID && a.TenantID == request.Tenantid);
+                if (hasDbAttachments)
+                {
+                    SyncOrderAttachmentsJson(order);
+                }
+                else if (request.Attachments != null && request.Attachments.Count > 0)
+                {
+                    // Legacy / pre-upload metadata only (name/size).
                     var attachmentOptions = new JsonSerializerOptions
                     {
                         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -672,8 +702,8 @@ namespace CimmpleAPI.Controllers
                             existingDetail.productid = detail.ProductId;
                             existingDetail.leadTime = detail.LeadTime ?? "";
                             existingDetail.notes = detail.Notes ?? "";
-                            existingDetail.ShippedQty = detail.ShippedQty;
-                            existingDetail.ShippingStatus = detail.ShippingStatus ?? "Not Started";
+                            // Do not overwrite ShippedQty / ShippingStatus from client — shipping APIs own these.
+                            // InvoicedQty / InvoiceStatus are likewise owned by invoice APIs.
 
                             // Keep linked Job Orders in sync (listing/detail read JO's own QtyOrdered snapshot).
                             if (jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
@@ -715,8 +745,10 @@ namespace CimmpleAPI.Controllers
                                 productid = detail.ProductId,
                                 leadTime = detail.LeadTime ?? "",
                                 notes = detail.Notes ?? "",
-                                ShippedQty = detail.ShippedQty,
-                                ShippingStatus = detail.ShippingStatus ?? "Not Started"
+                                ShippedQty = 0,
+                                ShippingStatus = "Not Started",
+                                InvoicedQty = 0,
+                                InvoiceStatus = "Not Invoiced"
                             };
                             _context.CustomerOrderDetails.Add(orderDetail);
                         }
@@ -736,6 +768,325 @@ namespace CimmpleAPI.Controllers
                 }
                 return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
             }
+        }
+
+        /// <summary>
+        /// Upload customer order attachments to Azure Blob Storage and create OrderAttachment records.
+        /// Requires an existing order (orderId). Mirrors QuotationController.QuotationSaveFile.
+        /// </summary>
+        [HttpPost("OrderSaveFile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> OrderSaveFile(IFormCollection form)
+        {
+            try
+            {
+                var files = form.Files;
+                if (files == null || files.Count == 0)
+                {
+                    return BadRequest(new { error = "At least one file is required" });
+                }
+
+                if (!form.ContainsKey("orderId") && !form.ContainsKey("OrderId") && !form.ContainsKey("formField"))
+                {
+                    return BadRequest(new { error = "orderId or formField is required" });
+                }
+
+                int orderId = 0;
+                int tenantId = GetTenantId();
+                int createdBy = GetUserId() ?? 0;
+
+                if (form.ContainsKey("formField") && !string.IsNullOrWhiteSpace(form["formField"]))
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var request = JsonSerializer.Deserialize<OrderAttachmentUploadContext>(form["formField"]!, options);
+                    if (request != null)
+                    {
+                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.TenantId > 0) tenantId = request.TenantId;
+                        if (request.TenantID > 0) tenantId = request.TenantID;
+                        if (request.Tenantid > 0) tenantId = request.Tenantid;
+                    }
+                }
+
+                if (orderId <= 0)
+                {
+                    var orderIdValue = form.ContainsKey("orderId") ? form["orderId"].ToString()
+                        : form.ContainsKey("OrderId") ? form["OrderId"].ToString() : "";
+                    int.TryParse(orderIdValue, out orderId);
+                }
+
+                if (form.ContainsKey("tenantId") && int.TryParse(form["tenantId"], out var formTenant) && formTenant > 0)
+                {
+                    tenantId = formTenant;
+                }
+
+                if (orderId <= 0)
+                {
+                    return BadRequest(new { error = "A saved order (orderId) is required before uploading attachments" });
+                }
+
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var order = _context.CustomerOrder
+                    .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (order == null)
+                {
+                    return NotFound(new { error = "Order not found" });
+                }
+
+                var uploaded = new List<OrderAttachmentDto>();
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length <= 0)
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                    var displayName = Path.GetFileName(file.FileName);
+
+                    int nextFileUniqueNo = 1;
+                    if (_context.OrderAttachment.Any())
+                    {
+                        nextFileUniqueNo = _context.OrderAttachment.Max(x => x.FileUniqueno) + 1;
+                    }
+
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+                    var attachment = new OrderAttachment
+                    {
+                        orderid = orderId,
+                        Name = displayName,
+                        size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        TenantID = tenantId,
+                        FileCode = "",
+                        Pageno = "0",
+                        createdby = createdBy
+                    };
+
+                    _context.OrderAttachment.Add(attachment);
+                    _context.SaveChanges();
+
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.OrdersFolder,
+                        blobName,
+                        createdBy);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
+                    {
+                        _context.OrderAttachment.Remove(attachment);
+                        _context.SaveChanges();
+                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                    }
+
+                    uploaded.Add(MapOrderAttachmentDto(attachment));
+                }
+
+                SyncOrderAttachmentsJson(order);
+                _context.SaveChanges();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        orderId,
+                        attachments = uploaded,
+                        message = "Files uploaded successfully"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Single-file binary download for customer order attachments.
+        /// </summary>
+        [HttpGet("OrderGetFile")]
+        public IActionResult OrderGetFile(
+            [FromQuery] int orderId,
+            [FromQuery] int fileUniqueno,
+            [FromQuery] int tenantId = 0,
+            [FromQuery] bool download = false)
+        {
+            try
+            {
+                if (orderId <= 0 || fileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "orderId and fileUniqueno are required" });
+                }
+
+                if (tenantId <= 0) tenantId = GetTenantId();
+
+                var attachment = _context.OrderAttachment.FirstOrDefault(a =>
+                    a.FileUniqueno == fileUniqueno &&
+                    a.orderid == orderId &&
+                    a.TenantID == tenantId);
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.OrdersFolder,
+                    attachment.UploadFile);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? attachment.UploadFile);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.Name);
+
+                if (download)
+                {
+                    return File(bytes, contentType, fileName);
+                }
+
+                Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName}\"";
+                Response.Headers["X-Attachment-Id"] = attachment.Id.ToString();
+                Response.Headers["X-File-Name"] = fileName;
+                return File(bytes, contentType);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private async Task ProcessDeletedOrderAttachments(
+            int orderId,
+            int tenantId,
+            List<int> deletedAttachmentIds)
+        {
+            var uniqueIds = deletedAttachmentIds
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            if (uniqueIds.Count == 0)
+            {
+                return;
+            }
+
+            var toDelete = _context.OrderAttachment
+                .Where(a => a.orderid == orderId
+                            && a.TenantID == tenantId
+                            && uniqueIds.Contains(a.Id))
+                .ToList();
+
+            foreach (var attachment in toDelete)
+            {
+                if (!string.IsNullOrEmpty(attachment.UploadFile))
+                {
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.OrdersFolder,
+                        attachment.UploadFile);
+
+                    await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+                }
+            }
+
+            if (toDelete.Count > 0)
+            {
+                _context.OrderAttachment.RemoveRange(toDelete);
+                _context.SaveChanges();
+            }
+        }
+
+        private List<OrderAttachmentDto> GetOrderAttachmentDtos(int orderId, int tenantId, string? attachmentsJsonFallback)
+        {
+            var dbAttachments = _context.OrderAttachment
+                .Where(a => a.orderid == orderId && a.TenantID == tenantId)
+                .OrderBy(a => a.Id)
+                .ToList();
+
+            if (dbAttachments.Count > 0)
+            {
+                return dbAttachments.Select(MapOrderAttachmentDto).ToList();
+            }
+
+            if (!string.IsNullOrEmpty(attachmentsJsonFallback))
+            {
+                try
+                {
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        PropertyNameCaseInsensitive = true
+                    };
+                    return JsonSerializer.Deserialize<List<OrderAttachmentDto>>(attachmentsJsonFallback, options)
+                           ?? new List<OrderAttachmentDto>();
+                }
+                catch
+                {
+                    return new List<OrderAttachmentDto>();
+                }
+            }
+
+            return new List<OrderAttachmentDto>();
+        }
+
+        private void SyncOrderAttachmentsJson(CustomerOrder order)
+        {
+            var attachments = _context.OrderAttachment
+                .Where(a => a.orderid == order.OrderID && a.TenantID == order.Tenantid)
+                .OrderBy(a => a.Id)
+                .Select(a => new OrderAttachmentDto
+                {
+                    Id = a.Id,
+                    Name = a.Name ?? "",
+                    Size = a.size,
+                    FileUrl = a.UploadFile ?? "",
+                    FileUniqueno = a.FileUniqueno,
+                    UploadFile = a.UploadFile ?? "",
+                    PageNo = a.Pageno ?? "0",
+                    CreatedBy = a.createdby
+                })
+                .ToList();
+
+            if (attachments.Count == 0)
+            {
+                order.AttachmentsJson = null;
+                return;
+            }
+
+            var attachmentOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true,
+                WriteIndented = false
+            };
+            order.AttachmentsJson = JsonSerializer.Serialize(attachments, attachmentOptions);
+        }
+
+        private static OrderAttachmentDto MapOrderAttachmentDto(OrderAttachment a)
+        {
+            return new OrderAttachmentDto
+            {
+                Id = a.Id,
+                Name = a.Name ?? "",
+                Size = a.size,
+                FileUrl = a.UploadFile ?? "",
+                FileUniqueno = a.FileUniqueno,
+                UploadFile = a.UploadFile ?? "",
+                PageNo = a.Pageno ?? "0",
+                CreatedBy = a.createdby
+            };
         }
 
         [HttpGet("CheckOrderDeletionImpact")]
@@ -905,6 +1256,21 @@ namespace CimmpleAPI.Controllers
                 {
                     return NotFound(new { error = "Order not found" });
                 }
+
+                // Enforce same rules as CheckOrderDeletionImpact
+                var hasInvoices = _context.InvoiceDetail
+                    .Any(id => id.OrderId == orderId &&
+                               _context.InvoiceMaster.Any(im => im.Id == id.InvoiceId && im.TenantId == tenantId && !im.IsVoided));
+                if (hasInvoices)
+                    return BadRequest(new { error = "Cannot delete order: one or more invoices exist. Delete or void invoices first." });
+
+                var hasShipments = _context.Shipping.Any(s => s.OrderId == orderId && s.TenantId == tenantId);
+                if (hasShipments)
+                    return BadRequest(new { error = "Cannot delete order: shipment(s) exist. Delete shipments first." });
+
+                var hasJobOrders = _context.JobOrderMaster.Any(jo => jo.CustomerOrderID == orderId && jo.Tenantid == tenantId);
+                if (hasJobOrders)
+                    return BadRequest(new { error = "Cannot delete order: job order(s) exist. Delete job orders first." });
 
                 // Delete associated attachments first
                 var attachments = _context.OrderAttachment
@@ -1319,6 +1685,12 @@ namespace CimmpleAPI.Controllers
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
 
+                if (order.LocationId.HasValue && order.LocationId.Value > 0 &&
+                    !CanAccessLocation(order.LocationId.Value))
+                {
+                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                }
+
                 int actualOrderId = order.OrderID;
 
                 // Get details separately to avoid circular references
@@ -1444,6 +1816,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
                 if (orderData.ValueKind == JsonValueKind.Null || orderData.ValueKind == JsonValueKind.Undefined)
                 {
                     return BadRequest(new { error = "Request is null" });
@@ -1548,6 +1921,23 @@ namespace CimmpleAPI.Controllers
                     order.LocationId = resolvedVendorLocationId;
 
                 Console.WriteLine($"SaveVendorOrder: Assigned to order - QuotationId = {order.QuotationId}, QuotationNo = '{order.QuotationNo}', TenantId = {order.Tenantid}");
+
+                if (order.OrderID == 0 && order.QuotationId.HasValue && order.QuotationId.Value > 0)
+                {
+                    var sourceVq = await _context.VendorQuotations
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(q => q.OrderID == order.QuotationId.Value && q.Tenantid == order.Tenantid);
+                    if (sourceVq != null &&
+                        (sourceVq.isconverted == 1 ||
+                         (sourceVq.convertedOrderId.HasValue && sourceVq.convertedOrderId.Value > 0) ||
+                         string.Equals(sourceVq.Status, "Converted", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Vendor quotation VQ#{sourceVq.PONumber} is already converted. Open the existing vendor order instead of converting again."
+                        });
+                    }
+                }
 
                 if (order.OrderID == 0)
                 {
@@ -2592,6 +2982,32 @@ namespace CimmpleAPI.Controllers
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
 
+                // Enforce same rules as CheckVendorOrderDeletionImpact — do not wipe receiving/invoice history
+                var orderDetailIds = await _context.VendorOrderDetails
+                    .Where(d => d.OrderID == orderId)
+                    .Select(d => d.ID)
+                    .ToListAsync();
+
+                var hasInvoices = await _context.VendorInvoiceDetail
+                    .AnyAsync(vid => vid.OrderId == orderId &&
+                        _context.VendorInvoiceMaster.Any(vim =>
+                            vim.Id == vid.InvoiceId && vim.TenantId == tenantId && vim.voideddate == null));
+                if (hasInvoices)
+                    return BadRequest(new { error = "Cannot delete vendor order: invoice(s) exist. Delete invoices first." });
+
+                if (orderDetailIds.Count > 0)
+                {
+                    var hasReceiving = await _context.VendorReceiving
+                        .AnyAsync(vr => orderDetailIds.Contains(vr.VendorOrderDetailID) && vr.Tenantid == tenantId);
+                    if (hasReceiving)
+                        return BadRequest(new { error = "Cannot delete vendor order with receiving history." });
+
+                    var hasInvoicing = await _context.VendorInvoicing
+                        .AnyAsync(vi => orderDetailIds.Contains(vi.VendorOrderDetailID) && vi.Tenantid == tenantId);
+                    if (hasInvoicing)
+                        return BadRequest(new { error = "Cannot delete vendor order with invoicing history." });
+                }
+
                 await RevertVendorQuotationsForDeletedOrderAsync(order, tenantId);
 
                 // Delete related records first to avoid foreign key constraint violations
@@ -2613,31 +3029,12 @@ namespace CimmpleAPI.Controllers
                     _context.VendorOrderComments.RemoveRange(comments);
                 }
 
-                // 3. Delete details (this will cascade delete VendorReceiving and VendorInvoicing if configured)
+                // 3. Delete details (receiving/invoicing already verified empty)
                 var details = await _context.VendorOrderDetails
                     .Where(d => d.OrderID == orderId)
                     .ToListAsync();
                 if (details.Any())
                 {
-                    // Delete VendorReceiving records first
-                    var detailIds = details.Select(d => d.ID).ToList();
-                    var receivingRecords = await _context.VendorReceiving
-                        .Where(vr => detailIds.Contains(vr.VendorOrderDetailID))
-                        .ToListAsync();
-                    if (receivingRecords.Any())
-                    {
-                        _context.VendorReceiving.RemoveRange(receivingRecords);
-                    }
-
-                    // Delete VendorInvoicing records
-                    var invoicingRecords = await _context.VendorInvoicing
-                        .Where(vi => detailIds.Contains(vi.VendorOrderDetailID))
-                        .ToListAsync();
-                    if (invoicingRecords.Any())
-                    {
-                        _context.VendorInvoicing.RemoveRange(invoicingRecords);
-                    }
-
                     _context.VendorOrderDetails.RemoveRange(details);
                 }
 
@@ -2650,12 +3047,7 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"DeleteVendorOrder: EXCEPTION - {ex.Message}");
-                Console.WriteLine($"DeleteVendorOrder: Stack trace: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"DeleteVendorOrder: Inner exception: {ex.InnerException.Message}");
-                }
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return StatusCode(500, new { error = ex.Message });
             }
         }
 
@@ -2693,8 +3085,11 @@ namespace CimmpleAPI.Controllers
 
         private static string ResolveVendorQuotationStatusAfterUnconvert(VendorQuotations quotation)
         {
-            // Child/response quotations were typically Responded before convert
-            if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
+            // Master RFQ after multi-vendor send may historically have ParentQuotationID = self; treat as master
+            var isChild = quotation.ParentQuotationID.HasValue
+                && quotation.ParentQuotationID.Value > 0
+                && quotation.ParentQuotationID.Value != quotation.OrderID;
+            if (isChild)
                 return "Responded";
             if (quotation.isSent)
                 return "Sent";
@@ -4131,7 +4526,20 @@ namespace CimmpleAPI.Controllers
         public int? LocationId { get; set; }
         public List<OrderDetailReq> Details { get; set; } = new List<OrderDetailReq>();
         public List<OrderAttachmentDto> Attachments { get; set; } = new List<OrderAttachmentDto>();
+        /// <summary>
+        /// OrderAttachment.Id values removed in the UI and pending deletion on save.
+        /// </summary>
+        public List<int> DeletedAttachmentIds { get; set; } = new List<int>();
         public List<OrderCommentDto> Comments { get; set; } = new List<OrderCommentDto>();
+    }
+
+    public class OrderAttachmentUploadContext
+    {
+        public int OrderId { get; set; }
+        public int OrderID { get; set; }
+        public int TenantId { get; set; }
+        public int TenantID { get; set; }
+        public int Tenantid { get; set; }
     }
 
     public class OrderAttachmentDto
@@ -4140,6 +4548,10 @@ namespace CimmpleAPI.Controllers
         public string Name { get; set; } = "";
         public int Size { get; set; }
         public string FileUrl { get; set; } = "";
+        public int FileUniqueno { get; set; }
+        public string UploadFile { get; set; } = "";
+        public string PageNo { get; set; } = "0";
+        public int CreatedBy { get; set; }
     }
 
     public class OrderCommentDto

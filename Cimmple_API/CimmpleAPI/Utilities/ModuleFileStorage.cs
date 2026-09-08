@@ -19,6 +19,7 @@ namespace CimmpleAPI.Utilities
         public const string DefaultContainer = "data";
         public const string QuotationsFolder = "Quotations";
         public const string OrdersFolder = "Orders";
+        public const string VendorQuotationsFolder = "VendorQuotations";
 
         public static string GetDirectory(int tenantId, string moduleFolder)
         {
