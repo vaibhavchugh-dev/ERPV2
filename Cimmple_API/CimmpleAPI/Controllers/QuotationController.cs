@@ -46,6 +46,7 @@ namespace CimmpleAPI.Controllers
 
                 var quotations = quotationsQuery
                     .OrderByDescending(q => q.OrderDate)
+                    .ToList()
                     .Select(q => new
                     {
                         orderID = q.OrderID,
@@ -53,7 +54,7 @@ namespace CimmpleAPI.Controllers
                         customerID = q.CustomerID,
                         customerCode = q.customercode ?? "",
                         customerName = q.CustomerName ?? "",
-                        orderDate = q.OrderDate,
+                        orderDate = q.OrderDate.ToString("yyyy-MM-dd"),
                         totalAmount = q.TotalAmount,
                         status = q.Status ?? "Draft",
                         customerRefNo = q.CustomerRefNo ?? "",
@@ -223,7 +224,7 @@ namespace CimmpleAPI.Controllers
                     customerName = quotation.CustomerName ?? "",
                     address = quotation.address ?? "",
                     customerPoNumber = quotation.CustomerPoNumber ?? "",
-                    orderDate = quotation.OrderDate,
+                    orderDate = quotation.OrderDate.ToString("yyyy-MM-dd"),
                     totalAmount = quotation.TotalAmount,
                     userId = quotation.UserId,
                     userToken = quotation.UserToken,
@@ -231,7 +232,9 @@ namespace CimmpleAPI.Controllers
                     tenantid = quotation.Tenantid,
                     shippingInstructions = quotation.shippingInstructions ?? "",
                     externalCustomerPO = quotation.ExternalCustomerPO ?? "",
-                    externalOrderDate = quotation.ExternalOrderDate,
+                    externalOrderDate = quotation.ExternalOrderDate.HasValue
+                        ? quotation.ExternalOrderDate.Value.ToString("yyyy-MM-dd")
+                        : null,
                     buyerName = quotation.BuyerName ?? "",
                     customerRefNo = quotation.CustomerRefNo ?? "",
                     isConverted = quotation.isConverted ?? 0,
@@ -662,7 +665,7 @@ namespace CimmpleAPI.Controllers
                     CustomerName = source.CustomerName ?? "",
                     address = source.address ?? "",
                     CustomerPoNumber = source.CustomerPoNumber ?? "",
-                    OrderDate = DateTime.Now.Date,
+                    OrderDate = source.OrderDate.Date,
                     TotalAmount = source.TotalAmount,
                     UserId = source.UserId,
                     UserToken = source.UserToken,

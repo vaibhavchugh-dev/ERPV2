@@ -13,6 +13,28 @@ const isWorkingSite = (loc: { locType?: number | null }) => {
   );
 };
 
+const mapCachedToMaster = (l: {
+  locationId: number;
+  name: string;
+  code: string;
+  locType: number;
+}): LocationMaster => ({
+  locationId: l.locationId,
+  name: l.name || "",
+  code: l.code || "",
+  locType: l.locType,
+  address: "",
+  city: "",
+  state: "",
+  zip: "",
+  country: "",
+  region: "",
+  email: "",
+  phone: "",
+  webaddress: "",
+  status: "Active",
+});
+
 /**
  * Site filter for shared multi-site list pages.
  * Defaults to the TopBar working site so switching location reloads that site's data.
@@ -58,50 +80,38 @@ export function useSiteListFilter() {
     setLocationFilter(workingSiteId);
   }, [workingSiteId, isLocationAllowed]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-        const tenantId = storage?.tenantID || 0;
-        const canAccessAll = !!storage?.canAccessAllLocations;
-        const cached = AuthService.getAllowedLocations();
+  const loadSites = useCallback(async () => {
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const tenantId = storage?.tenantID || 0;
+      const canAccessAll = !!storage?.canAccessAllLocations;
+      const cached = AuthService.getAllowedLocations();
 
-        let list: LocationMaster[] = [];
-        // Prefer login-cached locations (including admins) to skip a redundant GetLocations call.
-        if (cached.length > 0) {
-          list = cached.map((l) => ({
-            locationId: l.locationId,
-            name: l.name || "",
-            code: l.code || "",
-            locType: l.locType,
-            address: "",
-            city: "",
-            state: "",
-            zip: "",
-            country: "",
-            region: "",
-            email: "",
-            phone: "",
-            webaddress: "",
-            status: "Active",
-          }));
-        } else if (canAccessAll && tenantId > 0) {
-          const data = await LocationService.GetLocations({ tenantid: tenantId });
-          list = Array.isArray(data) ? data : [];
-        }
-        // Restricted users with empty cache: leave list empty (no tenant-wide fallback).
-        if (!cancelled) {
-          setSites(list.filter(isWorkingSite));
-        }
-      } catch {
-        if (!cancelled) setSites([]);
+      let list: LocationMaster[] = [];
+      // Prefer login-cached locations (including admins) to skip a redundant GetLocations call.
+      if (cached.length > 0) {
+        list = cached.map(mapCachedToMaster);
+      } else if (canAccessAll && tenantId > 0) {
+        const data = await LocationService.GetLocations({ tenantid: tenantId });
+        list = Array.isArray(data) ? data : [];
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      // Restricted users with empty cache: leave list empty (no tenant-wide fallback).
+      setSites(list.filter(isWorkingSite));
+    } catch {
+      setSites([]);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadSites();
+    const onLocationsUpdated = () => {
+      void loadSites();
+    };
+    window.addEventListener("allowedLocationsUpdated", onLocationsUpdated);
+    return () => {
+      window.removeEventListener("allowedLocationsUpdated", onLocationsUpdated);
+    };
+  }, [loadSites]);
 
   // Drop a working-site filter the user is not allowed to query (avoids API 403).
   useEffect(() => {

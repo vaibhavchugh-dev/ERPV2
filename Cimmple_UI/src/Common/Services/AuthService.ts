@@ -172,11 +172,18 @@ export class AuthService {
       }
       if (user.locations) {
         localStorage.setItem(LOCATIONS_KEY, JSON.stringify(user.locations));
+        window.dispatchEvent(new CustomEvent("allowedLocationsUpdated"));
       }
       return user;
     } catch {
       return null;
     }
+  }
+
+  /** Re-sync allowed locations from /me and notify TopBar / site filters to reload. */
+  public static async refreshAllowedLocations(): Promise<AuthLocation[]> {
+    const user = await AuthService.syncCurrentUserProfile();
+    return user?.locations ?? AuthService.getAllowedLocations();
   }
 
   public static clearSession(portal: "erp" | "vendor" | "all" = "all") {

@@ -346,10 +346,7 @@ const CustomerShipments: React.FC = () => {
       {/* Shipment Detail Modal */}
       <CustomerShipmentDetailModal
         isOpen={showDetailModal}
-        onClose={() => {
-          handleCloseDetailModal();
-          loadShipments();
-        }}
+        onClose={(refresh) => handleCloseDetailModal(refresh)}
         shipmentId={selectedShipmentId}
         onShipmentDeleted={loadShipments}
       />

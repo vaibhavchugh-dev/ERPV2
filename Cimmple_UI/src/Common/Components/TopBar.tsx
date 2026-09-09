@@ -222,9 +222,16 @@ const TopBar: React.FC = () => {
     setLocationMenuOpen(false);
   }, [currentLocationId, setLocationId]);
 
-  // Load locations on mount
+  // Load locations on mount and whenever allowed locations are refreshed (Location Master CRUD /me sync).
   useEffect(() => {
     loadLocations();
+    const onLocationsUpdated = () => {
+      void loadLocations();
+    };
+    window.addEventListener("allowedLocationsUpdated", onLocationsUpdated);
+    return () => {
+      window.removeEventListener("allowedLocationsUpdated", onLocationsUpdated);
+    };
   }, [loadLocations]);
 
   // Ensure working site is selected after login (Redux can lag behind localStorage).

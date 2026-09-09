@@ -1306,7 +1306,14 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const effectiveOrderId = formData.OrderID > 0 ? formData.OrderID : orderId;
 
   return (
-    <div className="customer-order-slideout-overlay" onClick={handleCancel}>
+    <div
+      className="customer-order-slideout-overlay"
+      onClick={() => {
+        if (!showShippingModal && !showInvoiceModal && !showTextEditorPopup) {
+          handleCancel();
+        }
+      }}
+    >
       <div className="customer-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="customer-order-slideout-header">
           <div>
@@ -2790,7 +2797,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
   };
 
   return (
-    <div className="text-editor-popup-overlay" onClick={onClose}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>

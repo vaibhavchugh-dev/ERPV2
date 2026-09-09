@@ -1515,7 +1515,14 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const effectiveQuotationId = formData.OrderID > 0 ? formData.OrderID : quotationId;
 
   return (
-    <div className="customer-quotation-slideout-overlay" onClick={handleCancel}>
+    <div
+      className="customer-quotation-slideout-overlay"
+      onClick={() => {
+        if (!showPriceBreakdownPopup && !showTextEditorPopup && !showConvertToOrderDialog) {
+          handleCancel();
+        }
+      }}
+    >
       <div
         className={`customer-quotation-slideout-card ${documentViewerOpen ? "is-document-workspace" : ""}`}
         onClick={(e) => e.stopPropagation()}
@@ -2668,7 +2675,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
       {/* Convert to Order Selection Dialog */}
       {showConvertToOrderDialog && (
-        <div className="text-editor-popup-overlay" onClick={() => setShowConvertToOrderDialog(false)}>
+        <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); setShowConvertToOrderDialog(false); }}>
           <div className="text-editor-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "800px" }}>
             <div className="text-editor-popup-header">
               <h3>Convert Quotation to Order - Select Items & Attachments</h3>
@@ -3227,7 +3234,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   const columnTotals = getColumnTotals();
 
   return (
-    <div className="price-breakdown-popup-overlay" onClick={onClose}>
+    <div className="price-breakdown-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="price-breakdown-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "90%", maxHeight: "90vh", overflow: "auto" }}>
         <div className="price-breakdown-popup-header">
           <h3>Price Breakdown Matrix - {detail.PartNo || `Item #${detail.ItemNo}`}</h3>
@@ -3291,44 +3298,53 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                           const canRemove = quantities.length > 5 && originalIndex >= 5;
                           return (
                             <th key={originalIndex} style={{ padding: "0.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: 600, minWidth: "140px", position: "relative" }}>
-                              {canRemove && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveQuantity(originalIndex)}
+                              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                                <div
                                   style={{
-                                    position: "absolute",
-                                    top: "0.25rem",
-                                    right: "0.25rem",
-                                    width: "18px",
-                                    height: "18px",
-                                    padding: 0,
-                                    backgroundColor: "transparent",
-                                    color: "#6b7280",
-                                    border: "none",
-                                    cursor: "pointer",
-                                    fontSize: "14px",
-                                    lineHeight: "1",
                                     display: "flex",
                                     alignItems: "center",
-                                    justifyContent: "center",
-                                    borderRadius: "2px",
+                                    justifyContent: "flex-end",
+                                    gap: canRemove ? "0.35rem" : 0,
+                                    minHeight: "18px",
+                                    fontSize: "0.7rem",
+                                    fontWeight: 500,
+                                    color: "#6b7280",
                                   }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.color = "#ef4444";
-                                    e.currentTarget.style.backgroundColor = "#fee2e2";
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.color = "#6b7280";
-                                    e.currentTarget.style.backgroundColor = "transparent";
-                                  }}
-                                  title="Remove column"
                                 >
-                                  ×
-                                </button>
-                              )}
-                              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                                <div style={{ fontSize: "0.7rem", fontWeight: 500, color: "#6b7280", textAlign: "right" }}>
-                                  Qty
+                                  <span>Qty</span>
+                                  {canRemove && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveQuantity(originalIndex)}
+                                      style={{
+                                        flexShrink: 0,
+                                        width: "18px",
+                                        height: "18px",
+                                        padding: 0,
+                                        backgroundColor: "transparent",
+                                        color: "#6b7280",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        fontSize: "14px",
+                                        lineHeight: "1",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        borderRadius: "2px",
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = "#ef4444";
+                                        e.currentTarget.style.backgroundColor = "#fee2e2";
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = "#6b7280";
+                                        e.currentTarget.style.backgroundColor = "transparent";
+                                      }}
+                                      title="Remove column"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
                                 </div>
                                 {/* Quantity input/display - all at same height */}
                                 <div style={{ height: "2.5rem", display: "flex", alignItems: "center" }}>
@@ -3622,7 +3638,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
   };
 
   return (
-    <div className="text-editor-popup-overlay" onClick={onClose}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
