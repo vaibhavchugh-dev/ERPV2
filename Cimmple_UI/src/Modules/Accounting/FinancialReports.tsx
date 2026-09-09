@@ -12,6 +12,7 @@ interface ReportType {
   description: string;
   icon: any;
   category: string;
+  unavailable?: boolean;
 }
 
 const ymdLocal = (d: Date) => {
@@ -90,9 +91,10 @@ const FinancialReports: React.FC = () => {
     {
       id: 'customer-statements',
       name: 'Customer Statements',
-      description: 'Individual customer account statements (Coming Soon)',
+      description: 'Not available yet — individual customer statements',
       icon: faFileAlt,
-      category: 'Accounts Receivable'
+      category: 'Accounts Receivable',
+      unavailable: true
     },
 
     // Accounts Payable Reports
@@ -106,9 +108,10 @@ const FinancialReports: React.FC = () => {
     {
       id: 'vendor-analysis',
       name: 'Vendor Payment Analysis',
-      description: 'Vendor payment history and trends (Coming Soon)',
+      description: 'Not available yet — vendor payment trends',
       icon: faChartBar,
-      category: 'Accounts Payable'
+      category: 'Accounts Payable',
+      unavailable: true
     },
 
     // General Ledger Reports
@@ -140,6 +143,8 @@ const FinancialReports: React.FC = () => {
   ];
 
   const isReportSupported = (reportId: string): boolean => {
+    const report = reportTypes.find((r) => r.id === reportId);
+    if (report?.unavailable) return false;
     return supportedReportTypes.includes(reportId);
   };
 
@@ -276,18 +281,17 @@ const FinancialReports: React.FC = () => {
         downloadFile(csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
         toast.success('Report downloaded as CSV');
       } else if (downloadFormat === 'excel') {
-        // For Excel, use CSV format with Excel MIME type (Excel can open CSV files)
-        const csvContent = convertToCSV(reportData);
-        // Add BOM for UTF-8 to ensure Excel opens it correctly
-        const BOM = '\uFEFF';
-        downloadFile(BOM + csvContent, `${fileName}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        toast.success('Report downloaded as Excel (CSV format)');
-      } else {
-        // PDF format - generate CSV that can be opened in Excel and saved as PDF
+        // Excel option currently downloads CSV with .csv extension (honest labeling)
         const csvContent = convertToCSV(reportData);
         const BOM = '\uFEFF';
         downloadFile(BOM + csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
-        toast.info('Report downloaded as CSV. Open in Excel and save as PDF if needed.');
+        toast.success('Report downloaded as CSV (Excel-compatible)');
+      } else {
+        // PDF option not implemented — fall back to CSV with clear message
+        const csvContent = convertToCSV(reportData);
+        const BOM = '\uFEFF';
+        downloadFile(BOM + csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
+        toast.info('PDF export is not available yet. Downloaded as CSV instead.');
       }
     } catch (error) {
       console.error('Error downloading report:', error);

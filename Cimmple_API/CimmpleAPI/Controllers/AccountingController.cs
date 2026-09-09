@@ -288,65 +288,44 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetBankTransactions called - TenantId: {tenantId}, BankAccountId: {bankAccountId}, StartDate: {startDate}, EndDate: {endDate}");
 
-                var start = DateTime.Parse(startDate);
-                var end = DateTime.Parse(endDate);
+                var start = DateTime.Parse(startDate).Date;
+                var end = DateTime.Parse(endDate).Date.AddDays(1).AddTicks(-1);
 
-                // Get transactions for the specified bank account within the date range
-                // For now, we'll simulate bank transactions based on existing transaction data
-                // In a real implementation, this would pull from a dedicated bank transaction table
-                var bankTransactions = new List<dynamic>();
-
-                // Get deposits (cash inflows)
-                var deposits = _context.Transactions
+                // Include Payment (AR/AP cash), plus legacy Deposit / Withdrawal rows.
+                var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+                var rows = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
-                               t.BankId == bankAccountId &&
-                               t.TransactionDate >= start &&
-                               t.TransactionDate <= end &&
-                               t.TransactionType == "Deposit")
-                    .Select(t => new
+                                t.BankId == bankAccountId &&
+                                t.TransactionDate >= start &&
+                                t.TransactionDate <= end &&
+                                t.TransactionType != null &&
+                                bankTypeSet.Contains(t.TransactionType))
+                    .OrderByDescending(t => t.TransactionDate)
+                    .ThenByDescending(t => t.TransactionID)
+                    .ToList()
+                    .Select(t =>
                     {
-                        id = t.TransactionID,
-                        date = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
-                        description = t.Description ?? "Deposit",
-                        amount = t.Amount ?? 0,
-                        type = "credit" as string,
-                        reconciled = false, // This would come from a reconciliation table
-                        reference = t.CheckNo ?? ""
+                        var amount = t.Amount ?? 0;
+                        var (signed, isCredit) = AccountingRules.MapBankTransactionSign(
+                            amount, t.isCustomer, t.TransactionType);
+                        return new
+                        {
+                            id = t.TransactionID,
+                            date = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
+                            description = t.Description ?? t.TransactionType ?? "Transaction",
+                            amount = signed,
+                            type = isCredit ? "credit" : "debit",
+                            reconciled = t.IsReconciled,
+                            reference = t.CheckNo ?? t.invoiceNo ?? ""
+                        };
                     })
                     .ToList();
 
-                bankTransactions.AddRange(deposits);
-
-                // Get withdrawals/checks (cash outflows)
-                var withdrawals = _context.Transactions
-                    .Where(t => t.TenantId == tenantId &&
-                               t.BankId == bankAccountId &&
-                               t.TransactionDate >= start &&
-                               t.TransactionDate <= end &&
-                               t.TransactionType == "Withdrawal")
-                    .Select(t => new
-                    {
-                        id = t.TransactionID,
-                        date = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
-                        description = t.Description ?? "Withdrawal",
-                        amount = -(t.Amount ?? 0), // Negative for debits
-                        type = "debit" as string,
-                        reconciled = false, // This would come from a reconciliation table
-                        reference = t.CheckNo ?? ""
-                    })
-                    .ToList();
-
-                bankTransactions.AddRange(withdrawals);
-
-                // Sort by date
-                var sortedTransactions = bankTransactions
-                    .OrderByDescending(t => t.date)
-                    .ToList();
-
-                return Ok(new { result = sortedTransactions });
+                return Ok(new { result = rows });
             }
             catch (Exception ex)
             {
@@ -360,12 +339,27 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
                 Console.WriteLine($"ReconcileBankTransaction called - TenantId: {tenantId}, TransactionId: {request.TransactionId}, Reconciled: {request.Reconciled}");
 
-                // In a real implementation, this would update a reconciliation status table
-                // For now, we'll just return success
-                return Ok(new { result = new { message = "Transaction reconciliation updated successfully" } });
+                var txn = _context.Transactions
+                    .FirstOrDefault(t => t.TransactionID == request.TransactionId && t.TenantId == tenantId);
+                if (txn == null)
+                    return NotFound(new { error = "Transaction not found" });
+
+                txn.IsReconciled = request.Reconciled;
+                txn.ReconciledUtc = request.Reconciled ? DateTime.UtcNow : null;
+
+                if (request.Reconciled && txn.BankId.HasValue)
+                {
+                    var bank = _context.BankMaster.FirstOrDefault(b => b.Id == txn.BankId.Value && b.TenantId == tenantId);
+                    if (bank != null)
+                        bank.LastReconciledDate = DateTime.UtcNow.Date;
+                }
+
+                _context.SaveChanges();
+                return Ok(new { result = new { message = "Transaction reconciliation updated successfully", reconciled = txn.IsReconciled } });
             }
             catch (Exception ex)
             {
@@ -379,12 +373,33 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
-                Console.WriteLine($"BulkReconcileTransactions called - TenantId: {tenantId}, TransactionIds: {string.Join(",", request.TransactionIds)}");
 
-                // In a real implementation, this would update multiple reconciliation statuses
-                // For now, we'll just return success
-                return Ok(new { result = new { message = $"{request.TransactionIds.Length} transactions reconciled successfully" } });
+                if (request?.TransactionIds == null || request.TransactionIds.Length == 0)
+                    return BadRequest(new { error = "No transaction ids provided" });
+
+                var txns = _context.Transactions
+                    .Where(t => t.TenantId == tenantId && request.TransactionIds.Contains(t.TransactionID))
+                    .ToList();
+
+                var now = DateTime.UtcNow;
+                foreach (var txn in txns)
+                {
+                    txn.IsReconciled = true;
+                    txn.ReconciledUtc = now;
+                }
+
+                var bankIds = txns.Where(t => t.BankId.HasValue).Select(t => t.BankId!.Value).Distinct().ToList();
+                if (bankIds.Count > 0)
+                {
+                    var banks = _context.BankMaster.Where(b => b.TenantId == tenantId && bankIds.Contains(b.Id)).ToList();
+                    foreach (var bank in banks)
+                        bank.LastReconciledDate = now.Date;
+                }
+
+                _context.SaveChanges();
+                return Ok(new { result = new { message = $"{txns.Count} transactions reconciled", count = txns.Count } });
             }
             catch (Exception ex)
             {
@@ -398,10 +413,33 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
-                var defaults = _context.AccountingDefaults
-                    .AsNoTracking()
-                    .FirstOrDefault(d => d.TenantId == tenantId);
+                EnsureDefaultPaymentTerms(tenantId);
+                EnsureDefaultApprovalLimits(tenantId);
+
+                var defaults = _context.AccountingDefaults.FirstOrDefault(d => d.TenantId == tenantId);
+                var paymentTerms = _context.PaymentTerms
+                    .Where(p => p.TenantId == tenantId && p.IsActive)
+                    .OrderBy(p => p.Days)
+                    .Select(p => new { id = p.Id, name = p.Name, days = p.Days, description = p.Description ?? "" })
+                    .ToList();
+
+                var approvalLimits = (
+                    from lim in _context.ApApprovalLimits
+                    where lim.TenantId == tenantId && lim.IsActive
+                    join role in _context.UserRole on lim.RoleId equals role.RoleID into rj
+                    from role in rj.DefaultIfEmpty()
+                    orderby lim.LimitAmount
+                    select new
+                    {
+                        id = lim.Id,
+                        roleId = lim.RoleId,
+                        role = role != null ? (role.RoleName ?? $"Role {lim.RoleId}") : $"Role {lim.RoleId}",
+                        limit = lim.LimitAmount,
+                        requiresDualApproval = lim.RequiresDualApproval
+                    }
+                ).ToList();
 
                 var settings = new
                 {
@@ -409,6 +447,8 @@ namespace CimmpleAPI.Controllers
                     fiscalYearStart = defaults?.FiscalYearStart ?? "01-01",
                     defaultCurrency = defaults?.DefaultCurrency ?? "USD",
                     taxRate = defaults?.TaxRate ?? 8.25m,
+                    gstEnabled = defaults?.GstEnabled ?? false,
+                    taxRegistrationNumber = defaults?.TaxRegistrationNumber,
                     defaultAccountsReceivableAccountId = defaults?.DefaultAccountsReceivableAccountId,
                     defaultAccountsPayableAccountId = defaults?.DefaultAccountsPayableAccountId,
                     defaultRevenueAccountId = defaults?.DefaultRevenueAccountId,
@@ -419,20 +459,8 @@ namespace CimmpleAPI.Controllers
                     defaultFreightOutAccountId = defaults?.DefaultFreightOutAccountId,
                     defaultOtherChargeAccountId = defaults?.DefaultOtherChargeAccountId,
                     defaultFreightInAccountId = defaults?.DefaultFreightInAccountId,
-                    paymentTerms = new[]
-                    {
-                        new { id = 1, name = "Net 15", days = 15, description = "Payment due within 15 days" },
-                        new { id = 2, name = "Net 30", days = 30, description = "Payment due within 30 days" },
-                        new { id = 3, name = "Net 45", days = 45, description = "Payment due within 45 days" },
-                        new { id = 4, name = "Net 60", days = 60, description = "Payment due within 60 days" }
-                    },
-                    approvalLimits = new[]
-                    {
-                        new { id = 1, role = "Staff", limit = 500, requiresDualApproval = false },
-                        new { id = 2, role = "Supervisor", limit = 2500, requiresDualApproval = false },
-                        new { id = 3, role = "Manager", limit = 10000, requiresDualApproval = true },
-                        new { id = 4, role = "Director", limit = 50000, requiresDualApproval = true }
-                    }
+                    paymentTerms,
+                    approvalLimits
                 };
 
                 return Ok(new { result = settings });
@@ -449,6 +477,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
 
                 if (request == null)
@@ -503,6 +532,10 @@ namespace CimmpleAPI.Controllers
                 defaults.FiscalYearStart = string.IsNullOrWhiteSpace(request.FiscalYearStart) ? "01-01" : request.FiscalYearStart.Trim();
                 defaults.DefaultCurrency = string.IsNullOrWhiteSpace(request.DefaultCurrency) ? "USD" : request.DefaultCurrency.Trim();
                 defaults.TaxRate = request.TaxRate;
+                defaults.GstEnabled = request.GstEnabled;
+                defaults.TaxRegistrationNumber = string.IsNullOrWhiteSpace(request.TaxRegistrationNumber)
+                    ? null
+                    : request.TaxRegistrationNumber.Trim();
                 defaults.DefaultAccountsReceivableAccountId = arId;
                 defaults.DefaultAccountsPayableAccountId = apId;
                 defaults.DefaultRevenueAccountId = revId;
@@ -515,14 +548,26 @@ namespace CimmpleAPI.Controllers
                 defaults.DefaultFreightInAccountId = freightInId;
                 defaults.UpdatedDate = now;
 
+                // Upsert payment terms when provided (Setup Save). Dedicated CRUD also available.
+                if (request.PaymentTerms != null)
+                {
+                    UpsertPaymentTerms(tenantId, request.PaymentTerms, now);
+                }
+
+                if (request.ApprovalLimits != null)
+                {
+                    UpsertApprovalLimits(tenantId, request.ApprovalLimits, now);
+                }
+
                 _context.SaveChanges();
 
                 return Ok(new { result = new { message = "Accounting settings saved successfully" } });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in SaveAccountingSettings: {ex.Message}");
-                return StatusCode(500, new { error = ex.Message });
+                Console.WriteLine($"Error in SaveAccountingSettings: {ex}");
+                var detail = ex.InnerException?.Message ?? ex.Message;
+                return StatusCode(500, new { error = detail });
             }
         }
 
@@ -1062,46 +1107,27 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var today = DateTime.Now.Date;
-                
-                // Get all unpaid customer invoices
+
                 var unpaidInvoices = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
-                                im.PaymentDate == null) // Unpaid
+                                 !im.IsVoided &&
+                                 im.PaidAmount < im.TotalAmount - 0.009m)
                     .ToList();
 
-                var current = unpaidInvoices
-                    .Where(im => im.DueDate.Date >= today)
-                    .Sum(im => im.TotalAmount);
+                var items = unpaidInvoices.Select(im =>
+                    new AccountingRules.AgingItem(
+                        im.DueDate,
+                        AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount)));
 
-                var days1to30 = unpaidInvoices
-                    .Where(im => im.DueDate.Date < today && 
-                                im.DueDate.Date >= today.AddDays(-30))
-                    .Sum(im => im.TotalAmount);
+                var buckets = AccountingRules.CalculateAgingBuckets(items, today);
+                var total = buckets.Sum(b => b.Amount);
 
-                var days31to60 = unpaidInvoices
-                    .Where(im => im.DueDate.Date < today.AddDays(-30) && 
-                                im.DueDate.Date >= today.AddDays(-60))
-                    .Sum(im => im.TotalAmount);
-
-                var days61to90 = unpaidInvoices
-                    .Where(im => im.DueDate.Date < today.AddDays(-60) && 
-                                im.DueDate.Date >= today.AddDays(-90))
-                    .Sum(im => im.TotalAmount);
-
-                var over90Days = unpaidInvoices
-                    .Where(im => im.DueDate.Date < today.AddDays(-90))
-                    .Sum(im => im.TotalAmount);
-
-                var total = current + days1to30 + days31to60 + days61to90 + over90Days;
-
-                return new[]
+                return buckets.Select(b => new
                 {
-                    new { bucket = "Current", amount = current, percentage = total > 0 ? (current / total * 100) : 0 },
-                    new { bucket = "1-30 Days", amount = days1to30, percentage = total > 0 ? (days1to30 / total * 100) : 0 },
-                    new { bucket = "31-60 Days", amount = days31to60, percentage = total > 0 ? (days31to60 / total * 100) : 0 },
-                    new { bucket = "61-90 Days", amount = days61to90, percentage = total > 0 ? (days61to90 / total * 100) : 0 },
-                    new { bucket = "Over 90 Days", amount = over90Days, percentage = total > 0 ? (over90Days / total * 100) : 0 }
-                };
+                    bucket = b.Name,
+                    amount = b.Amount,
+                    percentage = b.Percentage(total)
+                }).ToArray();
             }
             catch (Exception ex)
             {
@@ -1122,46 +1148,27 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var today = DateTime.Now.Date;
-                
-                // Get all unpaid vendor invoices
+
                 var unpaidInvoices = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
-                                 (vim.isPaid != 1 && vim.Paydate == null)) // Unpaid
+                                  vim.voideddate == null &&
+                                  vim.PaidAmount < vim.TotalAmount - 0.009m)
                     .ToList();
 
-                var current = unpaidInvoices
-                    .Where(vim => vim.DueDate.Date >= today)
-                    .Sum(vim => vim.TotalAmount);
+                var items = unpaidInvoices.Select(vim =>
+                    new AccountingRules.AgingItem(
+                        vim.DueDate,
+                        AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount)));
 
-                var days1to30 = unpaidInvoices
-                    .Where(vim => vim.DueDate.Date < today && 
-                                 vim.DueDate.Date >= today.AddDays(-30))
-                    .Sum(vim => vim.TotalAmount);
+                var buckets = AccountingRules.CalculateAgingBuckets(items, today);
+                var total = buckets.Sum(b => b.Amount);
 
-                var days31to60 = unpaidInvoices
-                    .Where(vim => vim.DueDate.Date < today.AddDays(-30) && 
-                                 vim.DueDate.Date >= today.AddDays(-60))
-                    .Sum(vim => vim.TotalAmount);
-
-                var days61to90 = unpaidInvoices
-                    .Where(vim => vim.DueDate.Date < today.AddDays(-60) && 
-                                 vim.DueDate.Date >= today.AddDays(-90))
-                    .Sum(vim => vim.TotalAmount);
-
-                var over90Days = unpaidInvoices
-                    .Where(vim => vim.DueDate.Date < today.AddDays(-90))
-                    .Sum(vim => vim.TotalAmount);
-
-                var total = current + days1to30 + days31to60 + days61to90 + over90Days;
-
-                return new[]
+                return buckets.Select(b => new
                 {
-                    new { bucket = "Current", amount = current, percentage = total > 0 ? (current / total * 100) : 0 },
-                    new { bucket = "1-30 Days", amount = days1to30, percentage = total > 0 ? (days1to30 / total * 100) : 0 },
-                    new { bucket = "31-60 Days", amount = days31to60, percentage = total > 0 ? (days31to60 / total * 100) : 0 },
-                    new { bucket = "61-90 Days", amount = days61to90, percentage = total > 0 ? (days61to90 / total * 100) : 0 },
-                    new { bucket = "Over 90 Days", amount = over90Days, percentage = total > 0 ? (over90Days / total * 100) : 0 }
-                };
+                    bucket = b.Name,
+                    amount = b.Amount,
+                    percentage = b.Percentage(total)
+                }).ToArray();
             }
             catch (Exception ex)
             {
@@ -1371,12 +1378,18 @@ namespace CimmpleAPI.Controllers
                     endDate = now;
                     break;
                 case "this year":
-                    startDate = new DateTime(now.Year, 1, 1);
-                    endDate = new DateTime(now.Year, 12, 31);
+                    {
+                        var (fyStart, fyEnd) = GetFiscalYearBounds(GetTenantId(), now.Year);
+                        startDate = fyStart;
+                        endDate = fyEnd;
+                    }
                     break;
                 case "last year":
-                    startDate = new DateTime(now.Year - 1, 1, 1);
-                    endDate = new DateTime(now.Year - 1, 12, 31);
+                    {
+                        var (fyStart, fyEnd) = GetFiscalYearBounds(GetTenantId(), now.Year - 1);
+                        startDate = fyStart;
+                        endDate = fyEnd;
+                    }
                     break;
                 default:
                     // Default to all dates for payment activity screens
@@ -1467,12 +1480,43 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tid = tenantId > 0 ? tenantId : GetTenantId();
                 var transaction = _context.Transactions
-                    .FirstOrDefault(t => t.TransactionID == transactionId && t.TenantId == tenantId);
+                    .FirstOrDefault(t => t.TransactionID == transactionId && t.TenantId == tid);
 
                 if (transaction == null)
                 {
                     return NotFound(new { error = "Transaction not found" });
+                }
+
+                if (transaction.IsReconciled)
+                {
+                    return BadRequest(new { error = "Cannot delete a reconciled bank transaction. Unreconcile it first." });
+                }
+
+                if (!string.IsNullOrWhiteSpace(transaction.AccountingPeriod) &&
+                    GlWorkflowService.IsPeriodLocked(_context, tid, transaction.AccountingPeriod))
+                {
+                    return BadRequest(new { error = $"Accounting period {transaction.AccountingPeriod} is closed." });
+                }
+
+                // Block delete when a payment journal references this cash movement via invoice no.
+                if (!string.IsNullOrWhiteSpace(transaction.invoiceNo))
+                {
+                    var linkedJe = _context.JournalEntries.Any(je =>
+                        je.TenantId == tid &&
+                        je.ReferenceNumber != null &&
+                        (je.ReferenceNumber.Contains(transaction.invoiceNo) ||
+                         (transaction.Description != null && je.Description != null &&
+                          je.Description.Contains(transaction.invoiceNo))));
+                    if (linkedJe)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "This transaction is linked to a journal entry. Reverse the journal entry instead of deleting the cash row."
+                        });
+                    }
                 }
 
                 // Delete child records first
@@ -1482,7 +1526,7 @@ namespace CimmpleAPI.Controllers
                 _context.Deposits.RemoveRange(deposits);
 
                 var withdrawals = _context.Withdrawals
-                    .Where(w => w.TransactionID == transactionId)
+                    .Where(w => w.WithdrawalID > 0 && w.TransactionID == transactionId)
                     .ToList();
                 _context.Withdrawals.RemoveRange(withdrawals);
 
@@ -1764,6 +1808,331 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, new { error = ex.Message });
             }
         }
+
+        [HttpPost("SendArReminder")]
+        public IActionResult SendArReminder([FromBody] SendArReminderRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.InvoiceId <= 0)
+                    return BadRequest(new { error = "Invoice id is required." });
+
+                var result = SendOneArReminder(tenantId, request.InvoiceId);
+                if (!result.ok)
+                    return BadRequest(new { error = result.error });
+
+                return Ok(new { result = new { message = "Payment reminder sent", toEmail = result.toEmail } });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpPost("SendBulkArReminders")]
+        public IActionResult SendBulkArReminders([FromBody] BulkArReminderRequest? request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+
+                var invoiceIds = request?.InvoiceIds?.Where(id => id > 0).Distinct().ToList()
+                    ?? _context.InvoiceMaster
+                        .Where(im => im.TenantId == tenantId &&
+                                     !im.IsVoided &&
+                                     im.PaidAmount < im.TotalAmount - 0.009m &&
+                                     im.DueDate.Date < DateTime.Now.Date)
+                        .Select(im => im.Id)
+                        .ToList();
+
+                var sent = 0;
+                var failures = new List<object>();
+                foreach (var id in invoiceIds)
+                {
+                    var r = SendOneArReminder(tenantId, id);
+                    if (r.ok) sent++;
+                    else failures.Add(new { invoiceId = id, error = r.error });
+                }
+
+                return Ok(new { result = new { sent, failed = failures.Count, failures } });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetGstStatus")]
+        public IActionResult GetGstStatus()
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                var defaults = _context.AccountingDefaults.AsNoTracking()
+                    .FirstOrDefault(d => d.TenantId == tenantId);
+                return Ok(new
+                {
+                    result = new
+                    {
+                        gstEnabled = defaults?.GstEnabled ?? false,
+                        taxRegistrationNumber = defaults?.TaxRegistrationNumber,
+                        available = false,
+                        message = "GST / multi-rate tax returns are not implemented yet. Tax registration fields are stored for future use."
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private (bool ok, string? error, string? toEmail) SendOneArReminder(int tenantId, int invoiceId)
+        {
+            var invoice = _context.InvoiceMaster
+                .FirstOrDefault(im => im.Id == invoiceId && im.TenantId == tenantId);
+            if (invoice == null)
+                return (false, "Invoice not found", null);
+            if (invoice.IsVoided)
+                return (false, "Cannot send reminder for a voided invoice", null);
+
+            var balance = invoice.TotalAmount - invoice.PaidAmount;
+            if (balance <= 0.009m)
+                return (false, "Invoice is fully paid", null);
+
+            var orderId = _context.InvoiceDetail
+                .Where(d => d.InvoiceId == invoice.Id)
+                .Select(d => d.OrderId)
+                .FirstOrDefault();
+            var order = _context.CustomerOrder
+                .AsNoTracking()
+                .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+            string? toEmail = null;
+            string customerName = order?.CustomerName ?? "Customer";
+            if (order != null)
+            {
+                toEmail = _context.CustomerMaster
+                    .AsNoTracking()
+                    .Where(c => c.Tenantid == tenantId && c.customer_id == order.CustomerID)
+                    .Select(c => c.ContactEmail ?? c.email)
+                    .FirstOrDefault();
+            }
+
+            var settings = _context.SystemSettings.AsNoTracking()
+                .FirstOrDefault(s => s.TenantId == tenantId);
+            var company = _context.AccountingDefaults.AsNoTracking()
+                .FirstOrDefault(d => d.TenantId == tenantId)?.CompanyName ?? "Cimmple";
+
+            var invoiceLabel = !string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo)
+                ? invoice.PrefixInvoiceNo
+                : invoice.InvoiceNo.ToString();
+            var subject = $"Payment reminder — Invoice {invoiceLabel}";
+            var body =
+                $"Dear {customerName},\n\n" +
+                $"This is a friendly reminder that invoice {invoiceLabel} dated {invoice.InvoiceDate:yyyy-MM-dd} " +
+                $"has an outstanding balance of {balance:0.00} (due {invoice.DueDate:yyyy-MM-dd}).\n\n" +
+                $"Thank you,\n{company}";
+
+            var (ok, error) = AccountingEmailService.TrySend(settings!, toEmail ?? "", subject, body);
+            _context.ArReminderLogs.Add(new ArReminderLog
+            {
+                TenantId = tenantId,
+                InvoiceId = invoiceId,
+                SentUtc = DateTime.UtcNow,
+                ToEmail = toEmail,
+                Status = ok ? "Sent" : "Failed",
+                Error = error,
+                ActorUserId = GetUserId()
+            });
+            _context.SaveChanges();
+
+            return (ok, error, toEmail);
+        }
+
+        private (DateTime start, DateTime end) GetFiscalYearBounds(int tenantId, int calendarYearHint)
+        {
+            var fy = _context.AccountingDefaults.AsNoTracking()
+                .Where(d => d.TenantId == tenantId)
+                .Select(d => d.FiscalYearStart)
+                .FirstOrDefault() ?? "01-01";
+
+            return AccountingRules.GetFiscalYearBounds(fy, calendarYearHint, DateTime.Now.Date);
+        }
+
+        private void EnsureDefaultPaymentTerms(int tenantId)
+        {
+            if (_context.PaymentTerms.Any(p => p.TenantId == tenantId))
+                return;
+
+            var now = DateTime.UtcNow;
+            var seeds = new[]
+            {
+                ("Net 15", 15, "Payment due within 15 days"),
+                ("Net 30", 30, "Payment due within 30 days"),
+                ("Net 45", 45, "Payment due within 45 days"),
+                ("Net 60", 60, "Payment due within 60 days")
+            };
+            foreach (var (name, days, desc) in seeds)
+            {
+                _context.PaymentTerms.Add(new PaymentTerm
+                {
+                    TenantId = tenantId,
+                    Name = name,
+                    Days = days,
+                    Description = desc,
+                    IsActive = true,
+                    CreatedDate = now,
+                    UpdatedDate = now
+                });
+            }
+            _context.SaveChanges();
+        }
+
+        private void EnsureDefaultApprovalLimits(int tenantId)
+        {
+            if (_context.ApApprovalLimits.Any(a => a.TenantId == tenantId))
+                return;
+
+            var roles = _context.UserRole
+                .Where(r => r.TenantId == tenantId || r.TenantId == 0)
+                .ToList();
+            if (roles.Count == 0)
+                return;
+
+            var defaults = new Dictionary<string, (decimal limit, bool dual)>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Staff"] = (500m, false),
+                ["Supervisor"] = (2500m, false),
+                ["Manager"] = (10000m, true),
+                ["Director"] = (50000m, true),
+                ["Admin"] = (100000m, true),
+                ["Administrator"] = (100000m, true)
+            };
+
+            var now = DateTime.UtcNow;
+            var added = false;
+            foreach (var role in roles)
+            {
+                var name = role.RoleName ?? "";
+                if (!defaults.TryGetValue(name, out var cfg))
+                    continue;
+                if (_context.ApApprovalLimits.Any(a => a.TenantId == tenantId && a.RoleId == role.RoleID && a.IsActive))
+                    continue;
+                _context.ApApprovalLimits.Add(new ApApprovalLimit
+                {
+                    TenantId = tenantId,
+                    RoleId = role.RoleID,
+                    LimitAmount = cfg.limit,
+                    RequiresDualApproval = cfg.dual,
+                    IsActive = true,
+                    CreatedDate = now,
+                    UpdatedDate = now
+                });
+                added = true;
+            }
+            if (added)
+                _context.SaveChanges();
+        }
+
+        private void UpsertPaymentTerms(int tenantId, PaymentTermRequest[] terms, DateTime now)
+        {
+            var existing = _context.PaymentTerms.Where(p => p.TenantId == tenantId).ToList();
+            var keptNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var term in terms)
+            {
+                if (string.IsNullOrWhiteSpace(term.Name) || term.Days < 0)
+                    continue;
+
+                var name = term.Name.Trim();
+                PaymentTerm? row = null;
+                if (term.Id > 0)
+                    row = existing.FirstOrDefault(p => p.Id == term.Id);
+                row ??= existing.FirstOrDefault(p =>
+                    string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+                if (row == null)
+                {
+                    row = new PaymentTerm
+                    {
+                        TenantId = tenantId,
+                        CreatedDate = now
+                    };
+                    _context.PaymentTerms.Add(row);
+                    existing.Add(row);
+                }
+
+                row.Name = name;
+                row.Days = term.Days;
+                row.Description = term.Description?.Trim();
+                row.IsActive = true;
+                row.UpdatedDate = now;
+                keptNames.Add(name);
+            }
+
+            foreach (var row in existing.Where(p => p.Id > 0 && p.IsActive))
+            {
+                if (!keptNames.Contains(row.Name))
+                {
+                    row.IsActive = false;
+                    row.UpdatedDate = now;
+                }
+            }
+        }
+
+        private void UpsertApprovalLimits(int tenantId, ApprovalLimitRequest[] limits, DateTime now)
+        {
+            var existing = _context.ApApprovalLimits.Where(a => a.TenantId == tenantId).ToList();
+            var keepRoleIds = new HashSet<int>();
+
+            foreach (var lim in limits)
+            {
+                var roleId = lim.RoleId;
+                if (roleId <= 0 && !string.IsNullOrWhiteSpace(lim.Role))
+                {
+                    roleId = _context.UserRole
+                        .Where(r => (r.TenantId == tenantId || r.TenantId == 0) &&
+                                    r.RoleName == lim.Role)
+                        .Select(r => r.RoleID)
+                        .FirstOrDefault();
+                }
+                if (roleId <= 0)
+                    continue;
+
+                var row = existing.FirstOrDefault(a => a.RoleId == roleId)
+                    ?? (lim.Id > 0 ? existing.FirstOrDefault(a => a.Id == lim.Id) : null);
+
+                if (row == null)
+                {
+                    row = new ApApprovalLimit
+                    {
+                        TenantId = tenantId,
+                        CreatedDate = now
+                    };
+                    _context.ApApprovalLimits.Add(row);
+                    existing.Add(row);
+                }
+
+                row.RoleId = roleId;
+                row.LimitAmount = lim.Limit;
+                row.RequiresDualApproval = lim.RequiresDualApproval;
+                row.IsActive = true;
+                row.UpdatedDate = now;
+                keepRoleIds.Add(roleId);
+            }
+
+            foreach (var row in existing.Where(a => a.IsActive && a.Id > 0 && !keepRoleIds.Contains(a.RoleId)))
+            {
+                row.IsActive = false;
+                row.UpdatedDate = now;
+            }
+        }
     }
 
     // Request DTOs
@@ -1784,6 +2153,8 @@ namespace CimmpleAPI.Controllers
         public string FiscalYearStart { get; set; }
         public string DefaultCurrency { get; set; }
         public decimal TaxRate { get; set; }
+        public bool GstEnabled { get; set; }
+        public string TaxRegistrationNumber { get; set; }
         public int? DefaultAccountsReceivableAccountId { get; set; }
         public int? DefaultAccountsPayableAccountId { get; set; }
         public int? DefaultRevenueAccountId { get; set; }
@@ -1809,9 +2180,20 @@ namespace CimmpleAPI.Controllers
     public class ApprovalLimitRequest
     {
         public int Id { get; set; }
+        public int RoleId { get; set; }
         public string Role { get; set; }
         public decimal Limit { get; set; }
         public bool RequiresDualApproval { get; set; }
+    }
+
+    public class SendArReminderRequest
+    {
+        public int InvoiceId { get; set; }
+    }
+
+    public class BulkArReminderRequest
+    {
+        public int[]? InvoiceIds { get; set; }
     }
 
     public class AccountingPeriodKeyRequest

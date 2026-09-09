@@ -31,6 +31,9 @@ namespace CimmpleAPI.Data.Models
         public int? createdby { get; set; }
         public DateTime? createdDate { get; set; }
         public bool IsVoided { get; set; }
+
+        /// <summary>Optional FK to PaymentTerm master.</summary>
+        public int? PaymentTermId { get; set; }
     }
 
     public class InvoiceDetail
@@ -88,6 +91,9 @@ namespace CimmpleAPI.Data.Models
         public int? voidedby { get; set; }
         public DateTime? entrydate { get; set; }
         public DateTime? voideddate { get; set; }
+
+        /// <summary>Optional FK to PaymentTerm master.</summary>
+        public int? PaymentTermId { get; set; }
         public string prefixinvoiceno { get; set; }
     }
 

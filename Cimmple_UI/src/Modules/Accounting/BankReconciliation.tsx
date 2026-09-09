@@ -9,7 +9,7 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 const BankReconciliation: React.FC = () => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
   const formatCurrency = (amount: number) => formatCurrencyRaw(Math.abs(amount));
-  const [selectedAccount, setSelectedAccount] = useState<number>(1);
+  const [selectedAccount, setSelectedAccount] = useState<number>(0);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,7 +25,12 @@ const BankReconciliation: React.FC = () => {
 
   useEffect(() => {
     loadBankAccounts();
-    loadTransactions();
+  }, []);
+
+  useEffect(() => {
+    if (selectedAccount > 0) {
+      loadTransactions();
+    }
   }, [selectedAccount, filters]);
 
   const loadBankAccounts = async () => {
@@ -33,15 +38,22 @@ const BankReconciliation: React.FC = () => {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
       const bankData = await BankService.GetBanklist({ tenantid: tenantID });
-      if (bankData) {
+      if (bankData && bankData.length > 0) {
         const transformedAccounts: BankAccount[] = bankData.map(bank => ({
           id: bank.id,
           name: bank.nickName || bank.bankName,
           accountNumber: bank.lastAccountNo || bank.accountNo,
           balance: bank.balance,
-          lastReconciled: '2024-01-01'
+          lastReconciled: bank.lastReconciledDate
+            ? String(bank.lastReconciledDate).slice(0, 10)
+            : ''
         }));
         setAccounts(transformedAccounts);
+        setSelectedAccount((prev) =>
+          prev > 0 && transformedAccounts.some((a) => a.id === prev)
+            ? prev
+            : transformedAccounts[0].id
+        );
       }
     } catch (error) {
       console.error('Error loading bank accounts:', error);
@@ -121,16 +133,13 @@ const BankReconciliation: React.FC = () => {
       const transaction = transactions.find(t => t.id === transactionId);
       if (transaction) {
         await AccountingService.ReconcileBankTransaction(transactionId, !transaction.reconciled);
-        setTransactions(prev =>
-          prev.map(t =>
-            t.id === transactionId ? { ...t, reconciled: !t.reconciled } : t
-          )
-        );
+        await loadTransactions();
+        await loadBankAccounts();
         toast.success('Transaction reconciliation updated');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error reconciling transaction:', error);
-      toast.error('Failed to update reconciliation status');
+      toast.error(error?.response?.data?.error || 'Failed to update reconciliation status');
     }
   };
 
@@ -144,22 +153,44 @@ const BankReconciliation: React.FC = () => {
     try {
       const transactionIds = unreconciled.map(t => t.id);
       await AccountingService.BulkReconcileTransactions(transactionIds);
-      setTransactions(prev =>
-        prev.map(t => ({ ...t, reconciled: true }))
-      );
+      await loadTransactions();
+      await loadBankAccounts();
       toast.success(`${unreconciled.length} transactions reconciled`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error bulk reconciling transactions:', error);
-      toast.error('Failed to reconcile transactions');
+      toast.error(error?.response?.data?.error || 'Failed to reconcile transactions');
     }
   };
 
   const handleImportStatement = () => {
-    toast.info('Bank statement import functionality coming soon');
+    toast.info('Bank statement import is not available yet');
   };
 
   const handleExportReport = () => {
-    toast.success('Reconciliation report exported');
+    // Honest CSV export of currently loaded transactions
+    if (transactions.length === 0) {
+      toast.info('No transactions to export');
+      return;
+    }
+    const header = 'Date,Description,Reference,Amount,Type,Reconciled\n';
+    const rows = transactions.map(t =>
+      [
+        t.date,
+        `"${(t.description || '').replace(/"/g, '""')}"`,
+        t.reference || '',
+        t.amount,
+        t.type,
+        t.reconciled ? 'Yes' : 'No'
+      ].join(',')
+    ).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bank-reconciliation_${selectedAccount}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Reconciliation list exported as CSV');
   };
 
   const selectedAccountData = accounts.find(acc => acc.id === selectedAccount);
@@ -264,7 +295,9 @@ const BankReconciliation: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Last Reconciled</span>
                 <span style={{ fontSize: '0.875rem', color: '#111827' }}>
-                  {formatDate(selectedAccountData.lastReconciled)}
+                  {selectedAccountData.lastReconciled
+                    ? formatDate(selectedAccountData.lastReconciled)
+                    : 'Never'}
                 </span>
               </div>
             </div>
