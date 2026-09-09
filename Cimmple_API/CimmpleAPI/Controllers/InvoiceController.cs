@@ -698,11 +698,18 @@ namespace CimmpleAPI.Controllers
                     Warnings = new List<string>()
                 };
 
-                // Check if invoice is paid
-                if (invoice.PaymentDate.HasValue)
+                // Check if invoice is paid / voided (align with vendor invoice delete)
+                if (invoice.IsVoided)
+                {
+                    impact.BlockingReasons.Add("Invoice is already voided. Cannot delete a voided invoice.");
+                    impact.CanDelete = false;
+                }
+
+                var paidAmount = GetEffectivePaidAmount(invoice);
+                if (paidAmount > 0.009m)
                 {
                     impact.BlockingReasons.Add(
-                        $"Invoice has been paid on {invoice.PaymentDate.Value:yyyy-MM-dd}. Cannot delete paid invoices."
+                        "Invoice has payments recorded. Reverse payments before deleting."
                     );
                     impact.CanDelete = false;
                 }
@@ -710,10 +717,9 @@ namespace CimmpleAPI.Controllers
                 var invoicePostingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
                 var hasPostedGlEntry = _context.JournalEntries
                     .Any(je => je.TenantId == tenantId && je.ReferenceNumber == invoicePostingRef);
-                if (hasPostedGlEntry)
+                if (hasPostedGlEntry && impact.CanDelete)
                 {
-                    impact.BlockingReasons.Add("Invoice has a posted GL entry. Reverse/delete the journal entry first.");
-                    impact.CanDelete = false;
+                    impact.Warnings.Add("Related AR journal entry will be reversed automatically on delete.");
                 }
 
                 // Get invoice details
@@ -865,11 +871,19 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Invoice not found" });
                     }
 
+                    if (invoice.IsVoided)
+                        return BadRequest(new { error = "Cannot delete a voided invoice. It is already reversed in GL." });
+
+                    var paid = GetEffectivePaidAmount(invoice);
+                    if (paid > 0.009m)
+                        return BadRequest(new { error = "Cannot delete a paid or partially paid invoice. Reverse payments first." });
+
                     var invoicePostingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
-                    var hasPostedGlEntry = _context.JournalEntries
-                        .Any(je => je.TenantId == tenantId && je.ReferenceNumber == invoicePostingRef);
-                    if (hasPostedGlEntry)
-                        return BadRequest(new { error = "Cannot delete invoice because a GL entry exists. Reverse/delete the related journal entry first." });
+                    if (!GlWorkflowService.TryReverseJournalByReference(
+                        _context, tenantId, invoicePostingRef, GetUserId(), "CustomerInvoiceDelete", out var reverseError))
+                    {
+                        return BadRequest(new { error = reverseError ?? "Failed to reverse the related journal entry." });
+                    }
 
                     // Get all invoice details for this invoice
                     var invoiceDetails = _context.InvoiceDetail

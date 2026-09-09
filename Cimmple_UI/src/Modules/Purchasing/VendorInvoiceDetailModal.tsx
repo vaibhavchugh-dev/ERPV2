@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faTrash, faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
+import { faTimes, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign, faHashtag, faUser, faClipboardList, faTrash, faExclamationTriangle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoice, RecordVendorPaymentRequest } from '../../Common/Services/VendorInvoiceService';
 import { PdfService } from '../../Common/Services/PdfService';
@@ -159,7 +159,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
           alignItems: 'center'
         }}>
           <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold' }}>
-            Record Payment - {invoice.invoiceNo}
+            Record Vendor Payment - {invoice.invoiceNo}
           </h3>
           <button
             type="button"
@@ -533,9 +533,17 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   };
 
   const handlePayInvoice = () => {
-    if (invoice) {
-      setShowPaymentModal(true);
+    if (!invoice) return;
+    const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+    if (isVoided) {
+      toast.error("Cannot record payment for a voided invoice");
+      return;
     }
+    if (!invoice.isApproved) {
+      toast.error("Invoice must be approved before payment can be recorded");
+      return;
+    }
+    setShowPaymentModal(true);
   };
 
   const handlePrintInvoice = async () => {
@@ -544,6 +552,9 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       return;
     }
 
+    const toastId = toast.info('Generating vendor invoice PDF… this may take a moment.', {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateVendorInvoice(invoice.id);
       const url = window.URL.createObjectURL(blob);
@@ -554,10 +565,18 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success('Vendor invoice PDF generated successfully');
+      toast.update(toastId, {
+        render: 'Vendor invoice PDF generated successfully',
+        type: 'success',
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error('Error generating vendor invoice PDF:', error);
-      toast.error(error.response?.data?.error || 'Failed to generate vendor invoice PDF');
+      toast.update(toastId, {
+        render: error.response?.data?.error || 'Failed to generate vendor invoice PDF',
+        type: 'error',
+        autoClose: 5000,
+      });
     }
   };
 
@@ -637,17 +656,17 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       bottom: 0,
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
       display: 'flex',
-      alignItems: 'center',
       justifyContent: 'center',
+      alignItems: 'center',
       zIndex: 1050,
-      padding: '2rem'
+      padding: '1rem'
     }}>
       <div style={{
         backgroundColor: 'white',
         borderRadius: '0.5rem',
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)',
+        maxWidth: '900px',
         width: '100%',
-        maxWidth: '800px',
         maxHeight: '90vh',
         overflow: 'hidden',
         display: 'flex',
@@ -655,148 +674,70 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       }}>
         {/* Header */}
         <div style={{
+          padding: '1.5rem',
+          borderBottom: '1px solid #e5e7eb',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '1.5rem',
-          borderBottom: '1px solid #e5e7eb',
           backgroundColor: '#f9fafb'
         }}>
           <div>
-            <h2 style={{
-              margin: 0,
-              fontSize: '1.5rem',
-              fontWeight: '600',
-              color: '#111827'
-            }}>
-              <FontAwesomeIcon icon={faFileInvoice} style={{ marginRight: '0.5rem' }} />
-              Invoice {invoice?.invoiceNo}
-            </h2>
-            <p style={{ margin: '0.25rem 0 0 0', color: '#6b7280' }}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold', color: '#111827' }}>
+              <FontAwesomeIcon icon={faFileInvoice} style={{ marginRight: '0.5rem', color: '#3b82f6' }} />
               Invoice Details
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && invoice?.isApproved && (
-              <button
-                onClick={handlePayInvoice}
-                style={{
-                  height: '36px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '0 1rem',
-                  backgroundColor: '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: '500',
-                  boxSizing: 'border-box'
-                }}
-              >
-                <FontAwesomeIcon icon={faCreditCard} style={{ marginRight: '0.5rem' }} />
-                Pay Invoice
-              </button>
+            </h3>
+            {invoice && (
+              <p style={{ margin: '0.25rem 0 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
+                {invoice.invoiceNo} • {invoice.vendorName || 'Vendor'}
+                {invoice.status && (
+                  <span style={{ marginLeft: '1rem' }}>
+                    {getStatusBadge(invoice.status)}
+                  </span>
+                )}
+                {invoice.isApproved && !['paid', 'void', 'approved'].includes((invoice.status || '').toLowerCase()) && (
+                  <span style={{ marginLeft: '0.5rem' }}>
+                    <span className="badge badge-success">Approved</span>
+                  </span>
+                )}
+              </p>
             )}
-            <button
-              onClick={handlePrintInvoice}
-              style={{
-                height: '36px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '0 1rem',
-                backgroundColor: '#6b7280',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                boxSizing: 'border-box'
-              }}
-            >
-              <FontAwesomeIcon icon={faPrint} style={{ marginRight: '0.5rem' }} />
-              Print
-            </button>
-            {invoice?.status === 'Unpaid' && (
-              <button
-                onClick={handleVoidInvoice}
-                style={{
-                  height: '36px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '0 1rem',
-                  backgroundColor: '#ef4444',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: '500',
-                  boxSizing: 'border-box'
-                }}
-              >
-                <FontAwesomeIcon icon={faBan} style={{ marginRight: '0.5rem' }} />
-                Void
-              </button>
-            )}
-            <button
-              onClick={handleDeleteInvoice}
-              style={{
-                height: '36px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '0 1rem',
-                backgroundColor: '#dc2626',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                boxSizing: 'border-box'
-              }}
-            >
-              <FontAwesomeIcon icon={faTrash} style={{ marginRight: '0.5rem' }} />
-              Delete
-            </button>
-            <button
-              onClick={() => onClose()}
-              style={{
-                height: '36px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '0 1rem',
-                backgroundColor: '#f3f4f6',
-                color: '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                boxSizing: 'border-box'
-              }}
-            >
-              Close
-            </button>
           </div>
+          <button
+            onClick={() => onClose()}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '1.25rem',
+              cursor: 'pointer',
+              color: '#6b7280',
+              padding: '0.25rem',
+              borderRadius: '0.25rem'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          >
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
         </div>
 
         {/* Content */}
         <div style={{
           flex: 1,
-          overflowY: 'auto',
+          overflow: 'auto',
           padding: '1.5rem'
         }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '2rem' }}>
               <div>Loading invoice details...</div>
             </div>
-          ) : invoice ? (
-            <>
+          ) : !invoice ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+              Invoice not found
+            </div>
+          ) : (
+            <div>
               {/* Unapproved Warning Alert Banner */}
-              {invoice?.status !== 'Paid' && invoice?.status !== 'Void' && !invoice?.isApproved && (
+              {invoice.status !== 'Paid' && invoice.status !== 'Void' && !invoice.isApproved && (
                 <div style={{
                   backgroundColor: '#fef3c7',
                   border: '1px solid #f59e0b',
@@ -817,266 +758,397 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               {/* Invoice Header Info */}
               <div style={{
                 display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '1rem',
+                marginBottom: '2rem'
+              }}>
+                <div style={{
+                  padding: '1rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <FontAwesomeIcon icon={faHashtag} style={{ marginRight: '0.25rem' }} />
+                    Invoice Number
+                  </label>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                    {invoice.invoiceNo}
+                  </p>
+                </div>
+
+                <div style={{
+                  padding: '1rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <FontAwesomeIcon icon={faCalendar} style={{ marginRight: '0.25rem' }} />
+                    Invoice Date
+                  </label>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                    {formatDate(invoice.invoiceDate)}
+                  </p>
+                </div>
+
+                <div style={{
+                  padding: '1rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <FontAwesomeIcon icon={faCalendar} style={{ marginRight: '0.25rem' }} />
+                    Due Date
+                  </label>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                    {formatDate(invoice.dueDate)}
+                  </p>
+                </div>
+
+                <div style={{
+                  padding: '1rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    <FontAwesomeIcon icon={faDollarSign} style={{ marginRight: '0.25rem' }} />
+                    Total Amount
+                  </label>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '1.25rem', fontWeight: '700', color: '#059669' }}>
+                    {formatCurrency(invoice.totalAmount)}
+                  </p>
+                  {(invoice.paidAmount ?? 0) > 0 && (
+                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: '#6b7280' }}>
+                      Paid {formatCurrency(invoice.paidAmount ?? 0)} · Due{' '}
+                      {formatCurrency(
+                        invoice.balanceDue ??
+                          Math.max(0, invoice.totalAmount - (invoice.paidAmount ?? 0))
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Vendor & Order Information */}
+              <div style={{
+                display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
                 gap: '2rem',
                 marginBottom: '2rem'
               }}>
-                <div>
-                  <h3 style={{
+                <div style={{
+                  padding: '1.5rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <h4 style={{
                     margin: '0 0 1rem 0',
-                    fontSize: '1.125rem',
+                    fontSize: '1rem',
                     fontWeight: '600',
-                    color: '#374151'
+                    color: '#111827',
+                    display: 'flex',
+                    alignItems: 'center'
                   }}>
-                    Invoice Information
-                  </h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <FontAwesomeIcon icon={faFileInvoice} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Invoice #:</span>
-                      <span>{invoice.invoiceNo}</span>
+                    <FontAwesomeIcon icon={faUser} style={{ marginRight: '0.5rem', color: '#3b82f6' }} />
+                    Vendor Information
+                  </h4>
+                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Vendor:</span>
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                        {invoice.vendorName || '—'}
+                      </p>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <FontAwesomeIcon icon={faCalendar} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Invoice Date:</span>
-                      <span>{formatDate(invoice.invoiceDate)}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <FontAwesomeIcon icon={faCalendar} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Due Date:</span>
-                      <span>{formatDate(invoice.dueDate)}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Status:</span>
-                      {getStatusBadge(invoice.status)}
+                    <div>
+                      <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Vendor Code:</span>
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                        {invoice.vendorCode || '—'}
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <h3 style={{
+                <div style={{
+                  padding: '1.5rem',
+                  backgroundColor: '#f9fafb',
+                  borderRadius: '0.5rem',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <h4 style={{
                     margin: '0 0 1rem 0',
-                    fontSize: '1.125rem',
+                    fontSize: '1rem',
                     fontWeight: '600',
-                    color: '#374151'
+                    color: '#111827',
+                    display: 'flex',
+                    alignItems: 'center'
                   }}>
-                    Amounts
-                  </h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Subtotal:</span>
-                      <span>{formatCurrency(invoice.amount)}</span>
+                    <FontAwesomeIcon icon={faClipboardList} style={{ marginRight: '0.5rem', color: '#3b82f6' }} />
+                    Order Information
+                  </h4>
+                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Order:</span>
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                        {invoice.orderId != null ? `Order ${invoice.orderId}` : '—'}
+                      </p>
                     </div>
-                    {(invoice.taxAmount ?? 0) > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Tax:</span>
-                        <span>{formatCurrency(invoice.taxAmount ?? 0)}</span>
-                      </div>
-                    )}
-                    {(invoice.freightCharge ?? 0) > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                        <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Freight:</span>
-                        <span>{formatCurrency(invoice.freightCharge ?? 0)}</span>
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                      <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Total Amount:</span>
-                      <span style={{ fontWeight: '600', fontSize: '1.125rem' }}>{formatCurrency(invoice.totalAmount)}</span>
+                    <div>
+                      <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Payment Method:</span>
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                        {invoice.paymentMethod || 'Not specified'}
+                      </p>
                     </div>
-                    {(invoice.paidAmount ?? 0) > 0 && (
-                      <>
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                          <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                          <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Paid:</span>
-                          <span>{formatCurrency(invoice.paidAmount ?? 0)}</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                          <FontAwesomeIcon icon={faDollarSign} style={{ width: '1rem', marginRight: '0.5rem', color: '#6b7280' }} />
-                          <span style={{ fontWeight: '500', marginRight: '0.5rem' }}>Balance Due:</span>
-                          <span style={{ fontWeight: '600' }}>
-                            {formatCurrency(
-                              invoice.balanceDue ??
-                                Math.max(0, invoice.totalAmount - (invoice.paidAmount ?? 0))
-                            )}
-                          </span>
-                        </div>
-                      </>
-                    )}
+                    <div>
+                      <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Approval:</span>
+                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                        {invoice.isApproved ? 'Approved' : 'Pending approval'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Line Items */}
-              <div>
-                <h3 style={{
+              {/* Invoice Items */}
+              <div style={{ marginBottom: '2rem' }}>
+                <h4 style={{
                   margin: '0 0 1rem 0',
-                  fontSize: '1.125rem',
+                  fontSize: '1rem',
                   fontWeight: '600',
-                  color: '#374151'
+                  color: '#111827',
+                  display: 'flex',
+                  alignItems: 'center'
                 }}>
-                  Line Items
-                </h3>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{
-                    width: '100%',
-                    borderCollapse: 'collapse',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '0.375rem'
-                  }}>
-                    <thead>
-                      <tr style={{ backgroundColor: '#f9fafb' }}>
-                        <th style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'left',
-                          fontWeight: '600',
-                          color: '#374151',
-                          borderBottom: '1px solid #e5e7eb'
-                        }}>Description</th>
-                        <th style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'center',
-                          fontWeight: '600',
-                          color: '#374151',
-                          borderBottom: '1px solid #e5e7eb'
-                        }}>Quantity</th>
-                        <th style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: '600',
-                          color: '#374151',
-                          borderBottom: '1px solid #e5e7eb'
-                        }}>Amount</th>
+                  <FontAwesomeIcon icon={faClipboardList} style={{ marginRight: '0.5rem', color: '#3b82f6' }} />
+                  Invoice Items
+                </h4>
+                <div style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '0.5rem',
+                  overflow: 'hidden'
+                }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead style={{ backgroundColor: '#f9fafb' }}>
+                      <tr>
+                        <th style={{ padding: '0.75rem', textAlign: 'left', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
+                          Description
+                        </th>
+                        <th style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
+                          Qty
+                        </th>
+                        <th style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
+                          Amount
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {invoice.items.map((item, index) => (
-                        <tr key={index} style={{
-                          backgroundColor: index % 2 === 0 ? 'white' : '#f9fafb',
-                          borderBottom: '1px solid #e5e7eb'
-                        }}>
-                          <td style={{
-                            padding: '0.75rem 1rem',
-                            borderRight: '1px solid #e5e7eb'
-                          }}>{item.description}</td>
-                          <td style={{
-                            padding: '0.75rem 1rem',
-                            textAlign: 'center',
-                            borderRight: '1px solid #e5e7eb'
-                          }}>{item.qtyInvoiced}</td>
-                          <td style={{
-                            padding: '0.75rem 1rem',
-                            textAlign: 'right'
-                          }}>{formatCurrency(item.amount)}</td>
+                        <tr key={index} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                          <td style={{ padding: '0.75rem', fontSize: '0.875rem', color: '#111827' }}>
+                            {item.description}
+                          </td>
+                          <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                            {item.qtyInvoiced}
+                          </td>
+                          <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827', fontWeight: '500' }}>
+                            {formatCurrency(item.amount)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot>
-                      <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
-                        <td colSpan={2} style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: '600',
-                          color: '#374151'
-                        }}>Subtotal:</td>
-                        <td style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'right'
-                        }}>{formatCurrency(invoice.amount)}</td>
+                    <tfoot style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                      <tr>
+                        <td colSpan={2} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
+                          Subtotal:
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
+                          {formatCurrency(invoice.amount)}
+                        </td>
                       </tr>
-                      {(invoice.taxAmount ?? 0) > 0 && (
-                        <tr style={{ backgroundColor: '#f9fafb' }}>
-                          <td colSpan={2} style={{
-                            padding: '0.5rem 1rem',
-                            textAlign: 'right',
-                            fontWeight: '500',
-                            color: '#374151'
-                          }}>Tax:</td>
-                          <td style={{
-                            padding: '0.5rem 1rem',
-                            textAlign: 'right'
-                          }}>{formatCurrency(invoice.taxAmount ?? 0)}</td>
-                        </tr>
+                      {((invoice.taxAmount ?? 0) > 0 || (invoice.freightCharge ?? 0) > 0) && (
+                        <>
+                          {(invoice.taxAmount ?? 0) > 0 && (
+                            <tr>
+                              <td colSpan={2} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                                Tax:
+                              </td>
+                              <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                                {formatCurrency(invoice.taxAmount ?? 0)}
+                              </td>
+                            </tr>
+                          )}
+                          {(invoice.freightCharge ?? 0) > 0 && (
+                            <tr>
+                              <td colSpan={2} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                                Freight:
+                              </td>
+                              <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                                {formatCurrency(invoice.freightCharge ?? 0)}
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       )}
-                      {(invoice.freightCharge ?? 0) > 0 && (
-                        <tr style={{ backgroundColor: '#f9fafb' }}>
-                          <td colSpan={2} style={{
-                            padding: '0.5rem 1rem',
-                            textAlign: 'right',
-                            fontWeight: '500',
-                            color: '#374151'
-                          }}>Freight:</td>
-                          <td style={{
-                            padding: '0.5rem 1rem',
-                            textAlign: 'right'
-                          }}>{formatCurrency(invoice.freightCharge ?? 0)}</td>
-                        </tr>
-                      )}
-                      <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #d1d5db' }}>
-                        <td colSpan={2} style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: '600',
-                          color: '#374151'
-                        }}>Total Amount:</td>
-                        <td style={{
-                          padding: '0.75rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: '600',
-                          color: '#111827'
-                        }}>{formatCurrency(invoice.totalAmount)}</td>
+                      <tr style={{ borderTop: '1px solid #e5e7eb' }}>
+                        <td colSpan={2} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '700', color: '#111827' }}>
+                          Total:
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '700', color: '#059669' }}>
+                          {formatCurrency(invoice.totalAmount)}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               </div>
-            </>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
-              Invoice not found or failed to load.
             </div>
           )}
         </div>
-      </div>
 
-      {/* Payment Modal */}
-      {showPaymentModal && invoice && (
-        <PaymentModal
-          invoice={{
-            id: invoice.id,
-            invoiceNo: invoice.invoiceNo,
-            vendorName: invoice.vendorName || '',
-            vendorCode: invoice.vendorCode || '',
-            orderNumber: `Order ${invoice.orderId}`,
-            invoiceDate: invoice.invoiceDate,
-            dueDate: invoice.dueDate,
-            amount: invoice.amount,
-            totalAmount: invoice.totalAmount,
-            paidAmount: invoice.paidAmount,
-            balanceDue: invoice.balanceDue,
-            status: invoice.status,
-            paymentMethod: invoice.paymentMethod
+        {/* Footer */}
+        {invoice && (
+          <div style={{
+            padding: '1rem 1.5rem',
+            borderTop: '1px solid #e5e7eb',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            backgroundColor: '#f9fafb'
+          }}>
+            <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+              Invoice {invoice.invoiceNo} • {invoice.items.length} item{invoice.items.length !== 1 ? 's' : ''} • {formatCurrency(invoice.totalAmount)}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {(() => {
+                const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
+                const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
+
+                if (isPaid || isVoided || !invoice.isApproved) return null;
+
+                return (
+                  <button
+                    onClick={handlePayInvoice}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '0.375rem',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: '500',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCreditCard} />
+                    Record Payment
+                  </button>
+                );
+              })()}
+              <button
+                onClick={handlePrintInvoice}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#6b7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <FontAwesomeIcon icon={faPrint} />
+                Print
+              </button>
+              {invoice.status === 'Unpaid' && (
+                <button
+                  onClick={handleVoidInvoice}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <FontAwesomeIcon icon={faBan} />
+                  Void
+                </button>
+              )}
+              <button
+                onClick={handleDeleteInvoice}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.375rem',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: '500',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <FontAwesomeIcon icon={faTrash} />
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Modal */}
+        {showPaymentModal && invoice && (
+          <PaymentModal
+            invoice={{
+              id: invoice.id,
+              invoiceNo: invoice.invoiceNo,
+              vendorName: invoice.vendorName || '',
+              vendorCode: invoice.vendorCode || '',
+              orderNumber: `Order ${invoice.orderId}`,
+              invoiceDate: invoice.invoiceDate,
+              dueDate: invoice.dueDate,
+              amount: invoice.amount,
+              totalAmount: invoice.totalAmount,
+              paidAmount: invoice.paidAmount,
+              balanceDue: invoice.balanceDue,
+              status: invoice.status,
+              paymentMethod: invoice.paymentMethod
+            }}
+            onClose={() => setShowPaymentModal(false)}
+            onPaymentComplete={handlePaymentComplete}
+          />
+        )}
+
+        {/* Deletion Impact Dialog */}
+        <DeletionImpactDialog
+          isOpen={showDeletionDialog}
+          entityName={`Vendor Invoice #${invoice?.invoiceNo || ''}`}
+          impact={deletionImpact}
+          onConfirm={confirmDeletion}
+          onCancel={() => {
+            setShowDeletionDialog(false);
+            setDeletionImpact(null);
           }}
-          onClose={() => setShowPaymentModal(false)}
-          onPaymentComplete={handlePaymentComplete}
+          isLoading={loading}
         />
-      )}
-
-      {/* Deletion Impact Dialog */}
-      <DeletionImpactDialog
-        isOpen={showDeletionDialog}
-        entityName={`Vendor Invoice #${invoice?.invoiceNo || ''}`}
-        impact={deletionImpact}
-        onConfirm={confirmDeletion}
-        onCancel={() => {
-          setShowDeletionDialog(false);
-          setDeletionImpact(null);
-        }}
-        isLoading={loading}
-      />
+      </div>
     </div>
   );
 };
