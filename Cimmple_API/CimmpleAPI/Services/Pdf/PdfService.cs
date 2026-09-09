@@ -34,12 +34,12 @@ namespace CimmpleAPI.Services.Pdf
             return stream.ToArray();
         }
 
-        public byte[] GenerateInvoicePdf(PdfDocumentData data, string invoiceNumber, string invoiceDate, string dueDate, string orderNumber, decimal subtotal, decimal? taxAmount = null, decimal? shippingCharge = null)
+        public byte[] GenerateInvoicePdf(PdfDocumentData data, string invoiceNumber, string invoiceDate, string dueDate, string orderNumber, decimal subtotal, decimal? taxAmount = null, decimal? shippingCharge = null, decimal? otherCharge = null)
         {
             QuestPDF.Settings.License = LicenseType.Community;
             QuestPDF.Settings.EnableDebugging = true;
 
-            var template = new InvoiceTemplate(data, invoiceNumber, invoiceDate, dueDate, orderNumber, subtotal, taxAmount, shippingCharge);
+            var template = new InvoiceTemplate(data, invoiceNumber, invoiceDate, dueDate, orderNumber, subtotal, taxAmount, shippingCharge, otherCharge);
             var document = template.Compose();
 
             using var stream = new MemoryStream();

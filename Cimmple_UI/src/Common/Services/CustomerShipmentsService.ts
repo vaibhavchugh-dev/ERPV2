@@ -38,6 +38,8 @@ export interface CustomerShipmentDetail {
     partName: string;
     qtyShipped: number;
     unitPrice: number;
+    discount: number;
+    discountType?: string;
     lineTotal: number;
   }>;
   totalAmount: number;

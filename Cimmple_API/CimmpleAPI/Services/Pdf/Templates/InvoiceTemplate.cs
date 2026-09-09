@@ -12,9 +12,10 @@ namespace CimmpleAPI.Services.Pdf.Templates
         private readonly string OrderNumber;
         private readonly decimal? TaxAmount;
         private readonly decimal? ShippingCharge;
+        private readonly decimal? OtherCharge;
         private readonly decimal Subtotal;
 
-        public InvoiceTemplate(PdfDocumentData data, string invoiceNumber, string invoiceDate, string dueDate, string orderNumber, decimal subtotal, decimal? taxAmount = null, decimal? shippingCharge = null) 
+        public InvoiceTemplate(PdfDocumentData data, string invoiceNumber, string invoiceDate, string dueDate, string orderNumber, decimal subtotal, decimal? taxAmount = null, decimal? shippingCharge = null, decimal? otherCharge = null) 
             : base(data)
         {
             InvoiceNumber = invoiceNumber;
@@ -24,6 +25,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
             Subtotal = subtotal;
             TaxAmount = taxAmount;
             ShippingCharge = shippingCharge;
+            OtherCharge = otherCharge;
         }
 
         public override Document Compose()
@@ -114,9 +116,22 @@ namespace CimmpleAPI.Services.Pdf.Templates
                         });
                     }
 
+                    if (OtherCharge.HasValue && OtherCharge.Value > 0)
+                    {
+                        totalsCol.Item().PaddingTop(4).Row(row =>
+                        {
+                            row.RelativeItem().Text("Other Charges:")
+                                .FontSize(10)
+                                .FontColor(MediumText);
+                            row.AutoItem().Text(FormatCurrency(OtherCharge.Value))
+                                .FontSize(10)
+                                .FontColor(DarkText);
+                        });
+                    }
+
                     totalsCol.Item().PaddingTop(6).Height(1).Background(BorderColor);
 
-                    var total = Subtotal + (TaxAmount ?? 0) + (ShippingCharge ?? 0);
+                    var total = Subtotal + (TaxAmount ?? 0) + (ShippingCharge ?? 0) + (OtherCharge ?? 0);
                     totalsCol.Item().PaddingTop(6).Row(row =>
                     {
                         row.RelativeItem().Text("TOTAL:")

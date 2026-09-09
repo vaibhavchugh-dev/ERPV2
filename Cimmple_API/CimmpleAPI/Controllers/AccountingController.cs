@@ -233,13 +233,21 @@ namespace CimmpleAPI.Controllers
                 recentTransactions.AddRange(recentInvoices!);
 
                 // 4. Recent open vendor invoices (skip paid/voided so amounts are not duplicated with payments)
-                var recentVendorInvoices = _context.VendorInvoiceMaster
+                var recentVendorInvoicesQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                   vim.voideddate == null &&
                                   vim.isPaid != 1 &&
                                   vim.isPaid != 2 &&
                                   vim.InvoiceDate >= rangeStart &&
-                                  vim.InvoiceDate <= rangeEnd)
+                                  vim.InvoiceDate <= rangeEnd);
+
+                if (filterLocationId.HasValue)
+                {
+                    recentVendorInvoicesQuery = recentVendorInvoicesQuery
+                        .Where(vim => vim.locationId == filterLocationId.Value);
+                }
+
+                var recentVendorInvoices = recentVendorInvoicesQuery
                     .OrderByDescending(vim => vim.InvoiceDate)
                     .ThenByDescending(vim => vim.Id)
                     .Take(safeLimit)

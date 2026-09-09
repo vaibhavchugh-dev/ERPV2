@@ -223,7 +223,7 @@ namespace CimmpleAPI.Controllers
             {
                 var tenantId = GetTenantId();
 
-                var shipment = _context.Shipping
+                var shipmentHeader = _context.Shipping
                     .Where(s => s.Id == shipmentId && s.TenantId == tenantId)
                     .Join(_context.CustomerOrder,
                         s => s.OrderId,
@@ -243,36 +243,62 @@ namespace CimmpleAPI.Controllers
                         boxes = so.Shipment.TotalBoxNo,
                         packingType = so.Shipment.PackingType,
                         terms = so.Shipment.Terms,
-                        notes = so.Shipment.Notes ?? "",
-                        items = _context.ShippingDetails
-                            .Where(sd => sd.ShipmentId == so.Shipment.Id)
-                            .Join(_context.CustomerOrderDetails,
-                                sd => sd.OrderDetailID,
-                                od => od.ID,
-                                (sd, od) => new
-                                {
-                                    orderDetailId = od.ID,
-                                    partNo = od.PartNo,
-                                    partName = od.partname,
-                                    qtyShipped = sd.ShippedQty,
-                                    unitPrice = od.UnitPrice,
-                                    lineTotal = sd.ShippedQty * od.UnitPrice
-                                })
-                            .ToList(),
-                        totalAmount = _context.ShippingDetails
-                            .Where(sd => sd.ShipmentId == so.Shipment.Id)
-                            .Join(_context.CustomerOrderDetails,
-                                sd => sd.OrderDetailID,
-                                od => od.ID,
-                                (sd, od) => sd.ShippedQty * od.UnitPrice)
-                            .Sum()
+                        notes = so.Shipment.Notes ?? ""
                     })
                     .FirstOrDefault();
 
-                if (shipment == null)
+                if (shipmentHeader == null)
                 {
                     return NotFound(new { error = "Shipment not found" });
                 }
+
+                var rawItems = _context.ShippingDetails
+                    .Where(sd => sd.ShipmentId == shipmentHeader.id)
+                    .Join(_context.CustomerOrderDetails,
+                        sd => sd.OrderDetailID,
+                        od => od.ID,
+                        (sd, od) => new
+                        {
+                            orderDetailId = od.ID,
+                            partNo = od.PartNo,
+                            partName = od.partname,
+                            qtyShipped = sd.ShippedQty,
+                            unitPrice = od.UnitPrice,
+                            discount = od.Discount,
+                            discountType = od.DiscountType
+                        })
+                    .ToList();
+
+                var items = rawItems.Select(x => new
+                {
+                    x.orderDetailId,
+                    x.partNo,
+                    x.partName,
+                    x.qtyShipped,
+                    x.unitPrice,
+                    discount = x.discount,
+                    discountType = string.IsNullOrWhiteSpace(x.discountType) ? "Percent" : x.discountType,
+                    lineTotal = ComputeLineNet(x.qtyShipped, x.unitPrice, x.discount, x.discountType)
+                }).ToList();
+
+                var shipment = new
+                {
+                    shipmentHeader.id,
+                    shipmentHeader.shipmentNo,
+                    shipmentHeader.orderId,
+                    shipmentHeader.orderNumber,
+                    shipmentHeader.customerName,
+                    shipmentHeader.customerCode,
+                    shipmentHeader.courier,
+                    shipmentHeader.trackingNumber,
+                    shipmentHeader.shipmentDate,
+                    shipmentHeader.boxes,
+                    shipmentHeader.packingType,
+                    shipmentHeader.terms,
+                    shipmentHeader.notes,
+                    items,
+                    totalAmount = items.Sum(i => i.lineTotal)
+                };
 
                 return Ok(new { result = shipment });
             }
@@ -280,6 +306,19 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private static decimal ComputeLineNet(int qty, decimal unitPrice, decimal discount, string? discountType)
+        {
+            var subtotal = qty * unitPrice;
+            if (subtotal <= 0)
+                return 0;
+
+            var discountAmount = string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase)
+                ? Math.Min(Math.Max(discount, 0), subtotal)
+                : subtotal * (Math.Min(Math.Max(discount, 0), 100m) / 100m);
+
+            return Math.Round(Math.Max(0, subtotal - discountAmount), 2);
         }
 
         [HttpGet("GetShipments/{orderId}")]
