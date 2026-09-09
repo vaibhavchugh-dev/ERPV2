@@ -36,6 +36,9 @@ namespace CimmpleAPI.Data.Models
         public string NickName { get; set; }
         public bool? ispayrollDefault { get; set; }
         public bool? isprimary { get; set; }
+
+        /// <summary>Date of last completed bank reconciliation for this account.</summary>
+        public DateTime? LastReconciledDate { get; set; }
     }
 
     public class BankCOAMapping

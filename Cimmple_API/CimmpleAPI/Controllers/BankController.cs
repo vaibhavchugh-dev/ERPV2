@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -28,6 +29,8 @@ namespace CimmpleAPI.Controllers
                 if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
                     return forbid!;
 
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+
                 var query = _context.BankMaster.Where(b => b.TenantId == tenantid);
                 if (filterLocationId.HasValue)
                 {
@@ -40,13 +43,15 @@ namespace CimmpleAPI.Controllers
                         id = b.Id,
                         bankName = b.BankName,
                         accountNo = b.lastAccountNo ?? "XXXX",
+                        lastAccountNo = b.lastAccountNo,
                         accountType = b.AccountType,
                         phone = b.Phone,
                         email = b.Email,
                         status = b.status ?? "Active",
                         balance = b.Balance,
                         routingNumber = b.RoutingNumber,
-                        nickName = b.NickName
+                        nickName = b.NickName,
+                        lastReconciledDate = b.LastReconciledDate
                     })
                     .ToList();
 
@@ -324,7 +329,7 @@ namespace CimmpleAPI.Controllers
                         {
                             Id = t.TransactionID,
                             Name = $"Transaction #{t.TransactionID}",
-                            DeleteEndpoint = $"/api/Transaction/DeleteTransaction?transactionId={t.TransactionID}"
+                            DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={t.TransactionID}"
                         }).ToList()
                     });
                 }

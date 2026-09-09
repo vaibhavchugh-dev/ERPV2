@@ -26,6 +26,7 @@ export interface BankMaster {
   TenantId: number;
   locationId: number;
   sharingid: number;
+  lastReconciledDate?: string | null;
 }
 
 export interface BankMasterReq {

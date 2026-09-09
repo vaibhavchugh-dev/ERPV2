@@ -277,13 +277,38 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Create vendor invoice header
+                    AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                    var invoiceDate = request.InvoiceDate ?? DateTime.Now;
+                    DateTime dueDate;
+                    int? paymentTermId = null;
+                    if (request.PaymentTermId.HasValue && request.PaymentTermId.Value > 0)
+                    {
+                        var term = _context.PaymentTerms.AsNoTracking()
+                            .FirstOrDefault(p => p.Id == request.PaymentTermId.Value &&
+                                                 p.TenantId == tenantId && p.IsActive);
+                        if (term != null)
+                        {
+                            paymentTermId = term.Id;
+                            dueDate = request.DueDate ?? invoiceDate.Date.AddDays(term.Days);
+                        }
+                        else
+                        {
+                            dueDate = request.DueDate ?? invoiceDate.Date.AddDays(30);
+                        }
+                    }
+                    else
+                    {
+                        dueDate = request.DueDate ?? invoiceDate.Date.AddDays(30);
+                    }
+
                     var invoice = new VendorInvoiceMaster
                     {
                         TenantId = tenantId,
                         InvoiceNo = invoiceNumber.ToString(),
                         prefixinvoiceno = $"VINV-{DateTime.Now.Year}-{invoiceNumber:D4}",
-                        InvoiceDate = request.InvoiceDate ?? DateTime.Now,
-                        DueDate = request.DueDate ?? DateTime.Now.AddDays(30),
+                        InvoiceDate = invoiceDate,
+                        DueDate = dueDate,
+                        PaymentTermId = paymentTermId,
                         AccountingPeriod = $"{DateTime.Now.Year}{DateTime.Now.Month:D2}",
                         VendorCode = request.VendorCode,
                         VendorName = request.VendorName,
@@ -581,6 +606,27 @@ namespace CimmpleAPI.Controllers
 
                 if (invoice == null)
                     return NotFound(new { error = "Vendor invoice not found" });
+
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var userId = GetUserId();
+                if (userId.HasValue)
+                {
+                    var user = _context.UserDetails.AsNoTracking()
+                        .FirstOrDefault(u => u.User_UniqueID == userId.Value && u.TenantID == tenantId);
+                    if (user?.Role is int roleId && roleId > 0)
+                    {
+                        var limit = _context.ApApprovalLimits
+                            .AsNoTracking()
+                            .FirstOrDefault(a => a.TenantId == tenantId && a.RoleId == roleId && a.IsActive);
+                        if (limit != null && !AccountingRules.CanApproveInvoice(invoice.TotalAmount, limit.LimitAmount))
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Invoice total {invoice.TotalAmount:0.00} exceeds your approval limit of {limit.LimitAmount:0.00}."
+                            });
+                        }
+                    }
+                }
 
                 invoice.Approved = true;
 
@@ -977,6 +1023,7 @@ namespace CimmpleAPI.Controllers
         public int? LocationId { get; set; }
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
+        public int? PaymentTermId { get; set; }
         public string Notes { get; set; }
         public decimal? TaxRate { get; set; }
         public decimal? TaxAmount { get; set; }

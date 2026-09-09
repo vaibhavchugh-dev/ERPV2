@@ -629,7 +629,7 @@ namespace CimmpleAPI.Controllers
                         {
                             Id = tc.Transid,
                             Name = $"Transaction #{tc.Transid}",
-                            DeleteEndpoint = $"/api/Transaction/DeleteTransaction?transactionId={tc.Transid}"
+                            DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={tc.Transid}"
                         }).ToList()
                     });
                 }

@@ -149,6 +149,9 @@ namespace CimmpleAPI.Data
         public DbSet<GlAccountingPeriodLock> GlAccountingPeriodLocks { get; set; }
         public DbSet<GlAuditEvent> GlAuditEvents { get; set; }
         public DbSet<AccountingDefaults> AccountingDefaults { get; set; }
+        public DbSet<PaymentTerm> PaymentTerms { get; set; }
+        public DbSet<ApApprovalLimit> ApApprovalLimits { get; set; }
+        public DbSet<ArReminderLog> ArReminderLogs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -694,6 +697,34 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.FiscalYearStart).HasMaxLength(10);
                 entity.Property(e => e.DefaultCurrency).HasMaxLength(10);
                 entity.Property(e => e.TaxRate).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.TaxRegistrationNumber).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<PaymentTerm>(entity =>
+            {
+                entity.ToTable("PaymentTerm");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Name).HasMaxLength(100);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.Name });
+            });
+
+            modelBuilder.Entity<ApApprovalLimit>(entity =>
+            {
+                entity.ToTable("ApApprovalLimit");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.LimitAmount).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.TenantId, e.RoleId });
+            });
+
+            modelBuilder.Entity<ArReminderLog>(entity =>
+            {
+                entity.ToTable("ArReminderLog");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ToEmail).HasMaxLength(255);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.Error).HasMaxLength(2000);
+                entity.HasIndex(e => new { e.TenantId, e.InvoiceId });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>

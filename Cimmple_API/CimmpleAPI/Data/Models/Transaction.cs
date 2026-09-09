@@ -24,6 +24,11 @@ namespace CimmpleAPI.Data.Models
         public int? contractid { get; set; }
         public bool? approved { get; set; }
         public int? isCustomer { get; set; }
+
+        /// <summary>Cleared against bank statement during reconciliation.</summary>
+        public bool IsReconciled { get; set; }
+
+        public DateTime? ReconciledUtc { get; set; }
     }
 
     public class Deposits
