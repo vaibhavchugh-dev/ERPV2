@@ -513,6 +513,9 @@ const CustomerInvoices: React.FC = () => {
       return;
     }
 
+    const toastId = toast.info("Generating invoice PDF… this may take a moment.", {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateInvoice(invoice.id);
       const url = window.URL.createObjectURL(blob);
@@ -523,10 +526,18 @@ const CustomerInvoices: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success("Invoice PDF generated successfully");
+      toast.update(toastId, {
+        render: "Invoice PDF generated successfully",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error("Error generating invoice PDF:", error);
-      toast.error(error.response?.data?.error || "Failed to generate invoice PDF");
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate invoice PDF",
+        type: "error",
+        autoClose: 5000,
+      });
     }
   };
 

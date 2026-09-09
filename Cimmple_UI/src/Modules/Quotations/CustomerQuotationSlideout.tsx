@@ -903,7 +903,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       setIsStateChanged(false);
     } catch (error: any) {
       console.error("Error saving quotation:", error);
-      toast.error(`Error saving quotation: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving quotation: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -1473,7 +1473,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error converting quotation to order:", error);
-      toast.error(`Error converting quotation to order: ${error.message || "Unknown error"}`);
+      toast.error(`Error converting quotation to order: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }

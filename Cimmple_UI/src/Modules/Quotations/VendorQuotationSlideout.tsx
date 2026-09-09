@@ -29,6 +29,11 @@ import { RawMaterial } from "../../Common/Services/InventoryService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import {
+  getPendingFiles,
+  revokeLocalAttachmentUrls,
+} from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
 import { toDateOnlyApiString, toHtmlDateInputValue } from "../../Common/Utils/Formatting";
@@ -80,12 +85,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
-  const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<number[]>([]);
   const [showMultiVendorDialog, setShowMultiVendorDialog] = useState(false);
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<number>>(new Set());
   const [alreadySentVendorIds, setAlreadySentVendorIds] = useState<Set<number>>(new Set());
   const [includeAttachments, setIncludeAttachments] = useState(true);
-  const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
@@ -339,19 +344,22 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           }
         }
         if (result.Attachments && Array.isArray(result.Attachments) && result.Attachments.length > 0) {
-          const cleanedAttachments = result.Attachments.map(a => ({
+          const cleanedAttachments: ModuleAttachment[] = result.Attachments.map((a: any) => ({
             id: a.id || 0,
             name: a.name || "",
             size: a.size || 0,
-            fileUrl: a.fileUrl || ""
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+            pageNo: a.pageNo || "0",
+            createdBy: a.createdBy || 0,
+            isPending: false,
           }));
           setAttachments(cleanedAttachments);
-          const maxId = Math.max(...cleanedAttachments.map(a => a.id), 0);
-          setAttachmentIdCounter(maxId + 1);
         } else {
           setAttachments([]);
-          setAttachmentIdCounter(1);
         }
+        setDeletedAttachmentIds([]);
         if (result.Comments && Array.isArray(result.Comments) && result.Comments.length > 0) {
           const cleanedComments = result.Comments.map(c => ({
             id: c.id || 0,
@@ -403,6 +411,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const initializeNewQuotation = () => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const today = new Date().toISOString().split('T')[0];
+
+    setAttachments([]);
+    setDeletedAttachmentIds([]);
 
     setFormData(prev => ({
       ...prev,
@@ -863,12 +874,16 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             Received: "No", // Required field - default to "No"
           };
         }),
-        Attachments: (attachments || []).map(a => ({
-          id: 0, // Reset ID for new attachments
-          name: a.name || "",
-          size: a.size || 0,
-          fileUrl: a.fileUrl || ""
-        })), // Copy attachments from state, reset IDs for new order
+        Attachments: (attachments || [])
+          .filter((a) => !a.isPending)
+          .map((a) => ({
+            id: 0,
+            name: a.name || "",
+            size: a.size || 0,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+          })), // Copy attachment metadata refs; blobs remain on VQ until convert copies them
         Comments: [], // Don't copy comments
       };
 
@@ -920,7 +935,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error converting quotation to vendor order:", error);
-      toast.error(`Error converting quotation: ${error.message || "Unknown error"}`);
+      toast.error(`Error converting quotation: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -1170,6 +1185,20 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     setLoading(true);
     setSavingAction(mode);
     try {
+      const pendingFiles = getPendingFiles(attachments);
+      const persistedAttachments = (attachments || [])
+        .filter((a) => !a.isPending)
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          fileUrl: a.fileUrl || a.uploadFile || "",
+          fileUniqueno: a.fileUniqueno || 0,
+          uploadFile: a.uploadFile || a.fileUrl || "",
+          pageNo: a.pageNo || "0",
+          createdBy: a.createdBy || 0,
+        }));
+
       const dataToSave: VendorQuotationMasterReq = {
         ...formData,
         Status: status,
@@ -1179,11 +1208,20 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           )
         ),
         Details: filledDetails,
-        Attachments: attachments || [],
+        Attachments: persistedAttachments,
+        DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments || [],
       };
 
       const result = await QuotationService.SaveVendorQuotation(dataToSave);
+
+      const savedId = result.id > 0 ? result.id : formData.OrderID;
+      if (savedId > 0 && pendingFiles.length > 0) {
+        await QuotationService.VendorQuotationSaveFile(savedId, pendingFiles);
+      }
+
+      revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+      setDeletedAttachmentIds([]);
 
       if (mode === "draft") {
         toast.success(quotationId > 0 ? "Quotation saved as draft" : "Quotation created as draft");
@@ -1194,10 +1232,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       }
       setIsStateChanged(false);
 
-      if (formData.OrderID === 0 && result.id > 0) {
+      if (formData.OrderID === 0 && savedId > 0) {
         setFormData((prev) => ({
           ...prev,
-          OrderID: result.id,
+          OrderID: savedId,
           Status: status,
         }));
       }
@@ -2130,97 +2168,44 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             </div>
 
             {/* Attachments Section */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Attachments</h3>
-              
-              {attachments.length === 0 ? (
-                <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.875rem" }}>No attachments added</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
-                  {attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "0.75rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1 }}>
-                        <span style={{ fontSize: "1.25rem" }}>📎</span>
-                        <div>
-                          <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{attachment.name}</div>
-                          <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {(attachment.size / 1024).toFixed(2)} KB
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
-                          setIsStateChanged(true);
-                        }}
-                        style={{
-                          padding: "0.25rem 0.5rem",
-                          backgroundColor: "#ef4444",
-                          color: "white",
-                          border: "none",
-                          borderRadius: "0.25rem",
-                          cursor: "pointer",
-                          fontSize: "0.75rem",
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#6366f1",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.375rem",
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="file"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    files.forEach((file) => {
-                      setAttachmentIdCounter((prev) => {
-                        const newId = prev;
-                        const newAttachment = {
-                          id: newId,
-                          name: file.name,
-                          size: file.size,
-                        };
-                        setAttachments((prevAttachments) => [...prevAttachments, newAttachment]);
-                        setIsStateChanged(true);
-                        return newId + 1;
-                      });
-                    });
-                  }}
-                />
-                + Add Attachment
-              </label>
-            </div>
+            <AttachmentUploadSection
+              attachments={attachments}
+              orderId={formData.OrderID}
+              disabled={loading}
+              deferUploadUntilSave
+              onAttachmentsChange={(next) => {
+                setAttachments(next);
+                setIsStateChanged(true);
+              }}
+              onDeleteAttachment={async (attachment) => {
+                if (attachment.isPending || !attachment.id || attachment.id <= 0 || !attachment.fileUniqueno) {
+                  if (attachment.localUrl) {
+                    URL.revokeObjectURL(attachment.localUrl);
+                  }
+                  setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                  setIsStateChanged(true);
+                  return;
+                }
+
+                setDeletedAttachmentIds((prev) =>
+                  prev.includes(attachment.id) ? prev : [...prev, attachment.id]
+                );
+                setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                setIsStateChanged(true);
+                toast.info("Attachment will be removed when you save the quotation");
+              }}
+              onDownloadAttachment={async (attachment) => {
+                if (!attachment.fileUniqueno || formData.OrderID <= 0) {
+                  throw new Error("Attachment is not available for download yet");
+                }
+                await QuotationService.DownloadVendorQuotationAttachment({
+                  orderId: formData.OrderID,
+                  fileUniqueno: attachment.fileUniqueno,
+                  name: attachment.name,
+                  uploadFile: attachment.uploadFile,
+                });
+              }}
+            />
 
             {/* Comments Section */}
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>

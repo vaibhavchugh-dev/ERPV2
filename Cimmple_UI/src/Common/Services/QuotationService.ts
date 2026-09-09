@@ -170,6 +170,7 @@ export interface VendorQuotationMasterReq {
   AdditionalNotes?: string;
   Details: QuotationDetailReq[];
   Attachments?: QuotationAttachment[];
+  DeletedAttachmentIds?: number[];
   Comments?: QuotationComment[];
 }
 
@@ -663,6 +664,124 @@ export class QuotationService {
     }).then(() => undefined);
   };
 
+  public static VendorQuotationSaveFile = async (
+    orderId: number,
+    files: File[]
+  ): Promise<QuotationAttachment[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const formData = new FormData();
+    appendFilesToFormData(formData, files);
+    formData.append(
+      "formField",
+      JSON.stringify({
+        OrderId: orderId,
+        OrderID: orderId,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("orderId", String(orderId));
+    formData.append("tenantId", String(tenantID));
+
+    const url = `/Quotation/VendorQuotationSaveFile`;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
+      const attachments = result?.attachments || [];
+      return attachments.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || "0",
+        createdBy: a.createdBy || a.CreatedBy || 0,
+      }));
+    });
+  };
+
+  public static VendorQuotationGetFile = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    signal?: AbortSignal;
+  }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/VendorQuotationGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+      signal: request.signal,
+    }).then((response: any) => {
+      const blob: Blob = response.data;
+      const headerType =
+        (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) ||
+        "";
+      const contentType =
+        (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+        blob.type ||
+        "application/octet-stream";
+      const fileNameHeader =
+        response.headers?.["x-file-name"] || response.headers?.["X-File-Name"] || undefined;
+      return { blob, contentType, fileName: fileNameHeader };
+    });
+  };
+
+  public static DownloadVendorQuotationAttachment = async (request: {
+    orderId: number;
+    fileUniqueno: number;
+    name: string;
+    uploadFile?: string;
+    cachedBlobUrl?: string;
+  }): Promise<void> => {
+    if (request.cachedBlobUrl) {
+      const link = document.createElement("a");
+      link.href = request.cachedBlobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      return;
+    }
+
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/VendorQuotationGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: true,
+      },
+      responseType: "blob",
+    }).then((response: any) => {
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
+    });
+  };
+
   public static CheckQuotationDeletionImpact = async (
     quotationId: number
   ): Promise<any> => {
@@ -938,7 +1057,16 @@ export class QuotationService {
         ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
         AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
         Details: details,
-        Attachments: result.Attachments || result.attachments || [],
+        Attachments: (result.Attachments || result.attachments || []).map((a: any) => ({
+          id: a.id || a.Id || 0,
+          name: a.name || a.Name || "",
+          size: a.size || a.Size || 0,
+          fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+          fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+          uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+          pageNo: a.pageNo || a.PageNo || "0",
+          createdBy: a.createdBy || a.CreatedBy || 0,
+        })),
         Comments: result.Comments || result.comments || [],
       };
     });
@@ -1011,10 +1139,17 @@ export class QuotationService {
     request.UserToken = storage?.userToken || 0;
 
     const url = `/Quotation/ConvertVendorQuotationToOrder?quotationId=${quotationId}`;
-    return Instense.post(url, request).then((response) => {
-      const result = response.data.result;
-      return result;
-    });
+    try {
+      const response = await Instense.post(url, request);
+      return response.data.result;
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Failed to convert vendor quotation to order";
+      throw new Error(message);
+    }
   };
 
   public static DuplicateVendorQuotationForVendors = async (
