@@ -3,6 +3,7 @@ import { toast } from "react-toastify";
 import { faCheckCircle, faEnvelope, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock, faBan } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { InvoiceService, InvoiceSummary } from "../../Common/Services/InvoiceService";
+import { AccountingService } from "../../Common/Services/AccountingService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { isEmailNotificationsEnabled } from "../../Common/Utils/settingsRuntime";
 import CustomerInvoiceDetailModal from "../Orders/CustomerInvoiceDetailModal";
@@ -298,7 +299,7 @@ const AccountsReceivable: React.FC = () => {
     [invoices, selectedIds]
   );
 
-  const handleSendReminder = (invoice: InvoiceSummary) => {
+  const handleSendReminder = async (invoice: InvoiceSummary) => {
     if (!canRecordPayment(invoice)) {
       toast.info("Cannot send reminders for voided or paid invoices");
       return;
@@ -307,7 +308,14 @@ const AccountsReceivable: React.FC = () => {
       toast.error("Email notifications are disabled in System Settings (General).");
       return;
     }
-    toast.success(`Payment reminder sent to ${invoice.customerName} for invoice ${invoice.invoiceNo}`);
+    try {
+      const result = await AccountingService.SendArReminder(invoice.id);
+      toast.success(
+        `Payment reminder sent${result?.toEmail ? ` to ${result.toEmail}` : ""} for invoice ${invoice.invoiceNo}`
+      );
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error || "Failed to send payment reminder");
+    }
   };
 
   const openInvoiceDetail = (invoice: InvoiceSummary, showPayment = false) => {
@@ -340,7 +348,7 @@ const AccountsReceivable: React.FC = () => {
     if (refresh) loadInvoices();
   };
 
-  const handleBulkReminders = () => {
+  const handleBulkReminders = async () => {
     if (!isEmailNotificationsEnabled()) {
       toast.error("Email notifications are disabled in System Settings (General).");
       return;
@@ -353,7 +361,19 @@ const AccountsReceivable: React.FC = () => {
       return;
     }
 
-    toast.success(`Payment reminders sent to ${overdueInvoices.length} customers`);
+    try {
+      const result = await AccountingService.SendBulkArReminders(
+        overdueInvoices.map((i) => i.id)
+      );
+      if (result?.sent > 0) {
+        toast.success(`Payment reminders sent to ${result.sent} customer(s)`);
+      }
+      if (result?.failed > 0) {
+        toast.warning(`${result.failed} reminder(s) failed — check SMTP settings and customer emails`);
+      }
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error || "Failed to send bulk reminders");
+    }
   };
 
   const handleRecordPaymentsClick = () => {

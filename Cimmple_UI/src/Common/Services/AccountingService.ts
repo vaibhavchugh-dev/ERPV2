@@ -389,6 +389,20 @@ export class AccountingService {
       return result;
     });
   };
+
+  public static SendArReminder = async (invoiceId: number): Promise<any> => {
+    return Instense.post(`/Accounting/SendArReminder`, { invoiceId }).then(
+      (response) => response.data.result
+    );
+  };
+
+  public static SendBulkArReminders = async (
+    invoiceIds?: number[]
+  ): Promise<{ sent: number; failed: number; failures: any[] }> => {
+    return Instense.post(`/Accounting/SendBulkArReminders`, {
+      invoiceIds: invoiceIds ?? null,
+    }).then((response) => response.data.result);
+  };
 }
 
 export {};

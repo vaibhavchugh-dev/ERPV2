@@ -54,6 +54,12 @@ namespace CimmpleAPI.Data.Models
         /// <summary>Vendor bill freight-in expense account.</summary>
         public int? DefaultFreightInAccountId { get; set; }
 
+        /// <summary>Foundation flag for future GST / multi-rate tax returns (Phase 8).</summary>
+        public bool GstEnabled { get; set; }
+
+        [MaxLength(50)]
+        public string? TaxRegistrationNumber { get; set; }
+
         public DateTime? CreatedDate { get; set; }
 
         public DateTime? UpdatedDate { get; set; }

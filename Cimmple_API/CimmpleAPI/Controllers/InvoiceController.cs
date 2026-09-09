@@ -189,13 +189,38 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Create invoice header
+                    var invoiceDate = request.InvoiceDate ?? DateTime.Now;
+                    DateTime dueDate;
+                    int? paymentTermId = null;
+                    if (request.PaymentTermId.HasValue && request.PaymentTermId.Value > 0)
+                    {
+                        AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                        var term = _context.PaymentTerms.AsNoTracking()
+                            .FirstOrDefault(p => p.Id == request.PaymentTermId.Value &&
+                                                 p.TenantId == tenantId && p.IsActive);
+                        if (term != null)
+                        {
+                            paymentTermId = term.Id;
+                            dueDate = request.DueDate ?? invoiceDate.Date.AddDays(term.Days);
+                        }
+                        else
+                        {
+                            dueDate = request.DueDate ?? invoiceDate.Date.AddDays(30);
+                        }
+                    }
+                    else
+                    {
+                        dueDate = request.DueDate ?? invoiceDate.Date.AddDays(30);
+                    }
+
                     var invoice = new InvoiceMaster
                     {
                         TenantId = tenantId,
                         InvoiceNo = invoiceNumber,
                         PrefixInvoiceNo = $"INV-{DateTime.Now.Year}-{invoiceNumber:D4}",
-                        InvoiceDate = request.InvoiceDate ?? DateTime.Now,
-                        DueDate = request.DueDate ?? DateTime.Now.AddDays(30),
+                        InvoiceDate = invoiceDate,
+                        DueDate = dueDate,
+                        PaymentTermId = paymentTermId,
                         AccountingPeriod = $"{DateTime.Now.Year}{DateTime.Now.Month:D2}", // YYYYMM format
                         ShippingCharge = shippingCharge,
                         OtherCharge = otherCharge,
@@ -1288,6 +1313,7 @@ namespace CimmpleAPI.Controllers
         public List<InvoiceLineItem> LineItems { get; set; } = new List<InvoiceLineItem>();
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
+        public int? PaymentTermId { get; set; }
         public string Notes { get; set; }
         /// <summary>Optional sales tax rate percent (0–100).</summary>
         public decimal? SaleTax { get; set; }

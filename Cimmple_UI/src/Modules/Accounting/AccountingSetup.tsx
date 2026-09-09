@@ -10,6 +10,8 @@ interface AccountingSettings {
   fiscalYearStart: string;
   defaultCurrency: string;
   taxRate: number;
+  gstEnabled?: boolean;
+  taxRegistrationNumber?: string;
   defaultAccountsReceivableAccountId?: number;
   defaultAccountsPayableAccountId?: number;
   defaultRevenueAccountId?: number;
@@ -33,6 +35,7 @@ interface PaymentTerm {
 
 interface ApprovalLimit {
   id: number;
+  roleId?: number;
   role: string;
   limit: number;
   requiresDualApproval: boolean;
@@ -79,6 +82,8 @@ const AccountingSetup: React.FC = () => {
           fiscalYearStart: settingsData.fiscalYearStart || '01-01',
           defaultCurrency: settingsData.defaultCurrency || 'USD',
           taxRate: settingsData.taxRate || 8.25,
+          gstEnabled: !!settingsData.gstEnabled,
+          taxRegistrationNumber: settingsData.taxRegistrationNumber || '',
           defaultAccountsReceivableAccountId: settingsData.defaultAccountsReceivableAccountId || undefined,
           defaultAccountsPayableAccountId: settingsData.defaultAccountsPayableAccountId || undefined,
           defaultRevenueAccountId: settingsData.defaultRevenueAccountId || undefined,
@@ -90,7 +95,13 @@ const AccountingSetup: React.FC = () => {
           defaultOtherChargeAccountId: settingsData.defaultOtherChargeAccountId || undefined,
           defaultFreightInAccountId: settingsData.defaultFreightInAccountId || undefined,
           paymentTerms: settingsData.paymentTerms || [],
-          approvalLimits: settingsData.approvalLimits || []
+          approvalLimits: (settingsData.approvalLimits || []).map((l: any) => ({
+            id: l.id,
+            roleId: l.roleId,
+            role: l.role,
+            limit: l.limit,
+            requiresDualApproval: !!l.requiresDualApproval
+          }))
         });
       }
     } catch (error) {
@@ -109,6 +120,8 @@ const AccountingSetup: React.FC = () => {
         fiscalYearStart: settings.fiscalYearStart,
         defaultCurrency: settings.defaultCurrency,
         taxRate: settings.taxRate,
+        gstEnabled: !!settings.gstEnabled,
+        taxRegistrationNumber: settings.taxRegistrationNumber || null,
         defaultAccountsReceivableAccountId: settings.defaultAccountsReceivableAccountId || null,
         defaultAccountsPayableAccountId: settings.defaultAccountsPayableAccountId || null,
         defaultRevenueAccountId: settings.defaultRevenueAccountId || null,
@@ -120,14 +133,21 @@ const AccountingSetup: React.FC = () => {
         defaultOtherChargeAccountId: settings.defaultOtherChargeAccountId || null,
         defaultFreightInAccountId: settings.defaultFreightInAccountId || null,
         paymentTerms: settings.paymentTerms,
-        approvalLimits: settings.approvalLimits
+        approvalLimits: settings.approvalLimits.map((l) => ({
+          id: l.id,
+          roleId: l.roleId || 0,
+          role: l.role,
+          limit: l.limit,
+          requiresDualApproval: l.requiresDualApproval
+        }))
       };
 
       await AccountingService.SaveAccountingSettings(settingsToSave);
       toast.success('Accounting settings saved successfully');
-    } catch (error) {
+      await loadAccountingSettings();
+    } catch (error: any) {
       console.error('Error saving settings:', error);
-      toast.error('Failed to save settings');
+      toast.error(error?.response?.data?.error || 'Failed to save settings');
     } finally {
       setSaving(false);
     }
@@ -385,6 +405,37 @@ const AccountingSetup: React.FC = () => {
                       fontSize: '0.875rem'
                     }}
                   />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                    Tax / GST Registration Number
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.taxRegistrationNumber || ''}
+                    onChange={(e) => updateSetting('taxRegistrationNumber', e.target.value)}
+                    placeholder="Optional — stored for future GST returns"
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.375rem',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingTop: '1.75rem' }}>
+                  <input
+                    id="gstEnabled"
+                    type="checkbox"
+                    checked={!!settings.gstEnabled}
+                    onChange={(e) => updateSetting('gstEnabled', e.target.checked)}
+                  />
+                  <label htmlFor="gstEnabled" style={{ fontSize: '0.875rem', color: '#374151' }}>
+                    Enable GST / multi-rate tax (foundation flag — returns not available yet)
+                  </label>
                 </div>
               </div>
             </div>
