@@ -145,7 +145,7 @@ const AccountingSetup: React.FC = () => {
       await AccountingService.SaveAccountingSettings(settingsToSave);
       toast.success('Accounting settings saved successfully');
       await loadAccountingSettings();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving settings:', error);
       toast.error(error?.response?.data?.error || 'Failed to save settings');
     } finally {
