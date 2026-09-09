@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import { AuthService } from "../../Common/Services/AuthService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import LocationMasterSlideout from "./LocationMasterSlideout";
@@ -109,6 +110,8 @@ const LocationMasterComponent: React.FC = () => {
     setShowSlideout(false);
     if (refreshList) {
       loadLocations();
+      // Keep TopBar / site filters in sync with Location Master CRUD.
+      void AuthService.refreshAllowedLocations();
     }
   };
 

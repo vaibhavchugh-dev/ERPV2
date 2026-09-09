@@ -321,7 +321,8 @@ namespace CimmpleAPI.Controllers
                     orderNumber,
                     invoice.Amount,
                     invoice.SaleTaxAmount,
-                    invoice.ShippingCharge
+                    invoice.ShippingCharge,
+                    invoice.OtherCharge
                 );
 
                 return File(pdfBytes, "application/pdf", $"Invoice_{invoiceNumber}_{DateTime.Now:yyyy-MM-dd}.pdf");
@@ -652,7 +653,7 @@ namespace CimmpleAPI.Controllers
                         UnitPrice = 0,
                         DiscountAmount = 0,
                         Amount = 0,
-                        Notes = ""
+                        Notes = x.cod.notes ?? ""
                     }).ToList(),
                     TotalAmount = 0
                 };

@@ -229,7 +229,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
-          console.log('Modal overlay clicked - closing modal');
+          e.stopPropagation();
           onClose();
         }
       }}

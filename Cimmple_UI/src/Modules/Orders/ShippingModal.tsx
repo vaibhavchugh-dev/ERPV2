@@ -137,7 +137,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
       onClick={(e) => {
         // Only close if clicking directly on overlay, not on modal content
         if (e.target === e.currentTarget) {
-          console.log('Modal overlay clicked - closing modal');
+          e.stopPropagation();
           onClose();
         }
       }}

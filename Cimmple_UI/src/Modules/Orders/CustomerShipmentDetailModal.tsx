@@ -360,6 +360,9 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                           Unit Price
                         </th>
                         <th style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
+                          Discount
+                        </th>
+                        <th style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
                           Total
                         </th>
                       </tr>
@@ -379,6 +382,11 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                           <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
                             {formatCurrency(item.unitPrice)}
                           </td>
+                          <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
+                            {(item.discountType || "Percent") === "Amount"
+                              ? formatCurrency(item.discount)
+                              : `${Number(item.discount || 0)}%`}
+                          </td>
                           <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827', fontWeight: '500' }}>
                             {formatCurrency(item.lineTotal)}
                           </td>
@@ -387,7 +395,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                     </tbody>
                     <tfoot style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
                       <tr>
-                        <td colSpan={4} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
+                        <td colSpan={5} style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
                           Total Value:
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#111827' }}>
