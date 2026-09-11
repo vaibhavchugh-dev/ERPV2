@@ -1628,6 +1628,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
                                 vendorId={formData.VendorID}
                                 vendorSelected={!!formData.VendorID && formData.VendorID > 0}
+                                lineType={lineType}
                                 scrollContainerSelector=".vendor-quotation-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
                                 onSelectPart={(part) => applyVendorPart(index, part)}

@@ -53,11 +53,13 @@ import {
   UpcomingDeadline
 } from "../../Common/Services/DashboardService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./Dashboard.scss";
 
 const Dashboard: React.FC = () => {
   const history = useHistory();
   const { formatCurrency } = useFormatting();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("This Month");
   const [productionPeriod, setProductionPeriod] = useState("This Week");
@@ -74,15 +76,15 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadDashboardData();
-  }, [dateRange]);
+  }, [dateRange, locationIdParam]);
 
   useEffect(() => {
-    DashboardService.GetProductionStatus(productionPeriod).then((d) => d && setProductionStatus(d));
-  }, [productionPeriod]);
+    DashboardService.GetProductionStatus(productionPeriod, locationIdParam).then((d) => d && setProductionStatus(d));
+  }, [productionPeriod, locationIdParam]);
 
   useEffect(() => {
-    DashboardService.GetRevenueTrends(revenuePeriod).then((d) => d && setRevenueTrends(d));
-  }, [revenuePeriod]);
+    DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam).then((d) => d && setRevenueTrends(d));
+  }, [revenuePeriod, locationIdParam]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -90,7 +92,7 @@ const Dashboard: React.FC = () => {
 
     // Critical path: unblock the shell as soon as metrics arrive.
     try {
-      const metricsData = await DashboardService.GetMetrics(dateRange);
+      const metricsData = await DashboardService.GetMetrics(dateRange, locationIdParam);
       if (metricsData) setMetrics(metricsData);
     } catch (error) {
       metricsFailed = true;
@@ -102,14 +104,14 @@ const Dashboard: React.FC = () => {
 
     // Secondary widgets load in parallel and paint as each completes.
     const secondary = [
-      DashboardService.GetProductionStatus(productionPeriod).then((d) => d && setProductionStatus(d)),
-      DashboardService.GetRevenueTrends(revenuePeriod).then((d) => d && setRevenueTrends(d)),
-      DashboardService.GetRecentActivities(20).then((d) => d && setRecentActivities(d)),
-      DashboardService.GetAlerts().then((d) => d && setAlerts(d)),
-      DashboardService.GetTopCustomers(5).then((d) => d && setTopCustomers(d)),
-      DashboardService.GetTopProducts(5).then((d) => d && setTopProducts(d)),
-      DashboardService.GetQualityStatus().then((d) => d && setQualityStatus(d)),
-      DashboardService.GetUpcomingDeadlines(7).then((d) => d && setUpcomingDeadlines(d)),
+      DashboardService.GetProductionStatus(productionPeriod, locationIdParam).then((d) => d && setProductionStatus(d)),
+      DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam).then((d) => d && setRevenueTrends(d)),
+      DashboardService.GetRecentActivities(20, locationIdParam).then((d) => d && setRecentActivities(d)),
+      DashboardService.GetAlerts(locationIdParam).then((d) => d && setAlerts(d)),
+      DashboardService.GetTopCustomers(5, locationIdParam).then((d) => d && setTopCustomers(d)),
+      DashboardService.GetTopProducts(5, locationIdParam).then((d) => d && setTopProducts(d)),
+      DashboardService.GetQualityStatus(locationIdParam).then((d) => d && setQualityStatus(d)),
+      DashboardService.GetUpcomingDeadlines(7, locationIdParam).then((d) => d && setUpcomingDeadlines(d)),
     ];
 
     const results = await Promise.allSettled(secondary);
@@ -235,6 +237,18 @@ const Dashboard: React.FC = () => {
             <option value="Last Month">Last Month</option>
             <option value="This Quarter">This Quarter</option>
             <option value="This Year">This Year</option>
+          </select>
+          <select
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+            className="dashboard-date-select"
+            aria-label={masterListFilter.label}
+          >
+            {masterListFilter.options.map((option) => (
+              <option key={option.value || "all"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
           <button onClick={loadDashboardData} className="dashboard-refresh-btn">
             <FontAwesomeIcon icon={faSync} />

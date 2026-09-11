@@ -1,10 +1,14 @@
 import axios from "axios";
 import { API_ROOT } from "./Api-config";
-import { AuthService } from "./AuthService";
 
 const Instense = axios.create();
 
 Instense.defaults.baseURL = `${API_ROOT.backendHost}`;
+
+/** Lazy import avoids circular init with AuthService (which imports this default export). */
+const getAuthService = () =>
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require("./AuthService").AuthService as typeof import("./AuthService").AuthService;
 
 const forceRedirectToLogin = () => {
   try {
@@ -14,7 +18,7 @@ const forceRedirectToLogin = () => {
     // ignore
   }
   try {
-    AuthService.clearSession("all");
+    getAuthService().clearSession("all");
   } catch {
     // ignore
   }
@@ -43,7 +47,7 @@ const getBearerToken = () => {
 
 /** Shares AuthService single-flight refresh with SessionKeepAlive. */
 const tryRefreshToken = async (): Promise<string | null> => {
-  const refreshed = await AuthService.refresh();
+  const refreshed = await getAuthService().refresh();
   return refreshed?.accessToken ?? null;
 };
 

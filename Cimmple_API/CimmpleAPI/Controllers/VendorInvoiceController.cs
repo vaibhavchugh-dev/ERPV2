@@ -301,6 +301,11 @@ namespace CimmpleAPI.Controllers
                         dueDate = request.DueDate ?? invoiceDate.Date.AddDays(30);
                     }
 
+                    if (dueDate.Date < invoiceDate.Date)
+                    {
+                        return BadRequest(new { error = "Due Date cannot be before Invoice Date." });
+                    }
+
                     var invoice = new VendorInvoiceMaster
                     {
                         TenantId = tenantId,

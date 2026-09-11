@@ -31,6 +31,9 @@ namespace CimmpleAPI.Controllers
 
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
 
+                // Ensure legacy payment rows without BankId appear in recon / current balance.
+                BackfillMissingPaymentBankIds(tenantid);
+
                 var query = _context.BankMaster.Where(b => b.TenantId == tenantid);
                 if (filterLocationId.HasValue)
                 {
@@ -460,6 +463,54 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private void BackfillMissingPaymentBankIds(int tenantId)
+        {
+            var orphans = _context.Transactions
+                .Where(t => t.TenantId == tenantId &&
+                            t.TransactionType != null &&
+                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                            (t.BankId == null || t.BankId <= 0) &&
+                            t.invoiceNo != null &&
+                            t.invoiceNo != "")
+                .ToList();
+            if (orphans.Count == 0)
+                return;
+
+            var changed = false;
+            foreach (var txn in orphans)
+            {
+                var invoiceNo = txn.invoiceNo!.Trim();
+                int? bankId = null;
+                if (txn.isCustomer == 1)
+                {
+                    bankId = _context.InvoiceMaster
+                        .Where(im => im.TenantId == tenantId &&
+                                     (im.PrefixInvoiceNo == invoiceNo ||
+                                      im.InvoiceNo.ToString() == invoiceNo))
+                        .Select(im => im.Bankid)
+                        .FirstOrDefault();
+                }
+                else
+                {
+                    bankId = _context.VendorInvoiceMaster
+                        .Where(vim => vim.TenantId == tenantId &&
+                                      (vim.prefixinvoiceno == invoiceNo ||
+                                       vim.InvoiceNo == invoiceNo))
+                        .Select(vim => vim.Bankid)
+                        .FirstOrDefault();
+                }
+
+                if (bankId.HasValue && bankId.Value > 0)
+                {
+                    txn.BankId = bankId.Value;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                _context.SaveChanges();
         }
     }
 
