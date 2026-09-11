@@ -44,7 +44,7 @@
 
     .fr-controls-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr auto;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
       gap: 1rem;
       align-items: end;
 

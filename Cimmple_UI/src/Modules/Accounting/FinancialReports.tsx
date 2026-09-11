@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import { faFileAlt, faDownload, faEye, faCalendar, faFilter, faChartBar, faChartLine, faTable, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./FinancialReports.scss";
 
 interface ReportType {
@@ -24,6 +25,7 @@ const ymdLocal = (d: Date) => {
 
 const FinancialReports: React.FC = () => {
   const history = useHistory();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [selectedReport, setSelectedReport] = useState<string>('');
   const [dateRange, setDateRange] = useState('This Month');
   const [reportFormat, setReportFormat] = useState<'pdf' | 'excel' | 'csv'>('pdf');
@@ -155,7 +157,11 @@ const FinancialReports: React.FC = () => {
   };
 
   const buildReportParams = (format: 'pdf' | 'excel' | 'csv') => {
-    const base: Record<string, unknown> = { dateRange, format };
+    const base: Record<string, unknown> = {
+      dateRange,
+      format,
+      locationId: locationIdParam,
+    };
     if (dateRange === 'Custom') {
       base.customStartDate = customStartDate;
       base.customEndDate = customEndDate;
@@ -464,6 +470,20 @@ const FinancialReports: React.FC = () => {
               <option value="This Year">This Year</option>
               <option value="Last Year">Last Year</option>
               <option value="Custom">Custom Range</option>
+            </select>
+          </div>
+
+          <div className="fr-control-group">
+            <label>{masterListFilter.label}</label>
+            <select
+              value={masterListFilter.value}
+              onChange={(e) => masterListFilter.onChange(e.target.value)}
+            >
+              {masterListFilter.options.map((option) => (
+                <option key={option.value || "all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
 

@@ -58,14 +58,18 @@ public static class ProfitLossGlReportService
         public decimal OperatingExpenses { get; set; }
     }
 
-    public static ResultDto Build(CimmpleDbContext db, int tenantId, DateTime startDate, DateTime endDate)
+    public static ResultDto Build(CimmpleDbContext db, int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
     {
         var endInclusive = endDate.Date.AddDays(1).AddTicks(-1);
 
-        var journalIds = db.JournalEntries.AsNoTracking()
+        var journalQuery = db.JournalEntries.AsNoTracking()
             .Where(je => je.TenantId == tenantId
                          && je.EntryDate >= startDate.Date
-                         && je.EntryDate <= endInclusive)
+                         && je.EntryDate <= endInclusive);
+        if (locationId.HasValue)
+            journalQuery = journalQuery.Where(je => je.locationId == locationId.Value);
+
+        var journalIds = journalQuery
             .Select(je => je.Id)
             .ToList();
 

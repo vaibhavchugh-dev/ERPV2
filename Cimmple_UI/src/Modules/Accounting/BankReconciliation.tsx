@@ -19,9 +19,16 @@ const BankReconciliation: React.FC = () => {
   const [differences, setDifferences] = useState<BankTransaction[]>([]);
   const [filters, setFilters] = useState({
     reconciled: 'all',
-    dateRange: 'Last 30 Days',
+    dateRange: 'This Year',
     amountRange: 'All'
   });
+
+  const toLocalYmd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
 
   useEffect(() => {
     loadBankAccounts();
@@ -43,7 +50,7 @@ const BankReconciliation: React.FC = () => {
           id: bank.id,
           name: bank.nickName || bank.bankName,
           accountNumber: bank.lastAccountNo || bank.accountNo,
-          balance: bank.balance,
+          balance: Number(bank.currentBalance ?? bank.balance ?? 0),
           lastReconciled: bank.lastReconciledDate
             ? String(bank.lastReconciledDate).slice(0, 10)
             : ''
@@ -86,8 +93,8 @@ const BankReconciliation: React.FC = () => {
 
       const transactions = await AccountingService.GetBankTransactions(
         selectedAccount,
-        startDate.toISOString().split('T')[0],
-        endDate.toISOString().split('T')[0]
+        toLocalYmd(startDate),
+        toLocalYmd(endDate)
       );
 
       if (transactions) {
