@@ -1079,6 +1079,13 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
+                    if (!bankId.HasValue || bankId.Value <= 0)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Select a bank account before recording this payment."
+                        });
+                    }
                     var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
                     if (!bankAccountId.HasValue)
                     {
@@ -1131,16 +1138,18 @@ namespace CimmpleAPI.Controllers
                     var description = isFullyPaid
                         ? $"Auto-posted customer payment for invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}"
                         : $"Auto-posted partial customer payment ({paymentAmount:0.00}) for invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
-                    var locationId = 1;
-                    if (bankId.HasValue)
-                    {
-                        var bankLocation = _context.BankMaster
-                            .Where(b => b.Id == bankId.Value && b.TenantId == tenantId)
-                            .Select(b => (int?)b.locationId)
-                            .FirstOrDefault();
-                        if (bankLocation.HasValue && bankLocation.Value > 0)
-                            locationId = bankLocation.Value;
-                    }
+                    // A payment belongs to the invoice/order site. The selected bank is
+                    // tracked separately in BankId and must not replace the business site.
+                    var locationId = _context.InvoiceDetail
+                        .Where(id => id.InvoiceId == invoice.Id)
+                        .Join(
+                            _context.CustomerOrder.Where(co => co.Tenantid == tenantId),
+                            id => id.OrderId,
+                            co => co.OrderID,
+                            (id, co) => co.locationId)
+                        .FirstOrDefault();
+                    if (locationId <= 0)
+                        locationId = 1;
 
                     var journalHeader = new JournalEntry
                     {
@@ -1229,7 +1238,8 @@ namespace CimmpleAPI.Controllers
         private static string BuildAutoPaymentReference(string prefix, string? invoiceNo, int invoiceId)
         {
             var safeInvoice = string.IsNullOrWhiteSpace(invoiceNo) ? invoiceId.ToString() : invoiceNo.Trim();
-            var reference = $"{prefix}-{safeInvoice}";
+            // Unique per payment so partial payments don't collide on the journal reference.
+            var reference = $"{prefix}-{safeInvoice}-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
             return reference.Length > 200 ? reference[..200] : reference;
         }
 

@@ -146,6 +146,7 @@ export class AccountingService {
       ReportType: reportType,
       DateRange: dr,
       Format: parameters.format || parameters.Format || "pdf",
+      LocationId: parameters.locationId ?? parameters.LocationId,
       Parameters: parameters,
     };
     if (

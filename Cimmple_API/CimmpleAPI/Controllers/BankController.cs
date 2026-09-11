@@ -37,21 +37,51 @@ namespace CimmpleAPI.Controllers
                     query = query.Where(b => b.locationId == filterLocationId.Value);
                 }
 
-                var banks = query
-                    .Select(b => new
+                var bankRows = query.ToList();
+                var bankIds = bankRows.Select(b => b.Id).ToList();
+                var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+                var bankTxns = _context.Transactions
+                    .Where(t => t.TenantId == tenantid &&
+                                t.BankId != null &&
+                                bankIds.Contains(t.BankId.Value) &&
+                                t.TransactionType != null &&
+                                bankTypeSet.Contains(t.TransactionType))
+                    .Select(t => new { t.BankId, t.Amount, t.isCustomer, t.TransactionType })
+                    .ToList()
+                    .GroupBy(t => t.BankId!.Value)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Sum(t =>
+                        {
+                            var (signed, _) = AccountingRules.MapBankTransactionSign(
+                                t.Amount ?? 0, t.isCustomer, t.TransactionType);
+                            return signed;
+                        }));
+
+                var banks = bankRows
+                    .Select(b =>
                     {
-                        id = b.Id,
-                        bankName = b.BankName,
-                        accountNo = b.lastAccountNo ?? "XXXX",
-                        lastAccountNo = b.lastAccountNo,
-                        accountType = b.AccountType,
-                        phone = b.Phone,
-                        email = b.Email,
-                        status = b.status ?? "Active",
-                        balance = b.Balance,
-                        routingNumber = b.RoutingNumber,
-                        nickName = b.NickName,
-                        lastReconciledDate = b.LastReconciledDate
+                        var opening = b.Balance;
+                        var activity = bankTxns.TryGetValue(b.Id, out var signedSum) ? signedSum : 0m;
+                        return new
+                        {
+                            id = b.Id,
+                            bankName = b.BankName,
+                            accountNo = b.lastAccountNo ?? "XXXX",
+                            lastAccountNo = b.lastAccountNo,
+                            accountType = b.AccountType,
+                            phone = b.Phone,
+                            email = b.Email,
+                            status = b.status ?? "Active",
+                            // Opening balance stored on the bank master
+                            balance = opening,
+                            openingBalance = opening,
+                            // Running current balance = opening + signed bank activity
+                            currentBalance = opening + activity,
+                            routingNumber = b.RoutingNumber,
+                            nickName = b.NickName,
+                            lastReconciledDate = b.LastReconciledDate
+                        };
                     })
                     .ToList();
 

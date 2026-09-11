@@ -464,9 +464,16 @@ const AccountsReceivable: React.FC = () => {
     const openInvoices = invoices.filter((invoice) => !isVoidInvoice(invoice) && !isPaidInvoice(invoice));
 
     const totalAmount = openInvoices.reduce((sum, invoice) => sum + getOpenBalance(invoice), 0);
+    // Include partial collections (paidAmount), not only fully paid invoice totals
     const paidAmount = invoices
-      .filter(isPaidInvoice)
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
+      .filter((invoice) => !isVoidInvoice(invoice))
+      .reduce((sum, invoice) => {
+        const collected = Number(
+          invoice.paidAmount ??
+            Math.max(0, invoice.totalAmount - getOpenBalance(invoice))
+        );
+        return sum + Math.max(0, collected);
+      }, 0);
     const unpaidAmount = totalAmount;
     const overdueAmount = openInvoices
       .filter((invoice) => (invoice.daysOverdue ?? 0) > 0)
