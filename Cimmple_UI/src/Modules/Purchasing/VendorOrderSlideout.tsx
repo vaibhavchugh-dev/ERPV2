@@ -2607,7 +2607,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
   };
 
   return (
-    <div className="text-editor-popup-overlay" onClick={onClose}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>

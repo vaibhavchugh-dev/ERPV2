@@ -52,6 +52,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   const [activeTab, setActiveTab] = useState<'bank' | 'contact'>('bank');
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [balanceDisplay, setBalanceDisplay] = useState<string>("");
+  const [isBalanceFocused, setIsBalanceFocused] = useState(false);
   const [isStateEditable, setIsStateEditable] = useState(false);
   const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string }>>([]);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -144,7 +145,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
       [field]: value,
     }));
 
-    // Handle balance formatting
+    // Handle balance: keep raw digits while typing; format only on blur.
     if (field === "Balance") {
       const numericValue = Utils.removeInvaildCharFromAmount(value);
       const numValue = parseFloat(numericValue) || 0;
@@ -152,7 +153,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
         ...prev,
         Balance: numValue,
       }));
-      setBalanceDisplay(Utils.currencyFormat(numValue));
+      setBalanceDisplay(isBalanceFocused ? numericValue : Utils.currencyFormat(numValue));
     }
 
     // Handle country change - clear state if changing from US
@@ -611,12 +612,13 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
                     placeholder="0.00"
                     value={balanceDisplay}
                     onChange={(e) => handleInputChange("Balance", e.target.value)}
-                    onFocus={(e) => {
-                      const numericValue = Utils.removeInvaildCharFromAmount(e.target.value);
-                      e.target.value = numericValue;
+                    onFocus={() => {
+                      setIsBalanceFocused(true);
+                      setBalanceDisplay(Utils.removeInvaildCharFromAmount(balanceDisplay || String(formData.Balance || 0)));
                     }}
-                    onBlur={(e) => {
-                      const numericValue = Utils.removeInvaildCharFromAmount(e.target.value);
+                    onBlur={() => {
+                      setIsBalanceFocused(false);
+                      const numericValue = Utils.removeInvaildCharFromAmount(balanceDisplay);
                       const numValue = parseFloat(numericValue) || 0;
                       setBalanceDisplay(Utils.currencyFormat(numValue));
                       setFormData((prev) => ({ ...prev, Balance: numValue }));

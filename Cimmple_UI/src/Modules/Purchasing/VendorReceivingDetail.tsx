@@ -5,6 +5,7 @@ import {
   VendorReceivingService,
   OrderForReceivingDetail,
   OrderDetailForReceiving,
+  ReceivingTransaction,
 } from "../../Common/Services/VendorReceivingService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
@@ -66,6 +67,8 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [receivingForms, setReceivingForms] = useState<Map<number, ReceivingFormData>>(new Map());
   const [showReceivingForm, setShowReceivingForm] = useState<Map<number, boolean>>(new Map());
+  const [receivingHistory, setReceivingHistory] = useState<Map<number, ReceivingTransaction[]>>(new Map());
+  const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
 
   const defaultReceiveLocationId = (): number | undefined => {
     if (order?.locationId && order.locationId > 0) return order.locationId;
@@ -149,7 +152,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     }
   };
 
-  const handleReceiveItem = (detail: OrderDetailForReceiving) => {
+  const handleReceiveItem = async (detail: OrderDetailForReceiving) => {
     if (detail.pendingQty <= 0) {
       toast.warning("This item is already fully received");
       return;
@@ -175,6 +178,29 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       newMap.set(detail.id, true);
       return newMap;
     });
+
+    setHistoryLoading((prev) => new Set(prev).add(detail.id));
+    try {
+      const history = await VendorReceivingService.GetReceivingHistory(detail.id);
+      setReceivingHistory((prev) => {
+        const next = new Map(prev);
+        next.set(detail.id, history || []);
+        return next;
+      });
+    } catch (error) {
+      console.error("[VendorReceivingDetail] Error loading receiving history:", error);
+      setReceivingHistory((prev) => {
+        const next = new Map(prev);
+        next.set(detail.id, []);
+        return next;
+      });
+    } finally {
+      setHistoryLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(detail.id);
+        return next;
+      });
+    }
   };
 
   const handleCancelReceiving = (detailId: number) => {
@@ -563,6 +589,25 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                     placeholder="Enter any notes about this receiving..."
                                   />
                                 </div>
+                              </div>
+                              <div className="receiving-history">
+                                <strong>Previous receiving notes</strong>
+                                {historyLoading.has(detail.id) ? (
+                                  <p>Loading history...</p>
+                                ) : (receivingHistory.get(detail.id) || []).length === 0 ? (
+                                  <p>No previous receiving notes.</p>
+                                ) : (
+                                  <ul>
+                                    {(receivingHistory.get(detail.id) || []).map((entry) => (
+                                      <li key={entry.id}>
+                                        <span>
+                                          {new Date(entry.receivedDate).toLocaleDateString()} · Qty {entry.receivedQty}
+                                        </span>
+                                        <span>{entry.notes?.trim() || "No notes entered"}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                               </div>
                               <div className="form-actions">
                                 <button

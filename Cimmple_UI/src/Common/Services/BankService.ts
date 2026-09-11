@@ -16,6 +16,8 @@ export interface BankMaster {
   zip: string;
   country: string;
   balance: number;
+  openingBalance?: number;
+  currentBalance?: number;
   startingcheck: number;
   checkseries: string;
   coa: string;

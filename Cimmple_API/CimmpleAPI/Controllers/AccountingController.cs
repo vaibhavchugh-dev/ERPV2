@@ -94,6 +94,77 @@ namespace CimmpleAPI.Controllers
                 // Get recent transactions from multiple sources
                 var recentTransactions = new List<dynamic>();
 
+                var allCustomerInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var locationCustomerInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allVendorInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var locationVendorInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    var customerInvoices = _context.InvoiceMaster
+                        .Where(im => im.TenantId == tenantId)
+                        .Select(im => new
+                        {
+                            im.Id,
+                            im.InvoiceNo,
+                            im.PrefixInvoiceNo,
+                            AtLocation = _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    co.locationId == locId))
+                        })
+                        .ToList();
+                    foreach (var invoice in customerInvoices)
+                    {
+                        allCustomerInvoiceNos.Add(invoice.InvoiceNo.ToString());
+                        if (!string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo))
+                            allCustomerInvoiceNos.Add(invoice.PrefixInvoiceNo.Trim());
+                        if (invoice.AtLocation)
+                        {
+                            locationCustomerInvoiceNos.Add(invoice.InvoiceNo.ToString());
+                            if (!string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo))
+                                locationCustomerInvoiceNos.Add(invoice.PrefixInvoiceNo.Trim());
+                        }
+                    }
+
+                    var vendorInvoices = _context.VendorInvoiceMaster
+                        .Where(vim => vim.TenantId == tenantId)
+                        .Select(vim => new { vim.InvoiceNo, vim.prefixinvoiceno, vim.locationId })
+                        .ToList();
+                    foreach (var invoice in vendorInvoices)
+                    {
+                        if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
+                            allVendorInvoiceNos.Add(invoice.InvoiceNo.Trim());
+                        if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
+                            allVendorInvoiceNos.Add(invoice.prefixinvoiceno.Trim());
+                        if (invoice.locationId == locId)
+                        {
+                            if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
+                                locationVendorInvoiceNos.Add(invoice.InvoiceNo.Trim());
+                            if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
+                                locationVendorInvoiceNos.Add(invoice.prefixinvoiceno.Trim());
+                        }
+                    }
+                }
+
+                bool PaymentMatchesLocation(Transactions transaction, bool customer)
+                {
+                    if (!filterLocationId.HasValue)
+                        return true;
+
+                    var invoiceNo = transaction.invoiceNo?.Trim() ?? "";
+                    var selected = customer ? locationCustomerInvoiceNos : locationVendorInvoiceNos;
+                    var all = customer ? allCustomerInvoiceNos : allVendorInvoiceNos;
+                    if (selected.Contains(invoiceNo))
+                        return true;
+                    if (all.Contains(invoiceNo))
+                        return false;
+                    return transaction.locationId == filterLocationId.Value;
+                }
+
                 // 1. Recent customer payments (from Transactions table)
                 var customerPaymentsQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
@@ -102,12 +173,12 @@ namespace CimmpleAPI.Controllers
                                 EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                 t.TransactionDate >= rangeStart &&
                                 t.TransactionDate <= rangeEnd);
-                if (filterLocationId.HasValue)
-                    customerPaymentsQuery = customerPaymentsQuery.Where(t => t.locationId == filterLocationId.Value);
 
                 var customerPayments = customerPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
+                    .AsEnumerable()
+                    .Where(t => PaymentMatchesLocation(t, true))
                     .Take(safeLimit)
                     .Select(t => new
                     {
@@ -123,6 +194,49 @@ namespace CimmpleAPI.Controllers
 
                 recentTransactions.AddRange(customerPayments);
 
+                // Legacy fully paid customer invoices may predate Transactions rows.
+                var customerInvoiceFallbackQuery = _context.InvoiceMaster
+                    .Where(im => im.TenantId == tenantId &&
+                                 !im.IsVoided &&
+                                 im.PaymentDate != null &&
+                                 im.PaymentDate >= rangeStart &&
+                                 im.PaymentDate <= rangeEnd &&
+                                 !_context.Transactions.Any(t =>
+                                     t.TenantId == tenantId &&
+                                     t.isCustomer == 1 &&
+                                     t.TransactionType != null &&
+                                     EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                                     (t.invoiceNo == im.PrefixInvoiceNo ||
+                                      t.invoiceNo == im.InvoiceNo.ToString())));
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    customerInvoiceFallbackQuery = customerInvoiceFallbackQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var customerInvoiceFallbackPayments = customerInvoiceFallbackQuery
+                    .OrderByDescending(im => im.PaymentDate)
+                    .ThenByDescending(im => im.Id)
+                    .Take(safeLimit)
+                    .Select(im => new
+                    {
+                        id = im.Id,
+                        type = "payment" as string,
+                        description = $"Payment received for invoice {im.PrefixInvoiceNo ?? im.InvoiceNo.ToString()}",
+                        amount = im.PaidAmount > 0 ? im.PaidAmount : im.TotalAmount,
+                        date = im.PaymentDate,
+                        status = "completed" as string,
+                        customerVendor = "Customer" as string
+                    })
+                    .ToList();
+                recentTransactions.AddRange(customerInvoiceFallbackPayments);
+
                 // 2. Recent vendor payments (from Transactions table)
                 var vendorPaymentsQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
@@ -131,12 +245,12 @@ namespace CimmpleAPI.Controllers
                                 EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                 t.TransactionDate >= rangeStart &&
                                 t.TransactionDate <= rangeEnd);
-                if (filterLocationId.HasValue)
-                    vendorPaymentsQuery = vendorPaymentsQuery.Where(t => t.locationId == filterLocationId.Value);
 
                 var vendorPayments = vendorPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
+                    .AsEnumerable()
+                    .Where(t => PaymentMatchesLocation(t, false))
                     .Take(safeLimit)
                     .Select(t => new
                     {
@@ -164,7 +278,8 @@ namespace CimmpleAPI.Controllers
                                       (t.isCustomer == 0 || t.isCustomer == null) &&
                                       t.TransactionType != null &&
                                       EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                                      t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo)));
+                                      t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo) &&
+                                      (!filterLocationId.HasValue || t.locationId == filterLocationId.Value)));
                 if (filterLocationId.HasValue)
                     vendorInvoiceFallbackQuery = vendorInvoiceFallbackQuery.Where(vim => vim.locationId == filterLocationId.Value);
 
@@ -635,29 +750,32 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var dateFilter = GetDateRangeFilter(dateRange, request);
+                int? reportLocationId = request.LocationId.HasValue && request.LocationId.Value > 0
+                    ? request.LocationId
+                    : null;
 
                 object reportData;
 
                 switch (request.ReportType.ToLower())
                 {
                     case "balance-sheet":
-                        reportData = GenerateBalanceSheet(tenantId, dateFilter.endDate);
+                        reportData = GenerateBalanceSheet(tenantId, dateFilter.endDate, reportLocationId);
                         break;
                     case "profit-loss":
                     case "income-statement":
-                        reportData = GenerateProfitLossStatement(tenantId, dateFilter.startDate, dateFilter.endDate);
+                        reportData = GenerateProfitLossStatement(tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
                         break;
                     case "cash-flow":
-                        reportData = GenerateCashFlowStatement(tenantId, dateFilter.startDate, dateFilter.endDate);
+                        reportData = GenerateCashFlowStatement(tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
                         break;
                     case "ar-aging":
-                        reportData = GenerateARAgingReport(tenantId);
+                        reportData = GenerateARAgingReport(tenantId, reportLocationId);
                         break;
                     case "ap-aging":
-                        reportData = GenerateAPAgingReport(tenantId);
+                        reportData = GenerateAPAgingReport(tenantId, reportLocationId);
                         break;
                     case "trial-balance":
-                        reportData = GenerateTrialBalance(tenantId, dateFilter.endDate);
+                        reportData = GenerateTrialBalance(tenantId, dateFilter.endDate, reportLocationId);
                         break;
                     default:
                         return BadRequest(new { error = "Unsupported report type" });
@@ -672,23 +790,24 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private object GenerateBalanceSheet(int tenantId, DateTime asOfDate)
+        private object GenerateBalanceSheet(int tenantId, DateTime asOfDate, int? locationId = null)
         {
             // Assets
-            var currentAssets = CalculateAssetBalances(tenantId, asOfDate, true);
-            var fixedAssets = CalculateAssetBalances(tenantId, asOfDate, false);
+            var currentAssets = CalculateAssetBalances(tenantId, asOfDate, true, locationId);
+            var fixedAssets = CalculateAssetBalances(tenantId, asOfDate, false, locationId);
 
             // Liabilities
-            var currentLiabilities = CalculateLiabilityBalances(tenantId, asOfDate, true);
-            var longTermLiabilities = CalculateLiabilityBalances(tenantId, asOfDate, false);
+            var currentLiabilities = CalculateLiabilityBalances(tenantId, asOfDate, true, locationId);
+            var longTermLiabilities = CalculateLiabilityBalances(tenantId, asOfDate, false, locationId);
 
             // Equity
-            var equity = CalculateEquityBalance(tenantId, asOfDate);
+            var equity = CalculateEquityBalance(tenantId, asOfDate, locationId);
 
             return new
             {
                 reportType = "Balance Sheet",
                 asOfDate = asOfDate.ToString("yyyy-MM-dd"),
+                locationId,
                 assets = new
                 {
                     currentAssets,
@@ -706,22 +825,22 @@ namespace CimmpleAPI.Controllers
             };
         }
 
-        private object GenerateProfitLossStatement(int tenantId, DateTime startDate, DateTime endDate)
+        private object GenerateProfitLossStatement(int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
         {
             // Accrual / GL basis: posted journal activity by COA (MainGroup drives sectioning).
-            return ProfitLossGlReportService.Build(_context, tenantId, startDate, endDate);
+            return ProfitLossGlReportService.Build(_context, tenantId, startDate, endDate, locationId);
         }
 
-        private object GenerateCashFlowStatement(int tenantId, DateTime startDate, DateTime endDate)
+        private object GenerateCashFlowStatement(int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
         {
             // Operating Activities
-            var operatingCashFlow = CalculateOperatingCashFlow(tenantId, startDate, endDate);
+            var operatingCashFlow = CalculateOperatingCashFlow(tenantId, startDate, endDate, locationId);
 
             // Investing Activities
-            var investingCashFlow = CalculateInvestingCashFlow(tenantId, startDate, endDate);
+            var investingCashFlow = CalculateInvestingCashFlow(tenantId, startDate, endDate, locationId);
 
             // Financing Activities
-            var financingCashFlow = CalculateFinancingCashFlow(tenantId, startDate, endDate);
+            var financingCashFlow = CalculateFinancingCashFlow(tenantId, startDate, endDate, locationId);
 
             var netCashFlow = operatingCashFlow + investingCashFlow + financingCashFlow;
 
@@ -730,6 +849,7 @@ namespace CimmpleAPI.Controllers
                 reportType = "Cash Flow Statement",
                 periodStart = startDate.ToString("yyyy-MM-dd"),
                 periodEnd = endDate.ToString("yyyy-MM-dd"),
+                locationId,
                 operatingActivities = operatingCashFlow,
                 investingActivities = investingCashFlow,
                 financingActivities = financingCashFlow,
@@ -737,31 +857,33 @@ namespace CimmpleAPI.Controllers
             };
         }
 
-        private object GenerateARAgingReport(int tenantId)
+        private object GenerateARAgingReport(int tenantId, int? locationId = null)
         {
-            var agingData = CalculateARAging(tenantId);
+            var agingData = CalculateARAging(tenantId, locationId);
 
             return new
             {
                 reportType = "AR Aging Report",
                 asOfDate = DateTime.Now.ToString("yyyy-MM-dd"),
+                locationId,
                 agingBuckets = agingData
             };
         }
 
-        private object GenerateAPAgingReport(int tenantId)
+        private object GenerateAPAgingReport(int tenantId, int? locationId = null)
         {
-            var agingData = CalculateAPAging(tenantId);
+            var agingData = CalculateAPAging(tenantId, locationId);
 
             return new
             {
                 reportType = "AP Aging Report",
                 asOfDate = DateTime.Now.ToString("yyyy-MM-dd"),
+                locationId,
                 agingBuckets = agingData
             };
         }
 
-        private object GenerateTrialBalance(int tenantId, DateTime asOfDate)
+        private object GenerateTrialBalance(int tenantId, DateTime asOfDate, int? locationId = null)
         {
             // Materialize accounts first, then compute balances in memory.
             // CalculateAccountBalance is a C# method and cannot be translated to SQL.
@@ -776,12 +898,13 @@ namespace CimmpleAPI.Controllers
                     accountCode = coa.AccountCode,
                     accountName = coa.AccountName,
                     accountType = coa.AccountType,
-                    balance = CalculateAccountBalance(coa.AccountID, tenantId, asOfDate)
+                    balance = CalculateAccountBalance(coa.AccountID, tenantId, asOfDate, locationId)
                 })
                 .Where(acc => acc.balance != 0) // Only show accounts with balances
                 .OrderBy(acc => acc.accountCode)
                 .ToList();
 
+            // Signed balance = debits − credits. Positive → Debit column; negative → Credit column.
             var totalDebits = accountBalances.Where(acc => acc.balance > 0).Sum(acc => acc.balance);
             var totalCredits = Math.Abs(accountBalances.Where(acc => acc.balance < 0).Sum(acc => acc.balance));
 
@@ -789,6 +912,7 @@ namespace CimmpleAPI.Controllers
             {
                 reportType = "Trial Balance",
                 asOfDate = asOfDate.ToString("yyyy-MM-dd"),
+                locationId,
                 accounts = accountBalances,
                 totalDebits,
                 totalCredits,
@@ -797,37 +921,44 @@ namespace CimmpleAPI.Controllers
         }
 
         // Helper calculation methods using real data
-        private decimal CalculateAccountBalance(int accountId, int tenantId, DateTime asOfDate)
+        /// <summary>
+        /// Returns a single signed GL balance (debits − credits) as of the date.
+        /// Trial Balance puts positive values in Debit and absolute negatives in Credit.
+        /// </summary>
+        private decimal CalculateAccountBalance(int accountId, int tenantId, DateTime asOfDate, int? locationId = null)
         {
             try
             {
-                decimal balance = 0;
+                var validTransactionQuery = _context.Transactions
+                    .Where(t => t.TenantId == tenantId &&
+                               t.TransactionDate != null &&
+                               t.TransactionDate <= asOfDate);
+                if (locationId.HasValue)
+                    validTransactionQuery = validTransactionQuery.Where(t => t.locationId == locationId.Value);
 
-                // Get valid transaction IDs up to asOfDate
-                var validTransactionIds = _context.Transactions
-                    .Where(t => t.TenantId == tenantId && 
-                               t.TransactionDate != null && 
-                               t.TransactionDate <= asOfDate)
+                var validTransactionIds = validTransactionQuery
                     .Select(t => t.TransactionID)
                     .ToList();
 
-                // Calculate from Deposits (credits/increases)
                 var deposits = _context.Deposits
-                    .Where(d => d.AccountID == accountId && 
+                    .Where(d => d.AccountID == accountId &&
                                d.TenantID == tenantId &&
                                validTransactionIds.Contains(d.TransactionID))
                     .Sum(d => (decimal?)d.Amount) ?? 0;
 
-                // Calculate from Withdrawals (debits/decreases)
                 var withdrawals = _context.Withdrawals
-                    .Where(w => w.AccountID == accountId && 
+                    .Where(w => w.AccountID == accountId &&
                                w.TenantID == tenantId &&
                                validTransactionIds.Contains(w.TransactionID))
                     .Sum(w => (decimal?)w.Amount) ?? 0;
 
-                // Calculate from Journal Entries (From = debit, To = credit)
-                var validJournalEntryIds = _context.JournalEntries
-                    .Where(je => je.TenantId == tenantId && je.EntryDate <= asOfDate)
+                // Journal From = debit, Journal To = credit
+                var validJournalQuery = _context.JournalEntries
+                    .Where(je => je.TenantId == tenantId && je.EntryDate <= asOfDate);
+                if (locationId.HasValue)
+                    validJournalQuery = validJournalQuery.Where(je => je.locationId == locationId.Value);
+
+                var validJournalEntryIds = validJournalQuery
                     .Select(je => je.Id)
                     .ToList();
 
@@ -841,9 +972,8 @@ namespace CimmpleAPI.Controllers
                                validJournalEntryIds.Contains(j.JournalEntryId))
                     .Sum(j => (decimal?)j.Amount) ?? 0;
 
-                // Calculate from TransCoa (transaction to account mapping)
                 var transCoaAmounts = _context.TransCoa
-                    .Where(tc => tc.accountid == accountId && 
+                    .Where(tc => tc.accountid == accountId &&
                                 tc.Tenantid == tenantId &&
                                 validTransactionIds.Contains(tc.Transid))
                     .Join(_context.Transactions.Where(t => validTransactionIds.Contains(t.TransactionID)),
@@ -852,33 +982,9 @@ namespace CimmpleAPI.Controllers
                           (tc, t) => t.Amount ?? 0)
                     .Sum();
 
-                // Determine if account is debit-normal (Assets, Expenses) or credit-normal (Liabilities, Equity, Revenue)
-                var account = _context.ChartofAccounts
-                    .FirstOrDefault(coa => coa.AccountID == accountId && coa.Tenantid == tenantId);
-
-                if (account != null)
-                {
-                    var accountType = account.AccountType?.ToLower() ?? "";
-                    bool isDebitNormal = accountType.Contains("asset") || accountType.Contains("expense");
-
-                    if (isDebitNormal)
-                    {
-                        // Debit-normal: Deposits and Journal Credits increase, Withdrawals and Journal Debits decrease
-                        balance = deposits + journalCredits - withdrawals - journalDebits + transCoaAmounts;
-                    }
-                    else
-                    {
-                        // Credit-normal: Withdrawals and Journal Debits increase, Deposits and Journal Credits decrease
-                        balance = withdrawals + journalDebits - deposits - journalCredits - transCoaAmounts;
-                    }
-                }
-                else
-                {
-                    // Default calculation if account not found
-                    balance = deposits - withdrawals + journalCredits - journalDebits + transCoaAmounts;
-                }
-
-                return balance;
+                // Debit − credit signed balance (aligns Trial Balance columns and P&amp;L convention).
+                // Legacy deposits increase debit-side cash; withdrawals decrease it.
+                return journalDebits - journalCredits + deposits - withdrawals + transCoaAmounts;
             }
             catch (Exception ex)
             {
@@ -887,26 +993,33 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateAssetBalances(int tenantId, DateTime asOfDate, bool currentAssets)
+        private decimal CalculateAssetBalances(int tenantId, DateTime asOfDate, bool currentAssets, int? locationId = null)
         {
             try
             {
-                // Get asset account types
-                var assetTypes = currentAssets 
-                    ? new[] { "Current Asset", "Cash", "Bank", "Accounts Receivable", "Inventory" }
-                    : new[] { "Fixed Asset", "Property", "Equipment", "Plant" };
-
+                // COA stores AccountType = "Asset" and subtype on MainGroup (e.g. "Current Assets").
                 var assetAccounts = _context.ChartofAccounts
-                    .Where(coa => coa.Tenantid == tenantId && 
-                                  coa.AccountType != null &&
-                                  assetTypes.Any(at => coa.AccountType.Contains(at, StringComparison.OrdinalIgnoreCase)))
+                    .Where(coa => coa.Tenantid == tenantId && coa.AccountType != null)
+                    .AsEnumerable()
+                    .Where(coa =>
+                    {
+                        var type = (coa.AccountType ?? "").ToLowerInvariant();
+                        if (!type.Contains("asset"))
+                            return false;
+                        var mg = (coa.MainGroup ?? "").ToLowerInvariant();
+                        var isFixed = mg.Contains("fixed") || mg.Contains("property") ||
+                                      mg.Contains("equipment") || mg.Contains("plant") ||
+                                      mg.Contains("pp&e") || mg.Contains("depreciation");
+                        return currentAssets ? !isFixed : isFixed;
+                    })
                     .Select(coa => coa.AccountID)
                     .ToList();
 
                 decimal totalBalance = 0;
                 foreach (var accountId in assetAccounts)
                 {
-                    var balance = CalculateAccountBalance(accountId, tenantId, asOfDate);
+                    var balance = CalculateAccountBalance(accountId, tenantId, asOfDate, locationId);
+                    // Assets are debit-normal; ignore credit (contra) netting at section level by summing signed.
                     totalBalance += balance;
                 }
 
@@ -919,27 +1032,32 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateLiabilityBalances(int tenantId, DateTime asOfDate, bool currentLiabilities)
+        private decimal CalculateLiabilityBalances(int tenantId, DateTime asOfDate, bool currentLiabilities, int? locationId = null)
         {
             try
             {
-                // Get liability account types
-                var liabilityTypes = currentLiabilities
-                    ? new[] { "Current Liability", "Accounts Payable", "Short Term Debt" }
-                    : new[] { "Long Term Liability", "Long Term Debt", "Loan" };
-
+                // COA stores AccountType = "Liability" and subtype on MainGroup.
                 var liabilityAccounts = _context.ChartofAccounts
-                    .Where(coa => coa.Tenantid == tenantId && 
-                                  coa.AccountType != null &&
-                                  liabilityTypes.Any(lt => coa.AccountType.Contains(lt, StringComparison.OrdinalIgnoreCase)))
+                    .Where(coa => coa.Tenantid == tenantId && coa.AccountType != null)
+                    .AsEnumerable()
+                    .Where(coa =>
+                    {
+                        var type = (coa.AccountType ?? "").ToLowerInvariant();
+                        if (!type.Contains("liabilit"))
+                            return false;
+                        var mg = (coa.MainGroup ?? "").ToLowerInvariant();
+                        var isLongTerm = mg.Contains("long-term") || mg.Contains("long term") ||
+                                         mg.Contains("noncurrent") || mg.Contains("non-current");
+                        return currentLiabilities ? !isLongTerm : isLongTerm;
+                    })
                     .Select(coa => coa.AccountID)
                     .ToList();
 
                 decimal totalBalance = 0;
                 foreach (var accountId in liabilityAccounts)
                 {
-                    var balance = CalculateAccountBalance(accountId, tenantId, asOfDate);
-                    // Liabilities are credit-normal, so negative balance means positive liability
+                    var balance = CalculateAccountBalance(accountId, tenantId, asOfDate, locationId);
+                    // Liabilities are credit-normal (negative signed balance). Present as positive liability.
                     totalBalance += Math.Abs(balance);
                 }
 
@@ -952,12 +1070,50 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateEquityBalance(int tenantId, DateTime asOfDate)
+        private decimal CalculateEquityBalance(int tenantId, DateTime asOfDate, int? locationId = null)
         {
-            // Assets - Liabilities = Equity
-            var assets = CalculateAssetBalances(tenantId, asOfDate, true) + CalculateAssetBalances(tenantId, asOfDate, false);
-            var liabilities = CalculateLiabilityBalances(tenantId, asOfDate, true) + CalculateLiabilityBalances(tenantId, asOfDate, false);
-            return assets - liabilities;
+            try
+            {
+                var equityAccounts = _context.ChartofAccounts
+                    .Where(coa => coa.Tenantid == tenantId && coa.AccountType != null)
+                    .AsEnumerable()
+                    .Where(coa => (coa.AccountType ?? "").ToLowerInvariant().Contains("equity"))
+                    .Select(coa => coa.AccountID)
+                    .ToList();
+
+                if (equityAccounts.Count > 0)
+                {
+                    decimal equity = 0;
+                    foreach (var accountId in equityAccounts)
+                    {
+                        var balance = CalculateAccountBalance(accountId, tenantId, asOfDate, locationId);
+                        // Equity is credit-normal.
+                        equity += Math.Abs(balance);
+                    }
+
+                    // Retained earnings plug from P&amp;L so BS still balances when income isn't closed.
+                    var pl = ProfitLossGlReportService.Build(
+                        _context, tenantId, new DateTime(2000, 1, 1), asOfDate, locationId);
+                    equity += pl.NetIncome;
+                    return equity;
+                }
+
+                // Fallback: Assets − Liabilities when no Equity COA rows exist.
+                var assets = CalculateAssetBalances(tenantId, asOfDate, true, locationId) +
+                             CalculateAssetBalances(tenantId, asOfDate, false, locationId);
+                var liabilities = CalculateLiabilityBalances(tenantId, asOfDate, true, locationId) +
+                                  CalculateLiabilityBalances(tenantId, asOfDate, false, locationId);
+                return assets - liabilities;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error calculating equity balance: {ex.Message}");
+                var assets = CalculateAssetBalances(tenantId, asOfDate, true, locationId) +
+                             CalculateAssetBalances(tenantId, asOfDate, false, locationId);
+                var liabilities = CalculateLiabilityBalances(tenantId, asOfDate, true, locationId) +
+                                  CalculateLiabilityBalances(tenantId, asOfDate, false, locationId);
+                return assets - liabilities;
+            }
         }
 
         private decimal CalculateRevenue(int tenantId, DateTime startDate, DateTime endDate)
@@ -1026,30 +1182,34 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateOperatingCashFlow(int tenantId, DateTime startDate, DateTime endDate)
+        private decimal CalculateOperatingCashFlow(int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
         {
             try
             {
                 // Operating cash flow = Cash received from customers - Cash paid to vendors
-                var cashIn = _context.Transactions
+                var cashInQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                t.isCustomer == 1 &&
                                t.TransactionType != null &&
-                               t.TransactionType == "Payment" &&
+                               EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                t.TransactionDate != null &&
                                t.TransactionDate >= startDate &&
-                               t.TransactionDate <= endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= endDate);
+                if (locationId.HasValue)
+                    cashInQuery = cashInQuery.Where(t => t.locationId == locationId.Value);
+                var cashIn = cashInQuery.Sum(t => t.Amount ?? 0);
 
-                var cashOut = _context.Transactions
+                var cashOutQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
-                               t.isCustomer == 0 &&
+                               (t.isCustomer == 0 || t.isCustomer == null) &&
                                t.TransactionType != null &&
-                               t.TransactionType == "Payment" &&
+                               EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                t.TransactionDate != null &&
                                t.TransactionDate >= startDate &&
-                               t.TransactionDate <= endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= endDate);
+                if (locationId.HasValue)
+                    cashOutQuery = cashOutQuery.Where(t => t.locationId == locationId.Value);
+                var cashOut = cashOutQuery.Sum(t => t.Amount ?? 0);
 
                 return cashIn - cashOut;
             }
@@ -1060,21 +1220,23 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateInvestingCashFlow(int tenantId, DateTime startDate, DateTime endDate)
+        private decimal CalculateInvestingCashFlow(int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
         {
             try
             {
                 // Investing activities - typically asset purchases/sales
                 // For now, using transactions marked as investing (could be enhanced with account type filtering)
-                var investingTransactions = _context.Transactions
+                var investingQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                t.TransactionType != null &&
                                t.TransactionDate != null &&
                                (t.TransactionType.Contains("Investment", StringComparison.OrdinalIgnoreCase) ||
                                 t.TransactionType.Contains("Asset", StringComparison.OrdinalIgnoreCase)) &&
                                t.TransactionDate >= startDate &&
-                               t.TransactionDate <= endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= endDate);
+                if (locationId.HasValue)
+                    investingQuery = investingQuery.Where(t => t.locationId == locationId.Value);
+                var investingTransactions = investingQuery.Sum(t => t.Amount ?? 0);
 
                 return -investingTransactions; // Negative for outflows
             }
@@ -1085,21 +1247,23 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private decimal CalculateFinancingCashFlow(int tenantId, DateTime startDate, DateTime endDate)
+        private decimal CalculateFinancingCashFlow(int tenantId, DateTime startDate, DateTime endDate, int? locationId = null)
         {
             try
             {
                 // Financing activities - loans, equity transactions
                 // For now, using transactions marked as financing (could be enhanced with account type filtering)
-                var financingTransactions = _context.Transactions
+                var financingQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                t.TransactionType != null &&
                                t.TransactionDate != null &&
                                (t.TransactionType.Contains("Loan", StringComparison.OrdinalIgnoreCase) ||
                                 t.TransactionType.Contains("Financing", StringComparison.OrdinalIgnoreCase)) &&
                                t.TransactionDate >= startDate &&
-                               t.TransactionDate <= endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= endDate);
+                if (locationId.HasValue)
+                    financingQuery = financingQuery.Where(t => t.locationId == locationId.Value);
+                var financingTransactions = financingQuery.Sum(t => t.Amount ?? 0);
 
                 return -financingTransactions; // Negative for outflows
             }
@@ -1110,17 +1274,29 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private object CalculateARAging(int tenantId)
+        private object CalculateARAging(int tenantId, int? locationId = null)
         {
             try
             {
                 var today = DateTime.Now.Date;
 
-                var unpaidInvoices = _context.InvoiceMaster
+                var unpaidInvoicesQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                  !im.IsVoided &&
-                                 im.PaidAmount < im.TotalAmount - 0.009m)
-                    .ToList();
+                                 im.PaidAmount < im.TotalAmount - 0.009m);
+                if (locationId.HasValue)
+                {
+                    var locId = locationId.Value;
+                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var unpaidInvoices = unpaidInvoicesQuery.ToList();
 
                 var items = unpaidInvoices.Select(im =>
                     new AccountingRules.AgingItem(
@@ -1151,17 +1327,20 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private object CalculateAPAging(int tenantId)
+        private object CalculateAPAging(int tenantId, int? locationId = null)
         {
             try
             {
                 var today = DateTime.Now.Date;
 
-                var unpaidInvoices = _context.VendorInvoiceMaster
+                var unpaidInvoicesQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                   vim.voideddate == null &&
-                                  vim.PaidAmount < vim.TotalAmount - 0.009m)
-                    .ToList();
+                                  vim.PaidAmount < vim.TotalAmount - 0.009m);
+                if (locationId.HasValue)
+                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(vim => vim.locationId == locationId.Value);
+
+                var unpaidInvoices = unpaidInvoicesQuery.ToList();
 
                 var items = unpaidInvoices.Select(vim =>
                     new AccountingRules.AgingItem(
@@ -1293,27 +1472,132 @@ namespace CimmpleAPI.Controllers
             var rangeStart = dateFilter.startDate.Date;
             var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
 
-            // Calculate cash inflows (customer payments received)
-            var cashInQuery = _context.Transactions
+            var paymentRows = _context.Transactions
                 .Where(t => t.TenantId == tenantId &&
-                           t.isCustomer == 1 &&
-                           t.TransactionType == "Payment" &&
-                           t.TransactionDate >= rangeStart &&
-                           t.TransactionDate <= rangeEnd);
-            if (locationId.HasValue)
-                cashInQuery = cashInQuery.Where(t => t.locationId == locationId.Value);
-            var cashIn = cashInQuery.Sum(t => t.Amount ?? 0);
+                            t.TransactionType != null &&
+                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                            t.TransactionDate >= rangeStart &&
+                            t.TransactionDate <= rangeEnd)
+                .ToList();
 
-            // Calculate cash outflows (vendor payments made)
-            var cashOutQuery = _context.Transactions
-                .Where(t => t.TenantId == tenantId &&
-                           t.isCustomer == 0 &&
-                           t.TransactionType == "Payment" &&
-                           t.TransactionDate >= rangeStart &&
-                           t.TransactionDate <= rangeEnd);
             if (locationId.HasValue)
-                cashOutQuery = cashOutQuery.Where(t => t.locationId == locationId.Value);
-            var cashOut = cashOutQuery.Sum(t => t.Amount ?? 0);
+            {
+                var locId = locationId.Value;
+                var customerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allCustomerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var customerInvoices = _context.InvoiceMaster
+                    .Where(im => im.TenantId == tenantId)
+                    .Select(im => new
+                    {
+                        im.Id,
+                        im.InvoiceNo,
+                        im.PrefixInvoiceNo,
+                        AtLocation = _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId))
+                    })
+                    .ToList();
+                foreach (var invoice in customerInvoices)
+                {
+                    allCustomerNumbers.Add(invoice.InvoiceNo.ToString());
+                    if (!string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo))
+                        allCustomerNumbers.Add(invoice.PrefixInvoiceNo.Trim());
+                    if (invoice.AtLocation)
+                    {
+                        customerNumbers.Add(invoice.InvoiceNo.ToString());
+                        if (!string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo))
+                            customerNumbers.Add(invoice.PrefixInvoiceNo.Trim());
+                    }
+                }
+
+                var vendorNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allVendorNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var vendorInvoices = _context.VendorInvoiceMaster
+                    .Where(vim => vim.TenantId == tenantId)
+                    .Select(vim => new { vim.InvoiceNo, vim.prefixinvoiceno, vim.locationId })
+                    .ToList();
+                foreach (var invoice in vendorInvoices)
+                {
+                    if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
+                        allVendorNumbers.Add(invoice.InvoiceNo.Trim());
+                    if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
+                        allVendorNumbers.Add(invoice.prefixinvoiceno.Trim());
+                    if (invoice.locationId == locId)
+                    {
+                        if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
+                            vendorNumbers.Add(invoice.InvoiceNo.Trim());
+                        if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
+                            vendorNumbers.Add(invoice.prefixinvoiceno.Trim());
+                    }
+                }
+
+                paymentRows = paymentRows.Where(t =>
+                {
+                    var number = t.invoiceNo?.Trim() ?? "";
+                    var isCustomerPayment = t.isCustomer == 1;
+                    var selected = isCustomerPayment ? customerNumbers : vendorNumbers;
+                    var all = isCustomerPayment ? allCustomerNumbers : allVendorNumbers;
+                    if (selected.Contains(number))
+                        return true;
+                    if (all.Contains(number))
+                        return false;
+                    return t.locationId == locId;
+                }).ToList();
+            }
+
+            var cashIn = paymentRows
+                .Where(t => t.isCustomer == 1)
+                .Sum(t => t.Amount ?? 0);
+            var cashOut = paymentRows
+                .Where(t => t.isCustomer == 0 || t.isCustomer == null)
+                .Sum(t => Math.Abs(t.Amount ?? 0));
+
+            // Include historical paid invoices that have no payment transaction row.
+            var customerFallback = _context.InvoiceMaster
+                .Where(im => im.TenantId == tenantId &&
+                             !im.IsVoided &&
+                             im.PaymentDate != null &&
+                             im.PaymentDate >= rangeStart &&
+                             im.PaymentDate <= rangeEnd &&
+                             !_context.Transactions.Any(t =>
+                                 t.TenantId == tenantId &&
+                                 t.isCustomer == 1 &&
+                                 t.TransactionType != null &&
+                                 EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                                 (t.invoiceNo == im.PrefixInvoiceNo ||
+                                  t.invoiceNo == im.InvoiceNo.ToString())));
+            if (locationId.HasValue)
+            {
+                var locId = locationId.Value;
+                customerFallback = customerFallback.Where(im =>
+                    _context.InvoiceDetail.Any(id =>
+                        id.InvoiceId == im.Id &&
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == id.OrderId &&
+                            co.Tenantid == tenantId &&
+                            co.locationId == locId)));
+            }
+            cashIn += customerFallback.Sum(im => (decimal?)(im.PaidAmount > 0 ? im.PaidAmount : im.TotalAmount)) ?? 0;
+
+            var vendorFallback = _context.VendorInvoiceMaster
+                .Where(vim => vim.TenantId == tenantId &&
+                              vim.isPaid == 1 &&
+                              vim.Paydate != null &&
+                              vim.Paydate >= rangeStart &&
+                              vim.Paydate <= rangeEnd &&
+                              !_context.Transactions.Any(t =>
+                                  t.TenantId == tenantId &&
+                                  (t.isCustomer == 0 || t.isCustomer == null) &&
+                                  t.TransactionType != null &&
+                                  EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                                  t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo) &&
+                                  (!locationId.HasValue || t.locationId == locationId.Value)));
+            if (locationId.HasValue)
+                vendorFallback = vendorFallback.Where(vim => vim.locationId == locationId.Value);
+            cashOut += vendorFallback.Sum(vim => (decimal?)vim.TotalAmount) ?? 0;
 
             return (cashIn, cashOut);
         }
@@ -2217,6 +2501,8 @@ namespace CimmpleAPI.Controllers
         public string Format { get; set; }
         /// <summary>Preferred tenant when the client sends it in the body (matches UI).</summary>
         public int TenantId { get; set; }
+        /// <summary>Optional site filter for location-scoped reports.</summary>
+        public int? LocationId { get; set; }
         /// <summary>Used when <see cref="DateRange"/> is Custom (yyyy-MM-dd).</summary>
         public string CustomStartDate { get; set; }
         public string CustomEndDate { get; set; }

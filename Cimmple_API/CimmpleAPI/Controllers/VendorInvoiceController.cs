@@ -674,6 +674,13 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
                     var bankId = request.BankId ?? invoice.Bankid;
+                    if (!bankId.HasValue || bankId.Value <= 0)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "Select a bank account before recording this payment."
+                        });
+                    }
                     var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
                     if (!bankAccountId.HasValue)
                     {
@@ -721,16 +728,9 @@ namespace CimmpleAPI.Controllers
                     var description = isFullyPaid
                         ? $"Auto-posted vendor payment for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}"
                         : $"Auto-posted partial vendor payment ({paymentAmount:0.00}) for invoice {invoice.prefixinvoiceno ?? invoice.InvoiceNo}";
+                    // Keep the invoice's business site on the payment. BankId identifies
+                    // the cash account and must not overwrite location reporting.
                     var locationId = invoice.locationId > 0 ? invoice.locationId : 1;
-                    if (bankId.HasValue)
-                    {
-                        var bankLocation = _context.BankMaster
-                            .Where(b => b.Id == bankId.Value && b.TenantId == tenantId)
-                            .Select(b => (int?)b.locationId)
-                            .FirstOrDefault();
-                        if (bankLocation.HasValue && bankLocation.Value > 0)
-                            locationId = bankLocation.Value;
-                    }
 
                     var journalHeader = new JournalEntry
                     {
@@ -813,7 +813,8 @@ namespace CimmpleAPI.Controllers
         private static string BuildAutoPaymentReference(string prefix, string? invoiceNo, int invoiceId)
         {
             var safeInvoice = string.IsNullOrWhiteSpace(invoiceNo) ? invoiceId.ToString() : invoiceNo.Trim();
-            var reference = $"{prefix}-{safeInvoice}";
+            // Unique per payment so partial payments don't collide on the journal reference.
+            var reference = $"{prefix}-{safeInvoice}-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
             return reference.Length > 200 ? reference[..200] : reference;
         }
 
