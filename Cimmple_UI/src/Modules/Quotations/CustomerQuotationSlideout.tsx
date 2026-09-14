@@ -2629,6 +2629,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
               const matchQty = sorted.find((q) => detail.QtyOrdered >= q)
                 ?? Math.min(...matrix.quantities);
               const colIdx = matrix.quantities.indexOf(matchQty);
+              // Totals only include active ops currently present in the matrix
               const tierPrice = matrix.breakdownPrices.reduce(
                 (sum, bp) => sum + (bp.prices[colIdx] || 0),
                 0
@@ -3071,28 +3072,36 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
 
   // Initialize breakdown prices when price breakdowns are loaded and no matrix exists
   useEffect(() => {
-    if (priceBreakdowns.length > 0 && breakdownPrices.length === 0 && !initialMatrix) {
+    if (priceBreakdowns.length === 0) return;
+
+    if (breakdownPrices.length === 0 && !initialMatrix) {
       setBreakdownPrices(priceBreakdowns.map(item => ({
         priceBreakdownId: item.id,
         itemName: item.itemName,
         prices: quantities.map(() => 0),
       })));
-    } else if (priceBreakdowns.length > 0 && breakdownPrices.length > 0) {
-      // Ensure all price breakdown items are included
-      const existingIds = new Set(breakdownPrices.map(bp => bp.priceBreakdownId));
-      const missingItems = priceBreakdowns.filter(item => !existingIds.has(item.id));
-      if (missingItems.length > 0) {
-        setBreakdownPrices((prev) => [
-          ...prev,
-          ...missingItems.map(item => ({
-            priceBreakdownId: item.id,
-            itemName: item.itemName,
-            prices: quantities.map(() => 0),
-          })),
-        ]);
-      }
+      return;
     }
-  }, [priceBreakdowns.length, initialMatrix]);
+
+    // Keep only active ops in totals/state; add any newly active ops missing from the matrix
+    const activeIds = new Set(priceBreakdowns.map(item => item.id));
+    setBreakdownPrices((prev) => {
+      const pruned = prev.filter(bp => activeIds.has(bp.priceBreakdownId));
+      const existingIds = new Set(pruned.map(bp => bp.priceBreakdownId));
+      const missingItems = priceBreakdowns.filter(item => !existingIds.has(item.id));
+      if (pruned.length === prev.length && missingItems.length === 0) {
+        return prev;
+      }
+      return [
+        ...pruned,
+        ...missingItems.map(item => ({
+          priceBreakdownId: item.id,
+          itemName: item.itemName,
+          prices: quantities.map(() => 0),
+        })),
+      ];
+    });
+  }, [priceBreakdowns, initialMatrix]);
 
   // Update breakdown prices when quantities change
   useEffect(() => {
@@ -3202,7 +3211,10 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
     
     const matrix: PriceBreakdownMatrix = {
       quantities: sortedQuantities,
-      breakdownPrices: reorderedBreakdownPrices,
+      // Persist only active ops so inactive prices are not kept in totals
+      breakdownPrices: reorderedBreakdownPrices.filter(bp =>
+        priceBreakdowns.some(pb => pb.id === bp.priceBreakdownId)
+      ),
       includeInPrint: reorderedIncludeInPrint,
     };
     
@@ -3226,8 +3238,11 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   // Calculate totals for each quantity column
   const getColumnTotals = (): number[] => {
     if (quantities.length === 0) return [];
+    const activeIds = new Set(priceBreakdowns.map(pb => pb.id));
     return quantities.map((_, quantityIndex) => {
-      return breakdownPrices.reduce((sum, bp) => sum + (bp.prices[quantityIndex] || 0), 0);
+      return breakdownPrices
+        .filter(bp => activeIds.has(bp.priceBreakdownId))
+        .reduce((sum, bp) => sum + (bp.prices[quantityIndex] || 0), 0);
     });
   };
 

@@ -197,12 +197,13 @@ const MasterListPage = <T extends Record<string, any>>({
   const endIndex = enablePagination ? startIndex + effectivePageSize : sortedData.length;
   const paginatedData = sortedData.slice(startIndex, endIndex);
 
-  // Reset to page 1 when search/filter changes
+  // Reset to page 1 when search/filter *values* change (not filter array identity on re-render)
+  const filterSignature = (filters || []).map((f) => String(f.value ?? "")).join("|");
   useEffect(() => {
     if (enablePagination) {
       setCurrentPage(1);
     }
-  }, [searchTerm, filters, enablePagination]);
+  }, [searchTerm, filterSignature, enablePagination]);
 
   const getSortIcon = (columnKey: string) => {
     if (sortColumn !== columnKey) {
