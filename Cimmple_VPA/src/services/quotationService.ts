@@ -6,6 +6,11 @@ export interface QuotationAttachment {
   name: string;
   size: number;
   fileUrl?: string;
+  fileUniqueno?: number;
+  uploadFile?: string;
+  isPending?: boolean;
+  localUrl?: string;
+  file?: File;
 }
 
 export interface QuotationDetailReq {
@@ -182,7 +187,9 @@ export class QuotationService {
               id: Number(a.id ?? a.Id ?? 0),
               name: String(a.name ?? a.Name ?? ""),
               size: Number(a.size ?? a.Size ?? 0),
-              fileUrl: String(a.fileUrl ?? a.FileUrl ?? ""),
+              fileUrl: String(a.fileUrl ?? a.FileUrl ?? a.uploadFile ?? a.UploadFile ?? ""),
+              fileUniqueno: Number(a.fileUniqueno ?? a.FileUniqueno ?? 0),
+              uploadFile: String(a.uploadFile ?? a.UploadFile ?? a.fileUrl ?? a.FileUrl ?? ""),
             }))
           : undefined,
       };
@@ -221,6 +228,8 @@ export class QuotationService {
         name: String(a.name ?? a.Name ?? ""),
         size: Number(a.size ?? a.Size ?? 0),
         fileUrl: String(a.fileUrl ?? a.FileUrl ?? a.uploadFile ?? a.UploadFile ?? ""),
+        fileUniqueno: Number(a.fileUniqueno ?? a.FileUniqueno ?? 0),
+        uploadFile: String(a.uploadFile ?? a.UploadFile ?? a.fileUrl ?? a.FileUrl ?? ""),
       })),
     };
   }
@@ -245,5 +254,92 @@ export class QuotationService {
       id: request.OrderID || 0,
       message: typeof result === "string" ? result : "Vendor quotation saved successfully",
     };
+  }
+
+  public static async vendorQuotationGetFile(request: {
+    orderId: number;
+    fileUniqueno: number;
+  }): Promise<{ blob: Blob; contentType: string }> {
+    const tenantID = AuthService.getTenantId();
+    const response = await api.get("/Quotation/VendorQuotationGetFile", {
+      params: {
+        orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+    });
+    const blob: Blob = response.data;
+    const headerType =
+      (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) || "";
+    const contentType =
+      (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+      blob.type ||
+      "application/octet-stream";
+    return { blob, contentType };
+  }
+
+  public static async vendorQuotationDetailSaveFile(
+    orderId: number,
+    itemNo: number,
+    files: File[]
+  ): Promise<QuotationAttachment[]> {
+    const tenantID = AuthService.getTenantId();
+    const formData = new FormData();
+    files.forEach((file) => formData.append("file", file));
+    formData.append(
+      "formField",
+      JSON.stringify({
+        OrderId: orderId,
+        OrderID: orderId,
+        ItemNo: itemNo,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("orderId", String(orderId));
+    formData.append("itemNo", String(itemNo));
+    formData.append("tenantId", String(tenantID));
+
+    const { data } = await api.post("/Quotation/VendorQuotationDetailSaveFile", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    const attachments = data?.result?.attachments || [];
+    return attachments.map((a: Record<string, unknown>) => ({
+      id: Number(a.id ?? a.Id ?? 0),
+      name: String(a.name ?? a.Name ?? ""),
+      size: Number(a.size ?? a.Size ?? 0),
+      fileUrl: String(a.fileUrl ?? a.FileUrl ?? a.uploadFile ?? a.UploadFile ?? ""),
+      fileUniqueno: Number(a.fileUniqueno ?? a.FileUniqueno ?? 0),
+      uploadFile: String(a.uploadFile ?? a.UploadFile ?? ""),
+    }));
+  }
+
+  public static async vendorQuotationDetailGetFile(request: {
+    orderId: number;
+    itemNo: number;
+    fileUniqueno: number;
+  }): Promise<{ blob: Blob; contentType: string }> {
+    const tenantID = AuthService.getTenantId();
+    const response = await api.get("/Quotation/VendorQuotationDetailGetFile", {
+      params: {
+        orderId: request.orderId,
+        itemNo: request.itemNo,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+    });
+    const blob: Blob = response.data;
+    const headerType =
+      (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) || "";
+    const contentType =
+      (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+      blob.type ||
+      "application/octet-stream";
+    return { blob, contentType };
   }
 }

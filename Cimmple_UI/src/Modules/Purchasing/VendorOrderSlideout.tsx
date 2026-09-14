@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -16,6 +16,13 @@ import VendorInvoiceModal from "./VendorInvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
+import {
+  getPendingFiles,
+  revokeLocalAttachmentUrls,
+} from "../../Common/Services/FileUploadHelper";
 import {
   VENDOR_ORDER_LINE_TYPES,
   DEFAULT_VENDOR_ORDER_LINE_TYPE,
@@ -83,8 +90,12 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
-  const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
-  const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<number[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
@@ -353,14 +364,16 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           }
         }
         if (result.Attachments && Array.isArray(result.Attachments)) {
-          setAttachments(result.Attachments.map(a => ({
+          setAttachments(result.Attachments.map((a: any) => ({
             id: a.id || 0,
             name: a.name || "",
             size: a.size || 0,
-            fileUrl: a.fileUrl || ""
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+            createdBy: a.createdBy || 0,
           })));
-          const maxId = Math.max(...result.Attachments.map((a: any) => a.id), 0);
-          setAttachmentIdCounter(maxId + 1);
+          setDeletedAttachmentIds([]);
         }
 
         if (result.Comments && Array.isArray(result.Comments)) {
@@ -997,6 +1010,160 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     window.print();
   };
 
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+  };
+
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
+
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
+      }
+      if (file.isPending) {
+        return file.localUrl
+          ? { url: file.localUrl, contentType: file.contentType }
+          : null;
+      }
+      if (!file.fileUniqueno || formData.OrderID <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno },
+        async () => {
+          const { blob, contentType } = await VendorOrderService.VendorOrderGetFile({
+            orderId: formData.OrderID,
+            fileUniqueno: file.fileUniqueno!,
+            signal,
+          });
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType,
+            blobUrl,
+            ownsUrl: true,
+          };
+        }
+      );
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id) ||
+          (file.fileUniqueno && d.fileUniqueno === file.fileUniqueno)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    [formData.OrderID]
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      if (file.localUrl || file.isPending || !file.fileUniqueno || formData.OrderID <= 0) {
+        return;
+      }
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {});
+    },
+    [formData.OrderID, loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    if (match.isPending && match.localUrl) {
+      const link = document.createElement("a");
+      link.href = match.localUrl;
+      link.download = match.name;
+      link.click();
+      return;
+    }
+
+    if (!match.fileUniqueno || formData.OrderID <= 0) {
+      toast.error("Attachment is not available for download yet");
+      return;
+    }
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno,
+    });
+
+    await VendorOrderService.DownloadVendorOrderAttachment({
+      orderId: formData.OrderID,
+      fileUniqueno: match.fileUniqueno,
+      name: match.name,
+      uploadFile: match.uploadFile,
+      cachedBlobUrl: cached?.blobUrl,
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+      revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to close?")) {
@@ -1054,6 +1221,20 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     setLoading(true);
     setSavingAction(mode);
     try {
+      const pendingFiles = getPendingFiles(attachments);
+      const hadDeletes = deletedAttachmentIds.length > 0;
+      const persistedAttachments = (attachments || [])
+        .filter((a) => !a.isPending)
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          fileUrl: a.fileUrl || a.uploadFile || "",
+          fileUniqueno: a.fileUniqueno || 0,
+          uploadFile: a.uploadFile || a.fileUrl || "",
+          createdBy: a.createdBy || 0,
+        }));
+
       const dataToSave: VendorOrderMasterReq = {
         ...formData,
         Status: status,
@@ -1063,11 +1244,20 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           )
         ),
         Details: filledDetails,
-        Attachments: attachments || [],
+        Attachments: persistedAttachments,
+        DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments || [],
       };
 
       const result = await VendorOrderService.SaveVendorOrder(dataToSave);
+
+      const savedId = result.id > 0 ? result.id : formData.OrderID;
+      if (savedId > 0 && pendingFiles.length > 0) {
+        await VendorOrderService.VendorOrderSaveFile(savedId, pendingFiles);
+      }
+
+      revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+      setDeletedAttachmentIds([]);
 
       const invoicedLineCount = filledDetails.filter(
         (d) => (d.InvoicedQty || 0) > 0 ||
@@ -1088,12 +1278,33 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       }
       setIsStateChanged(false);
 
-      if (formData.OrderID === 0 && result.id > 0) {
+      if (formData.OrderID === 0 && savedId > 0) {
         setFormData((prev) => ({
           ...prev,
-          OrderID: result.id,
+          OrderID: savedId,
           Status: status,
         }));
+      }
+
+      if (savedId > 0 && (pendingFiles.length > 0 || hadDeletes)) {
+        try {
+          const reloaded = await VendorOrderService.GetVendorOrderById(savedId);
+          if (reloaded?.Attachments) {
+            setAttachments(
+              reloaded.Attachments.map((a: any) => ({
+                id: a.id || 0,
+                name: a.name || "",
+                size: a.size || 0,
+                fileUrl: a.fileUrl || a.uploadFile || "",
+                fileUniqueno: a.fileUniqueno || 0,
+                uploadFile: a.uploadFile || a.fileUrl || "",
+                createdBy: a.createdBy || 0,
+              }))
+            );
+          }
+        } catch {
+          /* keep local state */
+        }
       }
 
       onClose(true);
@@ -1111,6 +1322,52 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       className="vendor-order-slideout-overlay"
       onClick={handleCancel}
     >
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div className="vendor-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="vendor-order-slideout-header">
           <div>
@@ -2079,98 +2336,55 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               )}
             </div>
 
-            {/* Attachments Section - Same as VendorQuotationSlideout */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Attachments</h3>
+            {/* Attachments Section */}
+            <AttachmentUploadSection
+              attachments={attachments}
+              orderId={formData.OrderID}
+              disabled={loading}
+              deferUploadUntilSave
+              onAttachmentsChange={(next) => {
+                setAttachments(next);
+                setIsStateChanged(true);
+              }}
+              onDeleteAttachment={async (attachment) => {
+                if (attachment.isPending || !attachment.id || attachment.id <= 0 || !attachment.fileUniqueno) {
+                  if (attachment.localUrl) {
+                    URL.revokeObjectURL(attachment.localUrl);
+                  }
+                  setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                  setIsStateChanged(true);
+                  return;
+                }
 
-              {attachments.length === 0 ? (
-                <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.875rem" }}>No attachments added</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
-                  {attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "0.75rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1 }}>
-                        <span style={{ fontSize: "1.25rem" }}>📎</span>
-                        <div>
-                          <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{attachment.name}</div>
-                          <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {(attachment.size / 1024).toFixed(2)} KB
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
-                          setIsStateChanged(true);
-                        }}
-                        style={{
-                          padding: "0.25rem 0.5rem",
-                          backgroundColor: "#ef4444",
-                          color: "white",
-                          border: "none",
-                          borderRadius: "0.25rem",
-                          cursor: "pointer",
-                          fontSize: "0.75rem",
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#6366f1",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.375rem",
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="file"
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    files.forEach((file) => {
-                      setAttachmentIdCounter((prev) => {
-                        const newId = prev;
-                        const newAttachment = {
-                          id: newId,
-                          name: file.name,
-                          size: file.size,
-                        };
-                        setAttachments((prevAttachments) => [...prevAttachments, newAttachment]);
-                        setIsStateChanged(true);
-                        return newId + 1;
-                      });
-                    });
-                  }}
-                />
-                + Add Attachment
-              </label>
-            </div>
+                documentCacheRef.current.remove({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                setDeletedAttachmentIds((prev) =>
+                  prev.includes(attachment.id) ? prev : [...prev, attachment.id]
+                );
+                setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                setIsStateChanged(true);
+                toast.info("Attachment will be removed when you save the order");
+              }}
+              onDownloadAttachment={async (attachment) => {
+                if (!attachment.fileUniqueno || formData.OrderID <= 0) {
+                  throw new Error("Attachment is not available for download yet");
+                }
+                const cached = documentCacheRef.current.get({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                await VendorOrderService.DownloadVendorOrderAttachment({
+                  orderId: formData.OrderID,
+                  fileUniqueno: attachment.fileUniqueno,
+                  name: attachment.name,
+                  uploadFile: attachment.uploadFile,
+                  cachedBlobUrl: cached?.blobUrl,
+                });
+              }}
+              onViewAttachment={handleOpenDocumentViewer}
+            />
 
             {/* Invoice History Section */}
             {orderId > 0 && (

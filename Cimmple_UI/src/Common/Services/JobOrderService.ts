@@ -1,5 +1,6 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
+import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
 
 export interface JobOrderMaster {
   jobOrderID: number;
@@ -47,6 +48,7 @@ export interface JobOrderMasterReq {
   UserToken: number;
   OrderDate: string;
   Attachments?: JobOrderAttachment[];
+  DeletedAttachmentIds?: number[];
   Comments?: JobOrderComment[];
   RoutingSteps?: JobOrderRoutingStep[];
   DrawingNumber?: string;
@@ -85,6 +87,10 @@ export interface JobOrderAttachment {
   name: string;
   size: number;
   fileUrl?: string;
+  fileUniqueno?: number;
+  uploadFile?: string;
+  pageNo?: string;
+  createdBy?: number;
 }
 
 export interface JobOrderComment {
@@ -508,7 +514,11 @@ export class JobOrderService {
               id: a.id || a.Id || 0,
               name: a.name || a.Name || "",
               size: a.size || a.Size || 0,
-              fileUrl: a.fileUrl || a.FileUrl || "",
+              fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+              fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+              uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+              pageNo: a.pageNo || a.PageNo || "0",
+              createdBy: a.createdBy || a.CreatedBy || 0,
             }))
           : [],
         Comments: Array.isArray(result.comments)
@@ -674,6 +684,127 @@ export class JobOrderService {
         return { id: result.id, message: result.message || "Job order created successfully" };
       }
       return { id: 0, message: "Job order created successfully" };
+    });
+  };
+
+  public static JobOrderSaveFile = async (
+    jobOrderId: number,
+    files: File[]
+  ): Promise<JobOrderAttachment[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const formData = new FormData();
+    appendFilesToFormData(formData, files);
+    formData.append(
+      "formField",
+      JSON.stringify({
+        JobOrderId: jobOrderId,
+        JobOrderID: jobOrderId,
+        OrderId: jobOrderId,
+        OrderID: jobOrderId,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("jobOrderId", String(jobOrderId));
+    formData.append("orderId", String(jobOrderId));
+    formData.append("tenantId", String(tenantID));
+
+    const url = `/JobOrder/JobOrderSaveFile`;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
+      const attachments = result?.attachments || [];
+      return attachments.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || "0",
+        createdBy: a.createdBy || a.CreatedBy || 0,
+      }));
+    });
+  };
+
+  public static JobOrderGetFile = async (request: {
+    jobOrderId: number;
+    fileUniqueno: number;
+    signal?: AbortSignal;
+  }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/JobOrder/JobOrderGetFile`;
+    return Instense.get(url, {
+      params: {
+        jobOrderId: request.jobOrderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+      signal: request.signal,
+    }).then((response: any) => {
+      const blob: Blob = response.data;
+      const headerType =
+        (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) ||
+        "";
+      const contentType =
+        (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+        blob.type ||
+        "application/octet-stream";
+      const fileNameHeader =
+        response.headers?.["x-file-name"] || response.headers?.["X-File-Name"] || undefined;
+      return { blob, contentType, fileName: fileNameHeader };
+    });
+  };
+
+  public static DownloadJobOrderAttachment = async (request: {
+    jobOrderId: number;
+    fileUniqueno: number;
+    name: string;
+    uploadFile?: string;
+    cachedBlobUrl?: string;
+  }): Promise<void> => {
+    if (request.cachedBlobUrl) {
+      const link = document.createElement("a");
+      link.href = request.cachedBlobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      return;
+    }
+
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/JobOrder/JobOrderGetFile`;
+    return Instense.get(url, {
+      params: {
+        jobOrderId: request.jobOrderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: true,
+      },
+      responseType: "blob",
+    }).then((response: any) => {
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
     });
   };
 }
