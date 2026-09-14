@@ -967,6 +967,254 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        [HttpPost("VendorOrderSaveFile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> VendorOrderSaveFile(IFormCollection form)
+        {
+            try
+            {
+                var files = form.Files;
+                if (files == null || files.Count == 0)
+                {
+                    return BadRequest(new { error = "At least one file is required" });
+                }
+
+                int orderId = 0;
+                int tenantId = GetTenantId();
+                int createdBy = GetUserId() ?? 0;
+
+                if (form.ContainsKey("formField") && !string.IsNullOrWhiteSpace(form["formField"]))
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var request = JsonSerializer.Deserialize<OrderAttachmentUploadContext>(form["formField"]!, options);
+                    if (request != null)
+                    {
+                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.TenantId > 0) tenantId = request.TenantId;
+                        if (request.TenantID > 0) tenantId = request.TenantID;
+                        if (request.Tenantid > 0) tenantId = request.Tenantid;
+                    }
+                }
+
+                if (orderId <= 0)
+                {
+                    var orderIdValue = form.ContainsKey("orderId") ? form["orderId"].ToString()
+                        : form.ContainsKey("OrderId") ? form["OrderId"].ToString() : "";
+                    int.TryParse(orderIdValue, out orderId);
+                }
+
+                if (form.ContainsKey("tenantId") && int.TryParse(form["tenantId"], out var formTenant) && formTenant > 0)
+                {
+                    tenantId = formTenant;
+                }
+
+                if (orderId <= 0)
+                {
+                    return BadRequest(new { error = "A saved vendor order (orderId) is required before uploading attachments" });
+                }
+
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var order = await _context.VendorOrders
+                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (order == null)
+                {
+                    return NotFound(new { error = "Vendor order not found" });
+                }
+
+                var uploaded = new List<object>();
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length <= 0)
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                    var displayName = Path.GetFileName(file.FileName);
+
+                    int nextFileUniqueNo = 1;
+                    if (_context.VendorOrderAttachments.Any())
+                    {
+                        nextFileUniqueNo = _context.VendorOrderAttachments.Max(x => x.FileUniqueno) + 1;
+                        if (nextFileUniqueNo <= 1)
+                        {
+                            nextFileUniqueNo = _context.VendorOrderAttachments.Max(x => x.Id) + 1;
+                        }
+                    }
+
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+                    var attachment = new VendorOrderAttachment
+                    {
+                        OrderID = orderId,
+                        Name = displayName,
+                        Size = file.Length,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        FileUrl = blobName,
+                        TenantID = tenantId,
+                        createdby = createdBy,
+                        CreatedDate = DateTime.UtcNow
+                    };
+
+                    _context.VendorOrderAttachments.Add(attachment);
+                    await _context.SaveChangesAsync();
+
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.VendorOrdersFolder,
+                        blobName,
+                        createdBy);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
+                    {
+                        _context.VendorOrderAttachments.Remove(attachment);
+                        await _context.SaveChangesAsync();
+                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                    }
+
+                    uploaded.Add(new
+                    {
+                        id = attachment.Id,
+                        name = attachment.Name,
+                        size = attachment.Size,
+                        fileUrl = attachment.UploadFile,
+                        fileUniqueno = attachment.FileUniqueno,
+                        uploadFile = attachment.UploadFile,
+                        createdBy = attachment.createdby
+                    });
+                }
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        orderId,
+                        attachments = uploaded,
+                        message = "Files uploaded successfully"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        [HttpGet("VendorOrderGetFile")]
+        public IActionResult VendorOrderGetFile(
+            [FromQuery] int orderId,
+            [FromQuery] int fileUniqueno,
+            [FromQuery] int tenantId = 0,
+            [FromQuery] bool download = false)
+        {
+            try
+            {
+                if (orderId <= 0 || fileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "orderId and fileUniqueno are required" });
+                }
+
+                if (tenantId <= 0) tenantId = GetTenantId();
+
+                var attachment = _context.VendorOrderAttachments.FirstOrDefault(a =>
+                    a.FileUniqueno == fileUniqueno &&
+                    a.OrderID == orderId &&
+                    (a.TenantID == tenantId || a.TenantID == 0));
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+
+                if (string.IsNullOrEmpty(blobName))
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.VendorOrdersFolder,
+                    blobName);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? blobName);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.Name);
+
+                if (download)
+                {
+                    return File(bytes, contentType, fileName);
+                }
+
+                Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName}\"";
+                Response.Headers["X-Attachment-Id"] = attachment.Id.ToString();
+                Response.Headers["X-File-Name"] = fileName;
+                return File(bytes, contentType);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private async Task ProcessDeletedVendorOrderAttachments(
+            int orderId,
+            int tenantId,
+            List<int> deletedAttachmentIds)
+        {
+            var uniqueIds = deletedAttachmentIds
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            if (uniqueIds.Count == 0)
+            {
+                return;
+            }
+
+            var toDelete = _context.VendorOrderAttachments
+                .Where(a => a.OrderID == orderId
+                            && uniqueIds.Contains(a.Id))
+                .ToList();
+
+            foreach (var attachment in toDelete)
+            {
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+                if (!string.IsNullOrEmpty(blobName))
+                {
+                    var tid = attachment.TenantID > 0 ? attachment.TenantID : tenantId;
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tid,
+                        ModuleFileStorage.VendorOrdersFolder,
+                        blobName);
+
+                    await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+                }
+            }
+
+            if (toDelete.Count > 0)
+            {
+                _context.VendorOrderAttachments.RemoveRange(toDelete);
+                await _context.SaveChangesAsync();
+            }
+        }
+
         private async Task ProcessDeletedOrderAttachments(
             int orderId,
             int tenantId,
@@ -1728,16 +1976,20 @@ namespace CimmpleAPI.Controllers
                     glcode = d.glcode ?? ""
                 }).ToList();
 
-                // Get attachments
+                // Get attachments (Azure-backed when UploadFile / FileUniqueno set)
                 var attachments = await _context.VendorOrderAttachments
                     .AsNoTracking()
                     .Where(a => a.OrderID == orderId)
+                    .OrderBy(a => a.Id)
                     .Select(a => new
                     {
                         id = a.Id,
                         name = a.Name ?? "",
                         size = a.Size,
-                        fileUrl = a.FileUrl ?? ""
+                        fileUrl = !string.IsNullOrEmpty(a.UploadFile) ? a.UploadFile : (a.FileUrl ?? ""),
+                        fileUniqueno = a.FileUniqueno,
+                        uploadFile = a.UploadFile ?? "",
+                        createdBy = a.createdby
                     })
                     .ToListAsync();
 
@@ -2175,40 +2427,20 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                // Handle Attachments - use safer query approach
-                if (orderData.TryGetProperty("Attachments", out JsonElement attachmentsElem) && attachmentsElem.ValueKind == JsonValueKind.Array && attachmentsElem.GetArrayLength() > 0)
+                // Process attachment deletions queued from the UI (Azure blobs + rows).
+                // New files are uploaded via VendorOrderSaveFile after this save.
+                if (orderData.TryGetProperty("DeletedAttachmentIds", out JsonElement deletedAttElem)
+                    && deletedAttElem.ValueKind == JsonValueKind.Array)
                 {
-                    // Delete existing attachments
-                    List<VendorOrderAttachment> existingAttachments = null;
-                    try
+                    var deletedIds = deletedAttElem.EnumerateArray()
+                        .Where(e => e.ValueKind == JsonValueKind.Number)
+                        .Select(e => e.GetInt32())
+                        .Where(id => id > 0)
+                        .Distinct()
+                        .ToList();
+                    if (deletedIds.Count > 0)
                     {
-                        existingAttachments = await _context.VendorOrderAttachments
-                            .AsNoTracking()
-                            .Where(a => a.OrderID == order.OrderID)
-                            .ToListAsync();
-                    }
-                    catch (Exception attachmentsEx)
-                    {
-                        Console.WriteLine($"SaveVendorOrder: Error querying existing attachments: {attachmentsEx.Message}");
-                        existingAttachments = new List<VendorOrderAttachment>();
-                    }
-                    
-                    if (existingAttachments != null && existingAttachments.Any())
-                    {
-                        _context.VendorOrderAttachments.RemoveRange(existingAttachments);
-                    }
-
-                    // Add new attachments
-                    foreach (var attachmentElem in attachmentsElem.EnumerateArray())
-                    {
-                        var attachment = new VendorOrderAttachment
-                        {
-                            OrderID = order.OrderID,
-                            Name = attachmentElem.TryGetProperty("name", out JsonElement nameElem) ? nameElem.GetString() ?? "" : "",
-                            Size = attachmentElem.TryGetProperty("size", out JsonElement sizeElem) ? sizeElem.GetInt64() : 0,
-                            FileUrl = attachmentElem.TryGetProperty("fileUrl", out JsonElement fileUrlElem) ? fileUrlElem.GetString() ?? "" : ""
-                        };
-                        _context.VendorOrderAttachments.Add(attachment);
+                        await ProcessDeletedVendorOrderAttachments(order.OrderID, order.Tenantid, deletedIds);
                     }
                 }
 
@@ -3011,12 +3243,34 @@ namespace CimmpleAPI.Controllers
                 await RevertVendorQuotationsForDeletedOrderAsync(order, tenantId);
 
                 // Delete related records first to avoid foreign key constraint violations
-                // 1. Delete attachments
+                // 1. Delete attachments (and Azure blobs when present)
                 var attachments = await _context.VendorOrderAttachments
                     .Where(a => a.OrderID == orderId)
                     .ToListAsync();
                 if (attachments.Any())
                 {
+                    foreach (var attachment in attachments)
+                    {
+                        var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                            ? attachment.UploadFile
+                            : attachment.FileUrl;
+                        if (!string.IsNullOrEmpty(blobName))
+                        {
+                            var tid = attachment.TenantID > 0 ? attachment.TenantID : tenantId;
+                            var fileInfo = ModuleFileStorage.CreateFileInfo(
+                                tid,
+                                ModuleFileStorage.VendorOrdersFolder,
+                                blobName);
+                            try
+                            {
+                                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+                            }
+                            catch
+                            {
+                                // Best-effort blob cleanup
+                            }
+                        }
+                    }
                     _context.VendorOrderAttachments.RemoveRange(attachments);
                 }
 

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -592,18 +593,18 @@ namespace CimmpleAPI.Controllers
                     fileName = file.FileName;
                 }
 
-                if (!_storageService.FileExists(filePath))
+                var fileBytes = _storageService.GetFileBytes(filePath, tenantId);
+                if (fileBytes == null || fileBytes.Length == 0)
                 {
-                    return NotFound(new { error = "File not found on disk" });
+                    return NotFound(new { error = "File not found in Azure Storage" });
                 }
 
-                var fileStream = _storageService.GetFileStream(filePath);
-                var contentType = document.MimeType ?? "application/octet-stream";
+                var contentType = document.MimeType ?? ModuleFileStorage.GetContentType(fileName);
 
                 // Log access
                 await LogAccessAsync(document.Id, versionId, "Download");
 
-                return File(fileStream, contentType, fileName);
+                return File(fileBytes, contentType, fileName);
             }
             catch (Exception ex)
             {
@@ -725,10 +726,31 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Document not found" });
                 }
 
-                // Soft delete
+                // Soft delete metadata; remove blobs from Azure to avoid orphaned storage
                 document.IsDeleted = true;
                 document.ModifiedBy = userId;
                 document.ModifiedDate = DateTime.UtcNow;
+
+                var versionPaths = await _context.DocumentVersions
+                    .Where(v => v.DocumentId == id && v.TenantId == tenantId)
+                    .Select(v => v.FilePath)
+                    .ToListAsync();
+                var filePaths = await _context.DocumentFiles
+                    .Where(f => f.DocumentId == id && f.TenantId == tenantId)
+                    .Select(f => f.FilePath)
+                    .ToListAsync();
+
+                foreach (var path in versionPaths.Concat(filePaths).Where(p => !string.IsNullOrWhiteSpace(p)))
+                {
+                    try
+                    {
+                        await _storageService.DeleteFileAsync(path, tenantId);
+                    }
+                    catch
+                    {
+                        // Best-effort blob cleanup; metadata soft-delete still succeeds
+                    }
+                }
 
                 await _context.SaveChangesAsync();
 

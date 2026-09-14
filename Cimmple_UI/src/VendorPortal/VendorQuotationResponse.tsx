@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { QuotationService, VendorQuotationMasterReq, QuotationDetailReq } from "../Common/Services/QuotationService";
+import {
+  QuotationService,
+  VendorQuotationMasterReq,
+  QuotationDetailReq,
+  QuotationAttachment,
+} from "../Common/Services/QuotationService";
 import "./VendorPortal.scss";
+
+type LineAttachment = QuotationAttachment & { isPending?: boolean; file?: File; localUrl?: string };
 
 interface VendorQuotationResponseProps {
   quotationId: number;
@@ -39,8 +46,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
-  const [attachments, setAttachments] = useState<Array<{id: number; name: string; size: number; fileUrl?: string}>>([]);
-  const [lineItemAttachments, setLineItemAttachments] = useState<Map<number, Array<{id: number; name: string; size: number; fileUrl?: string}>>>(new Map());
+  const [attachments, setAttachments] = useState<QuotationAttachment[]>([]);
+  const [lineItemAttachments, setLineItemAttachments] = useState<Map<number, LineAttachment[]>>(new Map());
   const [lineItemAttachmentCounters, setLineItemAttachmentCounters] = useState<Map<number, number>>(new Map());
 
   useEffect(() => {
@@ -97,20 +104,42 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
         
         // Load attachments (master quotation attachments - for reference only)
         if (result.Attachments && Array.isArray(result.Attachments)) {
-          setAttachments(result.Attachments);
+          setAttachments(
+            result.Attachments.map((a: any) => ({
+              id: a.id || 0,
+              name: a.name || "",
+              size: a.size || 0,
+              fileUrl: a.fileUrl || a.uploadFile || "",
+              fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+              uploadFile: a.uploadFile || a.fileUrl || "",
+            }))
+          );
         } else {
           setAttachments([]);
         }
         
         // Load line item attachments
-        const lineItemAttsMap = new Map<number, Array<{id: number; name: string; size: number; fileUrl?: string}>>();
+        const lineItemAttsMap = new Map<number, LineAttachment[]>();
         const lineItemCountersMap = new Map<number, number>();
         
         if (result.Details && Array.isArray(result.Details)) {
           result.Details.forEach((detail: any, index: number) => {
             if (detail.Attachments && Array.isArray(detail.Attachments)) {
-              lineItemAttsMap.set(index, detail.Attachments);
-              const maxId = Math.max(...detail.Attachments.map((a: any) => a.id || 0), 0);
+              lineItemAttsMap.set(
+                index,
+                detail.Attachments.map((a: any) => ({
+                  id: a.id || 0,
+                  name: a.name || "",
+                  size: a.size || 0,
+                  fileUrl: a.fileUrl || a.uploadFile || "",
+                  fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+                  uploadFile: a.uploadFile || a.fileUrl || "",
+                }))
+              );
+              const maxId = Math.max(
+                ...detail.Attachments.map((a: any) => a.fileUniqueno || a.id || 0),
+                0
+              );
               lineItemCountersMap.set(index, maxId + 1);
             } else {
               lineItemAttsMap.set(index, []);
@@ -175,21 +204,24 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
     setSaving(true);
 
     try {
-      // Vendor response updates pricing/notes only; backend keeps original RFQ line identity.
       const detailsWithAttachments = formData.Details.map((detail, index) => {
         const lineItemAtts = lineItemAttachments.get(index) || [];
-        console.log(`VendorQuotationResponse: Saving detail ${index} (ItemNo: ${detail.ItemNo}) with ${lineItemAtts.length} attachments:`, lineItemAtts);
+        const persisted = lineItemAtts
+          .filter((a) => !a.isPending)
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+          }));
         return {
           ...detail,
-          Attachments: lineItemAtts
+          Attachments: persisted,
         };
       });
-      
-      console.log("VendorQuotationResponse: Saving quotation with details:", detailsWithAttachments.map(d => ({
-        ItemNo: d.ItemNo,
-        attachmentsCount: d.Attachments?.length || 0
-      })));
-      
+
       const dataToSave: VendorQuotationMasterReq = {
         ...formData,
         Status: "Responded",
@@ -197,13 +229,30 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
         Attachments: attachments,
         Details: detailsWithAttachments,
       };
-      
-      console.log("VendorQuotationResponse: Full data to save:", JSON.stringify(dataToSave, null, 2));
 
-      console.log("Saving vendor quotation:", dataToSave);
-      console.log("VendorQuotationResponse: formData.ParentQuotationID:", formData.ParentQuotationID);
-      console.log("VendorQuotationResponse: dataToSave.ParentQuotationID:", dataToSave.ParentQuotationID);
-      await QuotationService.SaveVendorQuotation(dataToSave);
+      const result = await QuotationService.SaveVendorQuotation(dataToSave);
+      const savedId = result.id > 0 ? result.id : formData.OrderID;
+
+      for (let index = 0; index < formData.Details.length; index++) {
+        const detail = formData.Details[index];
+        const pendingFiles = (lineItemAttachments.get(index) || [])
+          .filter((a) => a.isPending && a.file)
+          .map((a) => a.file as File);
+        if (pendingFiles.length > 0 && savedId > 0 && detail.ItemNo > 0) {
+          await QuotationService.VendorQuotationDetailSaveFile(
+            savedId,
+            detail.ItemNo,
+            pendingFiles
+          );
+        }
+      }
+
+      lineItemAttachments.forEach((atts) => {
+        atts.forEach((a) => {
+          if (a.localUrl) URL.revokeObjectURL(a.localUrl);
+        });
+      });
+
       toast.success("Your response has been submitted successfully!");
       onClose(true);
     } catch (error: any) {
@@ -251,14 +300,19 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
     const counter = lineItemAttachmentCounters.get(index) || 1;
     let newCounter = counter;
     
-    const newAttachments = Array.from(files).map(file => {
-      const newAttachment = {
-        id: newCounter++,
+    const newAttachments: LineAttachment[] = Array.from(files).map((file) => {
+      const id = newCounter++;
+      return {
+        id,
         name: file.name,
         size: file.size,
-        fileUrl: "" // In production, upload to server and get URL
+        fileUrl: "",
+        fileUniqueno: 0,
+        uploadFile: "",
+        isPending: true,
+        file,
+        localUrl: URL.createObjectURL(file),
       };
-      return newAttachment;
     });
     
     setLineItemAttachments(prev => {
@@ -275,6 +329,50 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
     
     if (e.target) {
       e.target.value = "";
+    }
+  };
+
+  const handleViewHeaderAttachment = async (attachment: QuotationAttachment) => {
+    const fileUniqueno = attachment.fileUniqueno || attachment.id;
+    if (!fileUniqueno || formData.OrderID <= 0) {
+      toast.error("Attachment is not available for viewing");
+      return;
+    }
+    try {
+      const { blob, contentType } = await QuotationService.VendorQuotationGetFile({
+        orderId: formData.OrderID,
+        fileUniqueno,
+      });
+      const url = URL.createObjectURL(new Blob([blob], { type: contentType || blob.type }));
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to open attachment");
+    }
+  };
+
+  const handleViewLineAttachment = async (index: number, att: LineAttachment) => {
+    if (att.isPending && att.localUrl) {
+      window.open(att.localUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const fileUniqueno = att.fileUniqueno || att.id;
+    const itemNo = formData.Details[index]?.ItemNo || 0;
+    if (!fileUniqueno || formData.OrderID <= 0 || itemNo <= 0) {
+      toast.error("Attachment is not available for viewing");
+      return;
+    }
+    try {
+      const { blob, contentType } = await QuotationService.VendorQuotationDetailGetFile({
+        orderId: formData.OrderID,
+        itemNo,
+        fileUniqueno,
+      });
+      const url = URL.createObjectURL(new Blob([blob], { type: contentType || blob.type }));
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to open attachment");
     }
   };
 
@@ -533,7 +631,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                 {/* Display existing attachments */}
                                 {(lineItemAttachments.get(index) || []).map((att) => (
                                   <div 
-                                    key={att.id} 
+                                    key={`${att.id}-${att.name}`} 
                                     style={{
                                       display: "flex",
                                       alignItems: "center",
@@ -545,16 +643,35 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                     }}
                                   >
                                     <span>📎</span>
-                                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                      {att.name}
-                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleViewLineAttachment(index, att)}
+                                      style={{
+                                        flex: 1,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        background: "none",
+                                        border: "none",
+                                        padding: 0,
+                                        textAlign: "left",
+                                        cursor: "pointer",
+                                        color: "#4f46e5",
+                                        textDecoration: "underline",
+                                      }}
+                                      title="View attachment"
+                                    >
+                                      {att.name}{att.isPending ? " (pending)" : ""}
+                                    </button>
+                                    {!isReadOnlyResponse && (
                                     <button
                                       type="button"
                                       onClick={() => {
+                                        if (att.localUrl) URL.revokeObjectURL(att.localUrl);
                                         setLineItemAttachments(prev => {
                                           const newMap = new Map(prev);
                                           const current = newMap.get(index) || [];
-                                          newMap.set(index, current.filter(a => a.id !== att.id));
+                                          newMap.set(index, current.filter(a => a.id !== att.id || a.name !== att.name));
                                           return newMap;
                                         });
                                       }}
@@ -571,10 +688,13 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                     >
                                       ×
                                     </button>
+                                    )}
                                   </div>
                                 ))}
                                 
                                 {/* Add attachment button */}
+                                {!isReadOnlyResponse && (
+                                <>
                                 <input
                                   type="file"
                                   multiple
@@ -598,6 +718,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                 >
                                   + Add
                                 </label>
+                                </>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -649,21 +771,22 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                     >
                       <span style={{ fontSize: "1rem" }}>📎</span>
                       <span style={{ flex: 1, fontSize: "0.875rem", color: "#1f2937" }}>{attachment.name}</span>
-                      {attachment.fileUrl && (
-                        <a 
-                          href={attachment.fileUrl} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
+                      {(attachment.fileUniqueno || attachment.id || attachment.fileUrl) ? (
+                        <button
+                          type="button"
+                          onClick={() => handleViewHeaderAttachment(attachment)}
                           style={{ 
                             color: "#6366f1", 
-                            textDecoration: "none", 
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
                             fontSize: "0.875rem",
                             fontWeight: 500
                           }}
                         >
                           View
-                        </a>
-                      )}
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>

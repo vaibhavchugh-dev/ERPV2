@@ -324,6 +324,14 @@ const BankReconciliation: React.FC = () => {
                   {formatCurrencyRaw(periodActivity)}
                 </span>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', color: '#6b7280' }} title="Opening Balance + Net activity for the current filter">
+                  Period ending balance
+                </span>
+                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>
+                  {formatCurrencyRaw((openingBalances[selectedAccount] ?? 0) + periodActivity)}
+                </span>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Last Reconciled</span>
                 <span style={{ fontSize: '0.875rem', color: '#111827' }}>

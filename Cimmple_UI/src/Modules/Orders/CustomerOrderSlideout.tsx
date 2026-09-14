@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -17,6 +17,8 @@ import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
@@ -82,6 +84,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [editingField, setEditingField] = useState<{ index: number; field: "PartName" | "Notes"; value: string } | null>(null);
   const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
   const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<number[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  /** Session cache for lazily loaded attachment blobs; cleared when slideout closes. */
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [newComment, setNewComment] = useState("");
   const [commentIdCounter, setCommentIdCounter] = useState(1);
@@ -1074,12 +1081,168 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+  };
+
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
+
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
+      }
+      if (file.isPending) {
+        return file.localUrl
+          ? { url: file.localUrl, contentType: file.contentType }
+          : null;
+      }
+      if (!file.fileUniqueno || formData.OrderID <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno },
+        async () => {
+          const { blob, contentType } = await OrderService.OrderGetFile({
+            orderId: formData.OrderID,
+            fileUniqueno: file.fileUniqueno!,
+            signal,
+          });
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType,
+            blobUrl,
+            ownsUrl: true,
+          };
+        }
+      );
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id) ||
+          (file.fileUniqueno && d.fileUniqueno === file.fileUniqueno)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    [formData.OrderID]
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      if (file.localUrl || file.isPending || !file.fileUniqueno || formData.OrderID <= 0) {
+        return;
+      }
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {});
+    },
+    [formData.OrderID, loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    if (match.isPending && match.localUrl) {
+      const link = document.createElement("a");
+      link.href = match.localUrl;
+      link.download = match.name;
+      link.click();
+      return;
+    }
+
+    if (!match.fileUniqueno || formData.OrderID <= 0) {
+      toast.error("Attachment is not available for download yet");
+      return;
+    }
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno,
+    });
+
+    await OrderService.DownloadOrderAttachment({
+      orderId: formData.OrderID,
+      fileUniqueno: match.fileUniqueno,
+      name: match.name,
+      uploadFile: match.uploadFile,
+      cachedBlobUrl: cached?.blobUrl,
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+    };
+  }, []);
+
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+        closeDocumentViewer();
+        documentCacheRef.current.clear();
         onClose(listNeedsRefreshRef.current);
       }
     } else {
+      closeDocumentViewer();
+      documentCacheRef.current.clear();
       onClose(listNeedsRefreshRef.current);
     }
   };
@@ -1314,6 +1477,52 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         }
       }}
     >
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div className="customer-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="customer-order-slideout-header">
           <div>
@@ -2533,6 +2742,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                   return;
                 }
 
+                documentCacheRef.current.remove({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
                 setDeletedAttachmentIds((prev) =>
                   prev.includes(attachment.id) ? prev : [...prev, attachment.id]
                 );
@@ -2544,13 +2757,19 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                 if (!attachment.fileUniqueno || formData.OrderID <= 0) {
                   throw new Error("Attachment is not available for download yet");
                 }
+                const cached = documentCacheRef.current.get({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
                 await OrderService.DownloadOrderAttachment({
                   orderId: formData.OrderID,
                   fileUniqueno: attachment.fileUniqueno,
                   name: attachment.name,
                   uploadFile: attachment.uploadFile,
+                  cachedBlobUrl: cached?.blobUrl,
                 });
               }}
+              onViewAttachment={handleOpenDocumentViewer}
             />
 
             {/* Comments Section */}

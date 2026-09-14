@@ -788,10 +788,12 @@ namespace CimmpleAPI.Controllers
 
                 if (dto.DefaultLocationId.HasValue)
                 {
-                    var locOk = await _context.Locations
-                        .AnyAsync(l => l.LocationId == dto.DefaultLocationId.Value && l.TenantId == tenantId);
-                    if (!locOk)
+                    var loc = await _context.Locations
+                        .FirstOrDefaultAsync(l => l.LocationId == dto.DefaultLocationId.Value && l.TenantId == tenantId);
+                    if (loc == null)
                         return BadRequest(new { error = "Default location not found for this tenant." });
+                    if (!string.Equals(loc.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                        return BadRequest(new { error = "Default location must be an active location." });
                 }
 
                 RawMaterialMaster entity;

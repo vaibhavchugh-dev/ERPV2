@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -176,6 +177,17 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Company name is required" });
                 }
 
+                var companyNameNorm = request.company_name.Trim();
+                var nameDuplicate = _context.CustomerMaster
+                    .Any(c => c.Tenantid == request.TenantID
+                              && c.customer_id != request.customer_id
+                              && c.company_name != null
+                              && c.company_name.Trim().ToLower() == companyNameNorm.ToLower());
+                if (nameDuplicate)
+                {
+                    return BadRequest(new { error = $"Customer name '{companyNameNorm}' already exists" });
+                }
+
                 var existingCustomer = _context.CustomerMaster
                     .FirstOrDefault(c => c.customer_id == request.customer_id && c.Tenantid == request.TenantID);
 
@@ -185,11 +197,11 @@ namespace CimmpleAPI.Controllers
                 if (isNew)
                 {
                     customer = new CustomerMaster();
-                    // Generate customer code
-                    var maxCode = _context.CustomerMaster
+                    var existingCodes = _context.CustomerMaster
                         .Where(c => c.Tenantid == request.TenantID)
-                        .Count();
-                    customer.customercode = $"C{(maxCode + 1001)}";
+                        .Select(c => c.customercode)
+                        .ToList();
+                    customer.customercode = MasterCodeGenerator.NextCode(existingCodes, 'C');
                 }
                 else
                 {
@@ -197,7 +209,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Update customer properties
-                customer.company_name = request.company_name;
+                customer.company_name = companyNameNorm;
                 customer.companyAlias = request.companyAlias ?? "";
                 customer.email = request.email ?? "";
                 customer.phone_number = request.phone_number ?? "";
@@ -391,7 +403,7 @@ namespace CimmpleAPI.Controllers
                         .Where(cb => existingIds.Contains(cb.customer_id))
                         .ToList();
 
-                int nextCodeSeq = existing.Count + 1001;
+                int nextCodeSeq = MasterCodeGenerator.GetNextSequence(existing.Select(c => c.customercode), 'C');
                 var result = new CustomerImportResult();
                 var rowResults = new List<CustomerImportRowResult>();
                 var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

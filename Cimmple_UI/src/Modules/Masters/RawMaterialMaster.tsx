@@ -410,6 +410,15 @@ const RawMaterialMaster: React.FC = () => {
     ) {
       return fail("Invalid default location");
     }
+    if (defaultLocationId != null) {
+      const loc = locations.find((l) => l.locationId === defaultLocationId);
+      if (
+        loc &&
+        (loc.status || "Active").toLowerCase().trim() !== "active"
+      ) {
+        return fail("Default location must be an active location");
+      }
+    }
 
     setSaving(true);
     try {
@@ -888,12 +897,27 @@ const RawMaterialMaster: React.FC = () => {
                     }
                   >
                     <option value="">— None —</option>
-                    {locations.map((loc) => (
-                      <option key={loc.locationId} value={loc.locationId}>
-                        {loc.name || loc.code || `Location ${loc.locationId}`}
-                      </option>
-                    ))}
-                  </select>
+                    {locations
+                      .filter((loc) => {
+                        const isActive =
+                          (loc.status || "Active").toLowerCase().trim() === "active";
+                        const isCurrent =
+                          form.defaultLocationId !== "" &&
+                          String(loc.locationId) === form.defaultLocationId;
+                        return isActive || isCurrent;
+                      })
+                      .map((loc) => {
+                        const isActive =
+                          (loc.status || "Active").toLowerCase().trim() === "active";
+                        const label =
+                          loc.name || loc.code || `Location ${loc.locationId}`;
+                        return (
+                          <option key={loc.locationId} value={loc.locationId}>
+                            {isActive ? label : `${label} (Inactive)`}
+                          </option>
+                        );
+                      })}
+                    </select>
                 </div>
               </div>
             </section>

@@ -125,10 +125,12 @@ namespace CimmpleAPI.Controllers
 
                 if (isNew)
                 {
-                    // Check for duplicate workstation name
+                    // Check for duplicate workstation name (case-insensitive)
+                    var nameNorm = request.WorkstationName.Trim();
                     var duplicate = _context.WorkstationMaster
-                        .Any(w => w.WorkstationName == request.WorkstationName && 
-                                 w.TenantId == request.TenantID);
+                        .Any(w => w.TenantId == request.TenantID
+                                  && w.WorkstationName != null
+                                  && w.WorkstationName.Trim().ToLower() == nameNorm.ToLower());
 
                     if (duplicate)
                     {
@@ -136,7 +138,7 @@ namespace CimmpleAPI.Controllers
                     }
 
                     workstation = new WorkstationMaster();
-                    workstation.WorkstationName = request.WorkstationName;
+                    workstation.WorkstationName = nameNorm;
                     workstation.IsActive = request.IsActive;
                     workstation.TenantId = request.TenantID;
                     _context.WorkstationMaster.Add(workstation);
@@ -151,21 +153,20 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Workstation not found" });
                     }
 
+                    var nameNorm = request.WorkstationName.Trim();
                     // Check for duplicate workstation name (excluding current)
-                    if (workstation.WorkstationName != request.WorkstationName)
-                    {
-                        var duplicate = _context.WorkstationMaster
-                            .Any(w => w.WorkstationName == request.WorkstationName && 
-                                     w.TenantId == request.TenantID && 
-                                     w.Id != request.Id);
+                    var duplicate = _context.WorkstationMaster
+                        .Any(w => w.TenantId == request.TenantID
+                                  && w.Id != request.Id
+                                  && w.WorkstationName != null
+                                  && w.WorkstationName.Trim().ToLower() == nameNorm.ToLower());
 
-                        if (duplicate)
-                        {
-                            return BadRequest(new { error = "Workstation name already exists" });
-                        }
+                    if (duplicate)
+                    {
+                        return BadRequest(new { error = "Workstation name already exists" });
                     }
 
-                    workstation.WorkstationName = request.WorkstationName;
+                    workstation.WorkstationName = nameNorm;
                     workstation.IsActive = request.IsActive;
                     _context.WorkstationMaster.Update(workstation);
                 }
@@ -398,7 +399,8 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var users = _context.UserDetails
-                    .Where(u => u.TenantID == tenantid)
+                    .Where(u => u.TenantID == tenantid
+                                && (u.VendorId == null || u.VendorId == 0))
                     .Select(u => new
                     {
                         user_UniqueID = u.User_UniqueID,

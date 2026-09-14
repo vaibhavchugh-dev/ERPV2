@@ -232,12 +232,20 @@ export function QuotationDetailPage() {
     const counter = lineItemAttachmentCounters.get(index) || 1;
     let newCounter = counter;
 
-    const newAttachments = Array.from(files).map((file) => ({
-      id: newCounter++,
-      name: file.name,
-      size: file.size,
-      fileUrl: "",
-    }));
+    const newAttachments: QuotationAttachment[] = Array.from(files).map((file) => {
+      const id = newCounter++;
+      return {
+        id,
+        name: file.name,
+        size: file.size,
+        fileUrl: "",
+        fileUniqueno: 0,
+        uploadFile: "",
+        isPending: true,
+        file,
+        localUrl: URL.createObjectURL(file),
+      };
+    });
 
     setLineItemAttachments((prev) => {
       const next = new Map(prev);
@@ -252,6 +260,54 @@ export function QuotationDetailPage() {
     e.target.value = "";
   };
 
+  const openBlobInNewTab = (blob: Blob, contentType?: string) => {
+    const url = URL.createObjectURL(new Blob([blob], { type: contentType || blob.type }));
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+
+  const handleViewHeaderAttachment = async (attachment: QuotationAttachment) => {
+    const fileUniqueno = attachment.fileUniqueno || attachment.id;
+    if (!fileUniqueno || formData.OrderID <= 0) {
+      setError("Attachment is not available for viewing");
+      return;
+    }
+    try {
+      const { blob, contentType } = await QuotationService.vendorQuotationGetFile({
+        orderId: formData.OrderID,
+        fileUniqueno,
+      });
+      openBlobInNewTab(blob, contentType);
+    } catch (err: unknown) {
+      const ax = err as { message?: string };
+      setError(ax?.message || "Failed to open attachment");
+    }
+  };
+
+  const handleViewLineAttachment = async (index: number, att: QuotationAttachment) => {
+    if (att.isPending && att.localUrl) {
+      window.open(att.localUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const fileUniqueno = att.fileUniqueno || att.id;
+    const itemNo = formData.Details[index]?.ItemNo || 0;
+    if (!fileUniqueno || formData.OrderID <= 0 || itemNo <= 0) {
+      setError("Attachment is not available for viewing");
+      return;
+    }
+    try {
+      const { blob, contentType } = await QuotationService.vendorQuotationDetailGetFile({
+        orderId: formData.OrderID,
+        itemNo,
+        fileUniqueno,
+      });
+      openBlobInNewTab(blob, contentType);
+    } catch (err: unknown) {
+      const ax = err as { message?: string };
+      setError(ax?.message || "Failed to open attachment");
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (isLockedVendorStatus(formData.Status)) {
@@ -261,17 +317,50 @@ export function QuotationDetailPage() {
     setError("");
     setSuccess("");
     try {
-      const detailsWithAttachments = formData.Details.map((detail, index) => ({
-        ...detail,
-        Attachments: lineItemAttachments.get(index) || [],
-      }));
-      await QuotationService.saveVendorQuotation({
+      const detailsWithAttachments = formData.Details.map((detail, index) => {
+        const lineAtts = lineItemAttachments.get(index) || [];
+        const persisted = lineAtts
+          .filter((a) => !a.isPending)
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+          }));
+        return {
+          ...detail,
+          Attachments: persisted,
+        };
+      });
+
+      const result = await QuotationService.saveVendorQuotation({
         ...formData,
         Status: "Responded",
         ParentQuotationID: formData.ParentQuotationID,
         Attachments: attachments,
         Details: detailsWithAttachments,
       });
+
+      const savedId = result.id > 0 ? result.id : formData.OrderID;
+      for (let index = 0; index < formData.Details.length; index++) {
+        const detail = formData.Details[index];
+        const pendingFiles = (lineItemAttachments.get(index) || [])
+          .filter((a) => a.isPending && a.file)
+          .map((a) => a.file as File);
+        if (pendingFiles.length > 0 && savedId > 0 && detail.ItemNo > 0) {
+          await QuotationService.vendorQuotationDetailSaveFile(savedId, detail.ItemNo, pendingFiles);
+        }
+      }
+
+      lineItemAttachments.forEach((atts) => {
+        atts.forEach((a) => {
+          if (a.localUrl) URL.revokeObjectURL(a.localUrl);
+        });
+      });
+
+      await loadQuotation();
       setFormData((prev) => ({ ...prev, Status: "Responded" }));
       setSuccess("Response submitted successfully");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -562,38 +651,57 @@ export function QuotationDetailPage() {
                     <div className="mt-3 space-y-2">
                       {(lineItemAttachments.get(index) || []).map((att) => (
                         <div
-                          key={att.id}
+                          key={`${att.id}-${att.name}`}
                           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold dark:border-slate-600 dark:bg-slate-700/60"
                         >
                           <IconPaperclip className="shrink-0 text-slate-500" />
-                          <span className="flex-1 truncate text-slate-800 dark:text-slate-100">{att.name}</span>
                           <button
                             type="button"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
-                            aria-label="Remove attachment"
-                            onClick={() => {
-                              setLineItemAttachments((prev) => {
-                                const next = new Map(prev);
-                                next.set(index, (next.get(index) || []).filter((a) => a.id !== att.id));
-                                return next;
-                              });
-                            }}
+                            className="flex-1 truncate text-left text-accent underline"
+                            onClick={() => handleViewLineAttachment(index, att)}
                           >
-                            <IconTrash size={14} />
+                            {att.name}
+                            {att.isPending ? " (pending)" : ""}
                           </button>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
+                              aria-label="Remove attachment"
+                              onClick={() => {
+                                if (att.localUrl) URL.revokeObjectURL(att.localUrl);
+                                setLineItemAttachments((prev) => {
+                                  const next = new Map(prev);
+                                  next.set(
+                                    index,
+                                    (next.get(index) || []).filter(
+                                      (a) => !(a.id === att.id && a.name === att.name)
+                                    )
+                                  );
+                                  return next;
+                                });
+                              }}
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          )}
                         </div>
                       ))}
-                      <input
-                        type="file"
-                        multiple
-                        id={`lineItemFile-${index}`}
-                        className="hidden"
-                        onChange={(e) => handleLineItemFileUpload(index, e)}
-                      />
-                      <label htmlFor={`lineItemFile-${index}`} className="btn btn-secondary w-full gap-1.5 text-sm">
-                        <IconPlus size={16} />
-                        Add attachment
-                      </label>
+                      {!isReadOnly && (
+                        <>
+                          <input
+                            type="file"
+                            multiple
+                            id={`lineItemFile-${index}`}
+                            className="hidden"
+                            onChange={(e) => handleLineItemFileUpload(index, e)}
+                          />
+                          <label htmlFor={`lineItemFile-${index}`} className="btn btn-secondary w-full gap-1.5 text-sm">
+                            <IconPlus size={16} />
+                            Add attachment
+                          </label>
+                        </>
+                      )}
                     </div>
                   </li>
                 );
@@ -619,16 +727,15 @@ export function QuotationDetailPage() {
                 >
                   <IconPaperclip className="shrink-0 text-slate-500" />
                   <span className="flex-1 truncate text-slate-800 dark:text-slate-100">{attachment.name}</span>
-                  {attachment.fileUrl && (
-                    <a
-                      href={attachment.fileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                  {(attachment.fileUniqueno || attachment.id || attachment.fileUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => handleViewHeaderAttachment(attachment)}
                       className="inline-flex items-center gap-1 text-accent"
                     >
                       View
                       <IconExternal />
-                    </a>
+                    </button>
                   )}
                 </li>
               ))}

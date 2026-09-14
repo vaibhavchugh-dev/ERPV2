@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -44,6 +44,13 @@ import {
 } from "../../Common/Constants/jobPriorities";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
+import {
+  getPendingFiles,
+  revokeLocalAttachmentUrls,
+} from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
 import {
@@ -142,8 +149,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
-  const [attachments, setAttachments] = useState<Array<{ id: number; name: string; size: number; fileUrl?: string }>>([]);
-  const [attachmentIdCounter, setAttachmentIdCounter] = useState(1);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<number[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  /** Session cache for lazily loaded attachment blobs; cleared when slideout closes. */
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
   const [materialUsage, setMaterialUsage] = useState<JobMaterialUsage[]>([]);
   const [jobReservations, setJobReservations] = useState<InventoryReservation[]>([]);
@@ -695,6 +707,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       step.qtyProduced = parsed.qty;
     }
     const statusToSave = deriveJobStatus(currentForm.Status, stepsToSave);
+    const persistedAttachments = (attachments || [])
+      .filter((a) => !a.isPending)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        size: a.size,
+        fileUrl: a.fileUrl || a.uploadFile || "",
+        fileUniqueno: a.fileUniqueno || 0,
+        uploadFile: a.uploadFile || a.fileUrl || "",
+        pageNo: a.pageNo || "0",
+        createdBy: a.createdBy || 0,
+      }));
     setTrackingSaving(true);
     try {
       await JobOrderService.SaveJobOrder({
@@ -703,10 +727,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         Status: statusToSave,
         EnableJobTracking: trackingEnabled,
         RoutingSteps: stepsToSave,
-        Attachments: attachments,
+        Attachments: persistedAttachments,
+        DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments,
       });
       await loadMaterialUsage();
+      setDeletedAttachmentIds([]);
       setFormData((prev) => {
         const next = {
           ...prev,
@@ -811,7 +837,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         // Apply the job order immediately so the header (JO #) can paint without
         // waiting on the linked customer order fetch.
         setFormData(jobOrder);
-        setAttachments(jobOrder.Attachments || []);
+        const cleanedAttachments: ModuleAttachment[] = (jobOrder.Attachments || []).map((a) => ({
+          id: a.id || 0,
+          name: a.name || "",
+          size: a.size || 0,
+          fileUrl: a.fileUrl || a.uploadFile || "",
+          fileUniqueno: a.fileUniqueno || 0,
+          uploadFile: a.uploadFile || a.fileUrl || "",
+          pageNo: a.pageNo || "0",
+          createdBy: a.createdBy || 0,
+        }));
+        setAttachments(cleanedAttachments);
+        setDeletedAttachmentIds([]);
         setComments(jobOrder.Comments || []);
         const steps = jobOrder.RoutingSteps || [];
         const trackingOn = !!jobOrder.EnableJobTracking;
@@ -946,16 +983,36 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       }
       const stepsToSave = commitLiveElapsed(stepsForSave);
       const statusToSave = deriveJobStatus(formData.Status, stepsToSave);
+      const pendingFiles = getPendingFiles(attachments);
+      const persistedAttachments = (attachments || [])
+        .filter((a) => !a.isPending)
+        .map((a) => ({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          fileUrl: a.fileUrl || a.uploadFile || "",
+          fileUniqueno: a.fileUniqueno || 0,
+          uploadFile: a.uploadFile || a.fileUrl || "",
+          pageNo: a.pageNo || "0",
+          createdBy: a.createdBy || 0,
+        }));
+
       const result = await JobOrderService.SaveJobOrder({
         ...formData,
         Status: statusToSave,
         EnableJobTracking: enableJobTracking,
         RoutingSteps: stepsToSave,
-        Attachments: attachments,
+        Attachments: persistedAttachments,
+        DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments,
         MaterialRequirements: formData.MaterialRequirements || [],
       });
       if (result && result.id > 0) {
+        if (pendingFiles.length > 0) {
+          await JobOrderService.JobOrderSaveFile(result.id, pendingFiles);
+        }
+        revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+        setDeletedAttachmentIds([]);
         toast.success("Job order saved successfully");
         setRoutingSteps(stepsToSave);
         setFormData((prev) => ({
@@ -1022,39 +1079,167 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     }
   };
 
-  const handleCancel = () => {
-    onClose(false);
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
   };
 
-  const handleAddAttachment = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.onchange = (e: any) => {
-      const file = e.target.files[0];
-      if (file) {
-        const newAttachment = {
-          id: attachmentIdCounter,
-          name: file.name,
-          size: file.size,
-          fileUrl: URL.createObjectURL(file),
-        };
-        setAttachments((prev) => [...prev, newAttachment]);
-        setAttachmentIdCounter((prev) => prev + 1);
-        setFormData((prev) => ({
-          ...prev,
-          Attachments: [...(prev.Attachments || []), newAttachment],
-        }));
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
+
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
       }
-    };
-    input.click();
+      if (file.isPending) {
+        return file.localUrl
+          ? { url: file.localUrl, contentType: file.contentType }
+          : null;
+      }
+      const joId = formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId;
+      if (!file.fileUniqueno || joId <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno },
+        async () => {
+          const { blob, contentType } = await JobOrderService.JobOrderGetFile({
+            jobOrderId: joId,
+            fileUniqueno: file.fileUniqueno!,
+            signal,
+          });
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType,
+            blobUrl,
+            ownsUrl: true,
+          };
+        }
+      );
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id) ||
+          (file.fileUniqueno && d.fileUniqueno === file.fileUniqueno)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    [formData.JobOrderID, jobOrderId]
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      const joId = formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId;
+      if (file.localUrl || file.isPending || !file.fileUniqueno || joId <= 0) {
+        return;
+      }
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {});
+    },
+    [formData.JobOrderID, jobOrderId, loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    if (match.isPending && match.localUrl) {
+      const link = document.createElement("a");
+      link.href = match.localUrl;
+      link.download = match.name;
+      link.click();
+      return;
+    }
+
+    const joId = formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId;
+    if (!match.fileUniqueno || joId <= 0) {
+      toast.error("Attachment is not available for download yet");
+      return;
+    }
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno,
+    });
+
+    await JobOrderService.DownloadJobOrderAttachment({
+      jobOrderId: joId,
+      fileUniqueno: match.fileUniqueno,
+      name: match.name,
+      uploadFile: match.uploadFile,
+      cachedBlobUrl: cached?.blobUrl,
+    });
   };
 
-  const handleDeleteAttachment = (id: number) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
-    setFormData((prev) => ({
-      ...prev,
-      Attachments: (prev.Attachments || []).filter((a) => a.id !== id),
-    }));
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+      revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCancel = () => {
+    closeDocumentViewer();
+    documentCacheRef.current.clear();
+    onClose(false);
   };
 
   const handleAddComment = () => {
@@ -2198,6 +2383,52 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         handleCancel();
       }}
     >
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div className="job-order-slideout-card" onClick={(e) => e.stopPropagation()}>
         <div className="job-order-slideout-header">
           <div className="jo-header-title-block">
@@ -3612,73 +3843,52 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             )}
 
             {/* Attachments Section */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Attachments</h3>
-              
-              {attachments.length === 0 ? (
-                <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.875rem" }}>No attachments added</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
-                  {attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "0.75rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1 }}>
-                        <span style={{ fontSize: "1.25rem" }}>📎</span>
-                        <div>
-                          <div style={{ fontSize: "0.875rem", fontWeight: 500 }}>{attachment.name}</div>
-                          <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{(attachment.size / 1024).toFixed(2)} KB</div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAttachment(attachment.id)}
-                        style={{
-                          padding: "0.25rem 0.5rem",
-                          backgroundColor: "#ef4444",
-                          color: "white",
-                          border: "none",
-                          borderRadius: "0.25rem",
-                          cursor: "pointer",
-                          fontSize: "0.75rem",
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              <button
-                type="button"
-                onClick={handleAddAttachment}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  padding: "0.5rem 1rem",
-                  backgroundColor: "#6366f1",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "0.375rem",
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                + Add Attachment
-              </button>
-            </div>
+            <AttachmentUploadSection
+              attachments={attachments}
+              orderId={formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId}
+              disabled={loading}
+              deferUploadUntilSave
+              onAttachmentsChange={(next) => {
+                setAttachments(next);
+              }}
+              onDeleteAttachment={async (attachment) => {
+                if (attachment.isPending || !attachment.id || attachment.id <= 0 || !attachment.fileUniqueno) {
+                  if (attachment.localUrl) {
+                    URL.revokeObjectURL(attachment.localUrl);
+                  }
+                  setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                  return;
+                }
+
+                documentCacheRef.current.remove({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                setDeletedAttachmentIds((prev) =>
+                  prev.includes(attachment.id) ? prev : [...prev, attachment.id]
+                );
+                setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                toast.info("Attachment will be removed when you save the job order");
+              }}
+              onDownloadAttachment={async (attachment) => {
+                const joId = formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId;
+                if (!attachment.fileUniqueno || joId <= 0) {
+                  throw new Error("Attachment is not available for download yet");
+                }
+                const cached = documentCacheRef.current.get({
+                  id: attachment.id,
+                  fileUniqueno: attachment.fileUniqueno,
+                });
+                await JobOrderService.DownloadJobOrderAttachment({
+                  jobOrderId: joId,
+                  fileUniqueno: attachment.fileUniqueno,
+                  name: attachment.name,
+                  uploadFile: attachment.uploadFile,
+                  cachedBlobUrl: cached?.blobUrl,
+                });
+              }}
+              onViewAttachment={handleOpenDocumentViewer}
+            />
 
             {/* Comments Section */}
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>

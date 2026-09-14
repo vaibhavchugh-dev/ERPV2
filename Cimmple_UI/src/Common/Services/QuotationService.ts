@@ -668,7 +668,9 @@ export class QuotationService {
     orderId: number,
     files: File[]
   ): Promise<QuotationAttachment[]> => {
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
       tenantID = 1;
@@ -711,7 +713,9 @@ export class QuotationService {
     fileUniqueno: number;
     signal?: AbortSignal;
   }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
       tenantID = 1;
@@ -757,7 +761,9 @@ export class QuotationService {
       return;
     }
 
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
       tenantID = 1;
@@ -767,6 +773,136 @@ export class QuotationService {
     return Instense.get(url, {
       params: {
         orderId: request.orderId,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: true,
+      },
+      responseType: "blob",
+    }).then((response: any) => {
+      const blobUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      window.URL.revokeObjectURL(blobUrl);
+    });
+  };
+
+  public static VendorQuotationDetailSaveFile = async (
+    orderId: number,
+    itemNo: number,
+    files: File[]
+  ): Promise<QuotationAttachment[]> => {
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const formData = new FormData();
+    appendFilesToFormData(formData, files);
+    formData.append(
+      "formField",
+      JSON.stringify({
+        OrderId: orderId,
+        OrderID: orderId,
+        ItemNo: itemNo,
+        TenantId: tenantID,
+        TenantID: tenantID,
+        Tenantid: tenantID,
+      })
+    );
+    formData.append("orderId", String(orderId));
+    formData.append("itemNo", String(itemNo));
+    formData.append("tenantId", String(tenantID));
+
+    const url = `/Quotation/VendorQuotationDetailSaveFile`;
+    return postMultipart<{ result?: { attachments?: any[] } }>(url, formData).then((data) => {
+      const result = data.result;
+      const attachments = result?.attachments || [];
+      return attachments.map((a: any) => ({
+        id: a.id || a.Id || 0,
+        name: a.name || a.Name || "",
+        size: a.size || a.Size || 0,
+        fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+        fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+        uploadFile: a.uploadFile || a.UploadFile || "",
+        pageNo: a.pageNo || a.PageNo || "0",
+        createdBy: a.createdBy || a.CreatedBy || 0,
+      }));
+    });
+  };
+
+  public static VendorQuotationDetailGetFile = async (request: {
+    orderId: number;
+    itemNo: number;
+    fileUniqueno: number;
+    signal?: AbortSignal;
+  }): Promise<{ blob: Blob; contentType: string; fileName?: string }> => {
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/VendorQuotationDetailGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        itemNo: request.itemNo,
+        fileUniqueno: request.fileUniqueno,
+        tenantId: tenantID,
+        download: false,
+      },
+      responseType: "blob",
+      signal: request.signal,
+    }).then((response: any) => {
+      const blob: Blob = response.data;
+      const headerType =
+        (response.headers && (response.headers["content-type"] || response.headers["Content-Type"])) ||
+        "";
+      const contentType =
+        (typeof headerType === "string" && headerType.split(";")[0].trim()) ||
+        blob.type ||
+        "application/octet-stream";
+      const fileNameHeader =
+        response.headers?.["x-file-name"] || response.headers?.["X-File-Name"] || undefined;
+      return { blob, contentType, fileName: fileNameHeader };
+    });
+  };
+
+  public static DownloadVendorQuotationDetailAttachment = async (request: {
+    orderId: number;
+    itemNo: number;
+    fileUniqueno: number;
+    name: string;
+    cachedBlobUrl?: string;
+  }): Promise<void> => {
+    if (request.cachedBlobUrl) {
+      const link = document.createElement("a");
+      link.href = request.cachedBlobUrl;
+      link.setAttribute("download", request.name);
+      link.click();
+      return;
+    }
+
+    const storage = JSON.parse(
+      localStorage.getItem("vendorStorage") || localStorage.getItem("storage") || "{}"
+    );
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/VendorQuotationDetailGetFile`;
+    return Instense.get(url, {
+      params: {
+        orderId: request.orderId,
+        itemNo: request.itemNo,
         fileUniqueno: request.fileUniqueno,
         tenantId: tenantID,
         download: true,

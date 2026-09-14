@@ -379,6 +379,7 @@ namespace CimmpleAPI.Data
                 // Explicitly configure all string properties to be nullable to handle existing NULL values in database
                 entity.Property(e => e.Name).IsRequired(false);
                 entity.Property(e => e.FileUrl).IsRequired(false);
+                entity.Property(e => e.UploadFile).IsRequired(false);
                 entity.HasOne(a => a.VendorOrder)
                     .WithMany(o => o.VendorOrderAttachments)
                     .HasForeignKey(a => a.OrderID);
