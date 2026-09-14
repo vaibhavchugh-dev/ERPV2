@@ -300,7 +300,7 @@ export class ProductMasterService {
 
   public static GetPartsByVendor = async (
     vendorId: number,
-    options?: { q?: string; limit?: number }
+    options?: { q?: string; limit?: number; lineType?: string }
   ): Promise<CustomerPartOption[]> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
@@ -316,6 +316,9 @@ export class ProductMasterService {
     };
     if (options?.q && options.q.trim()) {
       params.q = options.q.trim();
+    }
+    if (options?.lineType && options.lineType.trim()) {
+      params.lineType = options.lineType.trim();
     }
 
     return Instense.get(url, { params }).then((response) => {

@@ -17,6 +17,8 @@ export interface CustomerPartComboboxProps {
   vendorSelected?: boolean;
   /** Defaults to customer when customerId is provided */
   party?: PartHistoryParty;
+  /** When set (vendor Tool/Service/Subcontract/Other), history is filtered by LineType */
+  lineType?: string;
   hasError?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -37,13 +39,14 @@ const DEBOUNCE_MS = 300;
 /**
  * Part No combobox with debounced server search against customer or vendor history.
  */
-const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
+function CustomerPartCombobox({
   value,
   customerId = 0,
   customerSelected = false,
   vendorId = 0,
   vendorSelected = false,
   party: partyProp,
+  lineType,
   hasError,
   placeholder,
   disabled,
@@ -51,7 +54,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
   onSelectPart,
   onHistoryMatch,
   scrollContainerSelector,
-}) => {
+}: CustomerPartComboboxProps) {
   const party: PartHistoryParty =
     partyProp ?? (vendorSelected || vendorId > 0 ? "vendor" : "customer");
   const partyId = party === "vendor" ? vendorId : customerId;
@@ -129,6 +132,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
             ? await ProductMasterService.GetPartsByVendor(partyId, {
                 q: trimmedQ || undefined,
                 limit: 50,
+                lineType: lineType || undefined,
               })
             : await ProductMasterService.GetPartsByCustomer(partyId, {
                 q: trimmedQ || undefined,
@@ -151,7 +155,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         }
       }
     },
-    [party, partyId, partySelected, partyNoun, emitHistoryMatch]
+    [party, partyId, partySelected, partyNoun, lineType, emitHistoryMatch]
   );
 
   const restoreUnfiltered = () => {
@@ -243,6 +247,7 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
             ? await ProductMasterService.GetPartsByVendor(partyId, {
                 q: trimmed,
                 limit: 20,
+                lineType: lineType || undefined,
               })
             : await ProductMasterService.GetPartsByCustomer(partyId, {
                 q: trimmed,
@@ -482,24 +487,28 @@ const CustomerPartCombobox: React.FC<CustomerPartComboboxProps> = ({
         )}
     </div>
   );
-};
+}
 
 /** Convenience wrapper for vendor quotations / orders */
-export const VendorPartCombobox: React.FC<
-  Omit<CustomerPartComboboxProps, "customerId" | "customerSelected" | "party"> & {
-    vendorId: number;
-    vendorSelected: boolean;
-  }
-> = ({ vendorId, vendorSelected, ...rest }) => (
-  <CustomerPartCombobox
-    {...rest}
-    party="vendor"
-    vendorId={vendorId}
-    vendorSelected={vendorSelected}
-    customerId={0}
-    customerSelected={false}
-  />
-);
+export function VendorPartCombobox({
+  vendorId,
+  vendorSelected,
+  ...rest
+}: Omit<CustomerPartComboboxProps, "customerId" | "customerSelected" | "party"> & {
+  vendorId: number;
+  vendorSelected: boolean;
+}) {
+  return (
+    <CustomerPartCombobox
+      {...rest}
+      party="vendor"
+      vendorId={vendorId}
+      vendorSelected={vendorSelected}
+      customerId={0}
+      customerSelected={false}
+    />
+  );
+}
 
 export default CustomerPartCombobox;
 

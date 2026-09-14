@@ -278,8 +278,8 @@ namespace CimmpleAPI.Controllers
                                       (t.isCustomer == 0 || t.isCustomer == null) &&
                                       t.TransactionType != null &&
                                       EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                                      t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo) &&
-                                      (!filterLocationId.HasValue || t.locationId == filterLocationId.Value)));
+                                      (t.invoiceNo == vim.prefixinvoiceno ||
+                                       t.invoiceNo == vim.InvoiceNo)));
                 if (filterLocationId.HasValue)
                     vendorInvoiceFallbackQuery = vendorInvoiceFallbackQuery.Where(vim => vim.locationId == filterLocationId.Value);
 
@@ -287,12 +287,13 @@ namespace CimmpleAPI.Controllers
                     .OrderByDescending(vim => vim.Paydate)
                     .ThenByDescending(vim => vim.Id)
                     .Take(safeLimit)
+                    .AsEnumerable()
                     .Select(vim => new
                     {
                         id = vim.Id,
                         type = "payment" as string,
                         description = $"Payment made to {(string.IsNullOrWhiteSpace(vim.VendorName) ? "Vendor" : vim.VendorName)} for invoice {vim.prefixinvoiceno ?? vim.InvoiceNo}",
-                        amount = -vim.TotalAmount,
+                        amount = -(vim.PaidAmount > 0 ? vim.PaidAmount : vim.TotalAmount),
                         date = vim.Paydate,
                         status = "completed" as string,
                         customerVendor = string.IsNullOrWhiteSpace(vim.VendorName) ? "Vendor" : vim.VendorName
@@ -414,6 +415,9 @@ namespace CimmpleAPI.Controllers
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetBankTransactions called - TenantId: {tenantId}, BankAccountId: {bankAccountId}, StartDate: {startDate}, EndDate: {endDate}");
+
+                // Backfill legacy payment rows that posted to GL without BankId.
+                BackfillMissingPaymentBankIds(tenantId);
 
                 var start = DateTime.Parse(startDate).Date;
                 var end = DateTime.Parse(endDate).Date.AddDays(1).AddTicks(-1);
@@ -1593,13 +1597,65 @@ namespace CimmpleAPI.Controllers
                                   (t.isCustomer == 0 || t.isCustomer == null) &&
                                   t.TransactionType != null &&
                                   EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                                  t.invoiceNo == (vim.prefixinvoiceno ?? vim.InvoiceNo) &&
-                                  (!locationId.HasValue || t.locationId == locationId.Value)));
+                                  (t.invoiceNo == vim.prefixinvoiceno ||
+                                   t.invoiceNo == vim.InvoiceNo)));
             if (locationId.HasValue)
                 vendorFallback = vendorFallback.Where(vim => vim.locationId == locationId.Value);
-            cashOut += vendorFallback.Sum(vim => (decimal?)vim.TotalAmount) ?? 0;
+            cashOut += vendorFallback.Sum(vim => (decimal?)(vim.PaidAmount > 0 ? vim.PaidAmount : vim.TotalAmount)) ?? 0;
 
             return (cashIn, cashOut);
+        }
+
+        /// <summary>
+        /// Legacy payments could post without BankId (GL resolved via keyword fallback).
+        /// Fill BankId from the related invoice when possible so Bank Reconciliation can list them.
+        /// </summary>
+        private void BackfillMissingPaymentBankIds(int tenantId)
+        {
+            var orphans = _context.Transactions
+                .Where(t => t.TenantId == tenantId &&
+                            t.TransactionType != null &&
+                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                            (t.BankId == null || t.BankId <= 0) &&
+                            t.invoiceNo != null &&
+                            t.invoiceNo != "")
+                .ToList();
+            if (orphans.Count == 0)
+                return;
+
+            var changed = false;
+            foreach (var txn in orphans)
+            {
+                var invoiceNo = txn.invoiceNo!.Trim();
+                int? bankId = null;
+                if (txn.isCustomer == 1)
+                {
+                    bankId = _context.InvoiceMaster
+                        .Where(im => im.TenantId == tenantId &&
+                                     (im.PrefixInvoiceNo == invoiceNo ||
+                                      im.InvoiceNo.ToString() == invoiceNo))
+                        .Select(im => im.Bankid)
+                        .FirstOrDefault();
+                }
+                else
+                {
+                    bankId = _context.VendorInvoiceMaster
+                        .Where(vim => vim.TenantId == tenantId &&
+                                      (vim.prefixinvoiceno == invoiceNo ||
+                                       vim.InvoiceNo == invoiceNo))
+                        .Select(vim => vim.Bankid)
+                        .FirstOrDefault();
+                }
+
+                if (bankId.HasValue && bankId.Value > 0)
+                {
+                    txn.BankId = bankId.Value;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                _context.SaveChanges();
         }
 
         private (DateTime startDate, DateTime endDate) GetDateRangeFilter(string dateRange, ReportRequest? reportRequest = null)

@@ -21,7 +21,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetMetrics")]
-        public IActionResult GetMetrics([FromQuery] string dateRange = "This Month")
+        public IActionResult GetMetrics(
+            [FromQuery] string dateRange = "This Month",
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -40,38 +42,49 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var dateFilter = GetDateRangeFilter(dateRange);
                 var today = DateTime.Now.Date;
                 var weekStart = today.AddDays(-(int)today.DayOfWeek);
                 var rangeStart = dateFilter.startDate.Date;
                 var rangeEnd = dateFilter.endDate.Date;
 
+                // JobOrderMaster has no locationId — scope via related CustomerOrder.locationId
+                var jobOrdersQuery = _context.JobOrderMaster.Where(j => j.Tenantid == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    jobOrdersQuery = jobOrdersQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
                 // Production Metrics
-                var activeJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId && 
-                               j.Status != null &&
+                var activeJobOrders = jobOrdersQuery
+                    .Where(j => j.Status != null &&
                                (j.Status == "In Progress" || j.Status == "Pending" || j.Status == "Assigned"))
                     .Count();
 
-                var jobsCompletedToday = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId && 
-                               (j.Status == "Completed" || j.Status == "Shipped") &&
+                var jobsCompletedToday = jobOrdersQuery
+                    .Where(j => (j.Status == "Completed" || j.Status == "Shipped") &&
                                j.ModifiedDate.HasValue &&
                                j.ModifiedDate.Value.Date == today)
                     .Count();
 
-                var jobsCompletedThisWeek = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId && 
-                               (j.Status == "Completed" || j.Status == "Shipped") &&
+                var jobsCompletedThisWeek = jobOrdersQuery
+                    .Where(j => (j.Status == "Completed" || j.Status == "Shipped") &&
                                j.ModifiedDate.HasValue &&
                                j.ModifiedDate.Value.Date >= weekStart &&
                                j.ModifiedDate.Value.Date <= today)
                     .Count();
 
                 // On-time delivery: jobs due in the selected period, completed on/before due date
-                var jobsDueInPeriod = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId &&
-                               j.DueDate.Date >= rangeStart &&
+                var jobsDueInPeriod = jobOrdersQuery
+                    .Where(j => j.DueDate.Date >= rangeStart &&
                                j.DueDate.Date <= rangeEnd &&
                                j.Status != null &&
                                j.Status != "Cancelled" &&
@@ -90,9 +103,22 @@ namespace CimmpleAPI.Controllers
                     ? (decimal)onTimeCount / jobsDueInPeriod.Count * 100
                     : 0;
 
-                // Financial Metrics — outstanding balances exclude voided; use balance due
-                var unpaidCustomerInvoices = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId && !im.IsVoided)
+                // Financial Metrics — InvoiceMaster has no locationId; filter via InvoiceDetail -> CustomerOrder
+                var unpaidCustomerInvoicesQuery = _context.InvoiceMaster
+                    .Where(im => im.TenantId == tenantId && !im.IsVoided);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    unpaidCustomerInvoicesQuery = unpaidCustomerInvoicesQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var unpaidCustomerInvoices = unpaidCustomerInvoicesQuery
                     .ToList()
                     .Select(im =>
                     {
@@ -106,11 +132,15 @@ namespace CimmpleAPI.Controllers
                     .ToList();
                 var totalReceivables = unpaidCustomerInvoices.Sum();
 
-                var unpaidVendorInvoices = _context.VendorInvoiceMaster
+                var unpaidVendorInvoicesQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.isPaid != 1 &&
                                  vim.isPaid != 2 &&
-                                 vim.voideddate == null)
+                                 vim.voideddate == null);
+                if (filterLocationId.HasValue)
+                    unpaidVendorInvoicesQuery = unpaidVendorInvoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+
+                var unpaidVendorInvoices = unpaidVendorInvoicesQuery
                     .ToList()
                     .Select(vim =>
                     {
@@ -124,90 +154,114 @@ namespace CimmpleAPI.Controllers
                     .ToList();
                 var totalPayables = unpaidVendorInvoices.Sum();
 
-                var revenueThisMonth = _context.InvoiceMaster
+                var revenueThisMonthQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                !im.IsVoided &&
                                im.PaymentDate != null &&
                                im.InvoiceDate >= dateFilter.startDate &&
-                               im.InvoiceDate <= dateFilter.endDate)
-                    .Sum(im => (decimal?)im.TotalAmount) ?? 0;
+                               im.InvoiceDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    revenueThisMonthQuery = revenueThisMonthQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+                var revenueThisMonth = revenueThisMonthQuery.Sum(im => (decimal?)im.TotalAmount) ?? 0;
 
-                var cashIn = _context.Transactions
+                var cashInQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                t.isCustomer == 1 &&
                                t.TransactionType != null &&
                                t.TransactionType == "Payment" &&
                                t.TransactionDate != null &&
                                t.TransactionDate >= dateFilter.startDate &&
-                               t.TransactionDate <= dateFilter.endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                    cashInQuery = cashInQuery.Where(t => t.locationId == filterLocationId.Value);
+                var cashIn = cashInQuery.Sum(t => t.Amount ?? 0);
 
-                var cashOut = _context.Transactions
+                var cashOutQuery = _context.Transactions
                     .Where(t => t.TenantId == tenantId &&
                                t.isCustomer == 0 &&
                                t.TransactionType != null &&
                                t.TransactionType == "Payment" &&
                                t.TransactionDate != null &&
                                t.TransactionDate >= dateFilter.startDate &&
-                               t.TransactionDate <= dateFilter.endDate)
-                    .Sum(t => t.Amount ?? 0);
+                               t.TransactionDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                    cashOutQuery = cashOutQuery.Where(t => t.locationId == filterLocationId.Value);
+                var cashOut = cashOutQuery.Sum(t => t.Amount ?? 0);
 
                 var netCashFlow = cashIn - cashOut;
 
-                // Quality Metrics
+                // Quality Metrics — NonConformanceReport has no locationId; leave tenant-wide
                 var openNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId && 
+                    .Where(n => n.TenantId == tenantId &&
                                (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval"))
                     .Count();
 
                 var ncrResolvedThisWeek = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId && 
+                    .Where(n => n.TenantId == tenantId &&
                                n.Status == "Closed" &&
                                n.ClosedDate != null &&
                                n.ClosedDate.Value.Date >= rangeStart &&
                                n.ClosedDate.Value.Date <= rangeEnd)
                     .Count();
 
-                var totalJobOrdersForDefect = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId &&
-                               j.OrderDate.Date >= rangeStart &&
+                var totalJobOrdersForDefect = jobOrdersQuery
+                    .Where(j => j.OrderDate.Date >= rangeStart &&
                                j.OrderDate.Date <= rangeEnd)
                     .Count();
 
+                // NCR count remains tenant-wide (no locationId on entity)
                 var totalNCRs = _context.NonConformanceReports
                     .Where(n => n.TenantId == tenantId &&
                                n.ReportedDate.Date >= rangeStart &&
                                n.ReportedDate.Date <= rangeEnd)
                     .Count();
 
-                var defectRate = totalJobOrdersForDefect > 0 
-                    ? (decimal)totalNCRs / totalJobOrdersForDefect * 100 
+                var defectRate = totalJobOrdersForDefect > 0
+                    ? (decimal)totalNCRs / totalJobOrdersForDefect * 100
                     : 0;
 
                 // Operational Metrics
-                var pendingCustomerOrders = _context.CustomerOrder
-                    .Where(co => co.Tenantid == tenantId && 
+                var pendingCustomerOrdersQuery = _context.CustomerOrder
+                    .Where(co => co.Tenantid == tenantId &&
                                co.Status != null &&
-                               (co.Status == "Pending" || co.Status == "Draft"))
-                    .Count();
+                               (co.Status == "Pending" || co.Status == "Draft"));
+                if (filterLocationId.HasValue)
+                    pendingCustomerOrdersQuery = pendingCustomerOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
+                var pendingCustomerOrders = pendingCustomerOrdersQuery.Count();
 
-                var pendingVendorOrders = _context.VendorOrders
-                    .Where(vo => vo.Tenantid == tenantId && 
+                var pendingVendorOrdersQuery = _context.VendorOrders
+                    .Where(vo => vo.Tenantid == tenantId &&
                                vo.Status != null &&
-                               (vo.Status == "Pending" || vo.Status == "Draft"))
-                    .Count();
+                               (vo.Status == "Pending" || vo.Status == "Draft"));
+                if (filterLocationId.HasValue)
+                    pendingVendorOrdersQuery = pendingVendorOrdersQuery.Where(vo => vo.LocationId == filterLocationId.Value);
+                var pendingVendorOrders = pendingVendorOrdersQuery.Count();
 
                 // Overdue shipments = unshipped (or under-shipped) lines past promised due date
-                var activeOrderIds = _context.CustomerOrder
+                var activeOrdersQuery = _context.CustomerOrder
                     .Where(co => co.Tenantid == tenantId &&
                                  co.Status != "Cancelled" &&
                                  co.Status != "Canceled" &&
                                  co.Status != "Completed" &&
                                  co.Status != "Shipped" &&
-                                 co.Status != "Fully Invoiced")
+                                 co.Status != "Fully Invoiced");
+                if (filterLocationId.HasValue)
+                    activeOrdersQuery = activeOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
+
+                var activeOrderIds = activeOrdersQuery
                     .Select(co => co.OrderID)
                     .ToList();
 
+                // Shipping has no locationId; shipped qty lookup stays tenant-scoped (orders already location-filtered)
                 var shippedByDetail = _context.ShippingDetails
                     .Where(sd => sd.OrderDetailID.HasValue)
                     .Join(_context.Shipping.Where(s => s.TenantId == tenantId),
@@ -229,20 +283,24 @@ namespace CimmpleAPI.Controllers
                     });
 
                 // Sales Metrics
-                var quotationsThisMonth = _context.QuotationOrder
+                var quotationsThisMonthQuery = _context.QuotationOrder
                     .Where(q => q.Tenantid == tenantId &&
                                q.OrderDate >= dateFilter.startDate &&
-                               q.OrderDate <= dateFilter.endDate)
-                    .Count();
+                               q.OrderDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                    quotationsThisMonthQuery = quotationsThisMonthQuery.Where(q => q.Locationid == filterLocationId.Value);
+                var quotationsThisMonth = quotationsThisMonthQuery.Count();
 
-                var ordersThisMonth = _context.CustomerOrder
+                var ordersThisMonthQuery = _context.CustomerOrder
                     .Where(co => co.Tenantid == tenantId &&
                                co.OrderDate >= dateFilter.startDate &&
-                               co.OrderDate <= dateFilter.endDate)
-                    .Count();
+                               co.OrderDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                    ordersThisMonthQuery = ordersThisMonthQuery.Where(co => co.locationId == filterLocationId.Value);
+                var ordersThisMonth = ordersThisMonthQuery.Count();
 
-                var conversionRate = quotationsThisMonth > 0 
-                    ? (decimal)ordersThisMonth / quotationsThisMonth * 100 
+                var conversionRate = quotationsThisMonth > 0
+                    ? (decimal)ordersThisMonth / quotationsThisMonth * 100
                     : 0;
 
                 var metrics = new
@@ -295,7 +353,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetProductionStatus")]
-        public IActionResult GetProductionStatus([FromQuery] string period = "This Week")
+        public IActionResult GetProductionStatus(
+            [FromQuery] string period = "This Week",
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -313,11 +373,24 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var dateFilter = GetDateRangeFilter(period);
 
-                var jobOrdersByStatus = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId &&
-                               j.OrderDate >= dateFilter.startDate &&
+                var jobOrdersQuery = _context.JobOrderMaster.Where(j => j.Tenantid == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    jobOrdersQuery = jobOrdersQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
+                var jobOrdersByStatus = jobOrdersQuery
+                    .Where(j => j.OrderDate >= dateFilter.startDate &&
                                j.OrderDate <= dateFilter.endDate)
                     .GroupBy(j => j.Status ?? "Unknown")
                     .Select(g => new
@@ -327,9 +400,8 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                var overdueJobs = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId &&
-                               j.DueDate.Date < DateTime.Now.Date &&
+                var overdueJobs = jobOrdersQuery
+                    .Where(j => j.DueDate.Date < DateTime.Now.Date &&
                                j.Status != null &&
                                j.Status != "Completed" &&
                                j.Status != "Shipped" &&
@@ -358,7 +430,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRevenueTrends")]
-        public IActionResult GetRevenueTrends([FromQuery] string period = "30days")
+        public IActionResult GetRevenueTrends(
+            [FromQuery] string period = "30days",
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -376,13 +450,30 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var days = period == "7days" ? 7 : period == "30days" ? 30 : 90;
                 var startDate = DateTime.Now.AddDays(-days).Date;
 
-                var revenueData = _context.InvoiceMaster
+                var revenueQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                im.PaymentDate != null &&
-                               im.InvoiceDate >= startDate)
+                               im.InvoiceDate >= startDate);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    revenueQuery = revenueQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var revenueData = revenueQuery
                     .GroupBy(im => im.InvoiceDate.Date)
                     .Select(g => new
                     {
@@ -400,10 +491,14 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                var expenseData = _context.VendorInvoiceMaster
+                var expenseQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  (vim.isPaid == 1 || vim.Paydate != null) &&
-                                 vim.InvoiceDate >= startDate)
+                                 vim.InvoiceDate >= startDate);
+                if (filterLocationId.HasValue)
+                    expenseQuery = expenseQuery.Where(vim => vim.locationId == filterLocationId.Value);
+
+                var expenseData = expenseQuery
                     .GroupBy(vim => vim.InvoiceDate.Date)
                     .Select(g => new
                     {
@@ -440,7 +535,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRecentActivities")]
-        public IActionResult GetRecentActivities([FromQuery] int limit = 20)
+        public IActionResult GetRecentActivities(
+            [FromQuery] int limit = 20,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -458,11 +555,25 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var activities = new List<object>();
 
-                // Recent Job Orders
-                var recentJobOrders = _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId)
+                // Recent Job Orders — scoped via CustomerOrder.locationId
+                var recentJobOrdersQuery = _context.JobOrderMaster
+                    .Where(j => j.Tenantid == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    recentJobOrdersQuery = recentJobOrdersQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
+                var recentJobOrders = recentJobOrdersQuery
                     .OrderByDescending(j => j.CreatedDate)
                     .Take(limit / 4)
                     .Select(j => new
@@ -476,7 +587,7 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Recent Shipments
+                // Shipping has no locationId — leave tenant-wide
                 var recentShipments = _context.Shipping
                     .Where(s => s.TenantId == tenantId)
                     .OrderByDescending(s => s.ShipmentDate)
@@ -492,9 +603,22 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Recent Invoices
-                var recentInvoices = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId)
+                // Recent Invoices — filter via InvoiceDetail -> CustomerOrder
+                var recentInvoicesQuery = _context.InvoiceMaster
+                    .Where(im => im.TenantId == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    recentInvoicesQuery = recentInvoicesQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var recentInvoices = recentInvoicesQuery
                     .OrderByDescending(im => im.createdDate)
                     .Take(limit / 4)
                     .Select(im => new
@@ -508,7 +632,7 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Recent NCRs
+                // NCR has no locationId — leave tenant-wide
                 var recentNCRs = _context.NonConformanceReports
                     .Where(n => n.TenantId == tenantId)
                     .OrderByDescending(n => n.CreatedDate)
@@ -550,7 +674,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetAlerts")]
-        public IActionResult GetAlerts()
+        public IActionResult GetAlerts([FromQuery] int? locationId = null)
         {
             try
             {
@@ -568,17 +692,31 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var today = DateTime.Now.Date;
                 var alerts = new List<object>();
 
-                // Overdue Job Orders
-                var overdueJobs = _context.JobOrderMaster
+                // Overdue Job Orders — scoped via CustomerOrder.locationId
+                var overdueJobsQuery = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId &&
                                j.DueDate < today &&
                                j.Status != null &&
                                j.Status != "Completed" &&
                                j.Status != "Cancelled" &&
-                               j.Status != "Void")
+                               j.Status != "Void");
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    overdueJobsQuery = overdueJobsQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
+                var overdueJobs = overdueJobsQuery
                     .Select(j => new
                     {
                         type = "overdue_job",
@@ -592,12 +730,25 @@ namespace CimmpleAPI.Controllers
                     .Take(10)
                     .ToList();
 
-                // Overdue Invoices (AR)
-                var overdueAR = _context.InvoiceMaster
+                // Overdue Invoices (AR) — via InvoiceDetail -> CustomerOrder
+                var overdueARQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                im.DueDate < today &&
                                im.PaymentDate == null &&
-                               !im.IsVoided)
+                               !im.IsVoided);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    overdueARQuery = overdueARQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var overdueAR = overdueARQuery
                     .Select(im => new
                     {
                         type = "overdue_invoice_ar",
@@ -613,12 +764,16 @@ namespace CimmpleAPI.Controllers
                     .ToList();
 
                 // Overdue Vendor Invoices (AP)
-                var overdueAP = _context.VendorInvoiceMaster
+                var overdueAPQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate < today &&
                                  vim.isPaid != 1 &&
                                  vim.isPaid != 2 &&
-                                 vim.Paydate == null)
+                                 vim.Paydate == null);
+                if (filterLocationId.HasValue)
+                    overdueAPQuery = overdueAPQuery.Where(vim => vim.locationId == filterLocationId.Value);
+
+                var overdueAP = overdueAPQuery
                     .Select(vim => new
                     {
                         type = "overdue_invoice_ap",
@@ -633,7 +788,7 @@ namespace CimmpleAPI.Controllers
                     .Take(10)
                     .ToList();
 
-                // Open NCRs requiring attention
+                // Open NCRs — no locationId; leave tenant-wide
                 var criticalNCRs = _context.NonConformanceReports
                     .Where(n => n.TenantId == tenantId &&
                                n.Status != null &&
@@ -686,7 +841,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetTopCustomers")]
-        public IActionResult GetTopCustomers([FromQuery] int limit = 5)
+        public IActionResult GetTopCustomers(
+            [FromQuery] int limit = 5,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -704,9 +861,13 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var dateFilter = GetDateRangeFilter("This Month");
 
-                var topCustomers = _context.InvoiceMaster
+                var topCustomersQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                im.PaymentDate != null &&
                                im.InvoiceDate >= dateFilter.startDate &&
@@ -718,7 +879,12 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.CustomerOrder,
                           x => x.id.OrderId,
                           co => co.OrderID,
-                          (x, co) => new { x.im, co })
+                          (x, co) => new { x.im, co });
+
+                if (filterLocationId.HasValue)
+                    topCustomersQuery = topCustomersQuery.Where(x => x.co.locationId == filterLocationId.Value);
+
+                var topCustomers = topCustomersQuery
                     .GroupBy(x => new { x.co.CustomerID, x.co.CustomerName })
                     .Select(g => new
                     {
@@ -746,7 +912,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetTopProducts")]
-        public IActionResult GetTopProducts([FromQuery] int limit = 5)
+        public IActionResult GetTopProducts(
+            [FromQuery] int limit = 5,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -764,12 +932,26 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var dateFilter = GetDateRangeFilter("This Month");
 
-                var topProducts = _context.JobOrderMaster
+                var topProductsQuery = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId &&
                                j.OrderDate >= dateFilter.startDate &&
-                               j.OrderDate <= dateFilter.endDate)
+                               j.OrderDate <= dateFilter.endDate);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    topProductsQuery = topProductsQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
+                var topProducts = topProductsQuery
                     .GroupBy(j => new { j.PartNo, j.PartName })
                     .Select(g => new
                     {
@@ -798,7 +980,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetQualityStatus")]
-        public IActionResult GetQualityStatus()
+        public IActionResult GetQualityStatus([FromQuery] int? locationId = null)
         {
             try
             {
@@ -816,6 +998,12 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                // NonConformanceReport has no locationId — leave tenant-wide (filterLocationId unused)
+                _ = filterLocationId;
 
                 var ncrByStatus = _context.NonConformanceReports
                     .Where(n => n.TenantId == tenantId && n.Status != null)
@@ -842,7 +1030,9 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetUpcomingDeadlines")]
-        public IActionResult GetUpcomingDeadlines([FromQuery] int days = 7)
+        public IActionResult GetUpcomingDeadlines(
+            [FromQuery] int days = 7,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -860,13 +1050,17 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "TenantId is required" });
                     }
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var endDate = DateTime.Now.AddDays(days).Date;
                 var today = DateTime.Now.Date;
 
                 var deadlines = new List<object>();
 
-                // Job Order due dates
-                var jobDeadlines = _context.JobOrderMaster
+                // Job Order due dates — scoped via CustomerOrder.locationId
+                var jobDeadlinesQuery = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId &&
                                j.DueDate >= today &&
                                j.DueDate <= endDate &&
@@ -875,7 +1069,17 @@ namespace CimmpleAPI.Controllers
                                j.Status != "Shipped" &&
                                j.Status != "Cancelled" &&
                                j.Status != "Canceled" &&
-                               j.Status != "Void")
+                               j.Status != "Void");
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    jobDeadlinesQuery = jobDeadlinesQuery.Where(j =>
+                        _context.CustomerOrder.Any(co =>
+                            co.OrderID == j.CustomerOrderID &&
+                            co.locationId == locId));
+                }
+
+                var jobDeadlines = jobDeadlinesQuery
                     .Select(j => new
                     {
                         type = "job_order",
@@ -888,14 +1092,27 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Invoice due dates (AR) — exclude voided
-                var invoiceDeadlines = _context.InvoiceMaster
+                // Invoice due dates (AR) — via InvoiceDetail -> CustomerOrder
+                var invoiceDeadlinesQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                !im.IsVoided &&
                                im.DueDate >= today &&
                                im.DueDate <= endDate &&
                                im.PaymentDate == null &&
-                               !im.IsVoided)
+                               !im.IsVoided);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    invoiceDeadlinesQuery = invoiceDeadlinesQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                co.locationId == locId)));
+                }
+
+                var invoiceDeadlines = invoiceDeadlinesQuery
                     .Select(im => new
                     {
                         type = "invoice_ar",
@@ -908,15 +1125,19 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Vendor Invoice due dates (AP) — exclude paid and voided
-                var vendorInvoiceDeadlines = _context.VendorInvoiceMaster
+                // Vendor Invoice due dates (AP)
+                var vendorInvoiceDeadlinesQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
                                  vim.DueDate >= today &&
                                  vim.DueDate <= endDate &&
                                  vim.isPaid != 1 &&
                                  vim.isPaid != 2 &&
                                  vim.voideddate == null &&
-                                 vim.Paydate == null)
+                                 vim.Paydate == null);
+                if (filterLocationId.HasValue)
+                    vendorInvoiceDeadlinesQuery = vendorInvoiceDeadlinesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+
+                var vendorInvoiceDeadlines = vendorInvoiceDeadlinesQuery
                     .Select(vim => new
                     {
                         type = "invoice_ap",
@@ -1017,4 +1238,3 @@ namespace CimmpleAPI.Controllers
         }
     }
 }
-

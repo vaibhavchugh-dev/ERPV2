@@ -8,10 +8,12 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 
 const BankReconciliation: React.FC = () => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
-  const formatCurrency = (amount: number) => formatCurrencyRaw(Math.abs(amount));
+  const formatCurrency = (amount: number) => formatCurrencyRaw(amount);
   const [selectedAccount, setSelectedAccount] = useState<number>(0);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [openingBalances, setOpeningBalances] = useState<Record<number, number>>({});
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
+  const [periodActivity, setPeriodActivity] = useState(0);
   const [loading, setLoading] = useState(false);
   const [statementDate, setStatementDate] = useState('');
   const [statementBalance, setStatementBalance] = useState('');
@@ -46,15 +48,20 @@ const BankReconciliation: React.FC = () => {
       const tenantID = storage?.tenantID || 0;
       const bankData = await BankService.GetBanklist({ tenantid: tenantID });
       if (bankData && bankData.length > 0) {
-        const transformedAccounts: BankAccount[] = bankData.map(bank => ({
-          id: bank.id,
-          name: bank.nickName || bank.bankName,
-          accountNumber: bank.lastAccountNo || bank.accountNo,
-          balance: Number(bank.currentBalance ?? bank.balance ?? 0),
-          lastReconciled: bank.lastReconciledDate
-            ? String(bank.lastReconciledDate).slice(0, 10)
-            : ''
-        }));
+        const openings: Record<number, number> = {};
+        const transformedAccounts: BankAccount[] = bankData.map(bank => {
+          openings[bank.id] = Number(bank.openingBalance ?? bank.balance ?? 0);
+          return {
+            id: bank.id,
+            name: bank.nickName || bank.bankName,
+            accountNumber: bank.lastAccountNo || bank.accountNo,
+            balance: Number(bank.currentBalance ?? bank.balance ?? 0),
+            lastReconciled: bank.lastReconciledDate
+              ? String(bank.lastReconciledDate).slice(0, 10)
+              : ''
+          };
+        });
+        setOpeningBalances(openings);
         setAccounts(transformedAccounts);
         setSelectedAccount((prev) =>
           prev > 0 && transformedAccounts.some((a) => a.id === prev)
@@ -87,8 +94,11 @@ const BankReconciliation: React.FC = () => {
         case 'This Year':
           startDate.setMonth(0, 1);
           break;
+        case 'All Dates':
+          startDate.setFullYear(2000, 0, 1);
+          break;
         default:
-          startDate.setDate(endDate.getDate() - 30);
+          startDate.setMonth(0, 1);
       }
 
       const transactions = await AccountingService.GetBankTransactions(
@@ -119,6 +129,9 @@ const BankReconciliation: React.FC = () => {
         }
 
         setTransactions(filteredTransactions);
+
+        const activity = filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
+        setPeriodActivity(activity);
 
         const reconciledTxns = filteredTransactions.filter(t => t.reconciled);
         const calculatedBalance = reconciledTxns.reduce((sum, t) => sum + t.amount, 0);
@@ -294,9 +307,21 @@ const BankReconciliation: React.FC = () => {
           {selectedAccountData && (
             <div style={{ padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.375rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Current Balance</span>
+                <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Book Balance (all-time)</span>
                 <span style={{ fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
-                  {formatCurrency(selectedAccountData.balance)}
+                  {formatCurrencyRaw(selectedAccountData.balance)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Opening Balance</span>
+                <span style={{ fontSize: '0.875rem', color: '#111827' }}>
+                  {formatCurrencyRaw(openingBalances[selectedAccount] ?? 0)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Net activity (filtered)</span>
+                <span style={{ fontSize: '0.875rem', color: '#111827' }}>
+                  {formatCurrencyRaw(periodActivity)}
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -445,6 +470,7 @@ const BankReconciliation: React.FC = () => {
             <option value="Last 30 Days">Last 30 Days</option>
             <option value="Last 90 Days">Last 90 Days</option>
             <option value="This Year">This Year</option>
+            <option value="All Dates">All Dates</option>
           </select>
 
           <button

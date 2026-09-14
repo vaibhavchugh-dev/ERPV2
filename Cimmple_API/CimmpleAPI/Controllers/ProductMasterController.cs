@@ -653,6 +653,7 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int tenantId,
             [FromQuery] int vendorId,
             [FromQuery] string? q = null,
+            [FromQuery] string? lineType = null,
             [FromQuery] int limit = 50)
         {
             try
@@ -666,6 +667,7 @@ namespace CimmpleAPI.Controllers
                 if (limit > 200) limit = 200;
 
                 var search = (q ?? "").Trim();
+                var lineTypeFilter = (lineType ?? "").Trim();
 
                 var quotations = _context.VendorQuotations
                     .AsNoTracking()
@@ -690,6 +692,14 @@ namespace CimmpleAPI.Controllers
                 var orderDetailsQuery = _context.VendorOrderDetails
                     .AsNoTracking()
                     .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID));
+
+                if (!string.IsNullOrEmpty(lineTypeFilter))
+                {
+                    quotationDetailsQuery = quotationDetailsQuery.Where(d =>
+                        d.LineType != null && d.LineType == lineTypeFilter);
+                    orderDetailsQuery = orderDetailsQuery.Where(d =>
+                        d.LineType != null && d.LineType == lineTypeFilter);
+                }
 
                 if (!string.IsNullOrEmpty(search))
                 {
