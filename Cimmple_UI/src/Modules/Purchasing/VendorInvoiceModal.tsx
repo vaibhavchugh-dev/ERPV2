@@ -159,6 +159,22 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
         return;
       }
 
+      if (!invoiceDate) {
+        toast.warning('Invoice Date is required.');
+        setLoading(false);
+        return;
+      }
+      if (!dueDate) {
+        toast.warning('Due Date is required.');
+        setLoading(false);
+        return;
+      }
+      if (new Date(dueDate) < new Date(invoiceDate)) {
+        toast.warning('Due Date cannot be before Invoice Date.');
+        setLoading(false);
+        return;
+      }
+
       // Validate that we're not invoicing more than available
       for (const item of selectedItems) {
         const qtyToInvoice = quantities[item.id] || 0;
@@ -338,7 +354,13 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                   <input
                     type="date"
                     value={invoiceDate}
-                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setInvoiceDate(next);
+                      if (dueDate && next && new Date(dueDate) < new Date(next)) {
+                        setDueDate(next);
+                      }
+                    }}
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -355,6 +377,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                   <input
                     type="date"
                     value={dueDate}
+                    min={invoiceDate || undefined}
                     onChange={(e) => setDueDate(e.target.value)}
                     style={{
                       width: '100%',

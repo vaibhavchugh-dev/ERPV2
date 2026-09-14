@@ -3208,7 +3208,10 @@ namespace CimmpleAPI.Controllers
                         totalReceived,
                         totalPending = totalOrdered - totalReceived
                     };
-                }).ToList();
+                }).Where(o =>
+                    !string.Equals(o.status, "Fully Received", StringComparison.OrdinalIgnoreCase) &&
+                    o.totalPending > 0
+                ).ToList();
 
                 return Ok(new { result = ordersWithStats });
             }

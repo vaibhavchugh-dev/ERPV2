@@ -215,7 +215,7 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
             <button
               type="submit"
               disabled={loading}
-              style={{ padding: "0.5rem 1rem", border: "none", borderRadius: "0.375rem", background: "#10b981", color: "white", fontWeight: 500 }}
+              style={{ padding: "0.5rem 1rem", border: "none", borderRadius: "0.375rem", background: "#059669", color: "white", fontWeight: 500 }}
             >
               {loading ? "Paying…" : `Pay ${formatCurrency(totalDue)}`}
             </button>
@@ -584,18 +584,20 @@ const AccountsPayable: React.FC = () => {
             </button>
             <button
               onClick={handleBulkPayApproved}
+              disabled={bulkPaying || approvedPayable.length === 0}
               style={{
                 padding: "0.5rem 1rem",
-                backgroundColor: "#10b981",
+                backgroundColor: "#059669",
                 color: "white",
                 border: "none",
                 borderRadius: "0.375rem",
-                cursor: "pointer",
+                cursor: bulkPaying || approvedPayable.length === 0 ? "not-allowed" : "pointer",
                 fontSize: "0.875rem",
                 fontWeight: "500",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
+                opacity: bulkPaying || approvedPayable.length === 0 ? 0.7 : 1,
               }}
             >
               <FontAwesomeIcon icon={faCreditCard} />
