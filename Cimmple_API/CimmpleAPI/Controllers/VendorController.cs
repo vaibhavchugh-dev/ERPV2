@@ -422,12 +422,23 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Vendor name is required." });
                 }
 
+                var companyNameNorm = request.company_name.Trim();
+                var nameDuplicate = _context.VendorMaster
+                    .Any(v => v.Tenantid == request.TenantID
+                              && v.vendor_id != request.vendor_id
+                              && v.company_name != null
+                              && v.company_name.Trim().ToLower() == companyNameNorm.ToLower());
+                if (nameDuplicate)
+                {
+                    return BadRequest(new { error = $"Vendor name '{companyNameNorm}' already exists" });
+                }
+
                 if (request.vendor_id == 0)
                 {
                     // Create new vendor
                     var newVendor = new VendorMaster
                     {
-                        company_name = request.company_name,
+                        company_name = companyNameNorm,
                         companyAlias = request.companyAlias ?? string.Empty,
                         email = request.email ?? string.Empty,
                         phone_number = request.phone_number ?? string.Empty,
@@ -517,7 +528,7 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Vendor not found" });
                     }
 
-                    existingVendor.company_name = request.company_name;
+                    existingVendor.company_name = companyNameNorm;
                     existingVendor.companyAlias = request.companyAlias ?? string.Empty;
                     existingVendor.email = request.email ?? string.Empty;
                     existingVendor.phone_number = request.phone_number ?? string.Empty;
@@ -610,10 +621,11 @@ namespace CimmpleAPI.Controllers
 
         private string GenerateVendorCode(int tenantId)
         {
-            var maxCode = _context.VendorMaster
+            var existingCodes = _context.VendorMaster
                 .Where(v => v.Tenantid == tenantId)
-                .Count();
-            return $"V{(maxCode + 1001)}";
+                .Select(v => v.vendorcode)
+                .ToList();
+            return MasterCodeGenerator.NextCode(existingCodes, 'V');
         }
 
         [HttpPost("ImportVendors")]
@@ -642,7 +654,7 @@ namespace CimmpleAPI.Controllers
                         .Where(vc => existingIds.Contains(vc.customer_id))
                         .ToList();
 
-                int nextCodeSeq = existing.Count + 1001;
+                int nextCodeSeq = MasterCodeGenerator.GetNextSequence(existing.Select(v => v.vendorcode), 'V');
                 var result = new VendorImportResult();
                 var rowResults = new List<VendorImportRowResult>();
                 var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1067,6 +1079,19 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
+                    var portalUserCount = _context.UserDetails
+                        .Count(u => u.TenantID == tenantId && u.VendorId == vendorId
+                                    && (u.Status == null || u.Status.ToLower() != "inactive"));
+                    if (portalUserCount > 0)
+                    {
+                        impact.WillBeDeleted.Add(new ImpactedEntity
+                        {
+                            EntityType = "Portal Login",
+                            Count = portalUserCount,
+                            Description = $"{portalUserCount} portal login account(s) will be deactivated"
+                        });
+                    }
+
                     impact.Warnings.Add("This action cannot be undone");
                 }
 
@@ -1101,6 +1126,19 @@ namespace CimmpleAPI.Controllers
                     .Where(vcm => vcm.vendorid == vendorId)
                     .ToList();
                 _context.VendorCOAMapping.RemoveRange(coaMappings);
+
+                // Deactivate portal login accounts linked to this vendor (soft-delete; avoid FK issues)
+                var portalUsers = _context.UserDetails
+                    .Where(u => u.TenantID == tenantId && u.VendorId == vendorId)
+                    .ToList();
+                foreach (var portalUser in portalUsers)
+                {
+                    portalUser.Status = "Inactive";
+                    portalUser.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
+                    portalUser.Termination_Reason = "Vendor deleted";
+                    portalUser.VendorId = null;
+                    portalUser.Password = null;
+                }
 
                 // Delete the vendor
                 _context.VendorMaster.Remove(vendor);

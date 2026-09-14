@@ -230,7 +230,12 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error saving workstation:", error);
-      toast.error(`Error saving workstation: ${error.message || "Unknown error"}`);
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Error saving workstation: ${message}`);
     } finally {
       setLoading(false);
     }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -173,30 +174,10 @@ namespace CimmpleAPI.Controllers
                 }
                 var revenueThisMonth = revenueThisMonthQuery.Sum(im => (decimal?)im.TotalAmount) ?? 0;
 
-                var cashInQuery = _context.Transactions
-                    .Where(t => t.TenantId == tenantId &&
-                               t.isCustomer == 1 &&
-                               t.TransactionType != null &&
-                               t.TransactionType == "Payment" &&
-                               t.TransactionDate != null &&
-                               t.TransactionDate >= dateFilter.startDate &&
-                               t.TransactionDate <= dateFilter.endDate);
-                if (filterLocationId.HasValue)
-                    cashInQuery = cashInQuery.Where(t => t.locationId == filterLocationId.Value);
-                var cashIn = cashInQuery.Sum(t => t.Amount ?? 0);
-
-                var cashOutQuery = _context.Transactions
-                    .Where(t => t.TenantId == tenantId &&
-                               t.isCustomer == 0 &&
-                               t.TransactionType != null &&
-                               t.TransactionType == "Payment" &&
-                               t.TransactionDate != null &&
-                               t.TransactionDate >= dateFilter.startDate &&
-                               t.TransactionDate <= dateFilter.endDate);
-                if (filterLocationId.HasValue)
-                    cashOutQuery = cashOutQuery.Where(t => t.locationId == filterLocationId.Value);
-                var cashOut = cashOutQuery.Sum(t => t.Amount ?? 0);
-
+                var cashFlow = CashFlowMetricsCalculator.Calculate(
+                    _context, tenantId, dateFilter, filterLocationId);
+                var cashIn = cashFlow.cashIn;
+                var cashOut = cashFlow.cashOut;
                 var netCashFlow = cashIn - cashOut;
 
                 // Quality Metrics — NonConformanceReport has no locationId; leave tenant-wide

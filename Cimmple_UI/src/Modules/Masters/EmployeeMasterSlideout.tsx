@@ -583,9 +583,16 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       delete submitData.HasPassword;
       delete submitData.CanLogin;
       if (loginAccessEnabled) {
-        const firstName = submitData.FirstName?.toLowerCase().replace(/\s+/g, "") || "";
-        const lastName = submitData.LastName?.toLowerCase().replace(/\s+/g, "") || "";
-        submitData.UserName = `${firstName}.${lastName}` || "";
+        const existingUserName = (formData.UserName || "").trim();
+        // Only auto-generate username for new employees / first-time login enablement.
+        // Do not overwrite an existing username when First/Last Name change.
+        if (!existingUserName || existingUserName === "enabled") {
+          const firstName = submitData.FirstName?.toLowerCase().replace(/\s+/g, "") || "";
+          const lastName = submitData.LastName?.toLowerCase().replace(/\s+/g, "") || "";
+          submitData.UserName = `${firstName}.${lastName}` || "";
+        } else {
+          submitData.UserName = existingUserName;
+        }
         if (loginPassword.trim()) {
           submitData.Password = loginPassword.trim();
         } else {

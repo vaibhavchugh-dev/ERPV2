@@ -518,7 +518,12 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
       setIsStateChanged(false);
       onClose(true);
     } catch (error: any) {
-      toast.error(`Error saving customer: ${error.message}`);
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`Error saving customer: ${message}`);
     } finally {
       setLoading(false);
     }
