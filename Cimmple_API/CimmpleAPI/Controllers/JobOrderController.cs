@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
@@ -9,6 +11,7 @@ using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -21,11 +24,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
+        private readonly IConfiguration _configuration;
 
-        public JobOrderController(CimmpleDbContext context, InventoryService inventoryService)
+        public JobOrderController(
+            CimmpleDbContext context,
+            InventoryService inventoryService,
+            IConfiguration configuration)
         {
             _context = context;
             _inventoryService = inventoryService;
+            _configuration = configuration;
         }
 
         [HttpGet("GetJobOrders")]
@@ -390,7 +398,16 @@ namespace CimmpleAPI.Controllers
                     jobOrder.EnableJobTracking = false;
                 }
 
-                // Save attachments as JSON
+                // Delete Azure blobs for attachments removed in the UI (JSON-only storage).
+                if (request.DeletedAttachmentIds != null && request.DeletedAttachmentIds.Count > 0)
+                {
+                    await ProcessDeletedJobOrderAttachments(
+                        jobOrder,
+                        request.Tenantid,
+                        request.DeletedAttachmentIds);
+                }
+
+                // Save attachments as JSON (persisted metadata; new blobs uploaded via JobOrderSaveFile).
                 if (request.Attachments != null && request.Attachments.Count > 0)
                 {
                     var attachmentOptions = new JsonSerializerOptions
@@ -636,6 +653,312 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Upload job order attachments to Azure Blob Storage and update JobOrderMaster.AttachmentsJson.
+        /// Requires an existing job order (jobOrderId). No separate attachment table — metadata lives in JSON.
+        /// </summary>
+        [HttpPost("JobOrderSaveFile")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> JobOrderSaveFile(IFormCollection form)
+        {
+            try
+            {
+                var files = form.Files;
+                if (files == null || files.Count == 0)
+                {
+                    return BadRequest(new { error = "At least one file is required" });
+                }
+
+                if (!form.ContainsKey("jobOrderId") && !form.ContainsKey("JobOrderId")
+                    && !form.ContainsKey("orderId") && !form.ContainsKey("OrderId")
+                    && !form.ContainsKey("formField"))
+                {
+                    return BadRequest(new { error = "jobOrderId or formField is required" });
+                }
+
+                int jobOrderId = 0;
+                int tenantId = GetTenantId();
+                int createdBy = GetUserId() ?? 0;
+
+                if (form.ContainsKey("formField") && !string.IsNullOrWhiteSpace(form["formField"]))
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var request = JsonSerializer.Deserialize<JobOrderAttachmentUploadContext>(form["formField"]!, options);
+                    if (request != null)
+                    {
+                        jobOrderId = request.JobOrderId > 0 ? request.JobOrderId
+                            : request.JobOrderID > 0 ? request.JobOrderID
+                            : request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.TenantId > 0) tenantId = request.TenantId;
+                        if (request.TenantID > 0) tenantId = request.TenantID;
+                        if (request.Tenantid > 0) tenantId = request.Tenantid;
+                    }
+                }
+
+                if (jobOrderId <= 0)
+                {
+                    var idValue = form.ContainsKey("jobOrderId") ? form["jobOrderId"].ToString()
+                        : form.ContainsKey("JobOrderId") ? form["JobOrderId"].ToString()
+                        : form.ContainsKey("orderId") ? form["orderId"].ToString()
+                        : form.ContainsKey("OrderId") ? form["OrderId"].ToString() : "";
+                    int.TryParse(idValue, out jobOrderId);
+                }
+
+                if (form.ContainsKey("tenantId") && int.TryParse(form["tenantId"], out var formTenant) && formTenant > 0)
+                {
+                    tenantId = formTenant;
+                }
+
+                if (jobOrderId <= 0)
+                {
+                    return BadRequest(new { error = "A saved job order (jobOrderId) is required before uploading attachments" });
+                }
+
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
+                var jobOrder = _context.JobOrderMaster
+                    .FirstOrDefault(j => j.JobOrderID == jobOrderId && j.Tenantid == tenantId);
+                if (jobOrder == null)
+                {
+                    return NotFound(new { error = "Job order not found" });
+                }
+
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true
+                };
+
+                var existing = new List<JobOrderAttachmentDto>();
+                if (!string.IsNullOrEmpty(jobOrder.AttachmentsJson))
+                {
+                    try
+                    {
+                        existing = JsonSerializer.Deserialize<List<JobOrderAttachmentDto>>(
+                                       jobOrder.AttachmentsJson, jsonOptions)
+                                   ?? new List<JobOrderAttachmentDto>();
+                    }
+                    catch
+                    {
+                        existing = new List<JobOrderAttachmentDto>();
+                    }
+                }
+
+                int nextFileUniqueNo = existing.Count > 0
+                    ? Math.Max(existing.Max(a => a.FileUniqueno), existing.Max(a => a.Id)) + 1
+                    : 1;
+                if (nextFileUniqueNo <= 0) nextFileUniqueNo = 1;
+
+                var uploaded = new List<JobOrderAttachmentDto>();
+
+                foreach (var file in files)
+                {
+                    if (file == null || file.Length <= 0)
+                    {
+                        continue;
+                    }
+
+                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                    var displayName = Path.GetFileName(file.FileName);
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId,
+                        ModuleFileStorage.JobOrdersFolder,
+                        blobName,
+                        createdBy);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
+                    {
+                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                    }
+
+                    var dto = new JobOrderAttachmentDto
+                    {
+                        Id = nextFileUniqueNo,
+                        Name = displayName,
+                        Size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                        FileUrl = blobName,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        PageNo = "0",
+                        CreatedBy = createdBy
+                    };
+                    existing.Add(dto);
+                    uploaded.Add(dto);
+                    nextFileUniqueNo++;
+                }
+
+                var writeOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true,
+                    WriteIndented = false
+                };
+                jobOrder.AttachmentsJson = existing.Count > 0
+                    ? JsonSerializer.Serialize(existing, writeOptions)
+                    : null;
+                _context.SaveChanges();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        jobOrderId,
+                        attachments = uploaded,
+                        message = "Files uploaded successfully"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Single-file binary download for job order attachments (from AttachmentsJson + Azure).
+        /// </summary>
+        [HttpGet("JobOrderGetFile")]
+        public IActionResult JobOrderGetFile(
+            [FromQuery] int jobOrderId,
+            [FromQuery] int fileUniqueno,
+            [FromQuery] int tenantId = 0,
+            [FromQuery] bool download = false)
+        {
+            try
+            {
+                if (jobOrderId <= 0 || fileUniqueno <= 0)
+                {
+                    return BadRequest(new { error = "jobOrderId and fileUniqueno are required" });
+                }
+
+                if (tenantId <= 0) tenantId = GetTenantId();
+
+                var jobOrder = _context.JobOrderMaster
+                    .AsNoTracking()
+                    .FirstOrDefault(j => j.JobOrderID == jobOrderId && j.Tenantid == tenantId);
+                if (jobOrder == null || string.IsNullOrEmpty(jobOrder.AttachmentsJson))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                List<JobOrderAttachmentDto>? attachments;
+                try
+                {
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        PropertyNameCaseInsensitive = true
+                    };
+                    attachments = JsonSerializer.Deserialize<List<JobOrderAttachmentDto>>(
+                        jobOrder.AttachmentsJson, options);
+                }
+                catch
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var attachment = attachments?.FirstOrDefault(a =>
+                    a.FileUniqueno == fileUniqueno || a.Id == fileUniqueno);
+                if (attachment == null || string.IsNullOrEmpty(attachment.UploadFile ?? attachment.FileUrl))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobOrdersFolder,
+                    blobName);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = ModuleFileStorage.GetContentType(attachment.Name ?? blobName);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.Name);
+
+                if (download)
+                {
+                    return File(bytes, contentType, fileName);
+                }
+
+                Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName}\"";
+                Response.Headers["X-Attachment-Id"] = attachment.Id.ToString();
+                Response.Headers["X-File-Name"] = fileName;
+                return File(bytes, contentType);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        private async Task ProcessDeletedJobOrderAttachments(
+            JobOrderMaster jobOrder,
+            int tenantId,
+            List<int> deletedAttachmentIds)
+        {
+            if (deletedAttachmentIds == null || deletedAttachmentIds.Count == 0
+                || string.IsNullOrEmpty(jobOrder.AttachmentsJson))
+            {
+                return;
+            }
+
+            List<JobOrderAttachmentDto>? existing;
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    PropertyNameCaseInsensitive = true
+                };
+                existing = JsonSerializer.Deserialize<List<JobOrderAttachmentDto>>(
+                    jobOrder.AttachmentsJson, options);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (existing == null || existing.Count == 0)
+            {
+                return;
+            }
+
+            var idSet = deletedAttachmentIds.ToHashSet();
+            var toDelete = existing
+                .Where(a => idSet.Contains(a.Id) || idSet.Contains(a.FileUniqueno))
+                .ToList();
+
+            foreach (var attachment in toDelete)
+            {
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+                if (string.IsNullOrEmpty(blobName))
+                {
+                    continue;
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobOrdersFolder,
+                    blobName);
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
             }
         }
 
@@ -1288,6 +1611,7 @@ namespace CimmpleAPI.Controllers
         public int UserToken { get; set; }
         public string OrderDate { get; set; } // Accept as string, parse in controller
         public List<JobOrderAttachmentDto> Attachments { get; set; }
+        public List<int> DeletedAttachmentIds { get; set; } = new List<int>();
         public List<JobOrderCommentDto> Comments { get; set; }
         public List<JobOrderRoutingStepDto> RoutingSteps { get; set; }
         public string DrawingNumber { get; set; }
@@ -1303,6 +1627,17 @@ namespace CimmpleAPI.Controllers
         /// Null = leave existing planned material unchanged (PWA step saves). Empty list clears it.
         /// </summary>
         public List<JobMaterialRequirementReq>? MaterialRequirements { get; set; }
+    }
+
+    public class JobOrderAttachmentUploadContext
+    {
+        public int JobOrderId { get; set; }
+        public int JobOrderID { get; set; }
+        public int OrderId { get; set; }
+        public int OrderID { get; set; }
+        public int TenantId { get; set; }
+        public int TenantID { get; set; }
+        public int Tenantid { get; set; }
     }
 
     public class JobMaterialRequirementReq
@@ -1326,10 +1661,14 @@ namespace CimmpleAPI.Controllers
 
     public class JobOrderAttachmentDto
     {
-        public int id { get; set; }
-        public string name { get; set; }
-        public int size { get; set; }
-        public string fileUrl { get; set; }
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Size { get; set; }
+        public string FileUrl { get; set; } = "";
+        public int FileUniqueno { get; set; }
+        public string UploadFile { get; set; } = "";
+        public string PageNo { get; set; } = "0";
+        public int CreatedBy { get; set; }
     }
 
     public class JobOrderCommentDto
