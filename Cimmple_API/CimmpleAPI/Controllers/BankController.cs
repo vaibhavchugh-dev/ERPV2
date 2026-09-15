@@ -31,8 +31,8 @@ namespace CimmpleAPI.Controllers
 
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
 
-                // Ensure legacy payment rows without BankId appear in recon / current balance.
-                BackfillMissingPaymentBankIds(tenantid);
+                // Throttled + batched; skip on most page loads after first run.
+                BankPaymentBackfillService.RunIfNeeded(_context, tenantid);
 
                 var query = _context.BankMaster.Where(b => b.TenantId == tenantid);
                 if (filterLocationId.HasValue)
@@ -40,26 +40,44 @@ namespace CimmpleAPI.Controllers
                     query = query.Where(b => b.locationId == filterLocationId.Value);
                 }
 
-                var bankRows = query.ToList();
+                var bankRows = query
+                    .Select(b => new
+                    {
+                        b.Id,
+                        b.BankName,
+                        b.lastAccountNo,
+                        b.AccountType,
+                        b.Phone,
+                        b.Email,
+                        b.status,
+                        b.Balance,
+                        b.RoutingNumber,
+                        b.NickName,
+                        b.LastReconciledDate
+                    })
+                    .ToList();
                 var bankIds = bankRows.Select(b => b.Id).ToList();
                 var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
-                var bankTxns = _context.Transactions
-                    .Where(t => t.TenantId == tenantid &&
-                                t.BankId != null &&
-                                bankIds.Contains(t.BankId.Value) &&
-                                t.TransactionType != null &&
-                                bankTypeSet.Contains(t.TransactionType))
-                    .Select(t => new { t.BankId, t.Amount, t.isCustomer, t.TransactionType })
-                    .ToList()
-                    .GroupBy(t => t.BankId!.Value)
-                    .ToDictionary(
-                        g => g.Key,
-                        g => g.Sum(t =>
+
+                // Aggregate signed activity in the database (same sign rules as AccountingRules.MapBankTransactionSign).
+                var bankTxns = bankIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : _context.Transactions
+                        .Where(t => t.TenantId == tenantid &&
+                                    t.BankId != null &&
+                                    bankIds.Contains(t.BankId.Value) &&
+                                    t.TransactionType != null &&
+                                    bankTypeSet.Contains(t.TransactionType))
+                        .GroupBy(t => t.BankId!.Value)
+                        .Select(g => new
                         {
-                            var (signed, _) = AccountingRules.MapBankTransactionSign(
-                                t.Amount ?? 0, t.isCustomer, t.TransactionType);
-                            return signed;
-                        }));
+                            BankId = g.Key,
+                            Activity = g.Sum(t =>
+                                t.isCustomer == 1 || t.TransactionType == "Deposit"
+                                    ? (t.Amount ?? 0m)
+                                    : -((t.Amount ?? 0m) < 0 ? -(t.Amount ?? 0m) : (t.Amount ?? 0m)))
+                        })
+                        .ToDictionary(x => x.BankId, x => x.Activity);
 
                 var banks = bankRows
                     .Select(b =>
@@ -76,10 +94,8 @@ namespace CimmpleAPI.Controllers
                             phone = b.Phone,
                             email = b.Email,
                             status = b.status ?? "Active",
-                            // Opening balance stored on the bank master
                             balance = opening,
                             openingBalance = opening,
-                            // Running current balance = opening + signed bank activity
                             currentBalance = opening + activity,
                             routingNumber = b.RoutingNumber,
                             nickName = b.NickName,
@@ -463,54 +479,6 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
-        }
-
-        private void BackfillMissingPaymentBankIds(int tenantId)
-        {
-            var orphans = _context.Transactions
-                .Where(t => t.TenantId == tenantId &&
-                            t.TransactionType != null &&
-                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                            (t.BankId == null || t.BankId <= 0) &&
-                            t.invoiceNo != null &&
-                            t.invoiceNo != "")
-                .ToList();
-            if (orphans.Count == 0)
-                return;
-
-            var changed = false;
-            foreach (var txn in orphans)
-            {
-                var invoiceNo = txn.invoiceNo!.Trim();
-                int? bankId = null;
-                if (txn.isCustomer == 1)
-                {
-                    bankId = _context.InvoiceMaster
-                        .Where(im => im.TenantId == tenantId &&
-                                     (im.PrefixInvoiceNo == invoiceNo ||
-                                      im.InvoiceNo.ToString() == invoiceNo))
-                        .Select(im => im.Bankid)
-                        .FirstOrDefault();
-                }
-                else
-                {
-                    bankId = _context.VendorInvoiceMaster
-                        .Where(vim => vim.TenantId == tenantId &&
-                                      (vim.prefixinvoiceno == invoiceNo ||
-                                       vim.InvoiceNo == invoiceNo))
-                        .Select(vim => vim.Bankid)
-                        .FirstOrDefault();
-                }
-
-                if (bankId.HasValue && bankId.Value > 0)
-                {
-                    txn.BankId = bankId.Value;
-                    changed = true;
-                }
-            }
-
-            if (changed)
-                _context.SaveChanges();
         }
     }
 

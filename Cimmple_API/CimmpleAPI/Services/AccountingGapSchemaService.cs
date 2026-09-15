@@ -1,16 +1,35 @@
-using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using CimmpleAPI.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace CimmpleAPI.Services
 {
     /// <summary>
-    /// Ensures Accounting gap tables/columns exist for DBs that have not run the matching migration yet.
+    /// One-time (per process) schema ensure for Accounting gap columns/tables.
+    /// Avoids running a large DDL script on every bank/recon request.
     /// </summary>
     public static class AccountingGapSchemaService
     {
+        private static readonly SemaphoreSlim Gate = new(1, 1);
+        private static int _ensured; // 0 = not done, 1 = done
+
         public static async Task EnsureAsync(CimmpleDbContext context)
         {
-            await context.Database.ExecuteSqlRawAsync(@"
+            if (Volatile.Read(ref _ensured) == 1)
+                return;
+
+            await Gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (Volatile.Read(ref _ensured) == 1)
+                    return;
+
+                await context.Database.ExecuteSqlRawAsync(@"
 IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'CimmpleFlow')
 BEGIN
     EXEC('CREATE SCHEMA CimmpleFlow');
@@ -142,7 +161,142 @@ IF COL_LENGTH(N'dbo.AccountingDefaults', N'TaxRegistrationNumber') IS NULL AND O
 BEGIN
     ALTER TABLE dbo.AccountingDefaults ADD [TaxRegistrationNumber] nvarchar(50) NULL;
 END
-");
+").ConfigureAwait(false);
+
+                Volatile.Write(ref _ensured, 1);
+            }
+            finally
+            {
+                Gate.Release();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fills BankId on legacy payment rows. Batched + throttled so bank recon reads stay fast.
+    /// </summary>
+    public static class BankPaymentBackfillService
+    {
+        private static readonly ConcurrentDictionary<int, DateTime> LastRunUtc = new();
+        private static readonly TimeSpan MinInterval = TimeSpan.FromMinutes(5);
+
+        public static void RunIfNeeded(CimmpleDbContext context, int tenantId, bool force = false)
+        {
+            if (tenantId <= 0)
+                return;
+
+            var now = DateTime.UtcNow;
+            if (!force &&
+                LastRunUtc.TryGetValue(tenantId, out var last) &&
+                now - last < MinInterval)
+            {
+                return;
+            }
+
+            // Claim the slot early so concurrent list/txn requests don't all backfill.
+            LastRunUtc[tenantId] = now;
+
+            var orphans = context.Transactions
+                .Where(t => t.TenantId == tenantId &&
+                            t.TransactionType != null &&
+                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
+                            (t.BankId == null || t.BankId <= 0) &&
+                            t.invoiceNo != null &&
+                            t.invoiceNo != "")
+                .Select(t => new { t.TransactionID, t.invoiceNo, t.isCustomer })
+                .Take(500)
+                .ToList();
+
+            if (orphans.Count == 0)
+                return;
+
+            var customerNos = orphans
+                .Where(o => o.isCustomer == 1)
+                .Select(o => o.invoiceNo!.Trim())
+                .Where(s => s.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var vendorNos = orphans
+                .Where(o => o.isCustomer != 1)
+                .Select(o => o.invoiceNo!.Trim())
+                .Where(s => s.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var customerBankByNo = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (customerNos.Count > 0)
+            {
+                var customerInvoiceIds = customerNos
+                    .Select(s => int.TryParse(s, out var n) ? n : (int?)null)
+                    .Where(n => n.HasValue)
+                    .Select(n => n!.Value)
+                    .Distinct()
+                    .ToList();
+                var customerRows = context.InvoiceMaster
+                    .AsNoTracking()
+                    .Where(im => im.TenantId == tenantId && im.Bankid != null && im.Bankid > 0 &&
+                                 (customerNos.Contains(im.PrefixInvoiceNo!) ||
+                                  customerInvoiceIds.Contains(im.InvoiceNo)))
+                    .Select(im => new { im.PrefixInvoiceNo, im.InvoiceNo, im.Bankid })
+                    .ToList();
+                foreach (var row in customerRows)
+                {
+                    var bankId = row.Bankid!.Value;
+                    if (!string.IsNullOrWhiteSpace(row.PrefixInvoiceNo))
+                        customerBankByNo.TryAdd(row.PrefixInvoiceNo.Trim(), bankId);
+                    customerBankByNo.TryAdd(row.InvoiceNo.ToString(), bankId);
+                }
+            }
+
+            var vendorBankByNo = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (vendorNos.Count > 0)
+            {
+                var vendorRows = context.VendorInvoiceMaster
+                    .AsNoTracking()
+                    .Where(vim => vim.TenantId == tenantId && vim.Bankid != null && vim.Bankid > 0 &&
+                                  (vendorNos.Contains(vim.prefixinvoiceno!) ||
+                                   vendorNos.Contains(vim.InvoiceNo!)))
+                    .Select(vim => new { vim.prefixinvoiceno, vim.InvoiceNo, vim.Bankid })
+                    .ToList();
+                foreach (var row in vendorRows)
+                {
+                    var bankId = row.Bankid!.Value;
+                    if (!string.IsNullOrWhiteSpace(row.prefixinvoiceno))
+                        vendorBankByNo.TryAdd(row.prefixinvoiceno.Trim(), bankId);
+                    if (!string.IsNullOrWhiteSpace(row.InvoiceNo))
+                        vendorBankByNo.TryAdd(row.InvoiceNo.Trim(), bankId);
+                }
+            }
+
+            var updates = new List<(int id, int bankId)>();
+            foreach (var orphan in orphans)
+            {
+                var invoiceNo = orphan.invoiceNo!.Trim();
+                int bankId = 0;
+                if (orphan.isCustomer == 1)
+                    customerBankByNo.TryGetValue(invoiceNo, out bankId);
+                else
+                    vendorBankByNo.TryGetValue(invoiceNo, out bankId);
+
+                if (bankId > 0)
+                    updates.Add((orphan.TransactionID, bankId));
+            }
+
+            if (updates.Count == 0)
+                return;
+
+            var ids = updates.Select(u => u.id).ToList();
+            var txns = context.Transactions
+                .Where(t => ids.Contains(t.TransactionID))
+                .ToList();
+            var bankById = updates.ToDictionary(u => u.id, u => u.bankId);
+            foreach (var txn in txns)
+            {
+                if (bankById.TryGetValue(txn.TransactionID, out var bankId))
+                    txn.BankId = bankId;
+            }
+
+            context.SaveChanges();
         }
     }
 }

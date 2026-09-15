@@ -82,16 +82,21 @@ export class AccountingService {
 
   public static GetBankTransactions = async (
     bankAccountId: number,
-    startDate: string,
-    endDate: string
+    startDate?: string | null,
+    endDate?: string | null
   ): Promise<BankTransaction[] | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
     const url = `/Accounting/GetBankTransactions`;
-    return Instense.get(url, {
-      params: { tenantId: tenantID, bankAccountId, startDate, endDate },
-    }).then((response) => {
+    const params: Record<string, string | number> = {
+      tenantId: tenantID,
+      bankAccountId,
+    };
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+
+    return Instense.get(url, { params }).then((response) => {
       const result = response.data.result as BankTransaction[];
       return result;
     });
