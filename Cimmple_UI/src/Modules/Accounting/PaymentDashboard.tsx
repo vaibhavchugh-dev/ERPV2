@@ -163,7 +163,10 @@ const PaymentDashboard: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
                 <p style={{ margin: 0, color: '#6b7280', fontSize: '0.875rem', fontWeight: '500' }}>
-                  Accounts Receivable
+                  Outstanding AR
+                </p>
+                <p style={{ margin: '0.25rem 0 0 0', color: '#9ca3af', fontSize: '0.75rem' }}>
+                  Unpaid customer invoices
                 </p>
                 <p style={{ margin: '0.5rem 0 0 0', fontSize: '1.875rem', fontWeight: 'bold', color: '#111827' }}>
                   {formatCurrency(summary.totalReceivables || 0)}
@@ -214,7 +217,10 @@ const PaymentDashboard: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
                 <p style={{ margin: 0, color: '#6b7280', fontSize: '0.875rem', fontWeight: '500' }}>
-                  Accounts Payable
+                  Outstanding AP
+                </p>
+                <p style={{ margin: '0.25rem 0 0 0', color: '#9ca3af', fontSize: '0.75rem' }}>
+                  Unpaid vendor invoices
                 </p>
                 <p style={{ margin: '0.5rem 0 0 0', fontSize: '1.875rem', fontWeight: 'bold', color: '#111827' }}>
                   {formatCurrency(summary.totalPayables || 0)}
@@ -260,6 +266,9 @@ const PaymentDashboard: React.FC = () => {
               <div>
                 <p style={{ margin: 0, color: '#6b7280', fontSize: '0.875rem', fontWeight: '500' }}>
                   Net Cash Flow
+                </p>
+                <p style={{ margin: '0.25rem 0 0 0', color: '#9ca3af', fontSize: '0.75rem' }}>
+                  Period AR cash in − AP cash out
                 </p>
                 <p style={{
                   margin: '0.5rem 0 0 0',
