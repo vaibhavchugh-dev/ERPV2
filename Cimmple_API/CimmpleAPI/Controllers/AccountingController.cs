@@ -408,56 +408,101 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetBankTransactions")]
-        public IActionResult GetBankTransactions([FromQuery] int bankAccountId, [FromQuery] string startDate, [FromQuery] string endDate)
+        public IActionResult GetBankTransactions(
+            [FromQuery] int bankAccountId,
+            [FromQuery] string? startDate = null,
+            [FromQuery] string? endDate = null)
         {
             try
             {
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
-                Console.WriteLine($"GetBankTransactions called - TenantId: {tenantId}, BankAccountId: {bankAccountId}, StartDate: {startDate}, EndDate: {endDate}");
 
-                // Backfill legacy payment rows that posted to GL without BankId.
-                BackfillMissingPaymentBankIds(tenantId);
-
-                var start = DateTime.Parse(startDate).Date;
-                var end = DateTime.Parse(endDate).Date.AddDays(1).AddTicks(-1);
+                // Backfill already runs on GetBanklist; skip duplicate work on txn reload.
+                // (Still runs if list was cached / skipped and force is needed elsewhere.)
 
                 // Include Payment (AR/AP cash), plus legacy Deposit / Withdrawal rows.
+                // Same type set as Book Balance (BankController.GetBanklist).
                 var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
-                var rows = _context.Transactions
+                var query = _context.Transactions
+                    .AsNoTracking()
                     .Where(t => t.TenantId == tenantId &&
                                 t.BankId == bankAccountId &&
-                                t.TransactionDate >= start &&
-                                t.TransactionDate <= end &&
                                 t.TransactionType != null &&
-                                bankTypeSet.Contains(t.TransactionType))
+                                bankTypeSet.Contains(t.TransactionType));
+
+                // Optional date window. When both omitted, include every row (incl. null dates)
+                // to match all-time Book Balance. A very wide window (All Dates UI) also
+                // includes null TransactionDate rows.
+                var hasStart = !string.IsNullOrWhiteSpace(startDate);
+                var hasEnd = !string.IsNullOrWhiteSpace(endDate);
+                if (hasStart || hasEnd)
+                {
+                    if (!DateTime.TryParse(hasStart ? startDate : "1900-01-01", out var startParsed) ||
+                        !DateTime.TryParse(hasEnd ? endDate : "2099-12-31", out var endParsed))
+                    {
+                        return BadRequest(new { error = "Invalid startDate or endDate" });
+                    }
+
+                    var start = startParsed.Date;
+                    var end = endParsed.Date.AddDays(1).AddTicks(-1);
+                    var isAllDatesWindow = start.Year <= 1900 && endParsed.Year >= 2099;
+
+                    if (isAllDatesWindow)
+                    {
+                        query = query.Where(t =>
+                            t.TransactionDate == null ||
+                            (t.TransactionDate >= start && t.TransactionDate <= end));
+                    }
+                    else
+                    {
+                        query = query.Where(t =>
+                            t.TransactionDate != null &&
+                            t.TransactionDate >= start &&
+                            t.TransactionDate <= end);
+                    }
+                }
+
+                var raw = query
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
-                    .ToList()
-                    .Select(t =>
+                    .Select(t => new
                     {
-                        var amount = t.Amount ?? 0;
-                        var (signed, isCredit) = AccountingRules.MapBankTransactionSign(
-                            amount, t.isCustomer, t.TransactionType);
-                        return new
-                        {
-                            id = t.TransactionID,
-                            date = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
-                            description = t.Description ?? t.TransactionType ?? "Transaction",
-                            amount = signed,
-                            type = isCredit ? "credit" : "debit",
-                            reconciled = t.IsReconciled,
-                            reference = t.CheckNo ?? t.invoiceNo ?? ""
-                        };
+                        t.TransactionID,
+                        t.TransactionDate,
+                        t.Description,
+                        t.TransactionType,
+                        t.Amount,
+                        t.isCustomer,
+                        t.IsReconciled,
+                        t.CheckNo,
+                        t.invoiceNo
                     })
                     .ToList();
+
+                var rows = raw.Select(t =>
+                {
+                    var amount = t.Amount ?? 0;
+                    var (signed, isCredit) = AccountingRules.MapBankTransactionSign(
+                        amount, t.isCustomer, t.TransactionType);
+                    return new
+                    {
+                        id = t.TransactionID,
+                        date = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
+                        description = t.Description ?? t.TransactionType ?? "Transaction",
+                        amount = signed,
+                        type = isCredit ? "credit" : "debit",
+                        reconciled = t.IsReconciled,
+                        reference = t.CheckNo ?? t.invoiceNo ?? ""
+                    };
+                }).ToList();
 
                 return Ok(new { result = rows });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in GetBankTransactions: {ex.Message}");
-                return StatusCode(500, new { error = ex.Message });
+                Console.WriteLine($"Error in GetBankTransactions: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
             }
         }
 
@@ -1466,58 +1511,6 @@ namespace CimmpleAPI.Controllers
                 .Sum(x => x.balance);
 
             return (totalPayables, overduePayables, payablesDueThisWeek);
-        }
-
-        /// <summary>
-        /// Legacy payments could post without BankId (GL resolved via keyword fallback).
-        /// Fill BankId from the related invoice when possible so Bank Reconciliation can list them.
-        /// </summary>
-        private void BackfillMissingPaymentBankIds(int tenantId)
-        {
-            var orphans = _context.Transactions
-                .Where(t => t.TenantId == tenantId &&
-                            t.TransactionType != null &&
-                            EF.Functions.Like(t.TransactionType, "%Payment%") &&
-                            (t.BankId == null || t.BankId <= 0) &&
-                            t.invoiceNo != null &&
-                            t.invoiceNo != "")
-                .ToList();
-            if (orphans.Count == 0)
-                return;
-
-            var changed = false;
-            foreach (var txn in orphans)
-            {
-                var invoiceNo = txn.invoiceNo!.Trim();
-                int? bankId = null;
-                if (txn.isCustomer == 1)
-                {
-                    bankId = _context.InvoiceMaster
-                        .Where(im => im.TenantId == tenantId &&
-                                     (im.PrefixInvoiceNo == invoiceNo ||
-                                      im.InvoiceNo.ToString() == invoiceNo))
-                        .Select(im => im.Bankid)
-                        .FirstOrDefault();
-                }
-                else
-                {
-                    bankId = _context.VendorInvoiceMaster
-                        .Where(vim => vim.TenantId == tenantId &&
-                                      (vim.prefixinvoiceno == invoiceNo ||
-                                       vim.InvoiceNo == invoiceNo))
-                        .Select(vim => vim.Bankid)
-                        .FirstOrDefault();
-                }
-
-                if (bankId.HasValue && bankId.Value > 0)
-                {
-                    txn.BankId = bankId.Value;
-                    changed = true;
-                }
-            }
-
-            if (changed)
-                _context.SaveChanges();
         }
 
         private (DateTime startDate, DateTime endDate) GetDateRangeFilter(string dateRange, ReportRequest? reportRequest = null)
