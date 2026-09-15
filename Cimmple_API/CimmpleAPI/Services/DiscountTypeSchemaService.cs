@@ -10,31 +10,48 @@ namespace CimmpleAPI.Services
     public static class DiscountTypeSchemaService
     {
         private static bool _ensured;
+        private static bool _voaAttachmentEnsured;
         private static readonly object _lock = new();
 
         public static async Task EnsureColumnsAsync(CimmpleDbContext context)
         {
-            if (_ensured) return;
-            lock (_lock)
+            if (!_ensured)
             {
-                if (_ensured) return;
+                lock (_lock)
+                {
+                    if (_ensured) { /* continue to VOA */ }
+                }
+
+                if (!_ensured)
+                {
+                    await EnsureNvarcharColumnAsync(context, "InvoiceDetail", "DiscountType", 20);
+                    await EnsureNvarcharColumnAsync(context, "QuotationOrderDetails", "DiscountType", 20);
+                    await EnsureNvarcharColumnAsync(context, "CustomerOrderDetails", "DiscountType", 20);
+                    await EnsureNvarcharColumnAsync(context, "VendorQuotationsDetails", "DiscountType", 20);
+                    await EnsureNvarcharColumnAsync(context, "VendorOrderDetails", "DiscountType", 20);
+
+                    await EnsureNvarcharColumnAsync(context, "VendorOrderDetails", "LineType", 50);
+                    await EnsureNvarcharColumnAsync(context, "VendorQuotationsDetails", "LineType", 50);
+                    await EnsureIntColumnAsync(context, "VendorOrderDetails", "RawMaterialId");
+                    await EnsureIntColumnAsync(context, "VendorQuotationsDetails", "RawMaterialId");
+
+                    lock (_lock)
+                    {
+                        _ensured = true;
+                    }
+                }
             }
 
-            await EnsureNvarcharColumnAsync(context, "InvoiceDetail", "DiscountType", 20);
-            await EnsureNvarcharColumnAsync(context, "QuotationOrderDetails", "DiscountType", 20);
-            await EnsureNvarcharColumnAsync(context, "CustomerOrderDetails", "DiscountType", 20);
-            await EnsureNvarcharColumnAsync(context, "VendorQuotationsDetails", "DiscountType", 20);
-            await EnsureNvarcharColumnAsync(context, "VendorOrderDetails", "DiscountType", 20);
-
-            // Convert VQ → VO writes these on VendorOrderDetails; Compare can succeed while Convert fails without them
-            await EnsureNvarcharColumnAsync(context, "VendorOrderDetails", "LineType", 50);
-            await EnsureNvarcharColumnAsync(context, "VendorQuotationsDetails", "LineType", 50);
-            await EnsureIntColumnAsync(context, "VendorOrderDetails", "RawMaterialId");
-            await EnsureIntColumnAsync(context, "VendorQuotationsDetails", "RawMaterialId");
-
-            lock (_lock)
+            if (!_voaAttachmentEnsured)
             {
-                _ensured = true;
+                await EnsureIntColumnNotNullAsync(context, "VendorOrderAttachments", "FileUniqueno", 0);
+                await EnsureNvarcharColumnAsync(context, "VendorOrderAttachments", "UploadFile", 500);
+                await EnsureIntColumnNotNullAsync(context, "VendorOrderAttachments", "TenantID", 0);
+                await EnsureIntColumnNotNullAsync(context, "VendorOrderAttachments", "createdby", 0);
+                lock (_lock)
+                {
+                    _voaAttachmentEnsured = true;
+                }
             }
         }
 
@@ -59,6 +76,19 @@ IF OBJECT_ID(N'{schemaTable}', N'U') IS NOT NULL
    AND COL_LENGTH(N'{schemaTable}', N'{column}') IS NULL
 BEGIN
     ALTER TABLE {schemaTable} ADD [{column}] INT NULL;
+END");
+        }
+
+        private static async Task EnsureIntColumnNotNullAsync(
+            CimmpleDbContext context, string table, string column, int defaultValue)
+        {
+            var schemaTable = $"CimmpleFlow.{table}";
+            var dfName = $"DF_{table}_{column}";
+            await context.Database.ExecuteSqlRawAsync($@"
+IF OBJECT_ID(N'{schemaTable}', N'U') IS NOT NULL
+   AND COL_LENGTH(N'{schemaTable}', N'{column}') IS NULL
+BEGIN
+    ALTER TABLE {schemaTable} ADD [{column}] INT NOT NULL CONSTRAINT [{dfName}] DEFAULT ({defaultValue});
 END");
         }
     }
