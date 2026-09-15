@@ -1137,7 +1137,10 @@ namespace CimmpleAPI.Controllers
                     portalUser.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
                     portalUser.Termination_Reason = "Vendor deleted";
                     portalUser.VendorId = null;
-                    portalUser.Password = null;
+                    // Password / PasswordSalt are NOT NULL in SQL — never assign null
+                    portalUser.Password = "";
+                    portalUser.PasswordSalt = "";
+                    portalUser.UserToken = "";
                 }
 
                 // Delete the vendor

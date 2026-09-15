@@ -1916,6 +1916,8 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+
                 var order = await _context.VendorOrders
                     .AsNoTracking()
                     .Where(o => (o.OrderID == orderId || o.PONumber == orderId) && o.Tenantid == tenantId)
@@ -1977,26 +1979,50 @@ namespace CimmpleAPI.Controllers
                 }).ToList();
 
                 // Get attachments (Azure-backed when UploadFile / FileUniqueno set)
-                var attachments = await _context.VendorOrderAttachments
-                    .AsNoTracking()
-                    .Where(a => a.OrderID == orderId)
-                    .OrderBy(a => a.Id)
-                    .Select(a => new
-                    {
-                        id = a.Id,
-                        name = a.Name ?? "",
-                        size = a.Size,
-                        fileUrl = !string.IsNullOrEmpty(a.UploadFile) ? a.UploadFile : (a.FileUrl ?? ""),
-                        fileUniqueno = a.FileUniqueno,
-                        uploadFile = a.UploadFile ?? "",
-                        createdBy = a.createdby
-                    })
-                    .ToListAsync();
+                object attachments;
+                try
+                {
+                    attachments = await _context.VendorOrderAttachments
+                        .AsNoTracking()
+                        .Where(a => a.OrderID == actualOrderId)
+                        .OrderBy(a => a.Id)
+                        .Select(a => new
+                        {
+                            id = a.Id,
+                            name = a.Name ?? "",
+                            size = a.Size,
+                            fileUrl = !string.IsNullOrEmpty(a.UploadFile) ? a.UploadFile : (a.FileUrl ?? ""),
+                            fileUniqueno = a.FileUniqueno,
+                            uploadFile = a.UploadFile ?? "",
+                            createdBy = a.createdby
+                        })
+                        .ToListAsync();
+                }
+                catch (Exception attachEx)
+                {
+                    Console.WriteLine($"GetVendorOrderById attachments: {attachEx.Message}");
+                    // Fall back to legacy columns only so the order still opens
+                    attachments = await _context.VendorOrderAttachments
+                        .AsNoTracking()
+                        .Where(a => a.OrderID == actualOrderId)
+                        .OrderBy(a => a.Id)
+                        .Select(a => new
+                        {
+                            id = a.Id,
+                            name = a.Name ?? "",
+                            size = a.Size,
+                            fileUrl = a.FileUrl ?? "",
+                            fileUniqueno = 0,
+                            uploadFile = "",
+                            createdBy = 0
+                        })
+                        .ToListAsync();
+                }
 
                 // Get comments
                 var comments = await _context.VendorOrderComments
                     .AsNoTracking()
-                    .Where(c => c.OrderID == orderId)
+                    .Where(c => c.OrderID == actualOrderId)
                     .Select(c => new
                     {
                         id = c.Id,
