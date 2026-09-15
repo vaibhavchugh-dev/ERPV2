@@ -1,7 +1,16 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
-import { faFileAlt, faDownload, faEye, faCalendar, faFilter, faChartBar, faChartLine, faTable, faTimes } from "@fortawesome/free-solid-svg-icons";
+import {
+  faFileAlt,
+  faDownload,
+  faCalendar,
+  faChartBar,
+  faChartLine,
+  faTable,
+  faPlay,
+  faExternalLinkAlt,
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -13,7 +22,8 @@ interface ReportType {
   description: string;
   icon: any;
   category: string;
-  unavailable?: boolean;
+  kind: "report" | "link";
+  path?: string;
 }
 
 const ymdLocal = (d: Date) => {
@@ -23,146 +33,131 @@ const ymdLocal = (d: Date) => {
   return `${y}-${m}-${day}`;
 };
 
+const money = (n: unknown) =>
+  `$${(Number(n) || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const REPORT_CATALOG: ReportType[] = [
+  {
+    id: "balance-sheet",
+    name: "Balance Sheet",
+    description: "Assets, liabilities, and equity as of a date",
+    icon: faTable,
+    category: "Statements",
+    kind: "report",
+  },
+  {
+    id: "trial-balance",
+    name: "Trial Balance",
+    description: "Debit and credit balances by account",
+    icon: faTable,
+    category: "Statements",
+    kind: "report",
+  },
+  {
+    id: "profit-loss",
+    name: "Profit & Loss",
+    description: "Revenue and expenses (accrual GL)",
+    icon: faChartLine,
+    category: "Statements",
+    kind: "report",
+  },
+  {
+    id: "cash-flow",
+    name: "Cash Flow",
+    description: "Direct-method operating, investing, financing",
+    icon: faChartLine,
+    category: "Statements",
+    kind: "report",
+  },
+  {
+    id: "ar-aging",
+    name: "AR Aging",
+    description: "Open receivables by age bucket",
+    icon: faCalendar,
+    category: "Receivables & Payables",
+    kind: "report",
+  },
+  {
+    id: "customer-statements",
+    name: "Customer Statements",
+    description: "Invoices and payments by customer",
+    icon: faFileAlt,
+    category: "Receivables & Payables",
+    kind: "report",
+  },
+  {
+    id: "ap-aging",
+    name: "AP Aging",
+    description: "Open payables by age bucket",
+    icon: faCalendar,
+    category: "Receivables & Payables",
+    kind: "report",
+  },
+  {
+    id: "vendor-analysis",
+    name: "Vendor Payment Analysis",
+    description: "Vendor payments and open AP",
+    icon: faChartBar,
+    category: "Receivables & Payables",
+    kind: "report",
+  },
+  {
+    id: "general-ledger",
+    name: "General Ledger",
+    description: "Account activity and running balance",
+    icon: faTable,
+    category: "Ledgers",
+    kind: "link",
+    path: "/accounts/general-ledger",
+  },
+  {
+    id: "journal-entries",
+    name: "Journal Entries",
+    description: "Post and review journals",
+    icon: faFileAlt,
+    category: "Ledgers",
+    kind: "link",
+    path: "/accounts/journal-entries",
+  },
+];
+
 const FinancialReports: React.FC = () => {
   const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const [selectedReport, setSelectedReport] = useState<string>('');
-  const [dateRange, setDateRange] = useState('This Month');
-  const [reportFormat, setReportFormat] = useState<'pdf' | 'excel' | 'csv'>('pdf');
-  const [loading, setLoading] = useState(false);
-  const [generatedReportData, setGeneratedReportData] = useState<any>(null);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportToView, setReportToView] = useState<string>('');
+
+  const [selectedReport, setSelectedReport] = useState<string>("profit-loss");
+  const [dateRange, setDateRange] = useState("This Month");
   const [customStartDate, setCustomStartDate] = useState(() => {
     const d = new Date();
     d.setDate(1);
     return ymdLocal(d);
   });
   const [customEndDate, setCustomEndDate] = useState(() => ymdLocal(new Date()));
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [reportData, setReportData] = useState<any>(null);
+  const [loadedReportId, setLoadedReportId] = useState<string>("");
+  const [errorMessage, setErrorMessage] = useState<string>("");
 
-  const reportTypes: ReportType[] = [
-    // Financial Position Reports
-    {
-      id: 'balance-sheet',
-      name: 'Balance Sheet',
-      description: 'Assets, liabilities, and equity statement',
-      icon: faTable,
-      category: 'Financial Position'
-    },
-    {
-      id: 'trial-balance',
-      name: 'Trial Balance',
-      description: 'List of all general ledger account balances',
-      icon: faTable,
-      category: 'Financial Position'
-    },
+  const categories = useMemo(
+    () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
+    []
+  );
 
-    // Income Statement Reports
-    {
-      id: 'profit-loss',
-      name: 'Profit & Loss Statement',
-      description: 'Revenue, expenses, and net income',
-      icon: faChartLine,
-      category: 'Income Statement'
-    },
-    {
-      id: 'income-statement',
-      name: 'Income Statement',
-      description: 'Detailed revenue and expense breakdown',
-      icon: faChartBar,
-      category: 'Income Statement'
-    },
+  const selectedMeta = REPORT_CATALOG.find((r) => r.id === selectedReport);
+  const isLink = selectedMeta?.kind === "link";
+  const hasPreview = !!reportData && loadedReportId === selectedReport && !isLink;
 
-    // Cash Flow Reports
-    {
-      id: 'cash-flow',
-      name: 'Cash Flow Statement',
-      description: 'Operating, investing, and financing activities',
-      icon: faChartLine,
-      category: 'Cash Flow'
-    },
-
-    // Accounts Receivable Reports
-    {
-      id: 'ar-aging',
-      name: 'AR Aging Report',
-      description: 'Customer accounts receivable by age',
-      icon: faCalendar,
-      category: 'Accounts Receivable'
-    },
-    {
-      id: 'customer-statements',
-      name: 'Customer Statements',
-      description: 'Not available yet — individual customer statements',
-      icon: faFileAlt,
-      category: 'Accounts Receivable',
-      unavailable: true
-    },
-
-    // Accounts Payable Reports
-    {
-      id: 'ap-aging',
-      name: 'AP Aging Report',
-      description: 'Vendor accounts payable by age',
-      icon: faCalendar,
-      category: 'Accounts Payable'
-    },
-    {
-      id: 'vendor-analysis',
-      name: 'Vendor Payment Analysis',
-      description: 'Not available yet — vendor payment trends',
-      icon: faChartBar,
-      category: 'Accounts Payable',
-      unavailable: true
-    },
-
-    // General Ledger Reports
-    {
-      id: 'general-ledger',
-      name: 'General Ledger',
-      description: 'Posted lines and running balance by account (GL activity)',
-      icon: faTable,
-      category: 'General Ledger'
-    },
-    {
-      id: 'journal-entries',
-      name: 'Journal Entries',
-      description: 'Post and review general-ledger journal entries',
-      icon: faFileAlt,
-      category: 'General Ledger'
-    }
-  ];
-
-  // Supported report types (implemented in backend)
-  const supportedReportTypes = [
-    'balance-sheet',
-    'trial-balance',
-    'profit-loss',
-    'income-statement',
-    'cash-flow',
-    'ar-aging',
-    'ap-aging'
-  ];
-
-  const isReportSupported = (reportId: string): boolean => {
-    const report = reportTypes.find((r) => r.id === reportId);
-    if (report?.unavailable) return false;
-    return supportedReportTypes.includes(reportId);
-  };
-
-  const getAccountingNavPath = (reportId: string): string | null => {
-    if (reportId === 'journal-entries') return '/accounts/journal-entries';
-    if (reportId === 'general-ledger') return '/accounts/general-ledger';
-    return null;
-  };
-
-  const buildReportParams = (format: 'pdf' | 'excel' | 'csv') => {
+  const buildReportParams = (format: "pdf" | "excel" | "csv") => {
     const base: Record<string, unknown> = {
       dateRange,
       format,
       locationId: locationIdParam,
     };
-    if (dateRange === 'Custom') {
+    if (dateRange === "Custom") {
       base.customStartDate = customStartDate;
       base.customEndDate = customEndDate;
     }
@@ -170,905 +165,793 @@ const FinancialReports: React.FC = () => {
   };
 
   const validateCustomRange = (): boolean => {
-    if (dateRange !== 'Custom') return true;
+    if (dateRange !== "Custom") return true;
     if (!customStartDate || !customEndDate) {
-      toast.error('Please choose a start and end date for the custom range.');
+      toast.error("Please choose a start and end date for the custom range.");
       return false;
     }
     if (new Date(customStartDate) > new Date(customEndDate)) {
-      toast.error('Custom start date cannot be after the end date.');
+      toast.error("Custom start date cannot be after the end date.");
       return false;
     }
     return true;
   };
 
-  const categories = Array.from(new Set(reportTypes.map(report => report.category)));
-
-  const handleGenerateReport = async () => {
-    if (!selectedReport) {
-      toast.error('Please select a report type');
+  const selectReport = (reportId: string) => {
+    const item = REPORT_CATALOG.find((r) => r.id === reportId);
+    if (!item) return;
+    if (item.kind === "link" && item.path) {
+      history.push(item.path);
       return;
     }
-    const navPath = getAccountingNavPath(selectedReport);
-    if (navPath) {
-      history.push(navPath);
+    setSelectedReport(reportId);
+    setErrorMessage("");
+    // Clear stale preview when switching reports
+    if (loadedReportId !== reportId) {
+      setReportData(null);
+      setLoadedReportId("");
+    }
+  };
+
+  /** Explicit reportId avoids React setState race (Quick Action / list click). */
+  const runReport = async (reportId: string = selectedReport) => {
+    const item = REPORT_CATALOG.find((r) => r.id === reportId);
+    if (!item) {
+      toast.error("Please select a report");
+      return;
+    }
+    if (item.kind === "link" && item.path) {
+      history.push(item.path);
       return;
     }
     if (!validateCustomRange()) return;
 
+    setSelectedReport(reportId);
     setLoading(true);
+    setErrorMessage("");
+    setReportData(null);
+    setLoadedReportId("");
+
     try {
-      const reportData = await AccountingService.GenerateFinancialReport(
-        selectedReport,
-        buildReportParams(reportFormat)
+      const data = await AccountingService.GenerateFinancialReport(
+        reportId,
+        buildReportParams("csv")
       );
-
-      if (reportData) {
-        setGeneratedReportData(reportData);
-        setReportToView(selectedReport);
-        toast.success(`${reportTypes.find(r => r.id === selectedReport)?.name} generated successfully`);
-        
-        // Auto-open modal to show the report
-        setShowReportModal(true);
-        
-        // Auto-download if format is not pdf (for viewing)
-        if (reportFormat !== 'pdf') {
-          // Small delay to let modal open first
-          setTimeout(() => {
-            handleDownloadReport(reportData, selectedReport);
-          }, 500);
-        }
+      if (!data) {
+        setErrorMessage("No data returned for this report.");
+        toast.error("No data returned for this report");
+        return;
       }
-
-    } catch (error) {
-      console.error('Error generating report:', error);
-      toast.error('Failed to generate report');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleViewReport = async (reportId: string) => {
-    const nav = getAccountingNavPath(reportId);
-    if (nav) {
-      history.push(nav);
-      return;
-    }
-    if (!isReportSupported(reportId)) {
-      toast.info('This report type is not yet available. Coming soon!');
-      return;
-    }
-    if (!validateCustomRange()) return;
-
-    try {
-      setLoading(true);
-      setReportToView(reportId);
-      setSelectedReport(reportId);
-      
-      // Generate the report if not already generated
-      if (!generatedReportData || selectedReport !== reportId) {
-        const reportData = await AccountingService.GenerateFinancialReport(
-          reportId,
-          buildReportParams('pdf')
-        );
-        
-        if (reportData) {
-          setGeneratedReportData(reportData);
-        } else {
-          toast.error('No data returned for this report');
-          return;
-        }
-      }
-      
-      setShowReportModal(true);
+      setReportData(data);
+      setLoadedReportId(reportId);
     } catch (error: any) {
-      console.error('Error viewing report:', error);
-      const errorMessage = error?.response?.data?.error || error?.message || 'Failed to load report';
-      toast.error(`Failed to load report: ${errorMessage}`);
+      console.error("Error generating report:", error);
+      const msg =
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to generate report";
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownloadReport = (reportData: any, reportId: string, format?: 'pdf' | 'excel' | 'csv') => {
-    if (!reportData) {
-      toast.error('No report data available. Please generate the report first.');
-      return;
-    }
-
-    const reportName = reportTypes.find(r => r.id === reportId)?.name || 'Report';
-    const fileName = `${reportName}_${dateRange.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}`;
-    const downloadFormat = format || reportFormat;
-
+  const exportReport = async (format: "pdf" | "excel" | "csv") => {
+    if (!selectedReport || isLink) return;
+    if (!validateCustomRange()) return;
+    setExporting(true);
     try {
-      if (downloadFormat === 'csv') {
-        // Convert report data to CSV
-        const csvContent = convertToCSV(reportData);
-        downloadFile(csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
-        toast.success('Report downloaded as CSV');
-      } else if (downloadFormat === 'excel') {
-        // Excel option currently downloads CSV with .csv extension (honest labeling)
-        const csvContent = convertToCSV(reportData);
-        const BOM = '\uFEFF';
-        downloadFile(BOM + csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
-        toast.success('Report downloaded as CSV (Excel-compatible)');
-      } else {
-        // PDF option not implemented — fall back to CSV with clear message
-        const csvContent = convertToCSV(reportData);
-        const BOM = '\uFEFF';
-        downloadFile(BOM + csvContent, `${fileName}.csv`, 'text/csv;charset=utf-8;');
-        toast.info('PDF export is not available yet. Downloaded as CSV instead.');
+      const { blob, fileName } = await AccountingService.DownloadFinancialReport(
+        selectedReport,
+        buildReportParams(format)
+      );
+      if (blob.type && blob.type.includes("application/json")) {
+        const text = await blob.text();
+        try {
+          const err = JSON.parse(text);
+          toast.error(err.error || "Failed to export report");
+        } catch {
+          toast.error("Failed to export report");
+        }
+        return;
       }
-    } catch (error) {
-      console.error('Error downloading report:', error);
-      toast.error('Failed to download report');
+      const url = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success(
+        format === "pdf"
+          ? "Downloaded as PDF"
+          : format === "excel"
+            ? "Downloaded as CSV (Excel-compatible)"
+            : "Downloaded as CSV"
+      );
+    } catch (error: any) {
+      console.error("Export failed:", error);
+      if (reportData && format !== "pdf") {
+        const name = selectedMeta?.name || "Report";
+        const fileName = `${name}_${dateRange.replace(/\s+/g, "_")}_${ymdLocal(new Date())}.csv`;
+        const csv = convertToCSV(reportData);
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = window.URL.createObjectURL(blob);
+        const link = window.document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        window.document.body.appendChild(link);
+        link.click();
+        window.document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        toast.success(
+          format === "excel"
+            ? "Downloaded as CSV (Excel-compatible)"
+            : "Downloaded as CSV"
+        );
+        return;
+      }
+      toast.error(
+        error?.response?.data?.error || error?.message || "Failed to export report"
+      );
+    } finally {
+      setExporting(false);
     }
   };
 
-  const convertToCSV = (data: any): string => {
-    if (!data) return '';
-    
-    const rows: string[] = [];
-    
-    // Add report header
-    if (data.reportType) {
-      rows.push(`Report Type: ${data.reportType}`);
-    }
-    if (data.asOfDate) {
-      rows.push(`As Of Date: ${data.asOfDate}`);
-    }
-    if (data.periodStart && data.periodEnd) {
-      rows.push(`Period: ${data.periodStart} to ${data.periodEnd}`);
-    }
-    rows.push(''); // Empty row
-    
-    // Convert data to CSV rows
-    if (data.assets) {
-      rows.push('Assets');
-      rows.push(`Current Assets,${data.assets.currentAssets || 0}`);
-      rows.push(`Fixed Assets,${data.assets.fixedAssets || 0}`);
-      rows.push(`Total Assets,${data.assets.totalAssets || 0}`);
-      rows.push('');
-    }
-    
-    if (data.liabilitiesAndEquity) {
-      rows.push('Liabilities and Equity');
-      rows.push(`Current Liabilities,${data.liabilitiesAndEquity.currentLiabilities || 0}`);
-      rows.push(`Long Term Liabilities,${data.liabilitiesAndEquity.longTermLiabilities || 0}`);
-      rows.push(`Total Liabilities,${data.liabilitiesAndEquity.totalLiabilities || 0}`);
-      rows.push(`Equity,${data.liabilitiesAndEquity.equity || 0}`);
-      rows.push(`Total Liabilities and Equity,${data.liabilitiesAndEquity.totalLiabilitiesAndEquity || 0}`);
-      rows.push('');
-    }
-    
-    if (data.reportBasis === 'accrual-gl' && Array.isArray(data.sections)) {
-      rows.push('Profit & Loss (accrual — general ledger)');
-      rows.push(`Net revenue,${data.netRevenue ?? 0}`);
-      data.sections.forEach((sec: any) => {
-        const st = Math.abs(Number(sec?.subtotal) || 0);
-        if (!(Array.isArray(sec?.lines) && sec.lines.length > 0) && st < 0.0001) return;
-        rows.push(`"${sec.title}"`);
-        (sec.lines || []).forEach((ln: any) => {
-          rows.push(`${ln.accountCode || ''},"${(ln.accountName || '').replace(/"/g, '""')}",${ln.amount ?? 0}`);
-        });
-        rows.push(`Subtotal - ${sec.title},${sec.subtotal ?? 0}`);
-        rows.push('');
-      });
-      rows.push(`Gross profit,${data.grossProfit ?? 0}`);
-      rows.push(`Operating income,${data.operatingIncome ?? 0}`);
-      rows.push(`Income before tax,${data.incomeBeforeTax ?? 0}`);
-      rows.push(`Net income,${data.netIncome ?? 0}`);
-      rows.push('');
-    } else if (data.revenue !== undefined) {
-      rows.push('Income Statement');
-      rows.push(`Revenue,${data.revenue || 0}`);
-      rows.push(`Cost of Goods Sold,${data.costOfGoodsSold || 0}`);
-      rows.push(`Gross Profit,${data.grossProfit || 0}`);
-      rows.push(`Operating Expenses,${data.operatingExpenses || 0}`);
-      rows.push(`Operating Income,${data.operatingIncome || 0}`);
-      rows.push(`Net Income,${data.netIncome || 0}`);
-      rows.push('');
-    }
-    
-    if (data.operatingActivities !== undefined) {
-      rows.push('Cash Flow Statement');
-      rows.push(`Operating Activities,${data.operatingActivities || 0}`);
-      rows.push(`Investing Activities,${data.investingActivities || 0}`);
-      rows.push(`Financing Activities,${data.financingActivities || 0}`);
-      rows.push(`Net Cash Flow,${data.netCashFlow || 0}`);
-      rows.push('');
-    }
-    
-    if (data.agingBuckets) {
-      rows.push('Aging Report');
-      rows.push('Bucket,Amount,Percentage');
-      if (Array.isArray(data.agingBuckets)) {
-        data.agingBuckets.forEach((bucket: any) => {
-          rows.push(`${bucket.bucket || ''},${bucket.amount || 0},${bucket.percentage || 0}%`);
-        });
-      }
-      rows.push('');
-    }
-    
-    if (data.accounts) {
-      rows.push('Trial Balance');
-      rows.push('Account Code,Account Name,Account Type,Balance');
-      if (Array.isArray(data.accounts)) {
-        data.accounts.forEach((account: any) => {
-          rows.push(`${account.accountCode || ''},${account.accountName || ''},${account.accountType || ''},${account.balance || 0}`);
-        });
-      }
-      rows.push('');
-      rows.push(`Total Debits,${data.totalDebits || 0}`);
-      rows.push(`Total Credits,${data.totalCredits || 0}`);
-      rows.push(`Is Balanced,${data.isBalanced ? 'Yes' : 'No'}`);
-    }
-    
-    return rows.join('\n');
-  };
-
-  const downloadFile = (content: string, fileName: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = window.URL.createObjectURL(blob);
-    const link = window.document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    window.document.body.appendChild(link);
-    link.click();
-    window.document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
-  };
-
-  const getReportByCategory = (category: string) => {
-    return reportTypes.filter(report => report.category === category);
+  const periodLabel = () => {
+    if (dateRange === "Custom") return `${customStartDate} → ${customEndDate}`;
+    return dateRange;
   };
 
   return (
     <div className="financial-reports">
-      {/* Header */}
-      <div className="fr-header">
+      <header className="fr-page-header">
         <div>
           <h1>Financial Reports</h1>
-          <p>Generate and view comprehensive financial statements and reports</p>
+          <p>Select a report, set the period, then run to preview. Export when ready.</p>
         </div>
-      </div>
+      </header>
 
-      {/* Report Generation Controls */}
-      <div className="fr-generation-section">
-        <h3>Generate Report</h3>
-
-        <div className="fr-controls-grid">
-          <div className="fr-control-group">
-            <label>Report Type</label>
-            <select
-              value={selectedReport}
-              onChange={(e) => setSelectedReport(e.target.value)}
-            >
-              <option value="">Select a report...</option>
-              {categories.map(category => (
-                <optgroup key={category} label={category}>
-                  {getReportByCategory(category).map(report => (
-                    <option key={report.id} value={report.id}>
-                      {report.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-
-          <div className="fr-control-group">
-            <label>Date Range</label>
-            <select
-              value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
-            >
-              <option value="This Month">This Month</option>
-              <option value="Last Month">Last Month</option>
-              <option value="This Quarter">This Quarter</option>
-              <option value="Last Quarter">Last Quarter</option>
-              <option value="This Year">This Year</option>
-              <option value="Last Year">Last Year</option>
-              <option value="Custom">Custom Range</option>
-            </select>
-          </div>
-
-          <div className="fr-control-group">
-            <label>{masterListFilter.label}</label>
-            <select
-              value={masterListFilter.value}
-              onChange={(e) => masterListFilter.onChange(e.target.value)}
-            >
-              {masterListFilter.options.map((option) => (
-                <option key={option.value || "all"} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="fr-control-group">
-            <label>Format</label>
-            <select
-              value={reportFormat}
-              onChange={(e) => setReportFormat(e.target.value as 'pdf' | 'excel' | 'csv')}
-            >
-              <option value="pdf">PDF</option>
-              <option value="excel">Excel</option>
-              <option value="csv">CSV</option>
-            </select>
-          </div>
-
-          <button
-            onClick={handleGenerateReport}
-            disabled={loading || !selectedReport}
-            className="fr-generate-btn"
-          >
-            <FontAwesomeIcon icon={loading ? faDownload : faEye} />
-            {loading ? 'Generating...' : 'Generate & View Report'}
-          </button>
-        </div>
-
-        {dateRange === 'Custom' && (
-          <div className="fr-custom-range-row">
-            <div className="fr-control-group">
-              <label>Start date</label>
-              <input
-                type="date"
-                value={customStartDate}
-                onChange={(e) => setCustomStartDate(e.target.value)}
-              />
-            </div>
-            <div className="fr-control-group">
-              <label>End date</label>
-              <input
-                type="date"
-                value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
-              />
-            </div>
-          </div>
-        )}
-
-        {selectedReport && (
-          <div className={`fr-selected-report-info ${generatedReportData && reportToView === selectedReport ? 'generated' : ''}`}>
-            <div className="fr-info-content">
-              <div className={`fr-info-left ${generatedReportData && reportToView === selectedReport ? 'generated' : ''}`}>
-                <FontAwesomeIcon
-                  icon={reportTypes.find(r => r.id === selectedReport)?.icon || faFileAlt}
-                />
-                <div className="fr-info-text">
-                  <h4>{reportTypes.find(r => r.id === selectedReport)?.name}</h4>
-                  <p>{reportTypes.find(r => r.id === selectedReport)?.description}</p>
-                </div>
-              </div>
-              {generatedReportData && reportToView === selectedReport && (
-                <div className="fr-generated-badge">
-                  <FontAwesomeIcon icon={faEye} />
-                  Report Generated - View in Modal
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Report Categories */}
-      {categories.map(category => (
-        <div key={category} className="fr-category-section">
-          <h3>{category}</h3>
-
-          <div className="fr-reports-grid">
-            {getReportByCategory(category).map(report => {
-              const isSupported = isReportSupported(report.id);
-              const navPath = getAccountingNavPath(report.id);
-              const isInteractive = isSupported || !!navPath;
-              return (
-              <div
-                key={report.id}
-                className={`fr-report-card ${!isInteractive ? 'unsupported' : ''} ${selectedReport === report.id ? 'selected' : ''}`}
-                onClick={() => {
-                  if (navPath) {
-                    history.push(navPath);
-                    return;
-                  }
-                  if (isSupported) {
-                    setSelectedReport(report.id);
-                    // Auto-generate and view when clicking tile
-                    handleViewReport(report.id);
-                  }
-                }}
-              >
-                <div className="fr-report-header">
-                  <div className="fr-report-icon">
-                    <FontAwesomeIcon icon={report.icon} />
-                  </div>
-                  <div className="fr-report-info">
-                    <h4>{report.name}</h4>
-                    <p>{report.description}</p>
-                  </div>
-                </div>
-
-                <div className="fr-report-actions">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleViewReport(report.id);
-                    }}
-                    disabled={!isInteractive}
-                    className="fr-action-btn fr-view-btn"
-                  >
-                    <FontAwesomeIcon icon={faEye} />
-                    View
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (navPath) {
-                        history.push(navPath);
-                        return;
-                      }
-                      if (!isSupported) {
-                        toast.info('This report type is not yet available. Coming soon!');
-                        return;
-                      }
-                      if (!validateCustomRange()) return;
-                      try {
-                        setLoading(true);
-                        const reportData = await AccountingService.GenerateFinancialReport(
-                          report.id,
-                          buildReportParams(reportFormat)
-                        );
-                        if (reportData) {
-                          handleDownloadReport(reportData, report.id, reportFormat);
-                        } else {
-                          toast.error('No data returned for this report');
-                        }
-                      } catch (error: any) {
-                        console.error('Error downloading report:', error);
-                        const errorMessage = error?.response?.data?.error || error?.message || 'Failed to download report';
-                        toast.error(`Failed to download report: ${errorMessage}`);
-                      } finally {
-                        setLoading(false);
-                      }
-                    }}
-                    disabled={!isSupported}
-                    className="fr-action-btn fr-download-btn"
-                  >
-                    <FontAwesomeIcon icon={faDownload} />
-                    Download
-                  </button>
-                </div>
-              </div>
-            );
-            })}
-          </div>
-        </div>
-      ))}
-
-      {/* Quick Actions */}
-      <div className="fr-quick-actions">
-        <h3>Quick Actions</h3>
-
-        <div className="fr-quick-buttons">
-          <button
-            onClick={() => {
-              setSelectedReport('profit-loss');
-              setDateRange('This Month');
-              handleGenerateReport();
-            }}
-            style={{ backgroundColor: '#10b981', color: 'white' }}
-          >
-            <FontAwesomeIcon icon={faChartLine} />
-            Monthly P&L
-          </button>
-
-          <button
-            onClick={() => {
-              setSelectedReport('balance-sheet');
-              setDateRange('This Month');
-              handleGenerateReport();
-            }}
-            style={{ backgroundColor: '#8b5cf6', color: 'white' }}
-          >
-            <FontAwesomeIcon icon={faTable} />
-            Balance Sheet
-          </button>
-
-          <button
-            onClick={() => {
-              setSelectedReport('ar-aging');
-              setDateRange('This Month');
-              handleGenerateReport();
-            }}
-            style={{ backgroundColor: '#f59e0b', color: 'white' }}
-          >
-            <FontAwesomeIcon icon={faCalendar} />
-            AR Aging
-          </button>
-
-          <button
-            onClick={() => {
-              setSelectedReport('cash-flow');
-              setDateRange('This Month');
-              handleGenerateReport();
-            }}
-            style={{ backgroundColor: '#06b6d4', color: 'white' }}
-          >
-            <FontAwesomeIcon icon={faChartBar} />
-            Cash Flow
-          </button>
-        </div>
-      </div>
-
-      {/* Report View Modal */}
-      {showReportModal && generatedReportData && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '2rem'
-          }}
-          onClick={() => setShowReportModal(false)}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: '0.5rem',
-              maxWidth: '900px',
-              width: '100%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.2)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '1.5rem',
-              borderBottom: '1px solid #e5e7eb'
-            }}>
-              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '600', color: '#111827' }}>
-                {reportTypes.find(r => r.id === reportToView)?.name || 'Report'}
-              </h2>
-              <button
-                onClick={() => setShowReportModal(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.5rem',
-                  color: '#6b7280',
-                  cursor: 'pointer',
-                  padding: '0.25rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <FontAwesomeIcon icon={faTimes} />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div style={{ padding: '1.5rem' }}>
-              <div style={{ marginBottom: '1rem', color: '#6b7280', fontSize: '0.875rem' }}>
-                {generatedReportData.asOfDate && `As of: ${generatedReportData.asOfDate}`}
-                {generatedReportData.periodStart && generatedReportData.periodEnd && 
-                  `Period: ${generatedReportData.periodStart} to ${generatedReportData.periodEnd}`}
-              </div>
-
-              {/* Balance Sheet */}
-              {generatedReportData.assets && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Assets</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <div>Current Assets</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.assets.currentAssets || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Fixed Assets</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.assets.fixedAssets || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '2px solid #111827', paddingTop: '0.5rem', fontWeight: '600' }}>Total Assets</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '2px solid #111827', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.assets.totalAssets || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Liabilities and Equity */}
-              {generatedReportData.liabilitiesAndEquity && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Liabilities and Equity</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <div>Current Liabilities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.liabilitiesAndEquity.currentLiabilities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Long Term Liabilities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.liabilitiesAndEquity.longTermLiabilities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Total Liabilities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.liabilitiesAndEquity.totalLiabilities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Equity</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.liabilitiesAndEquity.equity || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '2px solid #111827', paddingTop: '0.5rem', fontWeight: '600' }}>Total Liabilities and Equity</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '2px solid #111827', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.liabilitiesAndEquity.totalLiabilitiesAndEquity || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Profit & Loss — multi-step (GL) or legacy flat */}
-              {generatedReportData.reportBasis === 'accrual-gl' && Array.isArray(generatedReportData.sections) ? (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '0.5rem', color: '#111827' }}>
-                    Profit &amp; Loss (accrual)
-                  </h3>
-                  <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '1rem' }}>
-                    Based on posted journal entries for the period. COA <strong>MainGroup</strong> drives section placement.
-                    {typeof generatedReportData.journalEntryCount === 'number' && (
-                      <span> Journal headers in period: <strong>{generatedReportData.journalEntryCount}</strong>.</span>
-                    )}
-                    {!generatedReportData.hasJournalActivity && (
-                      <span> No journal line activity in this range — amounts are zero.</span>
-                    )}
-                  </p>
-                  {generatedReportData.summaryNote && (
-                    <p style={{ fontSize: '0.8125rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', padding: '0.75rem', marginBottom: '1rem' }}>
-                      {generatedReportData.summaryNote}
-                    </p>
-                  )}
-                  {generatedReportData.sections.map((sec: any) => {
-                    const hasLines = Array.isArray(sec.lines) && sec.lines.length > 0;
-                    const hasAmt = Math.abs(Number(sec.subtotal) || 0) > 0.0001;
-                    if (!hasLines && !hasAmt) return null;
-                    return (
-                      <div key={sec.sectionId || sec.title} style={{ marginBottom: '1.25rem' }}>
-                        <h4 style={{ fontSize: '0.9375rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>{sec.title}</h4>
-                        {hasLines && (
-                          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                <th style={{ textAlign: 'left', padding: '0.35rem 0.5rem', fontWeight: '600', color: '#6b7280' }}>Code</th>
-                                <th style={{ textAlign: 'left', padding: '0.35rem 0.5rem', fontWeight: '600', color: '#6b7280' }}>Account</th>
-                                <th style={{ textAlign: 'right', padding: '0.35rem 0.5rem', fontWeight: '600', color: '#6b7280' }}>Amount</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sec.lines.map((ln: any, i: number) => (
-                                <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                  <td style={{ padding: '0.35rem 0.5rem', fontFamily: 'monospace' }}>{ln.accountCode || ''}</td>
-                                  <td style={{ padding: '0.35rem 0.5rem' }}>{ln.accountName || ''}</td>
-                                  <td style={{ textAlign: 'right', padding: '0.35rem 0.5rem' }}>
-                                    ${(Number(ln.amount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.25rem', paddingTop: '0.25rem', borderTop: '1px solid #e5e7eb' }}>
-                          <span style={{ fontWeight: '600', color: '#111827' }}>Subtotal — {sec.title}</span>
-                          <span style={{ textAlign: 'right', fontWeight: '600' }}>
-                            ${(Number(sec.subtotal) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      <div className="fr-workspace">
+        {/* Catalog */}
+        <aside className="fr-catalog" aria-label="Report catalog">
+          {categories.map((category) => (
+            <div key={category} className="fr-catalog-group">
+              <div className="fr-catalog-heading">{category}</div>
+              <ul className="fr-catalog-list">
+                {REPORT_CATALOG.filter((r) => r.category === category).map((report) => {
+                  const active = selectedReport === report.id;
+                  return (
+                    <li key={report.id}>
+                      <button
+                        type="button"
+                        className={`fr-catalog-item ${active ? "active" : ""} ${report.kind === "link" ? "is-link" : ""}`}
+                        onClick={() => selectReport(report.id)}
+                      >
+                        <FontAwesomeIcon icon={report.icon} className="fr-catalog-icon" />
+                        <span className="fr-catalog-text">
+                          <span className="fr-catalog-name">
+                            {report.name}
+                            {report.kind === "link" && (
+                              <FontAwesomeIcon
+                                icon={faExternalLinkAlt}
+                                className="fr-link-glyph"
+                              />
+                            )}
                           </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '2px solid #111827', fontSize: '0.9375rem' }}>
-                    <div style={{ fontWeight: '600' }}>Gross profit</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600' }}>
-                      ${(Number(generatedReportData.grossProfit) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ fontWeight: '600' }}>Operating income</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600' }}>
-                      ${(Number(generatedReportData.operatingIncome) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ fontWeight: '600' }}>Income before tax</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600' }}>
-                      ${(Number(generatedReportData.incomeBeforeTax) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ fontWeight: '700', paddingTop: '0.35rem' }}>Net income</div>
-                    <div style={{ textAlign: 'right', fontWeight: '700', paddingTop: '0.35rem' }}>
-                      ${(Number(generatedReportData.netIncome) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                </div>
-              ) : generatedReportData.revenue !== undefined ? (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Income Statement</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <div>Revenue</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.revenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Cost of Goods Sold</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.costOfGoodsSold || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '1px solid #d1d5db', paddingTop: '0.5rem', fontWeight: '600' }}>Gross Profit</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '1px solid #d1d5db', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.grossProfit || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Operating Expenses</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.operatingExpenses || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '1px solid #d1d5db', paddingTop: '0.5rem', fontWeight: '600' }}>Operating Income</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '1px solid #d1d5db', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.operatingIncome || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '2px solid #111827', paddingTop: '0.5rem', fontWeight: '600' }}>Net Income</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '2px solid #111827', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.netIncome || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+                          <span className="fr-catalog-desc">{report.description}</span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </aside>
 
-              {/* Cash Flow Statement */}
-              {generatedReportData.operatingActivities !== undefined && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Cash Flow Statement</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <div>Operating Activities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.operatingActivities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Investing Activities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.investingActivities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Financing Activities</div>
-                    <div style={{ textAlign: 'right', fontWeight: '500' }}>
-                      ${(generatedReportData.financingActivities || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ borderTop: '2px solid #111827', paddingTop: '0.5rem', fontWeight: '600' }}>Net Cash Flow</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', borderTop: '2px solid #111827', paddingTop: '0.5rem' }}>
-                      ${(generatedReportData.netCashFlow || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
+        {/* Main */}
+        <section className="fr-main">
+          <div className="fr-criteria">
+            <div className="fr-criteria-top">
+              <div className="fr-criteria-title">
+                <h2>{selectedMeta?.name || "Select a report"}</h2>
+                {selectedMeta && <p>{selectedMeta.description}</p>}
+              </div>
+
+              {!isLink && (
+                <div className="fr-actions">
+                  <button
+                    type="button"
+                    className="fr-btn fr-btn-primary"
+                    disabled={loading || !selectedReport}
+                    onClick={() => runReport(selectedReport)}
+                  >
+                    <FontAwesomeIcon icon={faPlay} />
+                    {loading ? "Running…" : "Run report"}
+                  </button>
+                  <div className="fr-export-group" role="group" aria-label="Export">
+                    <button
+                      type="button"
+                      className="fr-btn fr-btn-secondary"
+                      disabled={exporting || loading || !selectedReport}
+                      onClick={() => exportReport("pdf")}
+                      title="Export PDF"
+                    >
+                      <FontAwesomeIcon icon={faDownload} />
+                      PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="fr-btn fr-btn-secondary"
+                      disabled={exporting || loading || !selectedReport}
+                      onClick={() => exportReport("csv")}
+                      title="Export CSV"
+                    >
+                      CSV
+                    </button>
                   </div>
                 </div>
               )}
 
-              {/* Aging Report */}
-              {generatedReportData.agingBuckets && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Aging Report</h3>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                        <th style={{ textAlign: 'left', padding: '0.75rem', fontWeight: '600' }}>Bucket</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem', fontWeight: '600' }}>Amount</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem', fontWeight: '600' }}>Percentage</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Array.isArray(generatedReportData.agingBuckets) && generatedReportData.agingBuckets.map((bucket: any, index: number) => (
-                        <tr key={index} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                          <td style={{ padding: '0.75rem' }}>{bucket.bucket || ''}</td>
-                          <td style={{ textAlign: 'right', padding: '0.75rem' }}>
-                            ${(bucket.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td style={{ textAlign: 'right', padding: '0.75rem' }}>{(bucket.percentage || 0).toFixed(1)}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {isLink && selectedMeta?.path && (
+                <div className="fr-actions">
+                  <button
+                    type="button"
+                    className="fr-btn fr-btn-primary"
+                    onClick={() => history.push(selectedMeta.path!)}
+                  >
+                    <FontAwesomeIcon icon={faExternalLinkAlt} />
+                    Open {selectedMeta.name}
+                  </button>
                 </div>
               )}
+            </div>
 
-              {/* Trial Balance */}
-              {generatedReportData.accounts && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', color: '#111827' }}>Trial Balance</h3>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                        <th style={{ textAlign: 'left', padding: '0.75rem', fontWeight: '600' }}>Account Code</th>
-                        <th style={{ textAlign: 'left', padding: '0.75rem', fontWeight: '600' }}>Account Name</th>
-                        <th style={{ textAlign: 'left', padding: '0.75rem', fontWeight: '600' }}>Type</th>
-                        <th style={{ textAlign: 'right', padding: '0.75rem', fontWeight: '600' }}>Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Array.isArray(generatedReportData.accounts) && generatedReportData.accounts.map((account: any, index: number) => (
-                        <tr key={index} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                          <td style={{ padding: '0.75rem' }}>{account.accountCode || ''}</td>
-                          <td style={{ padding: '0.75rem' }}>{account.accountName || ''}</td>
-                          <td style={{ padding: '0.75rem' }}>{account.accountType || ''}</td>
-                          <td style={{ textAlign: 'right', padding: '0.75rem' }}>
-                            ${(account.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '2px solid #111827' }}>
-                    <div>Total Debits</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600' }}>
-                      ${(generatedReportData.totalDebits || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Total Credits</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600' }}>
-                      ${(generatedReportData.totalCredits || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <div>Is Balanced</div>
-                    <div style={{ textAlign: 'right', fontWeight: '600', color: generatedReportData.isBalanced ? '#10b981' : '#ef4444' }}>
-                      {generatedReportData.isBalanced ? 'Yes' : 'No'}
-                    </div>
-                  </div>
+            {!isLink && (
+              <div className="fr-criteria-filters">
+                <div className="fr-field">
+                  <label htmlFor="fr-period">Period</label>
+                  <select
+                    id="fr-period"
+                    value={dateRange}
+                    onChange={(e) => {
+                      setDateRange(e.target.value);
+                      setReportData(null);
+                      setLoadedReportId("");
+                    }}
+                  >
+                    <option value="This Month">This Month</option>
+                    <option value="Last Month">Last Month</option>
+                    <option value="This Quarter">This Quarter</option>
+                    <option value="Last Quarter">Last Quarter</option>
+                    <option value="This Year">This Year</option>
+                    <option value="Last Year">Last Year</option>
+                    <option value="Custom">Custom Range</option>
+                  </select>
                 </div>
-              )}
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
+                <div className="fr-field">
+                  <label htmlFor="fr-site">{masterListFilter.label}</label>
+                  <select
+                    id="fr-site"
+                    value={masterListFilter.value}
+                    onChange={(e) => {
+                      masterListFilter.onChange(e.target.value);
+                      setReportData(null);
+                      setLoadedReportId("");
+                    }}
+                  >
+                    {masterListFilter.options.map((option) => (
+                      <option key={option.value || "all"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {dateRange === "Custom" && (
+                  <>
+                    <div className="fr-field">
+                      <label htmlFor="fr-start">Start</label>
+                      <input
+                        id="fr-start"
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => {
+                          setCustomStartDate(e.target.value);
+                          setReportData(null);
+                          setLoadedReportId("");
+                        }}
+                      />
+                    </div>
+                    <div className="fr-field">
+                      <label htmlFor="fr-end">End</label>
+                      <input
+                        id="fr-end"
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => {
+                          setCustomEndDate(e.target.value);
+                          setReportData(null);
+                          setLoadedReportId("");
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="fr-preview" aria-live="polite">
+            {loading && (
+              <div className="fr-state">
+                <div className="fr-spinner" aria-hidden />
+                <h3>Running {selectedMeta?.name}…</h3>
+                <p>This can take a moment for large ledgers.</p>
+              </div>
+            )}
+
+            {!loading && errorMessage && (
+              <div className="fr-state fr-state-error">
+                <h3>Could not load report</h3>
+                <p>{errorMessage}</p>
                 <button
-                  onClick={() => {
-                    handleDownloadReport(generatedReportData, reportToView, reportFormat);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.75rem 1.5rem',
-                    backgroundColor: '#3b82f6',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.5rem'
-                  }}
+                  type="button"
+                  className="fr-btn fr-btn-primary"
+                  onClick={() => runReport(selectedReport)}
                 >
-                  <FontAwesomeIcon icon={faDownload} />
-                  Download Report
-                </button>
-                <button
-                  onClick={() => setShowReportModal(false)}
-                  style={{
-                    padding: '0.75rem 1.5rem',
-                    backgroundColor: '#f3f4f6',
-                    color: '#374151',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500'
-                  }}
-                >
-                  Close
+                  Try again
                 </button>
               </div>
-            </div>
+            )}
+
+            {!loading && !errorMessage && !hasPreview && !isLink && (
+              <div className="fr-state">
+                <h3>Ready to run</h3>
+                <p>
+                  Period: <strong>{periodLabel()}</strong>
+                  {masterListFilter.value
+                    ? ` · Site filter applied`
+                    : " · All sites"}
+                </p>
+                <button
+                  type="button"
+                  className="fr-btn fr-btn-primary"
+                  onClick={() => runReport(selectedReport)}
+                >
+                  <FontAwesomeIcon icon={faPlay} />
+                  Run {selectedMeta?.name}
+                </button>
+              </div>
+            )}
+
+            {!loading && !errorMessage && isLink && (
+              <div className="fr-state">
+                <h3>{selectedMeta?.name}</h3>
+                <p>{selectedMeta?.description}. This opens a dedicated ledger screen.</p>
+              </div>
+            )}
+
+            {!loading && !errorMessage && hasPreview && (
+              <div className="fr-preview-body">
+                <div className="fr-preview-meta">
+                  <span>
+                    {reportData.asOfDate && `As of ${reportData.asOfDate}`}
+                    {reportData.periodStart &&
+                      reportData.periodEnd &&
+                      `Period ${reportData.periodStart} to ${reportData.periodEnd}`}
+                  </span>
+                </div>
+                <ReportBody data={reportData} />
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        </section>
+      </div>
     </div>
   );
 };
+
+function ReportBody({ data }: { data: any }) {
+  if (!data) return null;
+
+  return (
+    <>
+      {data.summaryNote && (
+        <p className="fr-note">{data.summaryNote}</p>
+      )}
+
+      {data.assets && (
+        <div className="fr-block">
+          <h3>Assets</h3>
+          {(
+            [
+              {
+                title: "Current Assets",
+                lines: data.assets.currentAssetLines,
+                total: data.assets.currentAssets,
+              },
+              {
+                title: "Fixed Assets",
+                lines: data.assets.fixedAssetLines,
+                total: data.assets.fixedAssets,
+              },
+            ] as const
+          ).map((sec) => (
+            <SectionTable key={sec.title} title={sec.title} lines={sec.lines} amountKey="balance" subtotal={sec.total} />
+          ))}
+          <TotalsRow label="Total Assets" value={data.assets.totalAssets} strong />
+        </div>
+      )}
+
+      {data.liabilitiesAndEquity && (
+        <div className="fr-block">
+          <h3>Liabilities and Equity</h3>
+          {(
+            [
+              {
+                title: "Current Liabilities",
+                lines: data.liabilitiesAndEquity.currentLiabilityLines,
+                total: data.liabilitiesAndEquity.currentLiabilities,
+              },
+              {
+                title: "Long Term Liabilities",
+                lines: data.liabilitiesAndEquity.longTermLiabilityLines,
+                total: data.liabilitiesAndEquity.longTermLiabilities,
+              },
+              {
+                title: "Equity",
+                lines: data.liabilitiesAndEquity.equityLines,
+                total: data.liabilitiesAndEquity.equity,
+              },
+            ] as const
+          ).map((sec) => (
+            <SectionTable key={sec.title} title={sec.title} lines={sec.lines} amountKey="balance" subtotal={sec.total} />
+          ))}
+          <TotalsRow
+            label="Total Liabilities and Equity"
+            value={data.liabilitiesAndEquity.totalLiabilitiesAndEquity}
+            strong
+          />
+        </div>
+      )}
+
+      {data.reportBasis === "accrual-gl" && Array.isArray(data.sections) && (
+        <div className="fr-block">
+          <h3>Profit &amp; Loss (accrual)</h3>
+          <p className="fr-muted">
+            Based on posted journal entries.
+            {typeof data.journalEntryCount === "number" && (
+              <> Journal headers in period: <strong>{data.journalEntryCount}</strong>.</>
+            )}
+          </p>
+          {data.sections.map((sec: any) => {
+            const hasLines = Array.isArray(sec.lines) && sec.lines.length > 0;
+            const hasAmt = Math.abs(Number(sec.subtotal) || 0) > 0.0001;
+            if (!hasLines && !hasAmt) return null;
+            return (
+              <SectionTable
+                key={sec.sectionId || sec.title}
+                title={sec.title}
+                lines={sec.lines}
+                amountKey="amount"
+                codeKey="accountCode"
+                nameKey="accountName"
+                subtotal={sec.subtotal}
+              />
+            );
+          })}
+          <TotalsRow label="Gross profit" value={data.grossProfit} />
+          <TotalsRow label="Operating income" value={data.operatingIncome} />
+          <TotalsRow label="Income before tax" value={data.incomeBeforeTax} />
+          <TotalsRow label="Net income" value={data.netIncome} strong />
+        </div>
+      )}
+
+      {data.reportBasis === "direct-cash" && Array.isArray(data.sections) && (
+        <div className="fr-block">
+          <h3>Cash Flow (direct)</h3>
+          {data.sections.map((sec: any) => {
+            const hasLines = Array.isArray(sec.lines) && sec.lines.length > 0;
+            const hasAmt = Math.abs(Number(sec.subtotal) || 0) > 0.0001;
+            if (!hasLines && !hasAmt) return null;
+            return (
+              <div key={sec.sectionId || sec.title} className="fr-section">
+                <h4>{sec.title}</h4>
+                {hasLines && (
+                  <table className="fr-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th className="num">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sec.lines.map((ln: any, i: number) => (
+                        <tr key={i}>
+                          <td>{ln.date || ""}</td>
+                          <td>{ln.description || ln.category || ""}</td>
+                          <td className="num">{money(ln.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <TotalsRow label={`Subtotal — ${sec.title}`} value={sec.subtotal} />
+              </div>
+            );
+          })}
+          <TotalsRow label="Net Cash Flow" value={data.netCashFlow} strong />
+        </div>
+      )}
+
+      {data.agingBuckets && (
+        <div className="fr-block">
+          <h3>Aging</h3>
+          <table className="fr-table">
+            <thead>
+              <tr>
+                <th>Bucket</th>
+                <th className="num">Amount</th>
+                <th className="num">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.isArray(data.agingBuckets) &&
+                data.agingBuckets.map((bucket: any, index: number) => (
+                  <tr key={index}>
+                    <td>{bucket.bucket || ""}</td>
+                    <td className="num">{money(bucket.amount)}</td>
+                    <td className="num">{(Number(bucket.percentage) || 0).toFixed(1)}%</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data.accounts && (
+        <div className="fr-block">
+          <h3>Trial Balance</h3>
+          {!data.isBalanced && (
+            <p className="fr-note fr-note-danger">
+              Trial balance is not balanced — total debits and credits differ.
+            </p>
+          )}
+          <table className="fr-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Account</th>
+                <th>Type</th>
+                <th className="num">Debit</th>
+                <th className="num">Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.isArray(data.accounts) &&
+                data.accounts.map((account: any, index: number) => (
+                  <tr key={index}>
+                    <td className="mono">{account.accountCode || ""}</td>
+                    <td>{account.accountName || ""}</td>
+                    <td>{account.accountType || ""}</td>
+                    <td className="num">
+                      {money(
+                        account.debit ??
+                          (account.balance > 0 ? account.balance : 0)
+                      )}
+                    </td>
+                    <td className="num">
+                      {money(
+                        account.credit ??
+                          (account.balance < 0 ? Math.abs(account.balance) : 0)
+                      )}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+          <TotalsRow label="Total Debits" value={data.totalDebits} />
+          <TotalsRow label="Total Credits" value={data.totalCredits} />
+          <TotalsRow
+            label="Balanced"
+            value={data.isBalanced ? "Yes" : "No"}
+            strong
+            raw
+          />
+        </div>
+      )}
+
+      {Array.isArray(data.statements) && (
+        <div className="fr-block">
+          <h3>Customer Statements</h3>
+          {data.statements.map((st: any) => (
+            <div key={st.customerId} className="fr-section">
+              <h4>
+                {st.customerName}
+                {st.customerCode ? ` (${st.customerCode})` : ""}
+              </h4>
+              <TotalsRow label="Opening Balance" value={st.openingBalance} />
+              {Array.isArray(st.activity) && st.activity.length > 0 && (
+                <table className="fr-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Type</th>
+                      <th>Ref</th>
+                      <th className="num">Charges</th>
+                      <th className="num">Payments</th>
+                      <th className="num">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {st.activity.map((ln: any, i: number) => (
+                      <tr key={i}>
+                        <td>{ln.date}</td>
+                        <td>{ln.type}</td>
+                        <td>{ln.reference}</td>
+                        <td className="num">{money(ln.charges)}</td>
+                        <td className="num">{money(ln.payments)}</td>
+                        <td className="num">{money(ln.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <TotalsRow label="Closing Balance" value={st.closingBalance} strong />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {Array.isArray(data.vendors) && (
+        <div className="fr-block">
+          <h3>Vendor Payment Analysis</h3>
+          <table className="fr-table">
+            <thead>
+              <tr>
+                <th>Vendor</th>
+                <th className="num">Payments</th>
+                <th className="num">Count</th>
+                <th className="num">Open AP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.vendors.map((v: any, i: number) => (
+                <tr key={i}>
+                  <td>
+                    {v.vendorName}
+                    {v.vendorCode ? ` (${v.vendorCode})` : ""}
+                  </td>
+                  <td className="num">{money(v.paymentsInPeriod)}</td>
+                  <td className="num">{v.paymentCount || 0}</td>
+                  <td className="num">{money(v.openApBalance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <TotalsRow label="Total Payments" value={data.totalPaymentsInPeriod} strong />
+          <TotalsRow label="Total Open AP" value={data.totalOpenAp} strong />
+        </div>
+      )}
+    </>
+  );
+}
+
+function SectionTable({
+  title,
+  lines,
+  amountKey,
+  codeKey = "accountCode",
+  nameKey = "accountName",
+  subtotal,
+}: {
+  title: string;
+  lines: any;
+  amountKey: string;
+  codeKey?: string;
+  nameKey?: string;
+  subtotal: unknown;
+}) {
+  const hasLines = Array.isArray(lines) && lines.length > 0;
+  return (
+    <div className="fr-section">
+      <h4>{title}</h4>
+      {hasLines && (
+        <table className="fr-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Account</th>
+              <th className="num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((ln: any, i: number) => (
+              <tr key={i}>
+                <td className="mono">{ln[codeKey] || ""}</td>
+                <td>{ln[nameKey] || ""}</td>
+                <td className="num">{money(ln[amountKey])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <TotalsRow label={`Subtotal — ${title}`} value={subtotal} />
+    </div>
+  );
+}
+
+function TotalsRow({
+  label,
+  value,
+  strong,
+  raw,
+}: {
+  label: string;
+  value: unknown;
+  strong?: boolean;
+  raw?: boolean;
+}) {
+  return (
+    <div className={`fr-totals-row ${strong ? "strong" : ""}`}>
+      <span>{label}</span>
+      <span className="num">{raw ? String(value) : money(value)}</span>
+    </div>
+  );
+}
+
+function convertToCSV(data: any): string {
+  if (!data) return "";
+  const rows: string[] = [];
+  if (data.reportType) rows.push(`Report Type: ${data.reportType}`);
+  if (data.asOfDate) rows.push(`As Of Date: ${data.asOfDate}`);
+  if (data.periodStart && data.periodEnd) {
+    rows.push(`Period: ${data.periodStart} to ${data.periodEnd}`);
+  }
+  rows.push("");
+  if (data.assets) {
+    rows.push("Assets");
+    rows.push(`Current Assets,${data.assets.currentAssets || 0}`);
+    rows.push(`Fixed Assets,${data.assets.fixedAssets || 0}`);
+    rows.push(`Total Assets,${data.assets.totalAssets || 0}`);
+    rows.push("");
+  }
+  if (data.liabilitiesAndEquity) {
+    rows.push("Liabilities and Equity");
+    rows.push(`Equity,${data.liabilitiesAndEquity.equity || 0}`);
+    rows.push(
+      `Total Liabilities and Equity,${data.liabilitiesAndEquity.totalLiabilitiesAndEquity || 0}`
+    );
+    rows.push("");
+  }
+  if (data.reportBasis === "accrual-gl" && Array.isArray(data.sections)) {
+    rows.push(`Net income,${data.netIncome ?? 0}`);
+  }
+  if (data.reportBasis === "direct-cash") {
+    rows.push(`Net Cash Flow,${data.netCashFlow ?? 0}`);
+  }
+  if (data.accounts) {
+    rows.push("Account Code,Account Name,Debit,Credit");
+    (data.accounts || []).forEach((a: any) => {
+      rows.push(
+        `${a.accountCode || ""},${a.accountName || ""},${a.debit || 0},${a.credit || 0}`
+      );
+    });
+  }
+  if (data.agingBuckets) {
+    rows.push("Bucket,Amount,Percentage");
+    (data.agingBuckets || []).forEach((b: any) => {
+      rows.push(`${b.bucket || ""},${b.amount || 0},${b.percentage || 0}`);
+    });
+  }
+  return rows.join("\n");
+}
 
 export default FinancialReports;
