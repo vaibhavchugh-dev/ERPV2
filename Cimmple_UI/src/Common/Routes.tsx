@@ -240,7 +240,7 @@ export const protectedRoutes: any[] = [
   },
   {
     path: "/reports",
-    name: "Business Intelligence",
+    name: "Reports",
     Component: BusinessIntelligence,
   },
   {
