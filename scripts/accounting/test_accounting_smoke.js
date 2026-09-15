@@ -214,6 +214,8 @@ async function testDashboardAndReports() {
     "ap-aging",
     "balance-sheet",
     "cash-flow",
+    "customer-statements",
+    "vendor-analysis",
   ];
 
   for (const reportType of reportTypes) {
@@ -221,7 +223,7 @@ async function testDashboardAndReports() {
       TenantId: TENANT_ID,
       ReportType: reportType,
       DateRange: "This Month",
-      Format: "csv",
+      Format: "json",
     });
     if (rep.status >= 200 && rep.status < 300 && rep.data?.result != null) {
       pass(`Report:${reportType}`);
@@ -230,17 +232,40 @@ async function testDashboardAndReports() {
     }
   }
 
-  const comingSoon = await request("POST", "/api/Accounting/GenerateFinancialReport", {
-    TenantId: TENANT_ID,
-    ReportType: "customer-statements",
-    DateRange: "This Month",
-    Format: "csv",
+  const pdfRep = await fetch(`${BASE_URL}/api/Accounting/GenerateFinancialReport`, {
+    method: "POST",
+    headers: {
+      Accept: "application/pdf",
+      "Content-Type": "application/json",
+      tenantId: String(TENANT_ID),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(locationId ? { "X-Location-Id": String(locationId) } : {}),
+    },
+    body: JSON.stringify({
+      TenantId: TENANT_ID,
+      ReportType: "trial-balance",
+      DateRange: "This Month",
+      Format: "pdf",
+    }),
   });
-  // Backend may 400/500 or return empty — UI blocks these; API honesty is optional
-  if (comingSoon.status >= 400) {
-    pass("Report:customer-statements blocked/unavailable", String(comingSoon.status));
+  const pdfBuf = Buffer.from(await pdfRep.arrayBuffer());
+  const pdfMagic = pdfBuf.slice(0, 4).toString("utf8");
+  if (pdfRep.status >= 200 && pdfRep.status < 300 && pdfMagic === "%PDF") {
+    pass("Report:pdf-export", `bytes=${pdfBuf.length}`);
   } else {
-    skip("Report:customer-statements", "API still accepts unsupported type (UI blocks it)");
+    fail("Report:pdf-export", `${pdfRep.status} magic=${pdfMagic}`);
+  }
+
+  const unsupported = await request("POST", "/api/Accounting/GenerateFinancialReport", {
+    TenantId: TENANT_ID,
+    ReportType: "not-a-real-report",
+    DateRange: "This Month",
+    Format: "json",
+  });
+  if (unsupported.status >= 400) {
+    pass("Report:unsupported-type blocked", String(unsupported.status));
+  } else {
+    fail("Report:unsupported-type blocked", "API accepted unknown report type");
   }
 }
 
