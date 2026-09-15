@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
 import { faUniversity, faCheckCircle, faExclamationTriangle, faSync, faDownload, faUpload, faSearch, faFilter } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, BankTransaction, BankAccount } from "../../Common/Services/AccountingService";
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+
+type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
 
 const BankReconciliation: React.FC = () => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
@@ -24,7 +26,86 @@ const BankReconciliation: React.FC = () => {
     dateRange: 'This Year',
     amountRange: 'All'
   });
+  // Default: latest transactions first
+  const [sortColumn, setSortColumn] = useState<ReconSortColumn>("date");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
+  const handleSort = (column: ReconSortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      // Date defaults to latest-first; other columns start ascending
+      setSortDirection(column === "date" ? "desc" : "asc");
+    }
+  };
+
+  const sortedTransactions = useMemo(() => {
+    const rows = [...transactions];
+    const dir = sortDirection === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (sortColumn) {
+        case "date": {
+          const aDate = a.date || "";
+          const bDate = b.date || "";
+          cmp = aDate.localeCompare(bDate);
+          if (cmp === 0) cmp = a.id - b.id;
+          break;
+        }
+        case "description":
+          cmp = (a.description || "").localeCompare(b.description || "", undefined, {
+            sensitivity: "base",
+          });
+          break;
+        case "amount":
+          cmp = a.amount - b.amount;
+          break;
+        case "type":
+          cmp = (a.type || "").localeCompare(b.type || "");
+          break;
+        case "status":
+          cmp = Number(a.reconciled) - Number(b.reconciled);
+          break;
+        default:
+          cmp = 0;
+      }
+      return cmp * dir;
+    });
+    return rows;
+  }, [transactions, sortColumn, sortDirection]);
+
+  const sortIcon = (column: ReconSortColumn) => {
+    if (sortColumn !== column) return "⇅";
+    return sortDirection === "asc" ? "↑" : "↓";
+  };
+
+  const thSortable = (
+    column: ReconSortColumn,
+    label: string,
+    align: "left" | "right" | "center" = "left"
+  ) => (
+    <th
+      onClick={() => handleSort(column)}
+      style={{
+        padding: "0.75rem 1.5rem",
+        textAlign: align,
+        fontSize: "0.875rem",
+        fontWeight: 600,
+        color: "#374151",
+        borderBottom: "1px solid #e5e7eb",
+        cursor: "pointer",
+        userSelect: "none",
+        whiteSpace: "nowrap",
+      }}
+      title={`Sort by ${label}`}
+    >
+      {label}{" "}
+      <span style={{ color: sortColumn === column ? "#2563eb" : "#9ca3af", fontSize: "0.75rem" }}>
+        {sortIcon(column)}
+      </span>
+    </th>
+  );
   const toLocalYmd = (d: Date) => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -80,31 +161,46 @@ const BankReconciliation: React.FC = () => {
     try {
       const endDate = new Date();
       const startDate = new Date();
+      let startYmd: string | undefined;
+      let endYmd: string | undefined;
 
       switch (filters.dateRange) {
         case 'Last 7 Days':
           startDate.setDate(endDate.getDate() - 7);
+          startYmd = toLocalYmd(startDate);
+          endYmd = toLocalYmd(endDate);
           break;
         case 'Last 30 Days':
           startDate.setDate(endDate.getDate() - 30);
+          startYmd = toLocalYmd(startDate);
+          endYmd = toLocalYmd(endDate);
           break;
         case 'Last 90 Days':
           startDate.setDate(endDate.getDate() - 90);
+          startYmd = toLocalYmd(startDate);
+          endYmd = toLocalYmd(endDate);
           break;
         case 'This Year':
           startDate.setMonth(0, 1);
+          startYmd = toLocalYmd(startDate);
+          endYmd = toLocalYmd(endDate);
           break;
         case 'All Dates':
-          startDate.setFullYear(2000, 0, 1);
+          // Wide window (not "today") so Net matches all-time Book Balance.
+          // Always send dates so older API builds that require start/end do not 500.
+          startYmd = '1900-01-01';
+          endYmd = '2099-12-31';
           break;
         default:
           startDate.setMonth(0, 1);
+          startYmd = toLocalYmd(startDate);
+          endYmd = toLocalYmd(endDate);
       }
 
       const transactions = await AccountingService.GetBankTransactions(
         selectedAccount,
-        toLocalYmd(startDate),
-        toLocalYmd(endDate)
+        startYmd,
+        endYmd
       );
 
       if (transactions) {
@@ -154,7 +250,13 @@ const BankReconciliation: React.FC = () => {
       if (transaction) {
         await AccountingService.ReconcileBankTransaction(transactionId, !transaction.reconciled);
         await loadTransactions();
-        await loadBankAccounts();
+        // Avoid full bank-list reload on every toggle; only refresh last-reconciled stamp.
+        const today = toLocalYmd(new Date());
+        setAccounts(prev =>
+          prev.map(a =>
+            a.id === selectedAccount ? { ...a, lastReconciled: today } : a
+          )
+        );
         toast.success('Transaction reconciliation updated');
       }
     } catch (error: any) {
@@ -174,7 +276,12 @@ const BankReconciliation: React.FC = () => {
       const transactionIds = unreconciled.map(t => t.id);
       await AccountingService.BulkReconcileTransactions(transactionIds);
       await loadTransactions();
-      await loadBankAccounts();
+      const today = toLocalYmd(new Date());
+      setAccounts(prev =>
+        prev.map(a =>
+          a.id === selectedAccount ? { ...a, lastReconciled: today } : a
+        )
+      );
       toast.success(`${unreconciled.length} transactions reconciled`);
     } catch (error: any) {
       console.error('Error bulk reconciling transactions:', error);
@@ -530,28 +637,18 @@ const BankReconciliation: React.FC = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ backgroundColor: '#f9fafb' }}>
                 <tr>
-                  <th style={{ padding: '0.75rem 1.5rem', textAlign: 'left', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                    Date
-                  </th>
-                  <th style={{ padding: '0.75rem 1.5rem', textAlign: 'left', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                    Description
-                  </th>
-                  <th style={{ padding: '0.75rem 1.5rem', textAlign: 'right', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                    Amount
-                  </th>
-                  <th style={{ padding: '0.75rem 1.5rem', textAlign: 'center', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                    Type
-                  </th>
-                  <th style={{ padding: '0.75rem 1.5rem', textAlign: 'center', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
-                    Status
-                  </th>
+                  {thSortable("date", "Date", "left")}
+                  {thSortable("description", "Description", "left")}
+                  {thSortable("amount", "Amount", "right")}
+                  {thSortable("type", "Type", "center")}
+                  {thSortable("status", "Status", "center")}
                   <th style={{ padding: '0.75rem 1.5rem', textAlign: 'center', fontSize: '0.875rem', fontWeight: '600', color: '#374151', borderBottom: '1px solid #e5e7eb' }}>
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((transaction) => (
+                {sortedTransactions.map((transaction) => (
                   <tr key={transaction.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '1rem 1.5rem' }}>
                       <div style={{ fontSize: '0.875rem', color: '#111827' }}>
