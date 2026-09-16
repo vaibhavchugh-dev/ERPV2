@@ -12,6 +12,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Utilities;
+using CimmpleAPI.Services;
 
 namespace CimmpleAPI.Controllers
 {
@@ -1163,7 +1164,21 @@ END");
                 };
 
                 Console.WriteLine($"Returning NCR creation result with ncrId: {result.ncrId}, ncrNumber: {result.ncrNumber}");
-                return Ok(new { result });
+
+                var assignmentEmails = await TryNotifyNcrAssigneesAsync(
+                    ncr.TenantId,
+                    actualResponseNcrNumber,
+                    ncr.Title,
+                    ncr.Severity,
+                    ncr.Status,
+                    previousInvestigatedBy: null,
+                    newInvestigatedBy: ncr.InvestigatedBy,
+                    investigatedByName: ncr.InvestigatedByName,
+                    previousApprovedBy: null,
+                    newApprovedBy: ncr.ApprovedBy,
+                    approvedByName: ncr.ApprovedByName);
+
+                return Ok(new { result, assignmentEmails });
             }
             catch (Exception ex)
             {
@@ -1185,6 +1200,34 @@ END");
                 await ResolveNcrCodeFieldsAsync(ncrUpdate);
                 Console.WriteLine($"UpdateNCR called for id: {id}");
                 Console.WriteLine($"Update data - Title: '{ncrUpdate.Title}', Status: '{ncrUpdate.Status}'");
+
+                int? previousInvestigatedBy = null;
+                int? previousApprovedBy = null;
+                string? existingNcrNumber = null;
+                int existingTenantId = ncrUpdate.TenantId;
+
+                using (var preload = _context.Database.GetDbConnection().CreateCommand())
+                {
+                    preload.CommandText = @"
+                        SELECT InvestigatedBy, ApprovedBy, NcrNumber, TenantId
+                        FROM CimmpleFlow.NonConformanceReports
+                        WHERE NcrId = @Id";
+                    AddParameter(preload, "@Id", id);
+                    await _context.Database.OpenConnectionAsync();
+                    using var reader = await preload.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        previousInvestigatedBy = reader.IsDBNull(0) ? null : reader.GetInt32(0);
+                        previousApprovedBy = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                        existingNcrNumber = reader.IsDBNull(2) ? null : reader.GetString(2);
+                        if (!reader.IsDBNull(3))
+                            existingTenantId = reader.GetInt32(3);
+                    }
+                    else
+                    {
+                        return NotFound(new { error = new { message = "NCR not found" } });
+                    }
+                }
 
                 using (var command = _context.Database.GetDbConnection().CreateCommand())
                 {
@@ -1303,13 +1346,100 @@ END");
                         return NotFound(new { error = new { message = "NCR not found" } });
                     }
 
-                    return Ok(new { success = true });
+                    var assignmentEmails = await TryNotifyNcrAssigneesAsync(
+                        existingTenantId,
+                        existingNcrNumber ?? $"NCR-{id}",
+                        ncrUpdate.Title,
+                        ncrUpdate.Severity,
+                        ncrUpdate.Status,
+                        previousInvestigatedBy,
+                        ncrUpdate.InvestigatedBy,
+                        ncrUpdate.InvestigatedByName,
+                        previousApprovedBy,
+                        ncrUpdate.ApprovedBy,
+                        ncrUpdate.ApprovedByName);
+
+                    return Ok(new { success = true, assignmentEmails });
                 }
             }
             catch (Exception ex)
             {
                 return BadRequest(new { error = new { message = ex.Message } });
             }
+        }
+
+        private async Task<List<string>> TryNotifyNcrAssigneesAsync(
+            int tenantId,
+            string ncrNumber,
+            string? title,
+            string? severity,
+            string? status,
+            int? previousInvestigatedBy,
+            int? newInvestigatedBy,
+            string? investigatedByName,
+            int? previousApprovedBy,
+            int? newApprovedBy,
+            string? approvedByName)
+        {
+            var messages = new List<string>();
+            try
+            {
+                var settings = await _context.SystemSettings.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+                if (settings == null || !settings.EnableEmailNotifications)
+                    return messages;
+
+                var companyName = !string.IsNullOrWhiteSpace(settings.SmtpFromName)
+                    ? settings.SmtpFromName
+                    : "Cimmple";
+
+                async Task NotifyRoleAsync(int? previousId, int? newId, string? nameHint, string roleLabel)
+                {
+                    var prev = previousId.GetValueOrDefault();
+                    var next = newId.GetValueOrDefault();
+                    if (next <= 0 || next == prev)
+                        return;
+
+                    var user = await _context.UserDetails.AsNoTracking()
+                        .FirstOrDefaultAsync(u => u.User_UniqueID == next && u.TenantID == tenantId);
+                    if (user == null || string.IsNullOrWhiteSpace(user.Email))
+                    {
+                        messages.Add($"{roleLabel} assigned, but no email is on file for that user.");
+                        return;
+                    }
+
+                    var displayName = !string.IsNullOrWhiteSpace(nameHint)
+                        ? nameHint!
+                        : $"{user.FirstName} {user.LastName}".Trim();
+                    if (string.IsNullOrWhiteSpace(displayName))
+                        displayName = user.UserName ?? roleLabel;
+
+                    var (ok, error) = NcrEmailService.TrySendAssignmentNotice(
+                        settings,
+                        _configuration,
+                        user.Email!,
+                        displayName,
+                        roleLabel,
+                        ncrNumber,
+                        title ?? "",
+                        severity,
+                        status,
+                        companyName);
+
+                    messages.Add(ok
+                        ? $"{roleLabel} notified at {user.Email}."
+                        : $"{roleLabel} notification failed: {error}");
+                }
+
+                await NotifyRoleAsync(previousInvestigatedBy, newInvestigatedBy, investigatedByName, "Investigator");
+                await NotifyRoleAsync(previousApprovedBy, newApprovedBy, approvedByName, "Approver");
+            }
+            catch (Exception ex)
+            {
+                messages.Add($"Assignment email skipped: {ex.Message}");
+            }
+
+            return messages;
         }
 
         private void AddParameter(System.Data.Common.DbCommand command, string name, object value)

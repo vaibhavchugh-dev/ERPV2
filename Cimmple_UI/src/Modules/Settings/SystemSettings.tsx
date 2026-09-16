@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { faSave, faCog, faClock, faDollarSign, faShieldAlt, faEnvelope, faMapMarkerAlt, faExternalLinkAlt } from "@fortawesome/free-solid-svg-icons";
+import { faSave, faCog, faClock, faDollarSign, faShieldAlt, faEnvelope, faMapMarkerAlt, faExternalLinkAlt, faPaperPlane } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { SystemSettingsService, SystemSettings } from "../../Common/Services/SystemSettingsService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
@@ -24,6 +24,8 @@ const SystemSettingsComponent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'company' | 'datetime' | 'currency' | 'security' | 'email' | 'general'>('company');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testingSmtp, setTestingSmtp] = useState(false);
+  const [testSmtpTo, setTestSmtpTo] = useState("");
   const [tenantId, setTenantId] = useState(1);
   const [usingDefaults, setUsingDefaults] = useState(false);
 
@@ -50,7 +52,11 @@ const SystemSettingsComponent: React.FC = () => {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tid = storage?.tenantID || 1;
       const settingsData = await SystemSettingsService.GetSettings(tid);
-      setSettings(settingsData);
+      setSettings({
+        ...settingsData,
+        smtpPassword: "",
+        hasSmtpPassword: !!(settingsData as any).hasSmtpPassword || !!(settingsData as any).HasSmtpPassword,
+      });
       setUsingDefaults(false);
     } catch (error) {
       console.error('Error loading system settings:', error);
@@ -143,6 +149,56 @@ const SystemSettingsComponent: React.FC = () => {
       toast.error(`Failed to save settings: ${apiMessage}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestSmtp = async () => {
+    if (!settings) return;
+
+    if (!settings.smtpServer?.trim() || !settings.smtpFromEmail?.trim()) {
+      toast.error('SMTP server and From Email are required to send a test.');
+      return;
+    }
+    if (settings.smtpPort && (settings.smtpPort < 1 || settings.smtpPort > 65535)) {
+      toast.error('SMTP port must be between 1 and 65535');
+      return;
+    }
+
+    const toEmail = (testSmtpTo || settings.smtpFromEmail || "").trim();
+    if (!toEmail) {
+      toast.error('Enter a test recipient email, or set From Email first.');
+      return;
+    }
+
+    setTestingSmtp(true);
+    try {
+      const result = await SystemSettingsService.TestSmtp({
+        tenantId,
+        toEmail,
+        smtpServer: settings.smtpServer,
+        smtpPort: settings.smtpPort,
+        smtpUseSsl: settings.smtpUseSsl,
+        smtpUsername: settings.smtpUsername,
+        smtpPassword: settings.smtpPassword,
+        smtpFromEmail: settings.smtpFromEmail,
+        smtpFromName: settings.smtpFromName,
+      });
+      toastAlwaysSuccess(result?.message || `Test email sent to ${toEmail}.`);
+    } catch (error: any) {
+      console.error('Error testing SMTP:', error);
+      const data = error?.response?.data;
+      const apiMessage =
+        (typeof data === "string" && data) ||
+        data?.message ||
+        data?.error ||
+        data?.title ||
+        data?.detail ||
+        (data?.errors && JSON.stringify(data.errors)) ||
+        error?.message ||
+        "Unknown error";
+      toast.error(`SMTP test failed: ${apiMessage}`);
+    } finally {
+      setTestingSmtp(false);
     }
   };
 
@@ -922,9 +978,10 @@ const SystemSettingsComponent: React.FC = () => {
                 Email/SMTP Configuration
               </h3>
               <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
-                SMTP credentials are saved for your tenant. Outbound email delivery is not yet wired to all modules —
-                enable &quot;Email notifications&quot; under General to gate reminder actions. Company letterhead details
-                are maintained in Accounting Setup.
+                SMTP credentials are saved for your tenant and used by outbound mail (e.g. AR reminders).
+                Enable &quot;Email notifications&quot; under General to allow production sends. Use Test connection
+                below to verify SMTP even when notifications are off. Company letterhead details are maintained
+                in Accounting Setup.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 <div>
@@ -993,6 +1050,8 @@ const SystemSettingsComponent: React.FC = () => {
                     type="password"
                     value={settings.smtpPassword}
                     onChange={(e) => updateSetting('smtpPassword', e.target.value)}
+                    placeholder={settings.hasSmtpPassword ? '•••••••• (saved — leave blank to keep)' : 'Enter SMTP password'}
+                    autoComplete="new-password"
                     style={{
                       width: '100%',
                       padding: '0.75rem',
@@ -1001,6 +1060,11 @@ const SystemSettingsComponent: React.FC = () => {
                       fontSize: '0.875rem'
                     }}
                   />
+                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                    {settings.hasSmtpPassword
+                      ? 'A password is already saved. Leave blank to keep it, or enter a new one to replace it.'
+                      : 'Password is never shown after save.'}
+                  </small>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
@@ -1048,6 +1112,56 @@ const SystemSettingsComponent: React.FC = () => {
                     />
                     <span style={{ fontSize: '0.875rem' }}>Use SSL/TLS</span>
                   </label>
+                </div>
+                <div style={{ gridColumn: '1 / -1', marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid #e5e7eb' }}>
+                  <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
+                    Test connection
+                  </h4>
+                  <p style={{ margin: '0 0 1rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
+                    Sends a short HTML test message using the values above (unsaved changes are included).
+                    Leave password blank only if a password is already saved for this tenant.
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
+                    <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        Send test to
+                      </label>
+                      <input
+                        type="email"
+                        value={testSmtpTo}
+                        onChange={(e) => setTestSmtpTo(e.target.value)}
+                        placeholder={settings.smtpFromEmail || 'you@example.com'}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTestSmtp}
+                      disabled={testingSmtp || loading}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.75rem 1.25rem',
+                        backgroundColor: testingSmtp ? '#9ca3af' : '#2563eb',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '0.375rem',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        cursor: testingSmtp ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      <FontAwesomeIcon icon={faPaperPlane} />
+                      {testingSmtp ? 'Sending…' : 'Send test email'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -12,6 +12,7 @@ export interface ResetPasswordUser {
   userId: number;
   userName?: string;
   displayName?: string;
+  email?: string;
 }
 
 interface ResetPasswordModalProps {
@@ -27,6 +28,7 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ newPassword?: string; confirmPassword?: string }>({});
+  const [emailTemporaryPassword, setEmailTemporaryPassword] = useState(true);
 
   useEffect(() => {
     setNewPassword("");
@@ -34,7 +36,8 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
     setShowNew(false);
     setShowConfirm(false);
     setErrors({});
-  }, [user.userId]);
+    setEmailTemporaryPassword(!!user.email?.trim());
+  }, [user.userId, user.email]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -74,12 +77,17 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
         userId: user.userId,
         tenantId: tenantID,
         newPassword,
+        emailTemporaryPassword,
       });
 
       toast.success(
         result?.message ||
           "Password reset successfully. User must change password on next login."
       );
+      if (result?.emailMessage) {
+        if (/failed|no email/i.test(result.emailMessage)) toast.warn(result.emailMessage);
+        else toast.success(result.emailMessage);
+      }
       onSuccess?.();
       onClose();
     } catch (error: any) {
@@ -143,6 +151,32 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
           <div className="reset-password-notice">
             The user will be required to change this password on next login.
           </div>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              fontSize: "0.875rem",
+              color: "#374151",
+              cursor: user.email?.trim() ? "pointer" : "not-allowed",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={emailTemporaryPassword}
+              disabled={!user.email?.trim() || loading}
+              onChange={(e) => setEmailTemporaryPassword(e.target.checked)}
+              style={{ marginTop: "0.15rem" }}
+            />
+            <span>
+              Email temporary password to user
+              {user.email?.trim()
+                ? ` (${user.email})`
+                : " (no email on file)"}
+            </span>
+          </label>
 
           <div className="form-group">
             <label htmlFor="reset-new-password">

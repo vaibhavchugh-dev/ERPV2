@@ -541,6 +541,11 @@ namespace CimmpleAPI.Controllers
                         employee.User_UniqueID, passwordSettings.PasswordHistoryCount);
                 }
 
+                var wantWelcomeEmail = request.SendWelcomeEmail.GetValueOrDefault(0) == 1
+                    || (isNew && loginAccessEnabled && passwordProvided);
+                if (wantWelcomeEmail)
+                    employee.SendWelcomeEmail = 1;
+
                 // Handle Location Mapping — supports multi-location (LocationIds) or legacy single LocationId
                 var locationIds = (request.LocationIds != null && request.LocationIds.Count > 0)
                     ? request.LocationIds.Where(id => id > 0).Distinct().ToList()
@@ -632,13 +637,36 @@ namespace CimmpleAPI.Controllers
                         && f.AzureFaceRegistered);
                 }
 
+                string? welcomeEmailMessage = null;
+                var shouldSendWelcome = passwordProvided
+                    && loginAccessEnabled
+                    && request.SendWelcomeEmail.GetValueOrDefault(isNew ? 1 : 0) == 1
+                    && !string.IsNullOrWhiteSpace(employee.Email);
+                if (shouldSendWelcome && passwordSettings != null)
+                {
+                    var (emailOk, emailError) = IdentityEmailService.TrySendEmployeeWelcome(
+                        passwordSettings,
+                        _configuration,
+                        employee.Email,
+                        $"{employee.FirstName} {employee.LastName}".Trim(),
+                        employee.UserName ?? "",
+                        request.Password!);
+                    welcomeEmailMessage = emailOk
+                        ? $"Welcome email sent to {employee.Email}."
+                        : $"Welcome email was not sent: {emailError}";
+                    if (emailOk)
+                        employee.SendWelcomeEmail = 1;
+                    await _context.SaveChangesAsync();
+                }
+
                 return Ok(new
                 {
                     result = new
                     {
                         employee.User_UniqueID,
                         faceEnrolled,
-                        faceMessage
+                        faceMessage,
+                        welcomeEmailMessage
                     }
                 });
             }
@@ -1257,6 +1285,8 @@ namespace CimmpleAPI.Controllers
         public string SSN { get; set; }
         /// <summary>Optional plaintext password when enabling or changing login access. Never returned from GET.</summary>
         public string? Password { get; set; }
+        /// <summary>When 1 and a password is set with a valid email, send a welcome email with credentials.</summary>
+        public int? SendWelcomeEmail { get; set; }
     }
 
     public class EmployeeImportRequest
