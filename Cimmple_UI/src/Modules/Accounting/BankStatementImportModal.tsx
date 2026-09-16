@@ -13,6 +13,7 @@ import {
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import "../Masters/CustomerMasterSlideout.scss";
 
+/** CSV import + match modal for Bank Reconciliation. */
 export interface BankStatementImportResult {
   reconciledCount: number;
   statementDate?: string;

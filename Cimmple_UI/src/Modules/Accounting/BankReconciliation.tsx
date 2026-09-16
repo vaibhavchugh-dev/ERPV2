@@ -18,9 +18,8 @@ import {
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
-import BankStatementImportModal, {
-  BankStatementImportResult,
-} from "./BankStatementImportModal";
+import BankStatementImportModal from "./BankStatementImportModal";
+import type { BankStatementImportResult } from "./BankStatementImportModal";
 
 type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
 
