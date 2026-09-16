@@ -155,6 +155,10 @@
   }
 
   .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
     text-align: center;
     padding: 3rem;
     color: #6b7280;

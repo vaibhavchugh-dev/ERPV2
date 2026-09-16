@@ -22,6 +22,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
@@ -1042,12 +1043,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         return;
       }
       
-      const result = await OrderService.SaveOrder(formDataToSave);
+      const result = await OrderService.SaveOrder(formDataToSave, pendingFiles);
 
       const savedId = result.id > 0 ? result.id : formDataToSave.OrderID;
-      if (savedId > 0 && pendingFiles.length > 0) {
-        await OrderService.OrderSaveFile(savedId, pendingFiles);
-      }
 
       revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
       setDeletedAttachmentIds([]);
@@ -1075,7 +1073,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
       console.error("Error saving order:", error);
-      toast.error(`Error saving order: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
+      toast.error(`Error saving order: ${getApiErrorMessage(error, "Unknown error")}`);
     } finally {
       setLoading(false);
     }
