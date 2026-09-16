@@ -134,6 +134,7 @@ const Documents: React.FC = () => {
   };
 
   const handleDownload = async (document: Document, versionId?: number) => {
+    const toastId = toast.info("Downloading document...", { autoClose: false });
     try {
       const blob = await DocumentService.DownloadDocument(document.id, versionId);
       const url = window.URL.createObjectURL(blob);
@@ -144,9 +145,11 @@ const Documents: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       window.document.body.removeChild(a);
+      toast.dismiss(toastId);
       toast.success("Download started");
     } catch (error: any) {
       console.error("Error downloading document:", error);
+      toast.dismiss(toastId);
       toast.error(`Error downloading document: ${error.message || "Unknown error"}`);
     }
   };
@@ -165,15 +168,20 @@ const Documents: React.FC = () => {
     revokeViewerUrl();
   }, []);
 
-  const handlePreview = async (doc: Document) => {
+  const handlePreview = async (doc: Document, versionId?: number) => {
     try {
       revokeViewerUrl();
+      const versionName =
+        versionId != null
+          ? undefined
+          : doc.fileName || doc.documentName;
       setViewerDocuments([
         {
           id: doc.id,
-          name: doc.fileName || doc.documentName,
+          name: versionName || doc.fileName || doc.documentName,
           contentType: doc.mimeType,
           size: doc.fileSize,
+          versionId,
         },
       ]);
       setActiveViewerIndex(0);
@@ -187,7 +195,10 @@ const Documents: React.FC = () => {
   const handleNeedDocument = useCallback(
     async (file: DocumentViewerFile, _index: number, _signal: AbortSignal) => {
       try {
-        const blob = await DocumentService.DownloadDocument(Number(file.id));
+        const blob = await DocumentService.DownloadDocument(
+          Number(file.id),
+          file.versionId
+        );
         const url = URL.createObjectURL(blob);
         revokeViewerUrl();
         viewerUrlRef.current = url;
@@ -204,7 +215,7 @@ const Documents: React.FC = () => {
   const handleViewerDownload = async (file: DocumentViewerFile) => {
     const match = documents.find((d) => d.id === Number(file.id)) || selectedDocument;
     if (match) {
-      await handleDownload(match);
+      await handleDownload(match, file.versionId);
       return;
     }
     try {

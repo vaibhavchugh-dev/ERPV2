@@ -453,23 +453,49 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SaveOrder")]
-        public async Task<IActionResult> SaveOrder([FromBody] OrderReq request)
+        [Consumes("multipart/form-data", "application/json")]
+        public async Task<IActionResult> SaveOrder()
         {
             try
             {
-                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
-                if (request == null)
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+                OrderReq? request = null;
+                List<IFormFile> newFiles = new List<IFormFile>();
+
+                if (Request.HasFormContentType)
                 {
-                    var errors = ModelState
-                        .Where(x => x.Value.Errors.Count > 0)
-                        .Select(x => new { Field = x.Key, Errors = x.Value.Errors.Select(e => e.ErrorMessage) })
-                        .ToList();
-                    
-                    Console.WriteLine($"Request is null. Model state errors: {System.Text.Json.JsonSerializer.Serialize(errors)}");
-                    return BadRequest(new { error = "Request is null", modelErrors = errors });
+                    var form = await Request.ReadFormAsync();
+                    var formField = form["formField"].FirstOrDefault()
+                                 ?? form["FormField"].FirstOrDefault();
+                    if (string.IsNullOrWhiteSpace(formField))
+                    {
+                        return BadRequest(new { error = "formField is required for multipart SaveOrder" });
+                    }
+
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    request = JsonSerializer.Deserialize<OrderReq>(formField, options);
+                    newFiles = form.Files?.Where(f => f != null && f.Length > 0).ToList()
+                               ?? new List<IFormFile>();
+                }
+                else
+                {
+                    using var reader = new StreamReader(Request.Body);
+                    var body = await reader.ReadToEndAsync();
+                    if (string.IsNullOrWhiteSpace(body))
+                    {
+                        return BadRequest(new { error = "Request body is required" });
+                    }
+
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    request = JsonSerializer.Deserialize<OrderReq>(body, options);
                 }
 
-                Console.WriteLine($"Received SaveOrder request - OrderID: {request.OrderID}, CustomerID: {request.CustomerID}, Tenantid: {request.Tenantid}");
+                if (request == null)
+                {
+                    return BadRequest(new { error = "Request is null", details = "Model binding / deserialization failed." });
+                }
+
+                Console.WriteLine($"Received SaveOrder request - OrderID: {request.OrderID}, CustomerID: {request.CustomerID}, Tenantid: {request.Tenantid}, NewFiles: {newFiles.Count}");
 
                 if (request.Tenantid <= 0)
                 {
@@ -581,39 +607,6 @@ namespace CimmpleAPI.Controllers
                     return forbidLoc!;
                 order.locationId = resolvedLocationId;
 
-                // Remove Azure blobs + OrderAttachment rows queued for deletion in the UI.
-                if (request.DeletedAttachmentIds != null && request.DeletedAttachmentIds.Count > 0)
-                {
-                    await ProcessDeletedOrderAttachments(
-                        order.OrderID,
-                        request.Tenantid,
-                        request.DeletedAttachmentIds);
-                }
-
-                // Prefer DB-backed sync when OrderAttachment rows exist (after uploads / deletes).
-                var hasDbAttachments = _context.OrderAttachment
-                    .Any(a => a.orderid == order.OrderID && a.TenantID == request.Tenantid);
-                if (hasDbAttachments)
-                {
-                    SyncOrderAttachmentsJson(order);
-                }
-                else if (request.Attachments != null && request.Attachments.Count > 0)
-                {
-                    // Legacy / pre-upload metadata only (name/size).
-                    var attachmentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        PropertyNameCaseInsensitive = true,
-                        WriteIndented = false
-                    };
-                    order.AttachmentsJson = JsonSerializer.Serialize(request.Attachments, attachmentOptions);
-                    Console.WriteLine($"Saved attachments JSON: {order.AttachmentsJson}");
-                }
-                else
-                {
-                    order.AttachmentsJson = null;
-                }
-
                 // Save comments as JSON
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
@@ -629,6 +622,7 @@ namespace CimmpleAPI.Controllers
                     order.CommentsJson = null;
                 }
 
+                // Persist order first so new attachments can use OrderID.
                 _context.SaveChanges();
 
                 // If this order was created from a quotation, update the quotation
@@ -766,7 +760,51 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                 }
 
-                return Ok(new { result = new { id = order.OrderID, poNumber = order.PONumber, message = "Order saved successfully" } });
+                int createdBy = request.UserId > 0 ? request.UserId : (GetUserId() ?? 0);
+
+                // Remove Azure blobs + OrderAttachment rows queued for deletion in the UI.
+                if (request.DeletedAttachmentIds != null && request.DeletedAttachmentIds.Count > 0)
+                {
+                    await ProcessDeletedOrderAttachments(
+                        order.OrderID,
+                        request.Tenantid,
+                        request.DeletedAttachmentIds);
+                }
+
+                // Upload newly added files in the same request (CQ pattern).
+                if (newFiles.Count > 0)
+                {
+                    var uploadError = await UploadNewOrderAttachments(order, newFiles, createdBy);
+                    if (!string.IsNullOrEmpty(uploadError))
+                    {
+                        return StatusCode(500, new { error = uploadError });
+                    }
+                }
+
+                SyncOrderAttachmentsJson(order);
+                _context.SaveChanges();
+
+                var savedAttachments = GetOrderAttachmentDtos(order.OrderID, order.Tenantid, order.AttachmentsJson);
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = order.OrderID,
+                        poNumber = order.PONumber,
+                        message = "Order saved successfully",
+                        attachments = savedAttachments.Select(a => new
+                        {
+                            id = a.Id,
+                            name = a.Name,
+                            size = a.Size,
+                            fileUrl = a.FileUrl,
+                            fileUniqueno = a.FileUniqueno,
+                            uploadFile = a.UploadFile,
+                            pageNo = a.PageNo,
+                            createdBy = a.CreatedBy
+                        }).ToList()
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -785,10 +823,11 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         [HttpPost("OrderSaveFile")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> OrderSaveFile(IFormCollection form)
+        public async Task<IActionResult> OrderSaveFile()
         {
             try
             {
+                var form = await Request.ReadFormAsync();
                 var files = form.Files;
                 if (files == null || files.Count == 0)
                 {
@@ -846,68 +885,17 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order not found" });
                 }
 
-                var uploaded = new List<OrderAttachmentDto>();
-
-                foreach (var file in files)
+                var fileList = files.Where(f => f != null && f.Length > 0).ToList();
+                var uploadError = await UploadNewOrderAttachments(order, fileList, createdBy);
+                if (!string.IsNullOrEmpty(uploadError))
                 {
-                    if (file == null || file.Length <= 0)
-                    {
-                        continue;
-                    }
-
-                    var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
-                    var displayName = Path.GetFileName(file.FileName);
-
-                    int nextFileUniqueNo = 1;
-                    if (_context.OrderAttachment.Any())
-                    {
-                        nextFileUniqueNo = _context.OrderAttachment.Max(x => x.FileUniqueno) + 1;
-                    }
-
-                    var blobName = $"{nextFileUniqueNo}{ext}";
-                    var attachment = new OrderAttachment
-                    {
-                        orderid = orderId,
-                        Name = displayName,
-                        size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
-                        FileUniqueno = nextFileUniqueNo,
-                        UploadFile = blobName,
-                        TenantID = tenantId,
-                        FileCode = "",
-                        Pageno = "0",
-                        createdby = createdBy
-                    };
-
-                    _context.OrderAttachment.Add(attachment);
-                    _context.SaveChanges();
-
-                    var fileInfo = ModuleFileStorage.CreateFileInfo(
-                        tenantId,
-                        ModuleFileStorage.OrdersFolder,
-                        blobName,
-                        createdBy);
-
-                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
-                    if (!uploadedOk)
-                    {
-                        _context.OrderAttachment.Remove(attachment);
-                        _context.SaveChanges();
-                        var connMissing = string.IsNullOrEmpty(
-                            _configuration["AzureConnection:storageConnectionString"]
-                            ?? _configuration["AzureConnString"]);
-                        return StatusCode(500, new
-                        {
-                            error = connMissing
-                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
-                                : $"Failed to upload file '{displayName}' to Azure Storage"
-                        });
-                    }
-
-                    uploaded.Add(MapOrderAttachmentDto(attachment));
+                    return StatusCode(500, new { error = uploadError });
                 }
 
                 SyncOrderAttachmentsJson(order);
                 _context.SaveChanges();
+
+                var uploaded = GetOrderAttachmentDtos(order.OrderID, order.Tenantid, order.AttachmentsJson);
 
                 return Ok(new
                 {
@@ -986,10 +974,12 @@ namespace CimmpleAPI.Controllers
 
         [HttpPost("VendorOrderSaveFile")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> VendorOrderSaveFile(IFormCollection form)
+        public async Task<IActionResult> VendorOrderSaveFile()
         {
             try
             {
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+                var form = await Request.ReadFormAsync();
                 var files = form.Files;
                 if (files == null || files.Count == 0)
                 {
@@ -1092,7 +1082,14 @@ namespace CimmpleAPI.Controllers
                     {
                         _context.VendorOrderAttachments.Remove(attachment);
                         await _context.SaveChangesAsync();
-                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                        return StatusCode(500, new
+                        {
+                            error = string.IsNullOrEmpty(
+                                _configuration["AzureConnection:storageConnectionString"]
+                                ?? _configuration["AzureConnString"])
+                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                                : $"Failed to upload file '{displayName}' to Azure Storage"
+                        });
                     }
 
                     uploaded.Add(new
@@ -1352,6 +1349,70 @@ namespace CimmpleAPI.Controllers
                 PageNo = a.Pageno ?? "0",
                 CreatedBy = a.createdby
             };
+        }
+
+        /// <summary>
+        /// Uploads only newly selected files for a customer order. Never re-uploads existing Azure blobs.
+        /// </summary>
+        private async Task<string?> UploadNewOrderAttachments(
+            CustomerOrder order,
+            List<IFormFile> newFiles,
+            int createdBy)
+        {
+            foreach (var file in newFiles)
+            {
+                if (file == null || file.Length <= 0)
+                {
+                    continue;
+                }
+
+                var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
+                var displayName = Path.GetFileName(file.FileName);
+
+                int nextFileUniqueNo = 1;
+                if (_context.OrderAttachment.Any())
+                {
+                    nextFileUniqueNo = _context.OrderAttachment.Max(x => x.FileUniqueno) + 1;
+                }
+
+                var blobName = $"{nextFileUniqueNo}{ext}";
+                var attachment = new OrderAttachment
+                {
+                    orderid = order.OrderID,
+                    Name = displayName,
+                    size = file.Length > int.MaxValue ? int.MaxValue : (int)file.Length,
+                    FileUniqueno = nextFileUniqueNo,
+                    UploadFile = blobName,
+                    TenantID = order.Tenantid,
+                    FileCode = "",
+                    Pageno = "0",
+                    createdby = createdBy
+                };
+
+                _context.OrderAttachment.Add(attachment);
+                _context.SaveChanges();
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    order.Tenantid,
+                    ModuleFileStorage.OrdersFolder,
+                    blobName,
+                    createdBy);
+
+                var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                if (!uploadedOk)
+                {
+                    _context.OrderAttachment.Remove(attachment);
+                    _context.SaveChanges();
+                    var connMissing = string.IsNullOrEmpty(
+                        _configuration["AzureConnection:storageConnectionString"]
+                        ?? _configuration["AzureConnString"]);
+                    return connMissing
+                        ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                        : $"Failed to upload file '{displayName}' to Azure Storage";
+                }
+            }
+
+            return null;
         }
 
         [HttpGet("CheckOrderDeletionImpact")]

@@ -596,7 +596,10 @@ namespace CimmpleAPI.Controllers
                 var fileBytes = _storageService.GetFileBytes(filePath, tenantId);
                 if (fileBytes == null || fileBytes.Length == 0)
                 {
-                    return NotFound(new { error = "File not found in Azure Storage" });
+                    return NotFound(new
+                    {
+                        error = "File not found in storage. If this document was uploaded before Azure was configured, re-upload it or verify AzureConnection:storageConnectionString."
+                    });
                 }
 
                 var contentType = document.MimeType ?? ModuleFileStorage.GetContentType(fileName);

@@ -22,6 +22,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import {
   VENDOR_ORDER_LINE_TYPES,
@@ -1309,7 +1310,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
       onClose(true);
     } catch (error: any) {
-      toast.error(`Error saving order: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving order: ${getApiErrorMessage(error, "Unknown error")}`);
       console.error("Error saving order:", error);
     } finally {
       setLoading(false);

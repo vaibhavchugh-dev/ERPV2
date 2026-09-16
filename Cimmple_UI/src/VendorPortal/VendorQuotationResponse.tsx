@@ -6,6 +6,7 @@ import {
   QuotationDetailReq,
   QuotationAttachment,
 } from "../Common/Services/QuotationService";
+import { getApiErrorMessage } from "../Common/Services/FileUploadHelper";
 import "./VendorPortal.scss";
 
 type LineAttachment = QuotationAttachment & { isPending?: boolean; file?: File; localUrl?: string };
@@ -258,7 +259,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
     } catch (error: any) {
       console.error("Error saving quotation:", error);
       console.error("Error response:", error.response?.data);
-      toast.error(`Error submitting response: ${error.response?.data?.error || error.message || "Unknown error"}`);
+      toast.error(`Error submitting response: ${getApiErrorMessage(error, "Unknown error")}`);
     } finally {
       setSaving(false);
     }

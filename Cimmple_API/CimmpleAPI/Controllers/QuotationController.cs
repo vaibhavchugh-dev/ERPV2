@@ -1722,19 +1722,23 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Save attachments as JSON (persisted metadata; new blobs uploaded via VendorQuotationSaveFile).
-                if (request.TryGetProperty("Attachments", out JsonElement attachmentsElem) && attachmentsElem.ValueKind == JsonValueKind.Array && attachmentsElem.GetArrayLength() > 0)
+                // Only replace when Attachments is present; empty array clears; omit leaves existing alone.
+                if (request.TryGetProperty("Attachments", out JsonElement attachmentsElem))
                 {
-                    var attachmentOptions = new JsonSerializerOptions
+                    if (attachmentsElem.ValueKind == JsonValueKind.Array && attachmentsElem.GetArrayLength() > 0)
                     {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        PropertyNameCaseInsensitive = true,
-                        WriteIndented = false
-                    };
-                    quotation.AttachmentsJson = JsonSerializer.Serialize(attachmentsElem, attachmentOptions);
-                }
-                else
-                {
-                    quotation.AttachmentsJson = null;
+                        var attachmentOptions = new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            PropertyNameCaseInsensitive = true,
+                            WriteIndented = false
+                        };
+                        quotation.AttachmentsJson = JsonSerializer.Serialize(attachmentsElem, attachmentOptions);
+                    }
+                    else if (attachmentsElem.ValueKind == JsonValueKind.Array)
+                    {
+                        quotation.AttachmentsJson = null;
+                    }
                 }
 
                 // Save comments as JSON
@@ -2337,12 +2341,20 @@ namespace CimmpleAPI.Controllers
                         }
                     }
 
-                    // Drop pending-only stubs (no blob yet) from JSON; they upload after save.
+                    var rawCount = next.Count;
+
+                    // Drop pending-only stubs (no blob yet) from JSON; they upload via DetailSaveFile after save.
                     next = next
-                        .Where(a => !string.IsNullOrWhiteSpace(a.UploadFile ?? a.FileUrl)
-                                    || (a.FileUniqueno > 0 && !string.IsNullOrWhiteSpace(a.Name)))
                         .Where(a => !string.IsNullOrWhiteSpace(a.UploadFile ?? a.FileUrl))
                         .ToList();
+
+                    // Pending-only payload (stubs filtered out) or empty retain list while previous
+                    // blobs exist: do not wipe AttachmentsJson / delete Azure — DetailSaveFile appends.
+                    var intentionalClear = rawCount == 0;
+                    if (!intentionalClear && next.Count == 0 && previous.Count > 0)
+                    {
+                        continue;
+                    }
 
                     var nextKeys = new HashSet<int>(next.Select(a => a.FileUniqueno > 0 ? a.FileUniqueno : a.Id));
                     foreach (var removed in previous.Where(a =>
@@ -3075,10 +3087,11 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         [HttpPost("VendorQuotationSaveFile")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> VendorQuotationSaveFile(IFormCollection form)
+        public async Task<IActionResult> VendorQuotationSaveFile()
         {
             try
             {
+                var form = await Request.ReadFormAsync();
                 var files = form.Files;
                 if (files == null || files.Count == 0)
                 {
@@ -3184,7 +3197,15 @@ namespace CimmpleAPI.Controllers
                     var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
                     if (!uploadedOk)
                     {
-                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                        var connMissing = string.IsNullOrEmpty(
+                            _configuration["AzureConnection:storageConnectionString"]
+                            ?? _configuration["AzureConnString"]);
+                        return StatusCode(500, new
+                        {
+                            error = connMissing
+                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                                : $"Failed to upload file '{displayName}' to Azure Storage"
+                        });
                     }
 
                     var dto = new QuotationAttachmentDto
@@ -3327,10 +3348,11 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         [HttpPost("VendorQuotationDetailSaveFile")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> VendorQuotationDetailSaveFile(IFormCollection form)
+        public async Task<IActionResult> VendorQuotationDetailSaveFile()
         {
             try
             {
+                var form = await Request.ReadFormAsync();
                 var files = form.Files;
                 if (files == null || files.Count == 0)
                 {
@@ -3466,7 +3488,15 @@ namespace CimmpleAPI.Controllers
                     var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
                     if (!uploadedOk)
                     {
-                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                        var connMissing = string.IsNullOrEmpty(
+                            _configuration["AzureConnection:storageConnectionString"]
+                            ?? _configuration["AzureConnString"]);
+                        return StatusCode(500, new
+                        {
+                            error = connMissing
+                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                                : $"Failed to upload file '{displayName}' to Azure Storage"
+                        });
                     }
 
                     var dto = new QuotationAttachmentDto

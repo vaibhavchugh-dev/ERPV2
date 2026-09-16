@@ -50,6 +50,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -1002,7 +1003,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         Status: statusToSave,
         EnableJobTracking: enableJobTracking,
         RoutingSteps: stepsToSave,
-        Attachments: persistedAttachments,
+        // Omit empty Attachments when pending uploads follow so we don't wipe JSON before SaveFile.
+        Attachments:
+          persistedAttachments.length > 0 ||
+          deletedAttachmentIds.length > 0 ||
+          pendingFiles.length === 0
+            ? persistedAttachments
+            : undefined,
         DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments,
         MaterialRequirements: formData.MaterialRequirements || [],
@@ -1032,7 +1039,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error saving job order:", error);
-      toast.error(`Error saving job order: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving job order: ${getApiErrorMessage(error, "Unknown error")}`);
     } finally {
       setLoading(false);
     }
