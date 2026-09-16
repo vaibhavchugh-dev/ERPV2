@@ -500,7 +500,7 @@ namespace CimmpleAPI.Controllers
                     new PermissionMaster { PermissionName = "Non Conformance Reports", DisplayPermissionName = "Non Conformance Reports", LevelInfo = 1, OrderNo = 30, Url = "/quality", ReportGroup = "Quality", ReportDescription = "View and manage non-conformance reports" },
                     
                     // Reports
-                    new PermissionMaster { PermissionName = "Business Intelligence", DisplayPermissionName = "Business Intelligence", LevelInfo = 1, OrderNo = 40, Url = "/reports", ReportGroup = "Reports", ReportDescription = "Access business intelligence and reports" },
+                    new PermissionMaster { PermissionName = "Business Intelligence", DisplayPermissionName = "Reports", LevelInfo = 1, OrderNo = 40, Url = "/reports", ReportGroup = "Reports", ReportDescription = "Access operational and business reports" },
                     
                     // Accounting
                     new PermissionMaster { PermissionName = "Payment Dashboard", DisplayPermissionName = "Payment Dashboard", LevelInfo = 1, OrderNo = 50, Url = "/accounts/dashboard", ReportGroup = "Accounting", ReportDescription = "View payment dashboard" },
