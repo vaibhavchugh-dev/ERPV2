@@ -864,8 +864,8 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
               {bankName}
               {accountNumber ? ` · ${accountNumber}` : ""}
             </strong>
-            . Unmatched lines can be linked manually from the Book match list. Closing saves a
-            draft so you can finish later.
+            . Matches update the open reconciliation period. Unmatched lines can be linked
+            manually. Closing saves a draft so you can finish later.
           </p>
 
           {draftInfo && (

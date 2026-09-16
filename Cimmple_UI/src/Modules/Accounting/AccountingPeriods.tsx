@@ -93,9 +93,11 @@ const AccountingPeriods: React.FC = () => {
       <div className="ap-header">
         <h1>Period close &amp; GL audit</h1>
         <p>
-          Close an accounting month (YYYYMM) to block new journal posts,
-          reversals, and deletes in that period. Reopen only when corrections are
-          required. Recent control actions appear in the audit log.
+          Standard month-end order: complete bank reconciliation for each account
+          (statement date in that month), then close the GL period (YYYYMM). Closing
+          blocks journal posts and further bank recon for dates in that month.
+          Reopen only when corrections are required. Control actions appear in the
+          audit log (including bank recon completions).
         </p>
       </div>
 

@@ -150,6 +150,8 @@ namespace CimmpleAPI.Data
         public DbSet<PaymentTerm> PaymentTerms { get; set; }
         public DbSet<ApApprovalLimit> ApApprovalLimits { get; set; }
         public DbSet<ArReminderLog> ArReminderLogs { get; set; }
+        public DbSet<BankReconciliationPeriod> BankReconciliationPeriods { get; set; }
+        public DbSet<BankReconciliationPeriodItem> BankReconciliationPeriodItems { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -724,6 +726,25 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.Status).HasMaxLength(32);
                 entity.Property(e => e.Error).HasMaxLength(2000);
                 entity.HasIndex(e => new { e.TenantId, e.InvoiceId });
+            });
+
+            modelBuilder.Entity<BankReconciliationPeriod>(entity =>
+            {
+                entity.ToTable("BankReconciliationPeriod");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.BeginningBalance).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.EndingBalance).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.ClearedBalance).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.HasIndex(e => new { e.TenantId, e.BankId, e.StatementDate });
+            });
+
+            modelBuilder.Entity<BankReconciliationPeriodItem>(entity =>
+            {
+                entity.ToTable("BankReconciliationPeriodItem");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.PeriodId, e.TransactionId }).IsUnique();
+                entity.HasIndex(e => e.TransactionId);
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>
