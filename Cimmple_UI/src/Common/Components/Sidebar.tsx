@@ -84,7 +84,7 @@ const Sidebar: React.FC = () => {
   ];
 
   const reportsItems: NavItem[] = [
-    { icon: faChartLine, title: "Business Intelligence", path: "/reports" },
+    { icon: faChartLine, title: "Reports", path: "/reports" },
   ];
 
   const purchasingItems: NavItem[] = [

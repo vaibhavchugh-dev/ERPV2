@@ -146,11 +146,12 @@ export class AccountingService {
     const url = `/Accounting/GenerateFinancialReport`;
     const dr =
       parameters.dateRange || parameters.DateRange || "This Month";
+    // Viewing always requests JSON so the modal can render structured data.
     const payload: Record<string, unknown> = {
       tenantId: tenantID,
       ReportType: reportType,
       DateRange: dr,
-      Format: parameters.format || parameters.Format || "pdf",
+      Format: "json",
       LocationId: parameters.locationId ?? parameters.LocationId,
       Parameters: parameters,
     };
@@ -166,6 +167,50 @@ export class AccountingService {
       const result = response.data.result;
       return result;
     });
+  };
+
+  /** Download PDF/CSV/Excel-compatible CSV as a binary file from the API. */
+  public static DownloadFinancialReport = async (
+    reportType: string,
+    parameters: any
+  ): Promise<{ blob: Blob; fileName: string; mimeType: string }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    const dr =
+      parameters.dateRange || parameters.DateRange || "This Month";
+    const format = String(parameters.format || parameters.Format || "csv").toLowerCase();
+    const payload: Record<string, unknown> = {
+      tenantId: tenantID,
+      ReportType: reportType,
+      DateRange: dr,
+      Format: format === "excel" ? "excel" : format,
+      LocationId: parameters.locationId ?? parameters.LocationId,
+      Parameters: parameters,
+    };
+    if (
+      String(dr).toLowerCase() === "custom" &&
+      parameters.customStartDate &&
+      parameters.customEndDate
+    ) {
+      payload.CustomStartDate = parameters.customStartDate;
+      payload.CustomEndDate = parameters.customEndDate;
+    }
+
+    const response = await Instense.post(`/Accounting/GenerateFinancialReport`, payload, {
+      responseType: "blob",
+    });
+
+    const disposition = response.headers?.["content-disposition"] as string | undefined;
+    let fileName = `${reportType}.${format === "pdf" ? "pdf" : "csv"}`;
+    if (disposition) {
+      const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+      if (match?.[1]) fileName = match[1].replace(/['"]/g, "");
+    }
+    const mimeType =
+      format === "pdf"
+        ? "application/pdf"
+        : "text/csv;charset=utf-8";
+    return { blob: response.data as Blob, fileName, mimeType };
   };
 
   public static ListJournalEntries = async (params?: {
