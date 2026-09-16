@@ -1523,8 +1523,54 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         }
       }}
     >
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div
-        className={`customer-quotation-slideout-card ${documentViewerOpen ? "is-document-workspace" : ""}`}
+        className="customer-quotation-slideout-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="customer-quotation-slideout-header">
@@ -1643,27 +1689,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           </div>
         </div>
 
-        <div className="customer-quotation-slideout-workspace">
-          {documentViewerOpen && (
-            <div className="customer-quotation-slideout-viewer-pane">
-              <DocumentViewerWorkspace
-                documents={viewerDocuments}
-                activeIndex={activeViewerIndex}
-                onActiveIndexChange={setActiveViewerIndex}
-                onClose={closeDocumentViewer}
-                onNeedDocument={handleNeedDocument}
-                onPrefetchDocument={handlePrefetchDocument}
-                onDownload={(file) => {
-                  handleViewerDownload(file).catch((error: any) => {
-                    toast.error(error?.message || "Failed to download attachment");
-                  });
-                }}
-                mode="view"
-              />
-            </div>
-          )}
-
-          <div className="customer-quotation-slideout-form-pane">
         <form className="customer-quotation-slideout-form" onSubmit={handleSubmit}>
           <div className="customer-quotation-slideout-content">
             {/* Basic Information */}
@@ -2601,8 +2626,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             </button>
           </div>
         </form>
-          </div>
-        </div>
       </div>
 
       {/* Combined Price Breakdown Matrix Popup */}

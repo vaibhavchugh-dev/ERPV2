@@ -171,6 +171,20 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Process not found" });
                     }
 
+                    var newStatus = request.Status == "Active" ? 1 : (request.Status == "Inactive" ? 0 : process.status);
+                    if (process.status == 1 && newStatus == 0)
+                    {
+                        var deactivateImpact = BuildProcessDeletionImpact(process);
+                        if (deactivateImpact.BlockingDependencies.Count > 0 || process.IsSystem)
+                        {
+                            return BadRequest(new
+                            {
+                                error = deactivateImpact.BlockingReasons.FirstOrDefault()
+                                    ?? "Process is still referenced and cannot be deactivated"
+                            });
+                        }
+                    }
+
                     ApplyRequestToEntity(process, request, isCreate: false);
                 }
                 else
@@ -443,28 +457,7 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Process not found" });
                 }
 
-                var impact = new DeletionImpactResult
-                {
-                    CanDelete = true,
-                    BlockingReasons = new List<string>(),
-                    BlockingDependencies = new List<BlockingDependency>(),
-                    WillBeDeleted = new List<ImpactedEntity>(),
-                    WillBeAffected = new List<ImpactedEntity>(),
-                    Warnings = new List<string>()
-                };
-
-                if (process.IsSystem)
-                {
-                    impact.BlockingReasons.Add("This is a protected system process and cannot be deleted.");
-                    impact.CanDelete = false;
-                }
-
-                if (impact.CanDelete)
-                {
-                    impact.Warnings.Add("This action cannot be undone");
-                }
-
-                return Ok(new { result = impact });
+                return Ok(new { result = BuildProcessDeletionImpact(process) });
             }
             catch (Exception ex)
             {
@@ -485,9 +478,14 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Process not found" });
                 }
 
-                if (process.IsSystem)
+                var impact = BuildProcessDeletionImpact(process);
+                if (!impact.CanDelete)
                 {
-                    return BadRequest(new { error = "Protected system processes cannot be deleted" });
+                    return BadRequest(new
+                    {
+                        error = impact.BlockingReasons.FirstOrDefault()
+                            ?? "Process is still referenced and cannot be deleted"
+                    });
                 }
 
                 _context.ProcessMaster.Remove(process);
@@ -499,6 +497,104 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
+        }
+
+        private DeletionImpactResult BuildProcessDeletionImpact(ProcessMaster process)
+        {
+            var impact = new DeletionImpactResult
+            {
+                CanDelete = true,
+                BlockingReasons = new List<string>(),
+                BlockingDependencies = new List<BlockingDependency>(),
+                WillBeDeleted = new List<ImpactedEntity>(),
+                WillBeAffected = new List<ImpactedEntity>(),
+                Warnings = new List<string>()
+            };
+
+            if (process.IsSystem)
+            {
+                impact.CanDelete = false;
+                impact.BlockingReasons.Add("This is a protected system process and cannot be deleted.");
+            }
+
+            var processId = process.Id;
+            var tenantId = process.Tenantid;
+
+            var primaryTemplates = _context.JobTemplateMaster
+                .AsNoTracking()
+                .Where(t => t.Tenantid == tenantId && t.PrimaryProcessId == processId)
+                .Select(t => new { t.Id, t.TemplateName, t.TemplateCode })
+                .ToList();
+            var opTemplateIds = _context.JobTemplateOperation
+                .AsNoTracking()
+                .Where(o => o.Tenantid == tenantId && o.ProcessId == processId)
+                .Select(o => o.JobTemplateId)
+                .Distinct()
+                .ToList();
+            var allTemplateIds = primaryTemplates.Select(t => t.Id).Union(opTemplateIds).Distinct().ToList();
+            if (allTemplateIds.Count > 0)
+            {
+                impact.CanDelete = false;
+                var names = _context.JobTemplateMaster
+                    .AsNoTracking()
+                    .Where(t => allTemplateIds.Contains(t.Id))
+                    .Select(t => new { t.Id, t.TemplateName, t.TemplateCode })
+                    .ToList();
+                impact.BlockingDependencies.Add(new BlockingDependency
+                {
+                    EntityType = "Job Templates",
+                    Description = $"Referenced by {allTemplateIds.Count} job template(s) (primary process or operations)",
+                    Items = names.Take(10).Select(t => new DependencyItem
+                    {
+                        Id = t.Id,
+                        Name = !string.IsNullOrWhiteSpace(t.TemplateName)
+                            ? t.TemplateName!
+                            : (!string.IsNullOrWhiteSpace(t.TemplateCode) ? t.TemplateCode! : $"Template #{t.Id}")
+                    }).ToList()
+                });
+            }
+
+            var jobOrderCount = CountJobOrdersReferencingProcess(tenantId, processId);
+            if (jobOrderCount > 0)
+            {
+                impact.CanDelete = false;
+                impact.BlockingDependencies.Add(new BlockingDependency
+                {
+                    EntityType = "Job Orders",
+                    Description = $"Referenced in routing on {jobOrderCount} job order(s)",
+                    Items = new List<DependencyItem>()
+                });
+            }
+
+            if (!impact.CanDelete && impact.BlockingReasons.Count == 0)
+            {
+                impact.BlockingReasons.Add(
+                    "This process is still referenced by Job Templates or Job Order routing.");
+            }
+            else if (impact.CanDelete)
+            {
+                impact.Warnings.Add("This action cannot be undone");
+            }
+
+            return impact;
+        }
+
+        private int CountJobOrdersReferencingProcess(int tenantId, int processId)
+        {
+            var idStr = processId.ToString();
+            var patterns = new[]
+            {
+                $"\"processId\":{idStr}",
+                $"\"processId\": {idStr}",
+                $"\"ProcessId\":{idStr}",
+                $"\"ProcessId\": {idStr}"
+            };
+            return _context.JobOrderMaster
+                .AsNoTracking()
+                .Where(j => j.Tenantid == tenantId && j.RoutingStepsJson != null && j.RoutingStepsJson != "")
+                .AsEnumerable()
+                .Count(j => patterns.Any(p =>
+                    j.RoutingStepsJson!.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0));
         }
 
         private string? ValidateUniqueness(int tenantId, int processId, string processName, string? processCode)

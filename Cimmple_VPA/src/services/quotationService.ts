@@ -303,9 +303,7 @@ export class QuotationService {
     formData.append("itemNo", String(itemNo));
     formData.append("tenantId", String(tenantID));
 
-    const { data } = await api.post("/Quotation/VendorQuotationDetailSaveFile", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    const { data } = await api.post("/Quotation/VendorQuotationDetailSaveFile", formData);
     const attachments = data?.result?.attachments || [];
     return attachments.map((a: Record<string, unknown>) => ({
       id: Number(a.id ?? a.Id ?? 0),

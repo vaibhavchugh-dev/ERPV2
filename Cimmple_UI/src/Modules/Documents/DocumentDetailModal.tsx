@@ -14,17 +14,22 @@ import {
   faFile,
   faEdit,
   faTrash,
+  faEye,
 } from "@fortawesome/free-solid-svg-icons";
 import "./DocumentDetailModal.scss";
 
 interface DocumentDetailModalProps {
   document: Document;
   onClose: () => void;
+  onChanged?: () => void;
+  onPreview?: (document: Document) => void;
 }
 
 const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   document,
   onClose,
+  onChanged,
+  onPreview,
 }) => {
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
@@ -98,7 +103,8 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
       setSelectedFile(null);
       setVersionNotes("");
       loadVersions();
-      onClose(); // Refresh parent
+      onChanged?.();
+      onClose();
     } catch (error: any) {
       console.error("Error uploading version:", error);
       toast.error(`Error uploading version: ${error.message || "Unknown error"}`);
@@ -120,7 +126,8 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
       );
       toast.success("Document updated successfully");
       setEditing(false);
-      onClose(); // Refresh parent
+      onChanged?.();
+      onClose();
     } catch (error: any) {
       console.error("Error updating document:", error);
       toast.error(`Error updating document: ${error.message || "Unknown error"}`);
@@ -137,6 +144,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
     try {
       await DocumentService.DeleteDocument(document.id);
       toast.success("Document deleted successfully");
+      onChanged?.();
       onClose();
     } catch (error: any) {
       console.error("Error deleting document:", error);
@@ -209,6 +217,14 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
             </div>
 
             <div className="action-buttons">
+              {onPreview && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => onPreview(document)}
+                >
+                  <FontAwesomeIcon icon={faEye} /> Preview
+                </button>
+              )}
               <button className="btn btn-primary" onClick={() => handleDownload()}>
                 <FontAwesomeIcon icon={faDownload} /> Download
               </button>
