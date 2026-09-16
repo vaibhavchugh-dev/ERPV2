@@ -67,6 +67,7 @@ export interface ResetPasswordRequest {
   userId: number;
   tenantId: number;
   newPassword?: string;
+  emailTemporaryPassword?: boolean;
 }
 
 export interface Role {
@@ -174,7 +175,9 @@ export class UserManagementService {
     return response.data;
   }
 
-  public static async ResetPassword(resetData: ResetPasswordRequest): Promise<{ message: string }> {
+  public static async ResetPassword(
+    resetData: ResetPasswordRequest
+  ): Promise<{ message: string; emailMessage?: string }> {
     const url = `/UserManagement/ResetPassword`;
     const response = await Instense.post(url, resetData);
     return response.data;

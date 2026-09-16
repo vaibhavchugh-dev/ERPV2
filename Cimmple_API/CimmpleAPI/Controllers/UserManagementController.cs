@@ -2,10 +2,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using Microsoft.Extensions.Configuration;
 
 namespace CimmpleAPI.Controllers
 {
@@ -15,11 +17,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IAuthService _authService;
+        private readonly IConfiguration _configuration;
 
-        public UserManagementController(CimmpleDbContext context, IAuthService authService)
+        public UserManagementController(
+            CimmpleDbContext context,
+            IAuthService authService,
+            IConfiguration configuration)
         {
             _context = context;
             _authService = authService;
+            _configuration = configuration;
         }
 
         // GET: api/UserManagement/GetUsers
@@ -301,7 +308,32 @@ namespace CimmpleAPI.Controllers
                 await _context.SaveChangesAsync();
                 await _authService.TrimPasswordHistoryAsync(user.User_UniqueID, settings.PasswordHistoryCount);
 
-                return Ok(new { message = "Password reset successfully. User must change password on next login." });
+                string? emailMessage = null;
+                if (resetDto.EmailTemporaryPassword && !string.IsNullOrWhiteSpace(user.Email))
+                {
+                    var displayName = $"{user.FirstName} {user.LastName}".Trim();
+                    var (emailOk, emailError) = IdentityEmailService.TrySendPasswordResetNotice(
+                        settings,
+                        _configuration,
+                        user.Email,
+                        displayName,
+                        user.UserName ?? "",
+                        resetDto.NewPassword!,
+                        includePassword: true);
+                    emailMessage = emailOk
+                        ? $"Temporary password emailed to {user.Email}."
+                        : $"Password was reset, but email failed: {emailError}";
+                }
+                else if (resetDto.EmailTemporaryPassword)
+                {
+                    emailMessage = "Password was reset, but the user has no email on file.";
+                }
+
+                return Ok(new
+                {
+                    message = "Password reset successfully. User must change password on next login.",
+                    emailMessage
+                });
             }
             catch (Exception ex)
             {
@@ -858,6 +890,8 @@ namespace CimmpleAPI.Controllers
         public int UserId { get; set; }
         public int TenantId { get; set; }
         public string? NewPassword { get; set; }
+        /// <summary>When true, email the temporary password to the user's email address.</summary>
+        public bool EmailTemporaryPassword { get; set; }
     }
 
     public class AssignPermissionsDto

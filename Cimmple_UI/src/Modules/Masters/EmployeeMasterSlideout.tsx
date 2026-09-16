@@ -65,6 +65,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   const [faceEnrolled, setFaceEnrolled] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [loginPasswordConfirm, setLoginPasswordConfirm] = useState("");
+  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
   const [initialLoginAccessEnabled, setInitialLoginAccessEnabled] = useState(false);
 
   // Profile Picture State & Refs
@@ -100,6 +101,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       setInitialLoginAccessEnabled(false);
       setLoginPassword("");
       setLoginPasswordConfirm("");
+      setSendWelcomeEmail(true);
     }
   }, [employeeId]);
 
@@ -340,6 +342,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         setInitialLoginAccessEnabled(passwordExists);
         setLoginPassword("");
         setLoginPasswordConfirm("");
+        setSendWelcomeEmail(false);
 
         loadProfilePic(employee.User_UniqueID);
       }
@@ -595,8 +598,10 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         }
         if (loginPassword.trim()) {
           submitData.Password = loginPassword.trim();
+          submitData.SendWelcomeEmail = sendWelcomeEmail ? 1 : 0;
         } else {
           delete submitData.Password;
+          delete submitData.SendWelcomeEmail;
         }
       } else {
         submitData.UserName = "";
@@ -607,6 +612,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       toast.success(
         employeeId > 0 ? "Employee updated successfully" : "Employee created successfully"
       );
+      if (saved?.welcomeEmailMessage || saved?.WelcomeEmailMessage) {
+        const msg = saved.welcomeEmailMessage || saved.WelcomeEmailMessage;
+        if (/not sent|failed/i.test(msg)) toast.warn(msg);
+        else toast.success(msg);
+      }
       if (profilePicFile) {
         if (saved?.faceEnrolled || saved?.FaceEnrolled) {
           toast.success("Face enrolled for Time Clock");
@@ -847,6 +857,24 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                         )}
                       </div>
                     </div>
+                    {loginPassword.trim() !== "" && (
+                      <label
+                        className="checkbox-wrapper"
+                        style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={sendWelcomeEmail}
+                          onChange={(e) => {
+                            setSendWelcomeEmail(e.target.checked);
+                            setIsStateChanged(true);
+                          }}
+                        />
+                        <span style={{ fontSize: "0.875rem", color: "#374151" }}>
+                          Email login credentials to employee
+                        </span>
+                      </label>
+                    )}
                   </div>
                 )}
 

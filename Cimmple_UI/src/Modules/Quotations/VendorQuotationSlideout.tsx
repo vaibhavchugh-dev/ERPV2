@@ -39,6 +39,7 @@ import {
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import { toDateOnlyApiString, toHtmlDateInputValue } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
@@ -112,6 +113,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [coaAccounts, setCoaAccounts] = useState<ChartofAccountMaster[]>([]);
   const [companyDefaultExpenseGlcode, setCompanyDefaultExpenseGlcode] = useState("");
   const [defaultExpenseGlcode, setDefaultExpenseGlcode] = useState("");
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [vendorEmail, setVendorEmail] = useState("");
   // Refs for job order input fields
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   // Store display values for numeric fields (as strings) to allow clearing
@@ -347,9 +350,17 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               accountIdToGlcode((vendor as any)?.defaultExpenseAccountId) ||
               companyDefaultExpenseGlcode;
             setDefaultExpenseGlcode(vendorGl);
+            const contactEmail =
+              vendor?.VendorContact?.find((c) => c.isDefault)?.email ||
+              vendor?.VendorContact?.[0]?.email ||
+              vendor?.email ||
+              "";
+            setVendorEmail(contactEmail.trim());
           } catch {
             /* keep company default */
           }
+        } else {
+          setVendorEmail("");
         }
         if (result.Attachments && Array.isArray(result.Attachments) && result.Attachments.length > 0) {
           const cleanedAttachments: ModuleAttachment[] = result.Attachments.map((a: any) => ({
@@ -492,6 +503,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
             companyDefaultExpenseGlcode;
           setDefaultExpenseGlcode(vendorExpenseGl);
+          const contactEmail =
+            fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
+            fullVendorDetails.VendorContact?.[0]?.email ||
+            fullVendorDetails.email ||
+            "";
+          setVendorEmail(contactEmail.trim());
           setFormData(prev => ({
             ...prev,
             BuyerName: defaultContactPerson,
@@ -1489,6 +1506,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
                     <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
                     <rect x="6" y="14" width="12" height="8"></rect>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
                 <button
@@ -2744,6 +2773,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         onRefreshImpact={refreshDeletionImpact}
         onDeleteAll={handleDeleteAll}
         isLoading={loading}
+      />
+
+      <SendDocumentEmailDialog
+        open={showEmailDialog}
+        kind="vendorQuotation"
+        documentId={quotationId}
+        defaultToEmail={vendorEmail}
+        documentLabel={
+          formData.PONumber > 0
+            ? formData.PONumber < 1000
+              ? `VQ#${formData.PONumber + 999}`
+              : `VQ#${formData.PONumber}`
+            : undefined
+        }
+        onClose={() => setShowEmailDialog(false)}
       />
     </div>
   );

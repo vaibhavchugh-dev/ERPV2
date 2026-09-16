@@ -73,6 +73,8 @@ export interface VendorMasterReq {
   portalUserName?: string;
   /** Plaintext portal password sent only when enabling/resetting access */
   portalPassword?: string;
+  /** When true (default), email portal credentials after enable/password set */
+  sendPortalInviteEmail?: boolean;
 }
 
 export interface SaveVendorPortalAccessRequest {
@@ -80,6 +82,7 @@ export interface SaveVendorPortalAccessRequest {
   tenantId?: number;
   enabled: boolean;
   newPassword?: string;
+  sendInviteEmail?: boolean;
 }
 
 export interface VendorPortalAccessResult {
@@ -89,6 +92,7 @@ export interface VendorPortalAccessResult {
   portalUserId?: number;
   portalUserName?: string;
   vendorCode?: string;
+  inviteEmailMessage?: string;
 }
 
 export interface VendorImportRow {
@@ -287,6 +291,7 @@ export class VendorService {
       TenantId: tenantID,
       Enabled: request.enabled,
       NewPassword: request.newPassword || null,
+      SendInviteEmail: request.sendInviteEmail,
     }).then((response) => {
       const raw = response.data.result || response.data || {};
       return {
@@ -296,6 +301,7 @@ export class VendorService {
         portalUserId: raw.portalUserId ?? raw.PortalUserId,
         portalUserName: raw.portalUserName ?? raw.PortalUserName,
         vendorCode: raw.vendorCode ?? raw.VendorCode,
+        inviteEmailMessage: raw.inviteEmailMessage ?? raw.InviteEmailMessage,
       } as VendorPortalAccessResult;
     });
   };

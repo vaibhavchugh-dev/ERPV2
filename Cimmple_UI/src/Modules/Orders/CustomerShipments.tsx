@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
-import { faEye, faTrash, faTruck, faPrint } from "@fortawesome/free-solid-svg-icons";
+import { faEye, faTrash, faTruck, faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerShipmentsService, CustomerShipmentSummary } from "../../Common/Services/CustomerShipmentsService";
@@ -9,6 +9,7 @@ import { ShippingService } from "../../Common/Services/ShippingService";
 import { PdfService } from "../../Common/Services/PdfService";
 import CustomerShipmentDetailModal from "./CustomerShipmentDetailModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
@@ -37,6 +38,7 @@ const CustomerShipments: React.FC = () => {
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [shipmentToDelete, setShipmentToDelete] = useState<CustomerShipmentSummary | null>(null);
+  const [emailShipmentId, setEmailShipmentId] = useState<number | null>(null);
 
   // Handle URL parameter to open modal (from global search / dashboard)
   useEffect(() => {
@@ -291,6 +293,22 @@ const CustomerShipments: React.FC = () => {
           </button>
           <button
             type="button"
+            onClick={() => setEmailShipmentId(row.id)}
+            title="Email Shipment"
+            style={{
+              padding: "0.25rem 0.5rem",
+              backgroundColor: "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: "0.25rem",
+              cursor: "pointer",
+              fontSize: "0.75rem",
+            }}
+          >
+            <FontAwesomeIcon icon={faEnvelope} />
+          </button>
+          <button
+            type="button"
             onClick={() => handleDeleteShipment(row)}
             title="Delete Shipment"
             style={{
@@ -364,6 +382,14 @@ const CustomerShipments: React.FC = () => {
         }}
         onRefreshImpact={refreshDeletionImpact}
         isLoading={false}
+      />
+
+      <SendDocumentEmailDialog
+        open={emailShipmentId != null && emailShipmentId > 0}
+        kind="shipment"
+        documentId={emailShipmentId ?? 0}
+        documentLabel={shipments.find((s) => s.id === emailShipmentId)?.shipmentNo}
+        onClose={() => setEmailShipmentId(null)}
       />
     </div>
   );

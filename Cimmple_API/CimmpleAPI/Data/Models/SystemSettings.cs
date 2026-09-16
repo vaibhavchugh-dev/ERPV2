@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CimmpleAPI.Data.Models
 {
@@ -44,6 +45,10 @@ namespace CimmpleAPI.Data.Models
         public string SmtpPassword { get; set; } = "";
         public string SmtpFromEmail { get; set; } = "";
         public string SmtpFromName { get; set; } = "";
+
+        /// <summary>True when a password is stored; never returned with the actual secret.</summary>
+        [NotMapped]
+        public bool HasSmtpPassword { get; set; }
         
         // System Preferences
         public int DefaultPageSize { get; set; } = 10;
@@ -55,20 +60,3 @@ namespace CimmpleAPI.Data.Models
         public DateTime? UpdatedDate { get; set; }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
