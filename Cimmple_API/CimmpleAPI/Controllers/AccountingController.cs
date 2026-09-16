@@ -520,15 +520,18 @@ namespace CimmpleAPI.Controllers
                 if (txn == null)
                     return NotFound(new { error = "Transaction not found" });
 
+                if (txn.TransactionDate.HasValue &&
+                    GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, txn.TransactionDate.Value))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(txn.TransactionDate.Value);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before changing bank reconciliation."
+                    });
+                }
+
                 txn.IsReconciled = request.Reconciled;
                 txn.ReconciledUtc = request.Reconciled ? DateTime.UtcNow : null;
-
-                if (request.Reconciled && txn.BankId.HasValue)
-                {
-                    var bank = _context.BankMaster.FirstOrDefault(b => b.Id == txn.BankId.Value && b.TenantId == tenantId);
-                    if (bank != null)
-                        bank.LastReconciledDate = DateTime.UtcNow.Date;
-                }
 
                 _context.SaveChanges();
                 return Ok(new { result = new { message = "Transaction reconciliation updated successfully", reconciled = txn.IsReconciled } });
@@ -555,19 +558,25 @@ namespace CimmpleAPI.Controllers
                     .Where(t => t.TenantId == tenantId && request.TransactionIds.Contains(t.TransactionID))
                     .ToList();
 
+                var locked = txns
+                    .Where(t => t.TransactionDate.HasValue &&
+                                GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, t.TransactionDate.Value))
+                    .Select(t => GlWorkflowService.PeriodKeyFromDate(t.TransactionDate!.Value))
+                    .Distinct()
+                    .ToList();
+                if (locked.Count > 0)
+                {
+                    return Conflict(new
+                    {
+                        error = $"Accounting period(s) {string.Join(", ", locked)} are closed. Reopen on Period Close & Audit before clearing those transactions."
+                    });
+                }
+
                 var now = DateTime.UtcNow;
                 foreach (var txn in txns)
                 {
                     txn.IsReconciled = true;
                     txn.ReconciledUtc = now;
-                }
-
-                var bankIds = txns.Where(t => t.BankId.HasValue).Select(t => t.BankId!.Value).Distinct().ToList();
-                if (bankIds.Count > 0)
-                {
-                    var banks = _context.BankMaster.Where(b => b.TenantId == tenantId && bankIds.Contains(b.Id)).ToList();
-                    foreach (var bank in banks)
-                        bank.LastReconciledDate = now.Date;
                 }
 
                 _context.SaveChanges();
@@ -578,6 +587,427 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine($"Error in BulkReconcileTransactions: {ex.Message}");
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        [HttpGet("GetBankReconciliationContext")]
+        public IActionResult GetBankReconciliationContext([FromQuery] int bankId)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (bankId <= 0)
+                    return BadRequest(new { error = "bankId is required" });
+
+                var bank = _context.BankMaster.AsNoTracking()
+                    .FirstOrDefault(b => b.Id == bankId && b.TenantId == tenantId);
+                if (bank == null)
+                    return NotFound(new { error = "Bank account not found" });
+
+                var periods = _context.BankReconciliationPeriods
+                    .AsNoTracking()
+                    .Where(p => p.TenantId == tenantId && p.BankId == bankId)
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .Take(24)
+                    .ToList();
+
+                var open = periods.FirstOrDefault(p =>
+                    string.Equals(p.Status, "Open", StringComparison.OrdinalIgnoreCase));
+                var lastCompleted = periods
+                    .Where(p => string.Equals(p.Status, "Completed", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .FirstOrDefault();
+
+                var beginningBalance = lastCompleted?.EndingBalance ?? bank.Balance;
+                decimal? clearedBalance = null;
+                decimal? difference = null;
+                decimal? clearedCredits = null;
+                decimal? clearedDebits = null;
+                if (open != null)
+                {
+                    var cleared = ComputePeriodCleared(tenantId, bankId, open.StatementDate.Date, open.BeginningBalance);
+                    clearedBalance = cleared.ClearedBalance;
+                    clearedCredits = cleared.ClearedCredits;
+                    clearedDebits = cleared.ClearedDebits;
+                    // Statement ending − cleared balance (0 when reconciled)
+                    difference = open.EndingBalance - cleared.ClearedBalance;
+                }
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        bankId,
+                        bankOpeningBalance = bank.Balance,
+                        suggestedBeginningBalance = beginningBalance,
+                        lastReconciledDate = bank.LastReconciledDate.HasValue
+                            ? bank.LastReconciledDate.Value.ToString("yyyy-MM-dd")
+                            : (string?)null,
+                        openPeriod = open == null
+                            ? null
+                            : MapPeriodDto(open, clearedBalance, difference, clearedCredits, clearedDebits),
+                        lastCompletedPeriod = lastCompleted == null
+                            ? null
+                            : MapPeriodDto(lastCompleted, lastCompleted.ClearedBalance, null, null, null),
+                        periods = periods.Select(p => MapPeriodDto(
+                            p,
+                            p.Id == open?.Id ? clearedBalance : p.ClearedBalance,
+                            p.Id == open?.Id ? difference : null,
+                            p.Id == open?.Id ? clearedCredits : null,
+                            p.Id == open?.Id ? clearedDebits : null)).ToList()
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in GetBankReconciliationContext: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("StartBankReconciliationPeriod")]
+        public IActionResult StartBankReconciliationPeriod([FromBody] StartBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.BankId <= 0)
+                    return BadRequest(new { error = "bankId is required" });
+                if (!DateTime.TryParse(request.StatementDate, out var statementDate))
+                    return BadRequest(new { error = "Valid statementDate is required" });
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, statementDate))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(statementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before starting bank reconciliation."
+                    });
+                }
+
+                var bank = _context.BankMaster.FirstOrDefault(b => b.Id == request.BankId && b.TenantId == tenantId);
+                if (bank == null)
+                    return NotFound(new { error = "Bank account not found" });
+
+                var hasOpen = _context.BankReconciliationPeriods.Any(p =>
+                    p.TenantId == tenantId &&
+                    p.BankId == request.BankId &&
+                    p.Status == "Open");
+                if (hasOpen)
+                    return BadRequest(new { error = "An open reconciliation period already exists for this bank. Complete it first." });
+
+                var lastCompleted = _context.BankReconciliationPeriods
+                    .Where(p => p.TenantId == tenantId && p.BankId == request.BankId && p.Status == "Completed")
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .FirstOrDefault();
+
+                var beginning = lastCompleted?.EndingBalance ?? bank.Balance;
+                var period = new BankReconciliationPeriod
+                {
+                    TenantId = tenantId,
+                    BankId = request.BankId,
+                    BeginningBalance = beginning,
+                    EndingBalance = request.EndingBalance,
+                    StatementDate = statementDate.Date,
+                    Status = "Open",
+                    CreatedUtc = DateTime.UtcNow
+                };
+                _context.BankReconciliationPeriods.Add(period);
+                _context.SaveChanges();
+
+                var cleared = ComputePeriodCleared(tenantId, request.BankId, period.StatementDate.Date, period.BeginningBalance);
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        period.EndingBalance - cleared.ClearedBalance,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in StartBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("UpdateBankReconciliationPeriod")]
+        public IActionResult UpdateBankReconciliationPeriod([FromBody] UpdateBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.PeriodId <= 0)
+                    return BadRequest(new { error = "periodId is required" });
+
+                var period = _context.BankReconciliationPeriods
+                    .FirstOrDefault(p => p.Id == request.PeriodId && p.TenantId == tenantId);
+                if (period == null)
+                    return NotFound(new { error = "Reconciliation period not found" });
+                if (!string.Equals(period.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { error = "Only an open period can be updated" });
+
+                if (!string.IsNullOrWhiteSpace(request.StatementDate))
+                {
+                    if (!DateTime.TryParse(request.StatementDate, out var statementDate))
+                        return BadRequest(new { error = "Valid statementDate is required" });
+                    if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, statementDate))
+                    {
+                        var pk = GlWorkflowService.PeriodKeyFromDate(statementDate);
+                        return Conflict(new
+                        {
+                            error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before updating the statement date."
+                        });
+                    }
+                    period.StatementDate = statementDate.Date;
+                }
+
+                if (request.EndingBalance.HasValue)
+                    period.EndingBalance = request.EndingBalance.Value;
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, period.StatementDate))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(period.StatementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before changing this reconciliation."
+                    });
+                }
+
+                _context.SaveChanges();
+
+                var cleared = ComputePeriodCleared(tenantId, period.BankId, period.StatementDate.Date, period.BeginningBalance);
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        period.EndingBalance - cleared.ClearedBalance,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in UpdateBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("CompleteBankReconciliationPeriod")]
+        public IActionResult CompleteBankReconciliationPeriod([FromBody] CompleteBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.PeriodId <= 0)
+                    return BadRequest(new { error = "periodId is required" });
+
+                var period = _context.BankReconciliationPeriods
+                    .FirstOrDefault(p => p.Id == request.PeriodId && p.TenantId == tenantId);
+                if (period == null)
+                    return NotFound(new { error = "Reconciliation period not found" });
+                if (!string.Equals(period.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { error = "Period is already completed" });
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, period.StatementDate))
+                {
+                    var pkLock = GlWorkflowService.PeriodKeyFromDate(period.StatementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pkLock} is closed. Reopen that period on Period Close & Audit before completing bank reconciliation."
+                    });
+                }
+
+                var statementEnd = period.StatementDate.Date;
+                var cleared = ComputePeriodCleared(tenantId, period.BankId, statementEnd, period.BeginningBalance);
+                var diff = period.EndingBalance - cleared.ClearedBalance;
+                if (Math.Abs(diff) >= 0.01m)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot complete: difference is {diff:0.00} (statement ending − cleared). Cleared credits {cleared.ClearedCredits:0.00}, cleared debits {cleared.ClearedDebits:0.00}."
+                    });
+                }
+
+                var alreadyLinked = (
+                    from item in _context.BankReconciliationPeriodItems
+                    join p in _context.BankReconciliationPeriods on item.PeriodId equals p.Id
+                    where p.TenantId == tenantId && p.BankId == period.BankId
+                    select item.TransactionId
+                ).ToHashSet();
+
+                var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+                var endInclusive = statementEnd.AddDays(1).AddTicks(-1);
+                var toLink = _context.Transactions
+                    .AsNoTracking()
+                    .Where(t => t.TenantId == tenantId &&
+                                t.BankId == period.BankId &&
+                                t.IsReconciled &&
+                                t.TransactionType != null &&
+                                bankTypeSet.Contains(t.TransactionType) &&
+                                t.TransactionDate != null &&
+                                t.TransactionDate <= endInclusive)
+                    .Select(t => t.TransactionID)
+                    .ToList()
+                    .Where(id => !alreadyLinked.Contains(id))
+                    .ToList();
+
+                foreach (var txnId in toLink)
+                {
+                    _context.BankReconciliationPeriodItems.Add(new BankReconciliationPeriodItem
+                    {
+                        PeriodId = period.Id,
+                        TransactionId = txnId
+                    });
+                }
+
+                period.ClearedBalance = cleared.ClearedBalance;
+                period.Status = "Completed";
+                period.CompletedUtc = DateTime.UtcNow;
+                period.CompletedByUserId = GetUserId();
+
+                var bank = _context.BankMaster.FirstOrDefault(b => b.Id == period.BankId && b.TenantId == tenantId);
+                if (bank != null)
+                    bank.LastReconciledDate = statementEnd;
+
+                var bankLabel = bank == null
+                    ? $"Bank {period.BankId}"
+                    : (string.IsNullOrWhiteSpace(bank.NickName) ? bank.BankName : bank.NickName);
+                GlWorkflowService.AddAudit(
+                    _context,
+                    tenantId,
+                    "BankReconComplete",
+                    GetUserId(),
+                    null,
+                    null,
+                    GlWorkflowService.PeriodKeyFromDate(statementEnd),
+                    $"{bankLabel}: statement {statementEnd:yyyy-MM-dd}, ending {period.EndingBalance:0.00}");
+
+                _context.SaveChanges();
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        0m,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in CompleteBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        private readonly struct PeriodClearedTotals
+        {
+            public PeriodClearedTotals(decimal clearedCredits, decimal clearedDebits, decimal clearedBalance)
+            {
+                ClearedCredits = clearedCredits;
+                ClearedDebits = clearedDebits;
+                ClearedBalance = clearedBalance;
+            }
+
+            /// <summary>Sum of cleared credit magnitudes (deposits / customer receipts).</summary>
+            public decimal ClearedCredits { get; }
+            /// <summary>Sum of cleared debit magnitudes (payments / withdrawals).</summary>
+            public decimal ClearedDebits { get; }
+            /// <summary>Beginning + credits − debits.</summary>
+            public decimal ClearedBalance { get; }
+        }
+
+        /// <summary>
+        /// Cleared balance for an open statement period:
+        /// Beginning + cleared credits − cleared debits
+        /// (only reconciled cash txns dated on/before statement date, not already closed in a prior period).
+        /// </summary>
+        private PeriodClearedTotals ComputePeriodCleared(
+            int tenantId,
+            int bankId,
+            DateTime statementDate,
+            decimal beginningBalance)
+        {
+            var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+            var endInclusive = statementDate.Date.AddDays(1).AddTicks(-1);
+
+            var alreadyInCompleted = (
+                from item in _context.BankReconciliationPeriodItems.AsNoTracking()
+                join p in _context.BankReconciliationPeriods.AsNoTracking() on item.PeriodId equals p.Id
+                where p.TenantId == tenantId &&
+                      p.BankId == bankId &&
+                      p.Status == "Completed"
+                select item.TransactionId
+            ).ToHashSet();
+
+            var raw = _context.Transactions
+                .AsNoTracking()
+                .Where(t => t.TenantId == tenantId &&
+                            t.BankId == bankId &&
+                            t.IsReconciled &&
+                            t.TransactionType != null &&
+                            bankTypeSet.Contains(t.TransactionType) &&
+                            t.TransactionDate != null &&
+                            t.TransactionDate <= endInclusive)
+                .Select(t => new
+                {
+                    t.TransactionID,
+                    t.Amount,
+                    t.isCustomer,
+                    t.TransactionType
+                })
+                .ToList()
+                .Where(t => !alreadyInCompleted.Contains(t.TransactionID));
+
+            decimal credits = 0;
+            decimal debits = 0;
+            foreach (var t in raw)
+            {
+                var (signed, isCredit) = AccountingRules.MapBankTransactionSign(
+                    t.Amount ?? 0, t.isCustomer, t.TransactionType);
+                if (isCredit)
+                    credits += Math.Abs(signed);
+                else
+                    debits += Math.Abs(signed);
+            }
+
+            var clearedBalance = beginningBalance + credits - debits;
+            return new PeriodClearedTotals(credits, debits, clearedBalance);
+        }
+
+        private static object MapPeriodDto(
+            BankReconciliationPeriod p,
+            decimal? clearedBalance,
+            decimal? difference,
+            decimal? clearedCredits,
+            decimal? clearedDebits)
+        {
+            return new
+            {
+                id = p.Id,
+                bankId = p.BankId,
+                beginningBalance = p.BeginningBalance,
+                endingBalance = p.EndingBalance,
+                statementDate = p.StatementDate.ToString("yyyy-MM-dd"),
+                status = p.Status,
+                clearedCredits,
+                clearedDebits,
+                clearedBalance,
+                // Statement ending − cleared balance
+                difference,
+                completedUtc = p.CompletedUtc,
+                createdUtc = p.CreatedUtc
+            };
         }
 
         [HttpGet("GetAccountingSettings")]
@@ -1488,6 +1918,9 @@ namespace CimmpleAPI.Controllers
                 if (_context.GlAccountingPeriodLocks.Any(x => x.TenantId == tid && x.PeriodKey == pk))
                     return Conflict(new { error = $"Period {pk} is already closed." });
 
+                if (!GlWorkflowService.TryEnsureBankReconsCompleteForGlPeriod(_context, tid, pk, out var bankErr))
+                    return Conflict(new { error = bankErr });
+
                 _context.GlAccountingPeriodLocks.Add(new GlAccountingPeriodLock
                 {
                     TenantId = tid,
@@ -1495,7 +1928,8 @@ namespace CimmpleAPI.Controllers
                     ClosedUtc = DateTime.UtcNow,
                     ClosedByUserId = GetUserId()
                 });
-                GlWorkflowService.AddAudit(_context, tid, "PeriodClose", GetUserId(), null, null, pk, null);
+                GlWorkflowService.AddAudit(_context, tid, "PeriodClose", GetUserId(), null, null, pk,
+                    "GL period closed after bank reconciliation check");
                 _context.SaveChanges();
 
                 return Ok(new { result = new { message = $"Period {pk} closed.", periodKey = pk } });
@@ -1915,6 +2349,25 @@ namespace CimmpleAPI.Controllers
     public class BulkReconciliationRequest
     {
         public int[] TransactionIds { get; set; }
+    }
+
+    public class StartBankReconciliationPeriodRequest
+    {
+        public int BankId { get; set; }
+        public string StatementDate { get; set; }
+        public decimal EndingBalance { get; set; }
+    }
+
+    public class UpdateBankReconciliationPeriodRequest
+    {
+        public int PeriodId { get; set; }
+        public string StatementDate { get; set; }
+        public decimal? EndingBalance { get; set; }
+    }
+
+    public class CompleteBankReconciliationPeriodRequest
+    {
+        public int PeriodId { get; set; }
     }
 
     public class AccountingSettingsRequest

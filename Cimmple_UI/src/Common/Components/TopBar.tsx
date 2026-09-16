@@ -397,8 +397,12 @@ const TopBar: React.FC = () => {
     }, 100);
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
+  const handleLogout = async () => {
+    try {
+      await AuthService.logout();
+    } catch {
+      AuthService.clearSession("erp");
+    }
     User.isAuthenticated = false;
     history.push("/login");
   };

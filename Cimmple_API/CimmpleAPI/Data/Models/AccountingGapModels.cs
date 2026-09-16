@@ -70,4 +70,46 @@ namespace CimmpleAPI.Data.Models
 
         public int? ActorUserId { get; set; }
     }
+
+    /// <summary>One bank statement reconciliation period (Open or Completed).</summary>
+    public class BankReconciliationPeriod
+    {
+        [Key]
+        public int Id { get; set; }
+
+        public int TenantId { get; set; }
+
+        public int BankId { get; set; }
+
+        public decimal BeginningBalance { get; set; }
+
+        /// <summary>Statement ending balance entered from the bank statement.</summary>
+        public decimal EndingBalance { get; set; }
+
+        public DateTime StatementDate { get; set; }
+
+        /// <summary>Open | Completed</summary>
+        [MaxLength(32)]
+        public string Status { get; set; } = "Open";
+
+        /// <summary>Cleared balance snapshot when the period is completed.</summary>
+        public decimal? ClearedBalance { get; set; }
+
+        public DateTime? CompletedUtc { get; set; }
+
+        public int? CompletedByUserId { get; set; }
+
+        public DateTime CreatedUtc { get; set; }
+    }
+
+    /// <summary>Transaction cleared as part of a completed reconciliation period (audit).</summary>
+    public class BankReconciliationPeriodItem
+    {
+        [Key]
+        public int Id { get; set; }
+
+        public int PeriodId { get; set; }
+
+        public int TransactionId { get; set; }
+    }
 }
