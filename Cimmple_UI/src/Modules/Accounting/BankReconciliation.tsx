@@ -6,6 +6,9 @@ import { AccountingService, BankTransaction, BankAccount } from "../../Common/Se
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import BankStatementImportModal, {
+  BankStatementImportResult,
+} from "./BankStatementImportModal";
 
 type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
 
@@ -31,6 +34,7 @@ const BankReconciliation: React.FC = () => {
   // Default: latest transactions first
   const [sortColumn, setSortColumn] = useState<ReconSortColumn>("date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [showImport, setShowImport] = useState(false);
 
   const handleSort = (column: ReconSortColumn) => {
     if (sortColumn === column) {
@@ -335,7 +339,29 @@ const BankReconciliation: React.FC = () => {
   };
 
   const handleImportStatement = () => {
-    toast.info('Bank statement import is not available yet');
+    if (!selectedAccount || selectedAccount <= 0) {
+      toast.info("Select a bank account before importing a statement");
+      return;
+    }
+    setShowImport(true);
+  };
+
+  const handleStatementImported = async (result: BankStatementImportResult) => {
+    const today = toLocalYmd(new Date());
+    setAccounts((prev) =>
+      prev.map((a) =>
+        a.id === selectedAccount ? { ...a, lastReconciled: today } : a
+      )
+    );
+    if (result.statementBalance != null && result.statementBalance !== "") {
+      setStatementBalance(result.statementBalance);
+    }
+    // Changing statementDate triggers loadTransactions via useEffect
+    if (result.statementDate && result.statementDate !== statementDate) {
+      setStatementDate(result.statementDate);
+    } else {
+      await loadTransactions();
+    }
   };
 
   const handleExportReport = () => {
@@ -370,6 +396,15 @@ const BankReconciliation: React.FC = () => {
 
   return (
     <div style={{ padding: '1.5rem', width: '100%' }}>
+      {showImport && selectedAccountData && (
+        <BankStatementImportModal
+          bankAccountId={selectedAccount}
+          bankName={selectedAccountData.name}
+          accountNumber={selectedAccountData.accountNumber}
+          onClose={() => setShowImport(false)}
+          onApplied={handleStatementImported}
+        />
+      )}
       <div style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <div>
@@ -389,7 +424,8 @@ const BankReconciliation: React.FC = () => {
                 color: 'white',
                 border: 'none',
                 borderRadius: '0.375rem',
-                cursor: 'pointer',
+                cursor: selectedAccount > 0 ? 'pointer' : 'not-allowed',
+                opacity: selectedAccount > 0 ? 1 : 0.6,
                 fontSize: '0.875rem',
                 fontWeight: '500',
                 display: 'flex',
