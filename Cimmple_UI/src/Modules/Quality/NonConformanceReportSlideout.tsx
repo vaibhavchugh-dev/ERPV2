@@ -6,8 +6,8 @@ import {
   QualityService,
   NonConformanceReport,
   NCRStatus,
-  resolveNcrPhotoUrl,
 } from "../../Common/Services/QualityService";
+import NcrStoredPhotoImg from "./NcrStoredPhotoImg";
 import { JobOrderService, JobOrderMaster, JobOrderRoutingStep } from "../../Common/Services/JobOrderService";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
@@ -1156,7 +1156,11 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                     <div className="photo-preview-grid">
                       {storedPhotos.map((photo, index) => (
                         <div key={`stored-${index}`} className="photo-preview-item">
-                          <img src={resolveNcrPhotoUrl(photo)} alt={`Attachment ${index + 1}`} />
+                          <NcrStoredPhotoImg
+                            ncrId={ncr.ncrId || 0}
+                            photo={photo}
+                            alt={`Attachment ${index + 1}`}
+                          />
                           <button
                             type="button"
                             className="photo-delete-btn"

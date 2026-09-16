@@ -109,7 +109,11 @@ namespace CimmpleAPI.Utilities
             try
             {
                 string CloudConn = GetCloudConnectionString();
-                if (string.IsNullOrEmpty(CloudConn)) return false;
+                if (string.IsNullOrEmpty(CloudConn))
+                {
+                    Console.WriteLine("UploadFileOnServer: Azure connection string is missing (AzureConnection:storageConnectionString / AzureConnString / gcwConfig).");
+                    return false;
+                }
 
                 int Index = 0;
                 foreach (FileInfor fileDet in fileInfo)
@@ -137,8 +141,9 @@ namespace CimmpleAPI.Utilities
 
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.WriteLine($"UploadFileOnServer failed: {ex.Message}");
                 return false;
             }
         }

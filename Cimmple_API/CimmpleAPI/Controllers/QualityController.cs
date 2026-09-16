@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,6 +11,7 @@ using System.IO;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
 
 namespace CimmpleAPI.Controllers
 {
@@ -26,11 +28,16 @@ namespace CimmpleAPI.Controllers
 
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private readonly IConfiguration _configuration;
 
-        public QualityController(CimmpleDbContext context, IWebHostEnvironment environment)
+        public QualityController(
+            CimmpleDbContext context,
+            IWebHostEnvironment environment,
+            IConfiguration configuration)
         {
             _context = context;
             _environment = environment;
+            _configuration = configuration;
         }
 
         private static int _ncrExternalColumnsReady;
@@ -1519,13 +1526,6 @@ END");
                     return BadRequest(new { error = new { message = $"A maximum of {MaxPhotosPerNcr} photos is allowed per NCR" } });
                 }
 
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var folderPath = Path.Combine(webRootPath, "uploads", "ncr-photos", ncr.TenantId.ToString(), ncrId.ToString());
-                if (!Directory.Exists(folderPath))
-                {
-                    Directory.CreateDirectory(folderPath);
-                }
-
                 foreach (var file in files)
                 {
                     if (file == null || file.Length == 0)
@@ -1545,13 +1545,26 @@ END");
                     }
 
                     var uniqueFileName = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}{extension}";
-                    var filePath = Path.Combine(folderPath, uniqueFileName);
-                    using (var stream = new FileStream(filePath, FileMode.Create))
+                    var blobName = $"{ncrId}/{uniqueFileName}";
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        ncr.TenantId,
+                        ModuleFileStorage.NcrPhotosFolder,
+                        blobName);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
                     {
-                        await file.CopyToAsync(stream);
+                        return StatusCode(500, new
+                        {
+                            error = new
+                            {
+                                message = "Failed to upload photo to Azure Storage. Configure AzureConnection:storageConnectionString."
+                            }
+                        });
                     }
 
-                    existing.Add($"/uploads/ncr-photos/{ncr.TenantId}/{ncrId}/{uniqueFileName}");
+                    // Store blob name (not /uploads/...). Legacy local paths still supported on read.
+                    existing.Add(blobName);
                 }
 
                 ncr.Photos = JsonSerializer.Serialize(existing);
@@ -1564,6 +1577,86 @@ END");
             {
                 return BadRequest(new { error = new { message = ex.Message } });
             }
+        }
+
+        /// <summary>
+        /// Stream an NCR photo from Azure (or legacy local wwwroot path).
+        /// </summary>
+        [HttpGet("GetNCRPhoto/{ncrId}")]
+        public IActionResult GetNCRPhoto(int ncrId, [FromQuery] string file)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(file))
+                {
+                    return BadRequest(new { error = new { message = "file is required" } });
+                }
+
+                var ncr = _context.NonConformanceReports.AsNoTracking().FirstOrDefault(n => n.NcrId == ncrId);
+                if (ncr == null)
+                {
+                    return NotFound(new { error = new { message = "NCR not found" } });
+                }
+
+                var allowed = ParsePhotoUrls(ncr.Photos);
+                var normalized = file.Replace('\\', '/').TrimStart('/');
+                var match = allowed.FirstOrDefault(p =>
+                    string.Equals(p.Replace('\\', '/').TrimStart('/'), normalized, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(p, file, StringComparison.OrdinalIgnoreCase));
+
+                if (match == null)
+                {
+                    return NotFound(new { error = new { message = "Photo not found on NCR" } });
+                }
+
+                // Legacy local disk path
+                if (IsLegacyNcrPhotoPath(match))
+                {
+                    var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+                    var relative = match.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                    var fullPath = Path.Combine(webRootPath, relative);
+                    if (!System.IO.File.Exists(fullPath))
+                    {
+                        return NotFound(new { error = new { message = "Photo file not found on disk" } });
+                    }
+
+                    var bytes = System.IO.File.ReadAllBytes(fullPath);
+                    var contentType = ModuleFileStorage.GetContentType(match);
+                    return File(bytes, contentType);
+                }
+
+                var blobName = match.Replace('\\', '/').TrimStart('/');
+                // Strip accidental "uploads/ncr-photos/{tenant}/" if stored oddly
+                var azurePrefix = $"uploads/ncr-photos/{ncr.TenantId}/";
+                if (blobName.StartsWith(azurePrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    blobName = blobName.Substring(azurePrefix.Length);
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    ncr.TenantId,
+                    ModuleFileStorage.NcrPhotosFolder,
+                    blobName);
+
+                var azureBytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (azureBytes == null || azureBytes.Length == 0)
+                {
+                    return NotFound(new { error = new { message = "Photo not found in Azure Storage" } });
+                }
+
+                return File(azureBytes, ModuleFileStorage.GetContentType(blobName));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = new { message = ex.Message } });
+            }
+        }
+
+        private static bool IsLegacyNcrPhotoPath(string path)
+        {
+            var normalized = path.Replace('\\', '/');
+            return normalized.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase)
+                   || normalized.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase);
         }
 
         private static List<string> ParsePhotoUrls(string? photos)

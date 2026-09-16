@@ -80,6 +80,8 @@ public static class FinancialReportPdfService
         {
             foreach (var sec in sections.EnumerateArray())
             {
+                if (!SectionHasContent(sec))
+                    continue;
                 var title = GetString(sec, "title") ?? GetString(sec, "Title") ?? "";
                 sb.AppendLine(Escape(title));
                 if (TryGetProperty(sec, "lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
@@ -202,70 +204,73 @@ public static class FinancialReportPdfService
                 .Text(note).FontSize(8).FontColor(Colors.Amber.Darken3);
         }
 
-        if (TryGetProperty(root, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var sec in sections.EnumerateArray())
-            {
-                var title = GetString(sec, "title") ?? GetString(sec, "Title") ?? "";
-                col.Item().PaddingTop(8).Text(title).Bold().FontSize(11);
-                if (TryGetProperty(sec, "lines", out var lines) && lines.ValueKind == JsonValueKind.Array && lines.GetArrayLength() > 0)
-                {
-                    col.Item().Table(table =>
-                    {
-                        table.ColumnsDefinition(c =>
-                        {
-                            c.RelativeColumn(2);
-                            c.RelativeColumn(5);
-                            c.RelativeColumn(2);
-                        });
-                        table.Header(h =>
-                        {
-                            h.Cell().Text("Code").Bold();
-                            h.Cell().Text("Description").Bold();
-                            h.Cell().AlignRight().Text("Amount").Bold();
-                        });
-                        foreach (var ln in lines.EnumerateArray())
-                        {
-                            var code = GetString(ln, "accountCode") ?? GetString(ln, "AccountCode")
-                                       ?? GetString(ln, "date") ?? GetString(ln, "Date") ?? "";
-                            var name = GetString(ln, "accountName") ?? GetString(ln, "AccountName")
-                                       ?? GetString(ln, "description") ?? GetString(ln, "Description") ?? "";
-                            var amt = GetDecimal(ln, "amount") ?? GetDecimal(ln, "Amount")
-                                      ?? GetDecimal(ln, "balance") ?? GetDecimal(ln, "Balance") ?? 0;
-                            table.Cell().Text(code);
-                            table.Cell().Text(name);
-                            table.Cell().AlignRight().Text(FormatMoney(amt));
-                        }
-                    });
-                }
-                var sub = GetDecimal(sec, "subtotal") ?? GetDecimal(sec, "Subtotal");
-                if (sub.HasValue)
-                    col.Item().AlignRight().Text($"Subtotal: {FormatMoney(sub.Value)}").Bold();
-            }
+        var reportBasis = GetString(root, "reportBasis") ?? GetString(root, "ReportBasis") ?? "";
 
-            // P&L / cash flow totals
-            if (GetDecimal(root, "netIncome").HasValue || GetDecimal(root, "NetIncome").HasValue)
-                col.Item().PaddingTop(8).AlignRight().Text($"Net Income: {FormatMoney(GetDecimal(root, "netIncome") ?? GetDecimal(root, "NetIncome") ?? 0)}").Bold().FontSize(11);
-            if (GetDecimal(root, "netCashFlow").HasValue || GetDecimal(root, "NetCashFlow").HasValue)
-                col.Item().PaddingTop(8).AlignRight().Text($"Net Cash Flow: {FormatMoney(GetDecimal(root, "netCashFlow") ?? GetDecimal(root, "NetCashFlow") ?? 0)}").Bold().FontSize(11);
+        // Balance Sheet — major headers (Assets / Liabilities and Equity) matching on-screen view.
+        // Prefer assets DTO over flat sections[] so we don't lose the parent headers.
+        if (TryGetProperty(root, "assets", out var assets))
+        {
+            RenderBalanceSheet(col, root, assets);
             return;
         }
 
-        // Legacy BS flat
-        if (TryGetProperty(root, "assets", out var assets))
+        // P&L / Cash Flow sections — skip empty sections (same rule as UI).
+        if (TryGetProperty(root, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
         {
-            col.Item().Text("Assets").Bold().FontSize(11);
-            MoneyRow(col, "Current Assets", GetDecimal(assets, "currentAssets") ?? GetDecimal(assets, "CurrentAssets") ?? 0);
-            MoneyRow(col, "Fixed Assets", GetDecimal(assets, "fixedAssets") ?? GetDecimal(assets, "FixedAssets") ?? 0);
-            MoneyRow(col, "Total Assets", GetDecimal(assets, "totalAssets") ?? GetDecimal(assets, "TotalAssets") ?? 0, bold: true);
-        }
-        if (TryGetProperty(root, "liabilitiesAndEquity", out var le) || TryGetProperty(root, "LiabilitiesAndEquity", out le))
-        {
-            col.Item().PaddingTop(8).Text("Liabilities and Equity").Bold().FontSize(11);
-            MoneyRow(col, "Current Liabilities", GetDecimal(le, "currentLiabilities") ?? GetDecimal(le, "CurrentLiabilities") ?? 0);
-            MoneyRow(col, "Long Term Liabilities", GetDecimal(le, "longTermLiabilities") ?? GetDecimal(le, "LongTermLiabilities") ?? 0);
-            MoneyRow(col, "Equity", GetDecimal(le, "equity") ?? GetDecimal(le, "Equity") ?? 0);
-            MoneyRow(col, "Total Liabilities and Equity", GetDecimal(le, "totalLiabilitiesAndEquity") ?? GetDecimal(le, "TotalLiabilitiesAndEquity") ?? 0, bold: true);
+            var isCashFlow = reportBasis.Equals("direct-cash", StringComparison.OrdinalIgnoreCase)
+                             || reportType.Contains("cash", StringComparison.OrdinalIgnoreCase);
+            var isPl = reportBasis.Equals("accrual-gl", StringComparison.OrdinalIgnoreCase)
+                       || reportType.Contains("profit", StringComparison.OrdinalIgnoreCase)
+                       || reportType.Contains("income", StringComparison.OrdinalIgnoreCase);
+
+            if (isPl)
+                col.Item().Text("Profit & Loss (accrual)").Bold().FontSize(12);
+            if (isCashFlow)
+                col.Item().Text("Cash Flow (direct)").Bold().FontSize(12);
+
+            foreach (var sec in sections.EnumerateArray())
+            {
+                if (!SectionHasContent(sec))
+                    continue;
+
+                var title = GetString(sec, "title") ?? GetString(sec, "Title") ?? "";
+                col.Item().PaddingTop(10).Text(title).Bold().FontSize(10);
+
+                if (TryGetProperty(sec, "lines", out var lines) && lines.ValueKind == JsonValueKind.Array && lines.GetArrayLength() > 0)
+                {
+                    var first = lines[0];
+                    var cashStyle = isCashFlow || GetString(first, "date") != null || GetString(first, "Date") != null;
+                    if (cashStyle)
+                        RenderCashFlowLines(col, lines);
+                    else
+                        RenderAccountLines(col, lines);
+                }
+
+                var sub = GetDecimal(sec, "subtotal") ?? GetDecimal(sec, "Subtotal");
+                if (sub.HasValue)
+                    MoneyRow(col, $"Subtotal — {title}", sub.Value);
+            }
+
+            if (isPl)
+            {
+                if (GetDecimal(root, "grossProfit").HasValue || GetDecimal(root, "GrossProfit").HasValue)
+                    MoneyRow(col, "Gross profit", GetDecimal(root, "grossProfit") ?? GetDecimal(root, "GrossProfit") ?? 0);
+                if (GetDecimal(root, "operatingIncome").HasValue || GetDecimal(root, "OperatingIncome").HasValue)
+                    MoneyRow(col, "Operating income", GetDecimal(root, "operatingIncome") ?? GetDecimal(root, "OperatingIncome") ?? 0);
+                if (GetDecimal(root, "incomeBeforeTax").HasValue || GetDecimal(root, "IncomeBeforeTax").HasValue)
+                    MoneyRow(col, "Income before tax", GetDecimal(root, "incomeBeforeTax") ?? GetDecimal(root, "IncomeBeforeTax") ?? 0);
+                MoneyRow(col, "Net income",
+                    GetDecimal(root, "netIncome") ?? GetDecimal(root, "NetIncome") ?? 0, bold: true);
+            }
+
+            if (isCashFlow || GetDecimal(root, "netCashFlow").HasValue || GetDecimal(root, "NetCashFlow").HasValue)
+            {
+                col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Grey.Darken2);
+                MoneyRow(col, "Net Cash Flow",
+                    GetDecimal(root, "netCashFlow") ?? GetDecimal(root, "NetCashFlow") ?? 0, bold: true);
+            }
+
+            return;
         }
 
         if (TryGetProperty(root, "accounts", out var accounts) && accounts.ValueKind == JsonValueKind.Array)
@@ -332,11 +337,11 @@ public static class FinancialReportPdfService
         {
             foreach (var st in stmts.EnumerateArray())
             {
-                col.Item().PaddingTop(10).Text(GetString(st, "customerName") ?? "Customer").Bold().FontSize(11);
-                MoneyRow(col, "Opening Balance", GetDecimal(st, "openingBalance") ?? 0);
-                if (TryGetProperty(st, "activity", out var act) && act.ValueKind == JsonValueKind.Array)
+                col.Item().PaddingTop(12).Text(GetString(st, "customerName") ?? "Customer").Bold().FontSize(11);
+                MoneyRow(col, "Opening Balance", GetDecimal(st, "openingBalance") ?? GetDecimal(st, "OpeningBalance") ?? 0);
+                if (TryGetProperty(st, "activity", out var act) && act.ValueKind == JsonValueKind.Array && act.GetArrayLength() > 0)
                 {
-                    col.Item().Table(table =>
+                    col.Item().PaddingTop(4).Table(table =>
                     {
                         table.ColumnsDefinition(c =>
                         {
@@ -367,7 +372,15 @@ public static class FinancialReportPdfService
                         }
                     });
                 }
-                MoneyRow(col, "Closing Balance", GetDecimal(st, "closingBalance") ?? 0, bold: true);
+
+                col.Item().PaddingTop(8).LineHorizontal(1.5f).LineColor(Colors.Grey.Darken3);
+                col.Item().PaddingTop(6).PaddingBottom(4).Row(row =>
+                {
+                    row.RelativeItem().Text("Closing Balance").Bold().FontSize(10);
+                    row.ConstantItem(110).AlignRight()
+                        .Text(FormatMoney(GetDecimal(st, "closingBalance") ?? GetDecimal(st, "ClosingBalance") ?? 0))
+                        .Bold().FontSize(10);
+                });
             }
         }
 
@@ -402,27 +415,131 @@ public static class FinancialReportPdfService
             MoneyRow(col, "Total Open AP", GetDecimal(root, "totalOpenAp") ?? 0, bold: true);
         }
 
-        // Cash flow scalars if no sections rendered above
-        if (!TryGetProperty(root, "sections", out _) &&
-            (GetDecimal(root, "operatingActivities").HasValue || GetDecimal(root, "OperatingActivities").HasValue))
-        {
-            col.Item().Text("Cash Flow").Bold().FontSize(11);
-            MoneyRow(col, "Operating", GetDecimal(root, "operatingActivities") ?? GetDecimal(root, "OperatingActivities") ?? 0);
-            MoneyRow(col, "Investing", GetDecimal(root, "investingActivities") ?? GetDecimal(root, "InvestingActivities") ?? 0);
-            MoneyRow(col, "Financing", GetDecimal(root, "financingActivities") ?? GetDecimal(root, "FinancingActivities") ?? 0);
-            MoneyRow(col, "Net Cash Flow", GetDecimal(root, "netCashFlow") ?? GetDecimal(root, "NetCashFlow") ?? 0, bold: true);
-        }
-
         _ = reportType;
+    }
+
+    private static void RenderBalanceSheet(ColumnDescriptor col, JsonElement root, JsonElement assets)
+    {
+        col.Item().Text("Assets").Bold().FontSize(12);
+        RenderBsSubsection(col, "Current Assets",
+            GetLines(assets, "currentAssetLines", "CurrentAssetLines"),
+            GetDecimal(assets, "currentAssets") ?? GetDecimal(assets, "CurrentAssets") ?? 0);
+        RenderBsSubsection(col, "Fixed Assets",
+            GetLines(assets, "fixedAssetLines", "FixedAssetLines"),
+            GetDecimal(assets, "fixedAssets") ?? GetDecimal(assets, "FixedAssets") ?? 0);
+        col.Item().PaddingTop(4).LineHorizontal(1.5f).LineColor(Colors.Grey.Darken3);
+        MoneyRow(col, "Total Assets",
+            GetDecimal(assets, "totalAssets") ?? GetDecimal(assets, "TotalAssets") ?? 0, bold: true);
+
+        if (!TryGetProperty(root, "liabilitiesAndEquity", out var le) &&
+            !TryGetProperty(root, "LiabilitiesAndEquity", out le))
+            return;
+
+        col.Item().PaddingTop(14).Text("Liabilities and Equity").Bold().FontSize(12);
+        RenderBsSubsection(col, "Current Liabilities",
+            GetLines(le, "currentLiabilityLines", "CurrentLiabilityLines"),
+            GetDecimal(le, "currentLiabilities") ?? GetDecimal(le, "CurrentLiabilities") ?? 0);
+        RenderBsSubsection(col, "Long Term Liabilities",
+            GetLines(le, "longTermLiabilityLines", "LongTermLiabilityLines"),
+            GetDecimal(le, "longTermLiabilities") ?? GetDecimal(le, "LongTermLiabilities") ?? 0);
+        RenderBsSubsection(col, "Equity",
+            GetLines(le, "equityLines", "EquityLines"),
+            GetDecimal(le, "equity") ?? GetDecimal(le, "Equity") ?? 0);
+        col.Item().PaddingTop(4).LineHorizontal(1.5f).LineColor(Colors.Grey.Darken3);
+        MoneyRow(col, "Total Liabilities and Equity",
+            GetDecimal(le, "totalLiabilitiesAndEquity") ?? GetDecimal(le, "TotalLiabilitiesAndEquity") ?? 0,
+            bold: true);
+    }
+
+    private static JsonElement? GetLines(JsonElement parent, string camel, string pascal)
+    {
+        if (TryGetProperty(parent, camel, out var lines) && lines.ValueKind == JsonValueKind.Array)
+            return lines;
+        if (TryGetProperty(parent, pascal, out lines) && lines.ValueKind == JsonValueKind.Array)
+            return lines;
+        return null;
+    }
+
+    private static void RenderBsSubsection(ColumnDescriptor col, string title, JsonElement? lines, decimal subtotal)
+    {
+        col.Item().PaddingTop(8).Text(title).SemiBold().FontSize(10);
+        if (lines.HasValue && lines.Value.GetArrayLength() > 0)
+            RenderAccountLines(col, lines.Value, balanceKey: true);
+        MoneyRow(col, $"Subtotal — {title}", subtotal);
+    }
+
+    private static bool SectionHasContent(JsonElement sec)
+    {
+        var hasLines = TryGetProperty(sec, "lines", out var lines)
+                       && lines.ValueKind == JsonValueKind.Array
+                       && lines.GetArrayLength() > 0;
+        var sub = GetDecimal(sec, "subtotal") ?? GetDecimal(sec, "Subtotal") ?? 0;
+        return hasLines || Math.Abs(sub) > 0.0001m;
+    }
+
+    private static void RenderAccountLines(ColumnDescriptor col, JsonElement lines, bool balanceKey = false)
+    {
+        col.Item().Table(table =>
+        {
+            table.ColumnsDefinition(c =>
+            {
+                c.RelativeColumn(2);
+                c.RelativeColumn(5);
+                c.RelativeColumn(2);
+            });
+            table.Header(h =>
+            {
+                h.Cell().Text("Code").Bold();
+                h.Cell().Text("Account").Bold();
+                h.Cell().AlignRight().Text("Amount").Bold();
+            });
+            foreach (var ln in lines.EnumerateArray())
+            {
+                table.Cell().Text(GetString(ln, "accountCode") ?? GetString(ln, "AccountCode") ?? "");
+                table.Cell().Text(GetString(ln, "accountName") ?? GetString(ln, "AccountName") ?? "");
+                var amt = balanceKey
+                    ? (GetDecimal(ln, "balance") ?? GetDecimal(ln, "Balance") ?? 0)
+                    : (GetDecimal(ln, "amount") ?? GetDecimal(ln, "Amount")
+                       ?? GetDecimal(ln, "balance") ?? GetDecimal(ln, "Balance") ?? 0);
+                table.Cell().AlignRight().Text(FormatMoney(amt));
+            }
+        });
+    }
+
+    private static void RenderCashFlowLines(ColumnDescriptor col, JsonElement lines)
+    {
+        col.Item().Table(table =>
+        {
+            table.ColumnsDefinition(c =>
+            {
+                c.RelativeColumn(2);
+                c.RelativeColumn(5);
+                c.RelativeColumn(2);
+            });
+            table.Header(h =>
+            {
+                h.Cell().Text("Date").Bold();
+                h.Cell().Text("Description").Bold();
+                h.Cell().AlignRight().Text("Amount").Bold();
+            });
+            foreach (var ln in lines.EnumerateArray())
+            {
+                table.Cell().Text(GetString(ln, "date") ?? GetString(ln, "Date") ?? "");
+                table.Cell().Text(
+                    GetString(ln, "description") ?? GetString(ln, "Description")
+                    ?? GetString(ln, "category") ?? GetString(ln, "Category") ?? "");
+                table.Cell().AlignRight().Text(FormatMoney(GetDecimal(ln, "amount") ?? GetDecimal(ln, "Amount") ?? 0));
+            }
+        });
     }
 
     private static void MoneyRow(ColumnDescriptor col, string label, decimal amount, bool bold = false)
     {
-        col.Item().Row(row =>
+        col.Item().PaddingTop(2).Row(row =>
         {
             var left = row.RelativeItem().Text(label);
             if (bold) left.Bold();
-            var right = row.ConstantItem(100).AlignRight().Text(FormatMoney(amount));
+            var right = row.ConstantItem(110).AlignRight().Text(FormatMoney(amount));
             if (bold) right.Bold();
         });
     }

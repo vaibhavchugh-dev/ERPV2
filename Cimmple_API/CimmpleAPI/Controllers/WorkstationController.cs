@@ -153,6 +153,19 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Workstation not found" });
                     }
 
+                    if (workstation.IsActive && !request.IsActive)
+                    {
+                        var deactivateBlock = BuildWorkstationDeletionImpact(workstation.Id, request.TenantID);
+                        if (deactivateBlock.BlockingDependencies.Count > 0)
+                        {
+                            return BadRequest(new
+                            {
+                                error = deactivateBlock.BlockingReasons.FirstOrDefault()
+                                    ?? "Workstation is still referenced and cannot be deactivated"
+                            });
+                        }
+                    }
+
                     var nameNorm = request.WorkstationName.Trim();
                     // Check for duplicate workstation name (excluding current)
                     var duplicate = _context.WorkstationMaster
@@ -430,38 +443,7 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Workstation not found" });
                 }
 
-                var impact = new DeletionImpactResult
-                {
-                    CanDelete = true,
-                    BlockingReasons = new List<string>(),
-                    BlockingDependencies = new List<BlockingDependency>(),
-                    WillBeDeleted = new List<ImpactedEntity>(),
-                    WillBeAffected = new List<ImpactedEntity>(),
-                    Warnings = new List<string>()
-                };
-
-                // Check for User Workstation Mappings
-                var userMappings = _context.UserWorkstationMapping
-                    .Where(uwm => uwm.WorkstationId == workstationId && uwm.TenantId == tenantId)
-                    .ToList();
-
-                if (userMappings.Any())
-                {
-                    impact.WillBeDeleted.Add(new ImpactedEntity
-                    {
-                        EntityType = "User Mappings",
-                        Count = userMappings.Count,
-                        Description = $"{userMappings.Count} user mapping(s) will be deleted"
-                    });
-                }
-
-                // Check for Job Orders (if workstation is referenced)
-                // Note: Check JobOrderMaster for workstation references if the model has such a field
-                // For now, we'll just add a warning if there are any job orders that might reference it
-
-                impact.Warnings.Add("This action cannot be undone");
-
-                return Ok(new { result = impact });
+                return Ok(new { result = BuildWorkstationDeletionImpact(workstationId, tenantId) });
             }
             catch (Exception ex)
             {
@@ -482,13 +464,21 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Workstation not found" });
                 }
 
-                // Delete related entities
+                var impact = BuildWorkstationDeletionImpact(workstationId, tenantId);
+                if (!impact.CanDelete)
+                {
+                    return BadRequest(new
+                    {
+                        error = impact.BlockingReasons.FirstOrDefault()
+                            ?? "Workstation is still referenced and cannot be deleted"
+                    });
+                }
+
                 var userMappings = _context.UserWorkstationMapping
                     .Where(uwm => uwm.WorkstationId == workstationId && uwm.TenantId == tenantId)
                     .ToList();
                 _context.UserWorkstationMapping.RemoveRange(userMappings);
 
-                // Delete the workstation
                 _context.WorkstationMaster.Remove(workstation);
                 _context.SaveChanges();
 
@@ -498,6 +488,127 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
+        }
+
+        private DeletionImpactResult BuildWorkstationDeletionImpact(int workstationId, int tenantId)
+        {
+            var impact = new DeletionImpactResult
+            {
+                CanDelete = true,
+                BlockingReasons = new List<string>(),
+                BlockingDependencies = new List<BlockingDependency>(),
+                WillBeDeleted = new List<ImpactedEntity>(),
+                WillBeAffected = new List<ImpactedEntity>(),
+                Warnings = new List<string>()
+            };
+
+            var userMappingsCount = _context.UserWorkstationMapping
+                .Count(uwm => uwm.WorkstationId == workstationId && uwm.TenantId == tenantId);
+            if (userMappingsCount > 0)
+            {
+                impact.WillBeDeleted.Add(new ImpactedEntity
+                {
+                    EntityType = "User Mappings",
+                    Count = userMappingsCount,
+                    Description = $"{userMappingsCount} user mapping(s) will be deleted"
+                });
+            }
+
+            var processes = _context.ProcessMaster
+                .AsNoTracking()
+                .Where(p => p.Tenantid == tenantId && p.DefaultWorkstationId == workstationId)
+                .Select(p => new { p.Id, p.ProcessName })
+                .ToList();
+            if (processes.Count > 0)
+            {
+                impact.CanDelete = false;
+                impact.BlockingDependencies.Add(new BlockingDependency
+                {
+                    EntityType = "Process Master",
+                    Description = $"Used as default workstation on {processes.Count} process(es)",
+                    Items = processes.Take(10).Select(p => new DependencyItem
+                    {
+                        Id = p.Id,
+                        Name = string.IsNullOrWhiteSpace(p.ProcessName) ? $"Process #{p.Id}" : p.ProcessName!
+                    }).ToList()
+                });
+            }
+
+            var templateHeaderIds = _context.JobTemplateMaster
+                .AsNoTracking()
+                .Where(t => t.Tenantid == tenantId && t.WorkstationId == workstationId)
+                .Select(t => t.Id)
+                .ToList();
+            var opTemplateIds = _context.JobTemplateOperation
+                .AsNoTracking()
+                .Where(o => o.Tenantid == tenantId && o.WorkstationId == workstationId)
+                .Select(o => o.JobTemplateId)
+                .Distinct()
+                .ToList();
+            var allTemplateIds = templateHeaderIds.Union(opTemplateIds).Distinct().ToList();
+            if (allTemplateIds.Count > 0)
+            {
+                impact.CanDelete = false;
+                var names = _context.JobTemplateMaster
+                    .AsNoTracking()
+                    .Where(t => allTemplateIds.Contains(t.Id))
+                    .Select(t => new { t.Id, t.TemplateName, t.TemplateCode })
+                    .ToList();
+                impact.BlockingDependencies.Add(new BlockingDependency
+                {
+                    EntityType = "Job Templates",
+                    Description = $"Referenced by {allTemplateIds.Count} job template(s) (header or operations)",
+                    Items = names.Take(10).Select(t => new DependencyItem
+                    {
+                        Id = t.Id,
+                        Name = !string.IsNullOrWhiteSpace(t.TemplateName)
+                            ? t.TemplateName!
+                            : (!string.IsNullOrWhiteSpace(t.TemplateCode) ? t.TemplateCode! : $"Template #{t.Id}")
+                    }).ToList()
+                });
+            }
+
+            var jobOrderCount = CountJobOrdersReferencingField(tenantId, "workstationId", workstationId);
+            if (jobOrderCount > 0)
+            {
+                impact.CanDelete = false;
+                impact.BlockingDependencies.Add(new BlockingDependency
+                {
+                    EntityType = "Job Orders",
+                    Description = $"Referenced in routing on {jobOrderCount} job order(s)",
+                    Items = new List<DependencyItem>()
+                });
+            }
+
+            if (!impact.CanDelete)
+            {
+                impact.BlockingReasons.Add(
+                    "This workstation is still referenced by Process Master, Job Templates, or Job Order routing.");
+            }
+            else
+            {
+                impact.Warnings.Add("This action cannot be undone");
+            }
+
+            return impact;
+        }
+
+        private int CountJobOrdersReferencingField(int tenantId, string jsonFieldCamel, int id)
+        {
+            var idStr = id.ToString();
+            var patterns = new[]
+            {
+                $"\"{jsonFieldCamel}\":{idStr}",
+                $"\"{jsonFieldCamel}\": {idStr}",
+                $"\"{char.ToUpperInvariant(jsonFieldCamel[0]) + jsonFieldCamel.Substring(1)}\":{idStr}",
+                $"\"{char.ToUpperInvariant(jsonFieldCamel[0]) + jsonFieldCamel.Substring(1)}\": {idStr}"
+            };
+            return _context.JobOrderMaster
+                .AsNoTracking()
+                .Where(j => j.Tenantid == tenantId && j.RoutingStepsJson != null && j.RoutingStepsJson != "")
+                .AsEnumerable()
+                .Count(j => patterns.Any(p =>
+                    j.RoutingStepsJson!.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0));
         }
     }
 
