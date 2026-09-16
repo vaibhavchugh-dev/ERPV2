@@ -70,6 +70,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     results.shipments.length +
     results.ncrReports.length +
     results.users.length +
+    (results.employees?.length || 0) +
     results.documents.length;
 
   if (loading) {
@@ -183,6 +184,8 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
       case 'ncrReport':
         return `${result.partNo || ''}${result.customerName ? ` • ${result.customerName}` : ''}`;
       case 'user':
+        return `${result.email || ''}${result.userName ? ` • ${result.userName}` : ''}`;
+      case 'employee':
         return `${result.email || ''}${result.userName ? ` • ${result.userName}` : ''}`;
       case 'document':
         const docParts: string[] = [];
@@ -475,6 +478,18 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
             <span>Users ({results.users.length})</span>
           </div>
           {results.users.map(result => renderResultItem(result, faUser))}
+        </div>
+      )}
+
+      {results.employees && results.employees.length > 0 && (
+        <div className="search-results-section" key="employees-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="employees-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faUser} />
+            </div>
+            <span>Employees ({results.employees.length})</span>
+          </div>
+          {results.employees.map(result => renderResultItem(result, faUser))}
         </div>
       )}
 

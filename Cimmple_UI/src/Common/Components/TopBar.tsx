@@ -322,7 +322,7 @@ const TopBar: React.FC = () => {
       'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
       'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
       'locations', 'processes', 'jobTemplates', 'priceBreakdowns', 'creditCards', 'chartOfAccounts',
-      'shipments', 'ncrReports', 'users', 'documents'
+      'shipments', 'ncrReports', 'users', 'employees', 'documents'
     ];
     for (const cat of categories) {
       const list = resultsData[cat];

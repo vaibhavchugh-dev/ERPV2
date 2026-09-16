@@ -56,8 +56,6 @@ namespace CimmpleAPI.Data
         public DbSet<JobTemplateAttachment> JobTemplateAttachment { get; set; }
 
         public DbSet<CreditCardMaster> CreditCardMaster { get; set; }
-        public DbSet<DocumentMaster> DocumentMaster { get; set; }
-        public DbSet<DocumentType> DocumentType { get; set; }
         public DbSet<EntityMaster> EntityMaster { get; set; }
         
         // Document Management Entities
