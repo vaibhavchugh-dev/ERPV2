@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { BankService, BankMaster } from "../Services/BankService";
+import { useActiveLocation } from "./useActiveLocation";
 
 export function getBankDisplayName(bank: BankMaster): string {
   const name = bank.nickName || bank.bankName || "Bank";
@@ -19,10 +20,11 @@ export function pickDefaultBankId(banks: BankMaster[]): number {
 }
 
 /**
- * Loads company bank accounts from Bank Master for payment forms.
- * Defaults selection to the primary bank when available.
+ * Loads company bank accounts for payment forms, scoped to the active working site
+ * so bank lists stay consistent with Bank Master and Bank Reconciliation.
  */
 export function useCompanyBanks() {
+  const { locationId } = useActiveLocation();
   const [banks, setBanks] = useState<BankMaster[]>([]);
   const [bankId, setBankId] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -32,10 +34,10 @@ export function useCompanyBanks() {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      // Payment forms need all company banks for the tenant — do not filter by
-      // working location (that was emptying the dropdown when banks live on
-      // another site). Bank Master / recon can still location-scope separately.
-      const result = await BankService.GetBanklist({ tenantid: tenantID });
+      const result = await BankService.GetBanklist({
+        tenantid: tenantID,
+        ...(locationId > 0 ? { locationId } : {}),
+      });
       const active = (result || []).filter(
         (b) => !b.status || b.status.toLowerCase() === "active"
       );
@@ -52,7 +54,7 @@ export function useCompanyBanks() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locationId]);
 
   useEffect(() => {
     loadBanks();

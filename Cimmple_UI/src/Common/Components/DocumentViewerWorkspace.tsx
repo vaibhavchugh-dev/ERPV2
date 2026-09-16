@@ -16,6 +16,8 @@ export type DocumentViewerFile = {
   /** Cached or pending local blob/object URL */
   localUrl?: string;
   fileUniqueno?: number;
+  /** Documents module version id when previewing a non-current version */
+  versionId?: number;
   size?: number;
   isPending?: boolean;
 };

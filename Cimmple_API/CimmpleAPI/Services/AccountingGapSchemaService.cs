@@ -161,6 +161,59 @@ IF COL_LENGTH(N'dbo.AccountingDefaults', N'TaxRegistrationNumber') IS NULL AND O
 BEGIN
     ALTER TABLE dbo.AccountingDefaults ADD [TaxRegistrationNumber] nvarchar(50) NULL;
 END
+
+IF OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriod', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.BankReconciliationPeriod (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [TenantId] int NOT NULL,
+        [BankId] int NOT NULL,
+        [BeginningBalance] decimal(18,2) NOT NULL,
+        [EndingBalance] decimal(18,2) NOT NULL,
+        [StatementDate] datetime2 NOT NULL,
+        [Status] nvarchar(32) NOT NULL,
+        [ClearedBalance] decimal(18,2) NULL,
+        [CompletedUtc] datetime2 NULL,
+        [CompletedByUserId] int NULL,
+        [CreatedUtc] datetime2 NOT NULL,
+        CONSTRAINT [PK_BankReconciliationPeriod] PRIMARY KEY ([Id])
+    );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankReconPeriod_Tenant_Bank_Status' AND object_id = OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriod'))
+BEGIN
+    CREATE UNIQUE INDEX [IX_BankReconPeriod_Tenant_Bank_Status]
+        ON CimmpleFlow.BankReconciliationPeriod ([TenantId], [BankId])
+        WHERE [Status] = N'Open';
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankReconPeriod_Tenant_Bank_Date' AND object_id = OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriod'))
+BEGIN
+    CREATE INDEX [IX_BankReconPeriod_Tenant_Bank_Date]
+        ON CimmpleFlow.BankReconciliationPeriod ([TenantId], [BankId], [StatementDate]);
+END
+
+IF OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriodItem', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.BankReconciliationPeriodItem (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [PeriodId] int NOT NULL,
+        [TransactionId] int NOT NULL,
+        CONSTRAINT [PK_BankReconciliationPeriodItem] PRIMARY KEY ([Id])
+    );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankReconPeriodItem_Period_Txn' AND object_id = OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriodItem'))
+BEGIN
+    CREATE UNIQUE INDEX [IX_BankReconPeriodItem_Period_Txn]
+        ON CimmpleFlow.BankReconciliationPeriodItem ([PeriodId], [TransactionId]);
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankReconPeriodItem_Txn' AND object_id = OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriodItem'))
+BEGIN
+    CREATE INDEX [IX_BankReconPeriodItem_Txn]
+        ON CimmpleFlow.BankReconciliationPeriodItem ([TransactionId]);
+END
 ").ConfigureAwait(false);
 
                 Volatile.Write(ref _ensured, 1);

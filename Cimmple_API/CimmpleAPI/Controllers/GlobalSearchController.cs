@@ -51,6 +51,7 @@ namespace CimmpleAPI.Controllers
                         shipments = new List<object>(),
                         ncrReports = new List<object>(),
                         users = new List<object>(),
+                        employees = new List<object>(),
                         documents = new List<object>()
                     });
                 }
@@ -81,6 +82,7 @@ namespace CimmpleAPI.Controllers
                     shipments = await SearchShipments(searchTerm, tenantId, limit),
                     ncrReports = await SearchNCRReports(searchTerm, tenantId, limit),
                     users = await SearchUsers(searchTerm, tenantId, limit),
+                    employees = await SearchEmployees(searchTerm, tenantId, limit),
                     documents = await SearchDocuments(searchTerm, tenantId, limit)
                 };
 
@@ -780,6 +782,34 @@ namespace CimmpleAPI.Controllers
                 .ToListAsync();
 
             return ncrReports.Cast<object>().ToList();
+        }
+
+        // Employee Search Method (shop employees in Employee Master)
+        private async Task<List<object>> SearchEmployees(string searchTerm, int tenantId, int limit)
+        {
+            var employees = await _context.UserDetails
+                .Where(u => u.TenantID == tenantId &&
+                    (u.VendorId == null || u.VendorId == 0) &&
+                    ((u.FirstName != null && u.FirstName.ToLower().Contains(searchTerm)) ||
+                     (u.LastName != null && u.LastName.ToLower().Contains(searchTerm)) ||
+                     (u.Email != null && u.Email.ToLower().Contains(searchTerm)) ||
+                     (u.UserName != null && u.UserName.ToLower().Contains(searchTerm)) ||
+                     (u.EmpCode != null && u.EmpCode.ToLower().Contains(searchTerm))))
+                .Take(limit)
+                .Select(u => new
+                {
+                    id = u.User_UniqueID,
+                    type = "employee",
+                    firstName = u.FirstName ?? "",
+                    lastName = u.LastName ?? "",
+                    email = u.Email ?? "",
+                    userName = u.UserName ?? "",
+                    empCode = u.EmpCode ?? "",
+                    status = u.Status ?? ""
+                })
+                .ToListAsync();
+
+            return employees.Cast<object>().ToList();
         }
 
         // User Search Method

@@ -5,6 +5,11 @@ import { toast } from "react-toastify";
 import { AuthService } from "../Common/Services/AuthService";
 import { User } from "../Common/Services/User";
 import { protectedRoutes } from "../Common/Routes";
+import {
+  getPasswordPolicyHints,
+  validatePasswordAgainstPolicy,
+} from "../Common/Utils/passwordPolicy";
+import { getCachedSettings } from "../Common/Utils/settingsRuntime";
 import "./Login.scss";
 
 export const ChangePassword: React.FC = () => {
@@ -14,8 +19,15 @@ export const ChangePassword: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
 
+  const passwordHints = getPasswordPolicyHints(getCachedSettings());
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const policyError = validatePasswordAgainstPolicy(newPassword, getCachedSettings());
+    if (policyError) {
+      toast.error(policyError);
+      return;
+    }
     if (newPassword !== confirmPassword) {
       toast.error("New passwords do not match");
       return;
@@ -96,6 +108,9 @@ export const ChangePassword: React.FC = () => {
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
               />
+              <Form.Text className="text-muted">
+                Must include {passwordHints.join(", ")}.
+              </Form.Text>
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Confirm new password</Form.Label>

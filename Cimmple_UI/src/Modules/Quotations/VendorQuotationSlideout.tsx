@@ -35,6 +35,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -1405,7 +1406,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
       onClose(true);
     } catch (error: any) {
-      toast.error(`Error saving quotation: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving quotation: ${getApiErrorMessage(error, "Unknown error")}`);
       console.error("Error saving quotation:", error);
     } finally {
       setLoading(false);

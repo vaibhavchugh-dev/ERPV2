@@ -4,10 +4,12 @@ import { toast } from "react-toastify";
 import MasterListPage, { ColumnConfig } from "../../Common/Components/MasterListPage";
 import BankMasterSlideout from "./BankMasterSlideout";
 import { BankService, BankMaster } from "../../Common/Services/BankService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 const BankMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [banks, setBanks] = useState<BankMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
@@ -17,7 +19,7 @@ const BankMasterComponent: React.FC = () => {
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const openId = params.get('open');
+    const openId = params.get("open");
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -28,7 +30,6 @@ const BankMasterComponent: React.FC = () => {
     }
   }, [location.search, history, location.pathname]);
 
-  // Define columns for the table
   const columns: ColumnConfig<BankMaster>[] = [
     {
       key: "accountNo",
@@ -80,9 +81,11 @@ const BankMasterComponent: React.FC = () => {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
 
-      const result = await BankService.GetBanklist({ tenantid: tenantID });
+      const result = await BankService.GetBanklist({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       if (result) {
-        // Apply filter
         let filtered = result;
         if (filterValue === "active") {
           filtered = result.filter((b) => b.status === "Active");
@@ -100,11 +103,7 @@ const BankMasterComponent: React.FC = () => {
 
   useEffect(() => {
     loadBanks();
-  }, []);
-
-  useEffect(() => {
-    loadBanks();
-  }, [filterValue]);
+  }, [filterValue, locationIdParam]);
 
   const handleAddBank = () => {
     setSelectedBankId(0);
@@ -123,7 +122,6 @@ const BankMasterComponent: React.FC = () => {
     }
   };
 
-  // Filter banks based on filterValue
   const filteredBanks = banks.filter((bank) => {
     if (filterValue === "all") return true;
     if (filterValue === "active") return bank.status === "Active";
@@ -146,6 +144,7 @@ const BankMasterComponent: React.FC = () => {
         searchPlaceholder="Search banks..."
         searchFields={["bankName", "accountNo", "accountType", "email", "phone"]}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: [
@@ -156,12 +155,11 @@ const BankMasterComponent: React.FC = () => {
             value: filterValue,
             onChange: (value) => {
               setFilterValue(value);
-              loadBanks();
             },
           },
         ]}
         getRowId={(row) => row.id}
-        emptyMessage="No banks found"
+        emptyMessage="No banks found for this site"
         columnPreferenceKey="bankMaster.hiddenColumns"
         defaultHiddenColumns={["phone", "email"]}
       />
@@ -177,9 +175,3 @@ const BankMasterComponent: React.FC = () => {
 };
 
 export default BankMasterComponent;
-
-
-
-
-
-

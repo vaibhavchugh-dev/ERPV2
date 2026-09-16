@@ -22,7 +22,7 @@ interface DocumentDetailModalProps {
   document: Document;
   onClose: () => void;
   onChanged?: () => void;
-  onPreview?: (document: Document) => void;
+  onPreview?: (document: Document, versionId?: number) => void;
 }
 
 const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
@@ -65,6 +65,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   const handleDownload = async (versionId?: number) => {
+    const toastId = toast.info("Downloading document...", { autoClose: false });
     try {
       const blob = await DocumentService.DownloadDocument(document.id, versionId);
       const url = window.URL.createObjectURL(blob);
@@ -78,11 +79,28 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
       a.click();
       window.URL.revokeObjectURL(url);
       window.document.body.removeChild(a);
+      toast.dismiss(toastId);
       toast.success("Download started");
     } catch (error: any) {
       console.error("Error downloading:", error);
+      toast.dismiss(toastId);
       toast.error(`Error downloading: ${error.message || "Unknown error"}`);
     }
+  };
+
+  const handlePreviewVersion = (versionId?: number) => {
+    if (!onPreview) return;
+    const version = versionId
+      ? versions.find((v) => v.id === versionId)
+      : versions.find((v) => v.isCurrentVersion);
+    onPreview(
+      {
+        ...document,
+        fileName: version?.fileName || document.fileName,
+        fileSize: version?.fileSize || document.fileSize,
+      },
+      versionId
+    );
   };
 
   const handleVersionUpload = async () => {
@@ -220,7 +238,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
               {onPreview && (
                 <button
                   className="btn btn-secondary"
-                  onClick={() => onPreview(document)}
+                  onClick={() => handlePreviewVersion()}
                 >
                   <FontAwesomeIcon icon={faEye} /> Preview
                 </button>
@@ -332,7 +350,15 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                         )}
                         <button
                           className="btn-download-version"
+                          onClick={() => handlePreviewVersion(version.id)}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faEye} /> Preview
+                        </button>
+                        <button
+                          className="btn-download-version"
                           onClick={() => handleDownload(version.id)}
+                          type="button"
                         >
                           <FontAwesomeIcon icon={faDownload} /> Download
                         </button>

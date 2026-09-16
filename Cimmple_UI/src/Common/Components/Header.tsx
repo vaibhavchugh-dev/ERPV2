@@ -2,14 +2,19 @@ import React from "react";
 import { Navbar, Nav, Container } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { User } from "../Services/User";
+import { AuthService } from "../Services/AuthService";
 
 const Header: React.FC = () => {
   const history = useHistory();
   const storage = JSON.parse(localStorage.getItem("storage") || "{}");
   const userName = storage?.userName || "User";
 
-  const handleLogout = () => {
-    localStorage.clear();
+  const handleLogout = async () => {
+    try {
+      await AuthService.logout();
+    } catch {
+      AuthService.clearSession("erp");
+    }
     User.isAuthenticated = false;
     history.push("/login");
   };

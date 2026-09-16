@@ -408,19 +408,23 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Save attachments as JSON (persisted metadata; new blobs uploaded via JobOrderSaveFile).
-                if (request.Attachments != null && request.Attachments.Count > 0)
+                // Omit-safe: null Attachments means leave existing JSON alone (UI may upload next).
+                if (request.Attachments != null)
                 {
-                    var attachmentOptions = new JsonSerializerOptions
+                    if (request.Attachments.Count > 0)
                     {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        PropertyNameCaseInsensitive = true,
-                        WriteIndented = false
-                    };
-                    jobOrder.AttachmentsJson = JsonSerializer.Serialize(request.Attachments, attachmentOptions);
-                }
-                else
-                {
-                    jobOrder.AttachmentsJson = null;
+                        var attachmentOptions = new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            PropertyNameCaseInsensitive = true,
+                            WriteIndented = false
+                        };
+                        jobOrder.AttachmentsJson = JsonSerializer.Serialize(request.Attachments, attachmentOptions);
+                    }
+                    else
+                    {
+                        jobOrder.AttachmentsJson = null;
+                    }
                 }
 
                 // Save comments as JSON
@@ -662,10 +666,11 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         [HttpPost("JobOrderSaveFile")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> JobOrderSaveFile(IFormCollection form)
+        public async Task<IActionResult> JobOrderSaveFile()
         {
             try
             {
+                var form = await Request.ReadFormAsync();
                 var files = form.Files;
                 if (files == null || files.Count == 0)
                 {
@@ -777,7 +782,15 @@ namespace CimmpleAPI.Controllers
                     var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
                     if (!uploadedOk)
                     {
-                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                        var connMissing = string.IsNullOrEmpty(
+                            _configuration["AzureConnection:storageConnectionString"]
+                            ?? _configuration["AzureConnString"]);
+                        return StatusCode(500, new
+                        {
+                            error = connMissing
+                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                                : $"Failed to upload file '{displayName}' to Azure Storage"
+                        });
                     }
 
                     var dto = new JobOrderAttachmentDto

@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { UserManagementService } from "../../Common/Services/UserManagementService";
+import {
+  getPasswordPolicyHints,
+  validatePasswordAgainstPolicy,
+} from "../../Common/Utils/passwordPolicy";
+import { getCachedSettings } from "../../Common/Utils/settingsRuntime";
 import "./ResetPasswordModal.scss";
 
 export interface ResetPasswordUser {
@@ -39,12 +44,13 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [loading, onClose]);
 
+  const passwordHints = getPasswordPolicyHints(getCachedSettings());
+
   const validate = (): boolean => {
     const next: { newPassword?: string; confirmPassword?: string } = {};
-    if (!newPassword.trim()) {
-      next.newPassword = "New password is required";
-    } else if (newPassword.length < 8) {
-      next.newPassword = "Password must be at least 8 characters";
+    const policyError = validatePasswordAgainstPolicy(newPassword, getCachedSettings());
+    if (policyError) {
+      next.newPassword = policyError;
     }
     if (!confirmPassword.trim()) {
       next.confirmPassword = "Confirm password is required";
@@ -167,6 +173,9 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
               </button>
             </div>
             {errors.newPassword && <span className="error-message">{errors.newPassword}</span>}
+            <small className="reset-password-hint">
+              Must include {passwordHints.join(", ")}.
+            </small>
           </div>
 
           <div className="form-group">

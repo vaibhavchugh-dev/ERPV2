@@ -85,7 +85,8 @@ namespace CimmpleAPI.Services
         }
 
         /// <summary>
-        /// Bank statement sign: customer payments / deposits are credits; others are debits.
+        /// Bank statement sign: deposits / customer receipts are credits (+);
+        /// payments / withdrawals are debits (−). Always uses absolute amount magnitude.
         /// </summary>
         public static (decimal signedAmount, bool isCredit) MapBankTransactionSign(
             decimal amount,
@@ -94,7 +95,8 @@ namespace CimmpleAPI.Services
         {
             var isCredit = isCustomer == 1 ||
                            string.Equals(transactionType, "Deposit", StringComparison.OrdinalIgnoreCase);
-            var signed = isCredit ? amount : -Math.Abs(amount);
+            var magnitude = Math.Abs(amount);
+            var signed = isCredit ? magnitude : -magnitude;
             return (signed, isCredit);
         }
 

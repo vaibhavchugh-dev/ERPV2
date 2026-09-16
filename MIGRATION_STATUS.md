@@ -20,7 +20,6 @@ The migration includes all 20+ models:
 - ✅ WorkstationMaster
 - ✅ NCRCodeMaster
 - ✅ ProcessMaster
-- ✅ DocumentMaster
 - ✅ EntityMaster
 - ✅ CustomerOrder + QuotationOrder
 - ✅ VendorOrder + VendorQuotations
