@@ -471,6 +471,15 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"Received SaveOrder request - OrderID: {request.OrderID}, CustomerID: {request.CustomerID}, Tenantid: {request.Tenantid}");
 
+                if (request.Tenantid <= 0)
+                {
+                    request.Tenantid = GetTenantId();
+                }
+                if (request.Tenantid <= 0)
+                {
+                    return BadRequest(new { error = "TenantId is required" });
+                }
+
                 // Validate required fields
                 if (request.CustomerID <= 0)
                 {
@@ -883,7 +892,15 @@ namespace CimmpleAPI.Controllers
                     {
                         _context.OrderAttachment.Remove(attachment);
                         _context.SaveChanges();
-                        return StatusCode(500, new { error = $"Failed to upload file '{displayName}' to Azure Storage" });
+                        var connMissing = string.IsNullOrEmpty(
+                            _configuration["AzureConnection:storageConnectionString"]
+                            ?? _configuration["AzureConnString"]);
+                        return StatusCode(500, new
+                        {
+                            error = connMissing
+                                ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                                : $"Failed to upload file '{displayName}' to Azure Storage"
+                        });
                     }
 
                     uploaded.Add(MapOrderAttachmentDto(attachment));

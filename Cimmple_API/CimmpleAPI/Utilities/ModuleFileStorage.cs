@@ -23,6 +23,7 @@ namespace CimmpleAPI.Utilities
         public const string VendorOrdersFolder = "VendorOrders";
         public const string DocumentsFolder = "Documents";
         public const string JobOrdersFolder = "JobOrders";
+        public const string NcrPhotosFolder = "NCRPhotos";
 
         public static string GetDirectory(int tenantId, string moduleFolder)
         {

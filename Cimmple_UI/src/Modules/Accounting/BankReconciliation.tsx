@@ -1,25 +1,27 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
-import { faUniversity, faCheckCircle, faExclamationTriangle, faSync, faDownload, faUpload, faSearch, faFilter } from "@fortawesome/free-solid-svg-icons";
+import { faCheckCircle, faExclamationTriangle, faDownload, faUpload, faFilter } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, BankTransaction, BankAccount } from "../../Common/Services/AccountingService";
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
 
 const BankReconciliation: React.FC = () => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
   const formatCurrency = (amount: number) => formatCurrencyRaw(amount);
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [selectedAccount, setSelectedAccount] = useState<number>(0);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [openingBalances, setOpeningBalances] = useState<Record<number, number>>({});
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [periodActivity, setPeriodActivity] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [statementDate, setStatementDate] = useState('');
   const [statementBalance, setStatementBalance] = useState('');
-  const [reconciledBalance, setReconciledBalance] = useState(0);
   const [differences, setDifferences] = useState<BankTransaction[]>([]);
   const [filters, setFilters] = useState({
     reconciled: 'all',
@@ -75,6 +77,15 @@ const BankReconciliation: React.FC = () => {
     return rows;
   }, [transactions, sortColumn, sortDirection]);
 
+  // Cleared balance = opening + sum of reconciled amounts (filtered set)
+  const reconciledBalance = useMemo(() => {
+    const opening = openingBalances[selectedAccount] ?? 0;
+    const clearedSum = transactions
+      .filter((t) => t.reconciled)
+      .reduce((sum, t) => sum + t.amount, 0);
+    return opening + clearedSum;
+  }, [openingBalances, selectedAccount, transactions]);
+
   const sortIcon = (column: ReconSortColumn) => {
     if (sortColumn !== column) return "⇅";
     return sortDirection === "asc" ? "↑" : "↓";
@@ -113,21 +124,26 @@ const BankReconciliation: React.FC = () => {
     return `${y}-${m}-${day}`;
   };
 
+  const txnDateYmd = (dateStr: string) => (dateStr || "").slice(0, 10);
+
   useEffect(() => {
     loadBankAccounts();
-  }, []);
+  }, [locationIdParam]);
 
   useEffect(() => {
     if (selectedAccount > 0) {
       loadTransactions();
     }
-  }, [selectedAccount, filters]);
+  }, [selectedAccount, filters, statementDate]);
 
   const loadBankAccounts = async () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
-      const bankData = await BankService.GetBanklist({ tenantid: tenantID });
+      const bankData = await BankService.GetBanklist({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       if (bankData && bankData.length > 0) {
         const openings: Record<number, number> = {};
         const transformedAccounts: BankAccount[] = bankData.map(bank => {
@@ -149,6 +165,13 @@ const BankReconciliation: React.FC = () => {
             ? prev
             : transformedAccounts[0].id
         );
+      } else {
+        setOpeningBalances({});
+        setAccounts([]);
+        setSelectedAccount(0);
+        setTransactions([]);
+        setPeriodActivity(0);
+        setDifferences([]);
       }
     } catch (error) {
       console.error('Error loading bank accounts:', error);
@@ -197,6 +220,11 @@ const BankReconciliation: React.FC = () => {
           endYmd = toLocalYmd(endDate);
       }
 
+      // Clamp fetch end to statement date when set
+      if (statementDate && endYmd && statementDate < endYmd) {
+        endYmd = statementDate;
+      }
+
       const transactions = await AccountingService.GetBankTransactions(
         selectedAccount,
         startYmd,
@@ -205,6 +233,13 @@ const BankReconciliation: React.FC = () => {
 
       if (transactions) {
         let filteredTransactions = transactions;
+
+        // Also filter client-side so display/reconcile stay <= statement date
+        if (statementDate) {
+          filteredTransactions = filteredTransactions.filter(
+            (t) => txnDateYmd(t.date) <= statementDate
+          );
+        }
 
         if (filters.reconciled !== 'all') {
           const isReconciled = filters.reconciled === 'reconciled';
@@ -229,10 +264,6 @@ const BankReconciliation: React.FC = () => {
         const activity = filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
         setPeriodActivity(activity);
 
-        const reconciledTxns = filteredTransactions.filter(t => t.reconciled);
-        const calculatedBalance = reconciledTxns.reduce((sum, t) => sum + t.amount, 0);
-        setReconciledBalance(calculatedBalance);
-
         const unreconciledTxns = filteredTransactions.filter(t => !t.reconciled);
         setDifferences(unreconciledTxns);
       }
@@ -245,33 +276,43 @@ const BankReconciliation: React.FC = () => {
   };
 
   const handleReconcile = async (transactionId: number) => {
+    if (reconciling) return;
+    const transaction = transactions.find(t => t.id === transactionId);
+    if (!transaction) return;
+
+    setReconciling(true);
+    const toastId = toast.info('Reconciling…', { autoClose: false });
     try {
-      const transaction = transactions.find(t => t.id === transactionId);
-      if (transaction) {
-        await AccountingService.ReconcileBankTransaction(transactionId, !transaction.reconciled);
-        await loadTransactions();
-        // Avoid full bank-list reload on every toggle; only refresh last-reconciled stamp.
-        const today = toLocalYmd(new Date());
-        setAccounts(prev =>
-          prev.map(a =>
-            a.id === selectedAccount ? { ...a, lastReconciled: today } : a
-          )
-        );
-        toast.success('Transaction reconciliation updated');
-      }
+      await AccountingService.ReconcileBankTransaction(transactionId, !transaction.reconciled);
+      await loadTransactions();
+      // Avoid full bank-list reload on every toggle; only refresh last-reconciled stamp.
+      const today = toLocalYmd(new Date());
+      setAccounts(prev =>
+        prev.map(a =>
+          a.id === selectedAccount ? { ...a, lastReconciled: today } : a
+        )
+      );
+      toast.dismiss(toastId);
+      toast.success('Transaction reconciliation updated');
     } catch (error: any) {
       console.error('Error reconciling transaction:', error);
+      toast.dismiss(toastId);
       toast.error(error?.response?.data?.error || 'Failed to update reconciliation status');
+    } finally {
+      setReconciling(false);
     }
   };
 
   const handleBulkReconcile = async () => {
+    if (reconciling) return;
     const unreconciled = transactions.filter(t => !t.reconciled);
     if (unreconciled.length === 0) {
       toast.info('No unreconciled transactions to process');
       return;
     }
 
+    setReconciling(true);
+    const toastId = toast.info('Reconciling…', { autoClose: false });
     try {
       const transactionIds = unreconciled.map(t => t.id);
       await AccountingService.BulkReconcileTransactions(transactionIds);
@@ -282,10 +323,14 @@ const BankReconciliation: React.FC = () => {
           a.id === selectedAccount ? { ...a, lastReconciled: today } : a
         )
       );
+      toast.dismiss(toastId);
       toast.success(`${unreconciled.length} transactions reconciled`);
     } catch (error: any) {
       console.error('Error bulk reconciling transactions:', error);
+      toast.dismiss(toastId);
       toast.error(error?.response?.data?.error || 'Failed to reconcile transactions');
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -321,6 +366,7 @@ const BankReconciliation: React.FC = () => {
   };
 
   const selectedAccountData = accounts.find(acc => acc.id === selectedAccount);
+  const differenceAmount = Math.abs(parseFloat(statementBalance || '0') - reconciledBalance);
 
   return (
     <div style={{ padding: '1.5rem', width: '100%' }}>
@@ -404,6 +450,9 @@ const BankReconciliation: React.FC = () => {
               marginBottom: '1rem'
             }}
           >
+            {accounts.length === 0 && (
+              <option value={0}>No bank accounts for this site</option>
+            )}
             {accounts.map(account => (
               <option key={account.id} value={account.id}>
                 {account.name} - {account.accountNumber}
@@ -501,7 +550,9 @@ const BankReconciliation: React.FC = () => {
 
           <div style={{ padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.375rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Reconciled Balance</span>
+              <span style={{ fontSize: '0.875rem', color: '#6b7280' }} title="Opening Balance + sum of reconciled amounts (filtered)">
+                Cleared / Reconciled Balance
+              </span>
               <span style={{ fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
                 {formatCurrency(reconciledBalance)}
               </span>
@@ -517,9 +568,9 @@ const BankReconciliation: React.FC = () => {
               <span style={{
                 fontSize: '1rem',
                 fontWeight: '600',
-                color: Math.abs(parseFloat(statementBalance) - reconciledBalance) < 0.01 ? '#10b981' : '#ef4444'
+                color: differenceAmount < 0.01 ? '#10b981' : '#ef4444'
               }}>
-                {formatCurrency(Math.abs(parseFloat(statementBalance || '0') - reconciledBalance))}
+                {formatCurrency(differenceAmount)}
               </span>
             </div>
           </div>
@@ -538,6 +589,24 @@ const BankReconciliation: React.FC = () => {
             <FontAwesomeIcon icon={faFilter} style={{ color: '#6b7280' }} />
             <span style={{ fontWeight: '500', color: '#374151' }}>Filters:</span>
           </div>
+
+          <select
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+            style={{
+              padding: '0.5rem 1rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '0.375rem',
+              fontSize: '0.875rem'
+            }}
+            title="Site"
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
           <select
             value={filters.reconciled}
@@ -590,22 +659,24 @@ const BankReconciliation: React.FC = () => {
 
           <button
             onClick={handleBulkReconcile}
+            disabled={reconciling || loading}
             style={{
               padding: '0.5rem 1rem',
-              backgroundColor: '#10b981',
+              backgroundColor: reconciling ? '#6b7280' : '#10b981',
               color: 'white',
               border: 'none',
               borderRadius: '0.375rem',
-              cursor: 'pointer',
+              cursor: reconciling || loading ? 'not-allowed' : 'pointer',
               fontSize: '0.875rem',
               fontWeight: '500',
               display: 'flex',
               alignItems: 'center',
-              gap: '0.5rem'
+              gap: '0.5rem',
+              opacity: reconciling || loading ? 0.7 : 1
             }}
           >
             <FontAwesomeIcon icon={faCheckCircle} />
-            Reconcile All
+            {reconciling ? 'Reconciling…' : 'Reconcile All'}
           </button>
         </div>
       </div>
@@ -724,22 +795,32 @@ const BankReconciliation: React.FC = () => {
                     <td style={{ padding: '1rem 1.5rem', textAlign: 'center' }}>
                       <button
                         onClick={() => handleReconcile(transaction.id)}
+                        disabled={reconciling}
                         style={{
                           padding: "0.25rem 0.75rem",
-                          backgroundColor: transaction.reconciled ? "#ef4444" : "#10b981",
+                          backgroundColor: reconciling
+                            ? "#9ca3af"
+                            : transaction.reconciled
+                              ? "#ef4444"
+                              : "#10b981",
                           color: "white",
                           border: "none",
                           borderRadius: "0.25rem",
-                          cursor: "pointer",
+                          cursor: reconciling ? "not-allowed" : "pointer",
                           fontSize: "0.75rem",
-                          fontWeight: "500"
+                          fontWeight: "500",
+                          opacity: reconciling ? 0.7 : 1
                         }}
                       >
                         <FontAwesomeIcon
                           icon={transaction.reconciled ? faExclamationTriangle : faCheckCircle}
                           style={{ marginRight: '0.25rem' }}
                         />
-                        {transaction.reconciled ? 'Unreconcile' : 'Reconcile'}
+                        {reconciling
+                          ? 'Reconciling…'
+                          : transaction.reconciled
+                            ? 'Unreconcile'
+                            : 'Reconcile'}
                       </button>
                     </td>
                   </tr>
@@ -760,22 +841,3 @@ const BankReconciliation: React.FC = () => {
 };
 
 export default BankReconciliation;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
