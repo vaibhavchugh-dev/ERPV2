@@ -23,6 +23,7 @@ export const getDefaultSystemSettings = (tenantId: number): SystemSettings => ({
   maxConcurrentSessions: 3,
   failedLoginAttempts: 5,
   accountLockoutMinutes: 15,
+  emailDeliveryMode: "Hosted",
   smtpServer: "",
   smtpPort: 587,
   smtpUseSsl: true,

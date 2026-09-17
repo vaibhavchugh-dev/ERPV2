@@ -33,6 +33,8 @@ export interface SystemSettings {
   accountLockoutMinutes: number;
   
   // Email/SMTP Settings
+  /** Hosted = Cimmple platform SMTP; Custom = tenant SMTP below */
+  emailDeliveryMode: "Hosted" | "Custom";
   smtpServer: string;
   smtpPort: number;
   smtpUseSsl: boolean;
@@ -100,6 +102,7 @@ export class SystemSettingsService {
   public static async TestSmtp(payload: {
     tenantId: number;
     toEmail?: string;
+    emailDeliveryMode?: "Hosted" | "Custom";
     smtpServer?: string;
     smtpPort?: number;
     smtpUseSsl?: boolean;

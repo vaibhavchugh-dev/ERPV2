@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
@@ -14,10 +15,12 @@ namespace CimmpleAPI.Controllers
     public class SystemSettingsController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public SystemSettingsController(CimmpleDbContext context)
+        public SystemSettingsController(CimmpleDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
 
         private static SystemSettings CreateDefaultSettings(int tenantId) => new SystemSettings
@@ -43,6 +46,7 @@ namespace CimmpleAPI.Controllers
             MaxConcurrentSessions = 3,
             FailedLoginAttempts = 5,
             AccountLockoutMinutes = 15,
+            EmailDeliveryMode = SmtpSettingsResolver.ModeHosted,
             SmtpPort = 587,
             SmtpUseSsl = true,
             DefaultPageSize = 10,
@@ -52,9 +56,34 @@ namespace CimmpleAPI.Controllers
 
         private static SystemSettings RedactSmtpPassword(SystemSettings settings)
         {
+            settings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
             settings.HasSmtpPassword = !string.IsNullOrEmpty(settings.SmtpPassword);
             settings.SmtpPassword = "";
+
+            // Hosted mode: never expose leftover tenant SMTP fields in the UI
+            // (avoids prefilling Custom mode with old Cimmple/server values).
+            if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
+            {
+                settings.HasSmtpPassword = false;
+                settings.SmtpServer = "";
+                settings.SmtpUsername = "";
+                settings.SmtpFromEmail = "";
+                settings.SmtpPort = 587;
+                settings.SmtpUseSsl = true;
+            }
+
             return settings;
+        }
+
+        /// <summary>When using Cimmple hosted mail, clear tenant-stored SMTP secrets/host fields.</summary>
+        private static void ClearTenantCustomSmtpFields(SystemSettings target)
+        {
+            target.SmtpServer = "";
+            target.SmtpUsername = "";
+            target.SmtpPassword = "";
+            target.SmtpFromEmail = "";
+            target.SmtpPort = 587;
+            target.SmtpUseSsl = true;
         }
 
         // GET: api/SystemSettings/GetSettings
@@ -64,27 +93,43 @@ namespace CimmpleAPI.Controllers
             try
             {
                 await SystemSettingsSchemaService.EnsureTablesAsync(_context);
-
-                var settings = await _context.SystemSettings
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(s => s.TenantId == tenantId);
-
-                if (settings == null)
+                return Ok(await LoadSettingsForTenantAsync(tenantId));
+            }
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+            {
+                try
+                {
+                    await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+                    return Ok(await LoadSettingsForTenantAsync(tenantId));
+                }
+                catch (Exception retryEx)
+                {
+                    Console.WriteLine($"[GetSettings] Schema retry failed: {retryEx.Message}");
                     return Ok(CreateDefaultSettings(tenantId));
-
-                return Ok(RedactSmtpPassword(settings));
+                }
             }
             catch (Exception ex)
             {
-                if (SystemSettingsSchemaService.IsMissingTableException(ex))
-                {
-                    Console.WriteLine("[GetSettings] SystemSettings table missing; returning defaults.");
-                    return Ok(CreateDefaultSettings(tenantId));
-                }
-
                 Console.WriteLine($"[GetSettings] Error: {ex.Message}");
                 return StatusCode(500, new { message = "Error retrieving system settings", error = ex.Message });
             }
+        }
+
+        private async Task<SystemSettings> LoadSettingsForTenantAsync(int tenantId)
+        {
+            var settings = await _context.SystemSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+
+            if (settings == null)
+                return CreateDefaultSettings(tenantId);
+
+            if (string.IsNullOrWhiteSpace(settings.EmailDeliveryMode))
+                settings.EmailDeliveryMode = SmtpSettingsResolver.ModeHosted;
+            else
+                settings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
+
+            return RedactSmtpPassword(settings);
         }
 
         // POST: api/SystemSettings/SaveSettings
@@ -103,6 +148,9 @@ namespace CimmpleAPI.Controllers
 
                 if (existingSettings == null)
                 {
+                    settings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
+                    if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
+                        ClearTenantCustomSmtpFields(settings);
                     settings.CreatedDate = DateTime.UtcNow;
                     settings.UpdatedDate = DateTime.UtcNow;
                     _context.SystemSettings.Add(settings);
@@ -129,14 +177,22 @@ namespace CimmpleAPI.Controllers
                     existingSettings.MaxConcurrentSessions = settings.MaxConcurrentSessions;
                     existingSettings.FailedLoginAttempts = settings.FailedLoginAttempts;
                     existingSettings.AccountLockoutMinutes = settings.AccountLockoutMinutes;
-                    existingSettings.SmtpServer = settings.SmtpServer;
-                    existingSettings.SmtpPort = settings.SmtpPort;
-                    existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
-                    existingSettings.SmtpUsername = settings.SmtpUsername;
-                    if (!string.IsNullOrEmpty(settings.SmtpPassword))
-                        existingSettings.SmtpPassword = settings.SmtpPassword;
-                    existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
+                    existingSettings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
                     existingSettings.SmtpFromName = settings.SmtpFromName;
+                    if (SmtpSettingsResolver.IsCustomMode(existingSettings.EmailDeliveryMode))
+                    {
+                        existingSettings.SmtpServer = settings.SmtpServer;
+                        existingSettings.SmtpPort = settings.SmtpPort;
+                        existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
+                        existingSettings.SmtpUsername = settings.SmtpUsername;
+                        if (!string.IsNullOrEmpty(settings.SmtpPassword))
+                            existingSettings.SmtpPassword = settings.SmtpPassword;
+                        existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
+                    }
+                    else
+                    {
+                        ClearTenantCustomSmtpFields(existingSettings);
+                    }
                     existingSettings.DefaultPageSize = settings.DefaultPageSize;
                     existingSettings.EnableEmailNotifications = settings.EnableEmailNotifications;
                     existingSettings.EnableInAppNotifications = settings.EnableInAppNotifications;
@@ -146,17 +202,84 @@ namespace CimmpleAPI.Controllers
                 await _context.SaveChangesAsync();
                 return Ok(new { message = "System settings saved successfully" });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
             {
-                if (SystemSettingsSchemaService.IsMissingTableException(ex))
+                // Column may have been missing on first attempt; ensure again and retry once.
+                try
+                {
+                    await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+                    _context.ChangeTracker.Clear();
+
+                    var existingSettings = await _context.SystemSettings
+                        .FirstOrDefaultAsync(s => s.TenantId == settings!.TenantId);
+
+                    if (existingSettings == null)
+                    {
+                        settings!.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
+                        if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
+                            ClearTenantCustomSmtpFields(settings);
+                        settings.CreatedDate = DateTime.UtcNow;
+                        settings.UpdatedDate = DateTime.UtcNow;
+                        _context.SystemSettings.Add(settings);
+                    }
+                    else
+                    {
+                        existingSettings.DateFormat = settings!.DateFormat;
+                        existingSettings.TimeFormat = settings.TimeFormat;
+                        existingSettings.Timezone = settings.Timezone;
+                        existingSettings.Locale = settings.Locale;
+                        existingSettings.DefaultCurrency = settings.DefaultCurrency;
+                        existingSettings.CurrencySymbol = settings.CurrencySymbol;
+                        existingSettings.DecimalPlaces = settings.DecimalPlaces;
+                        existingSettings.DecimalSeparator = settings.DecimalSeparator;
+                        existingSettings.ThousandsSeparator = settings.ThousandsSeparator;
+                        existingSettings.MinPasswordLength = settings.MinPasswordLength;
+                        existingSettings.RequireUppercase = settings.RequireUppercase;
+                        existingSettings.RequireLowercase = settings.RequireLowercase;
+                        existingSettings.RequireNumbers = settings.RequireNumbers;
+                        existingSettings.RequireSpecialChars = settings.RequireSpecialChars;
+                        existingSettings.PasswordExpirationDays = settings.PasswordExpirationDays;
+                        existingSettings.PasswordHistoryCount = settings.PasswordHistoryCount;
+                        existingSettings.SessionTimeoutMinutes = settings.SessionTimeoutMinutes;
+                        existingSettings.MaxConcurrentSessions = settings.MaxConcurrentSessions;
+                        existingSettings.FailedLoginAttempts = settings.FailedLoginAttempts;
+                        existingSettings.AccountLockoutMinutes = settings.AccountLockoutMinutes;
+                        existingSettings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
+                        existingSettings.SmtpFromName = settings.SmtpFromName;
+                        if (SmtpSettingsResolver.IsCustomMode(existingSettings.EmailDeliveryMode))
+                        {
+                            existingSettings.SmtpServer = settings.SmtpServer;
+                            existingSettings.SmtpPort = settings.SmtpPort;
+                            existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
+                            existingSettings.SmtpUsername = settings.SmtpUsername;
+                            if (!string.IsNullOrEmpty(settings.SmtpPassword))
+                                existingSettings.SmtpPassword = settings.SmtpPassword;
+                            existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
+                        }
+                        else
+                        {
+                            ClearTenantCustomSmtpFields(existingSettings);
+                        }
+                        existingSettings.DefaultPageSize = settings.DefaultPageSize;
+                        existingSettings.EnableEmailNotifications = settings.EnableEmailNotifications;
+                        existingSettings.EnableInAppNotifications = settings.EnableInAppNotifications;
+                        existingSettings.UpdatedDate = DateTime.UtcNow;
+                    }
+
+                    await _context.SaveChangesAsync();
+                    return Ok(new { message = "System settings saved successfully" });
+                }
+                catch (Exception retryEx)
                 {
                     return StatusCode(503, new
                     {
                         message = "System settings table is not available. Contact your administrator.",
-                        error = ex.Message
+                        error = retryEx.Message
                     });
                 }
-
+            }
+            catch (Exception ex)
+            {
                 Console.WriteLine($"[SaveSettings] Error: {ex.Message}");
                 return StatusCode(500, new { message = "Error saving system settings", error = ex.Message });
             }
@@ -208,7 +331,7 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// Sends a test message using the provided SMTP fields (or saved tenant settings).
+        /// Sends a test message. Hosted mode uses PlatformSmtp; Custom mode uses form/saved tenant SMTP.
         /// Bypasses the email-notifications gate so admins can verify SMTP while notifications are off.
         /// </summary>
         [HttpPost("TestSmtp")]
@@ -222,7 +345,33 @@ namespace CimmpleAPI.Controllers
                 var saved = await _context.SystemSettings
                     .FirstOrDefaultAsync(s => s.TenantId == tenantId);
 
-                var settings = BuildSmtpSettingsForTest(tenantId, saved, request);
+                var mode = SmtpSettingsResolver.NormalizeMode(
+                    !string.IsNullOrWhiteSpace(request?.EmailDeliveryMode)
+                        ? request!.EmailDeliveryMode
+                        : saved?.EmailDeliveryMode);
+
+                SystemSettings settings;
+                if (mode == SmtpSettingsResolver.ModeHosted)
+                {
+                    var (resolved, resolveError) = SmtpSettingsResolver.Resolve(
+                        new SystemSettings
+                        {
+                            TenantId = tenantId,
+                            EmailDeliveryMode = SmtpSettingsResolver.ModeHosted,
+                            SmtpFromName = request?.SmtpFromName ?? saved?.SmtpFromName ?? "",
+                            EnableEmailNotifications = true
+                        },
+                        _configuration);
+                    if (resolved == null)
+                        return BadRequest(new { message = resolveError ?? "Platform SMTP is not configured." });
+                    settings = resolved;
+                }
+                else
+                {
+                    settings = BuildSmtpSettingsForTest(tenantId, saved, request);
+                    settings.EmailDeliveryMode = SmtpSettingsResolver.ModeCustom;
+                }
+
                 var toEmail = !string.IsNullOrWhiteSpace(request?.ToEmail)
                     ? request!.ToEmail!.Trim()
                     : settings.SmtpFromEmail?.Trim() ?? "";
@@ -236,7 +385,7 @@ namespace CimmpleAPI.Controllers
                     Subject = "Cimmple SMTP test",
                     Body =
                         "<p>This is a test message from Cimmple System Settings.</p>" +
-                        $"<p>Tenant id: {tenantId}<br/>Sent at (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}</p>",
+                        $"<p>Mode: {mode}<br/>Tenant id: {tenantId}<br/>Sent at (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}</p>",
                     IsHtml = true
                 };
 
@@ -247,7 +396,7 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { message = error ?? "Failed to send test email." });
                 }
 
-                return Ok(new { message = $"Test email sent to {toEmail}." });
+                return Ok(new { message = $"Test email sent to {toEmail} ({mode})." });
             }
             catch (Exception ex)
             {
@@ -396,6 +545,9 @@ namespace CimmpleAPI.Controllers
 
         /// <summary>Optional override; defaults to From Email.</summary>
         public string? ToEmail { get; set; }
+
+        /// <summary>Hosted or Custom; defaults to saved tenant mode.</summary>
+        public string? EmailDeliveryMode { get; set; }
 
         public string? SmtpServer { get; set; }
         public int? SmtpPort { get; set; }

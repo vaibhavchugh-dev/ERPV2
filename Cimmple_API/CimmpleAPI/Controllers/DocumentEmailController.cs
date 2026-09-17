@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Pdf;
@@ -12,11 +13,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly DocumentPdfService _documentPdfService;
+        private readonly IConfiguration _configuration;
 
-        public DocumentEmailController(CimmpleDbContext context, DocumentPdfService documentPdfService)
+        public DocumentEmailController(
+            CimmpleDbContext context,
+            DocumentPdfService documentPdfService,
+            IConfiguration configuration)
         {
             _context = context;
             _documentPdfService = documentPdfService;
+            _configuration = configuration;
         }
 
         [HttpPost("SendQuotation")]
@@ -150,7 +156,7 @@ namespace CimmpleAPI.Controllers
             {
                 var companyName = !string.IsNullOrWhiteSpace(settings.SmtpFromName)
                     ? settings.SmtpFromName
-                    : null;
+                    : SmtpSettingsResolver.LoadPlatformSmtp(_configuration)?.SmtpFromName;
                 body = DocumentEmailTemplates.BuildDefaultBody(
                     documentTypeLabel,
                     label,
@@ -177,7 +183,7 @@ namespace CimmpleAPI.Controllers
                 }
             };
 
-            var (ok, error) = EmailService.TrySend(settings, mailRequest);
+            var (ok, error) = EmailService.TrySend(settings, mailRequest, _configuration);
             if (!ok)
                 return BadRequest(new { message = error ?? "Failed to send email." });
 

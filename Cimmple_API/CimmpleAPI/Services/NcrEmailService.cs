@@ -58,7 +58,7 @@ namespace CimmpleAPI.Services
                 Subject = $"{(string.IsNullOrWhiteSpace(ncrNumber) ? "NCR" : ncrNumber.Trim())} — assigned as {roleLabel}",
                 Body = body,
                 IsHtml = true
-            });
+            }, configuration);
         }
     }
 }

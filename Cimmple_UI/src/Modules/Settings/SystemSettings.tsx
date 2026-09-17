@@ -52,8 +52,15 @@ const SystemSettingsComponent: React.FC = () => {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tid = storage?.tenantID || 1;
       const settingsData = await SystemSettingsService.GetSettings(tid);
+      const modeRaw =
+        (settingsData as any).emailDeliveryMode ||
+        (settingsData as any).EmailDeliveryMode ||
+        "Hosted";
+      const emailDeliveryMode =
+        String(modeRaw).toLowerCase() === "custom" ? "Custom" : "Hosted";
       setSettings({
         ...settingsData,
+        emailDeliveryMode,
         smtpPassword: "",
         hasSmtpPassword: !!(settingsData as any).hasSmtpPassword || !!(settingsData as any).HasSmtpPassword,
       });
@@ -155,18 +162,26 @@ const SystemSettingsComponent: React.FC = () => {
   const handleTestSmtp = async () => {
     if (!settings) return;
 
-    if (!settings.smtpServer?.trim() || !settings.smtpFromEmail?.trim()) {
-      toast.error('SMTP server and From Email are required to send a test.');
-      return;
-    }
-    if (settings.smtpPort && (settings.smtpPort < 1 || settings.smtpPort > 65535)) {
-      toast.error('SMTP port must be between 1 and 65535');
-      return;
+    const isCustom = (settings.emailDeliveryMode || "Hosted") === "Custom";
+
+    if (isCustom) {
+      if (!settings.smtpServer?.trim() || !settings.smtpFromEmail?.trim()) {
+        toast.error("SMTP server and From Email are required for custom SMTP.");
+        return;
+      }
+      if (settings.smtpPort && (settings.smtpPort < 1 || settings.smtpPort > 65535)) {
+        toast.error("SMTP port must be between 1 and 65535");
+        return;
+      }
     }
 
-    const toEmail = (testSmtpTo || settings.smtpFromEmail || "").trim();
+    const toEmail = (testSmtpTo || (isCustom ? settings.smtpFromEmail : "") || "").trim();
     if (!toEmail) {
-      toast.error('Enter a test recipient email, or set From Email first.');
+      toast.error(
+        isCustom
+          ? "Enter a test recipient email, or set From Email first."
+          : "Enter a test recipient email."
+      );
       return;
     }
 
@@ -175,12 +190,13 @@ const SystemSettingsComponent: React.FC = () => {
       const result = await SystemSettingsService.TestSmtp({
         tenantId,
         toEmail,
-        smtpServer: settings.smtpServer,
-        smtpPort: settings.smtpPort,
-        smtpUseSsl: settings.smtpUseSsl,
-        smtpUsername: settings.smtpUsername,
-        smtpPassword: settings.smtpPassword,
-        smtpFromEmail: settings.smtpFromEmail,
+        emailDeliveryMode: isCustom ? "Custom" : "Hosted",
+        smtpServer: isCustom ? settings.smtpServer : undefined,
+        smtpPort: isCustom ? settings.smtpPort : undefined,
+        smtpUseSsl: isCustom ? settings.smtpUseSsl : undefined,
+        smtpUsername: isCustom ? settings.smtpUsername : undefined,
+        smtpPassword: isCustom ? settings.smtpPassword : undefined,
+        smtpFromEmail: isCustom ? settings.smtpFromEmail : undefined,
         smtpFromName: settings.smtpFromName,
       });
       toastAlwaysSuccess(result?.message || `Test email sent to ${toEmail}.`);
@@ -975,83 +991,96 @@ const SystemSettingsComponent: React.FC = () => {
           {activeTab === 'email' && (
             <div>
               <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
-                Email/SMTP Configuration
+                Email delivery
               </h3>
               <p style={{ margin: '0 0 1.5rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
-                SMTP credentials are saved for your tenant and used by outbound mail (e.g. AR reminders).
-                Enable &quot;Email notifications&quot; under General to allow production sends. Use Test connection
-                below to verify SMTP even when notifications are off. Company letterhead details are maintained
-                in Accounting Setup.
+                Choose Cimmple-hosted mail (mail.cimmple.com) or your own SMTP server.
+                Enable &quot;Email notifications&quot; under General to allow production sends.
               </p>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                  Delivery mode
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', maxWidth: '320px' }}>
+                    <input
+                      type="radio"
+                      name="emailDeliveryMode"
+                      checked={(settings.emailDeliveryMode || 'Hosted') === 'Hosted'}
+                      onChange={() => {
+                        setSettings((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                emailDeliveryMode: "Hosted",
+                                smtpServer: "",
+                                smtpUsername: "",
+                                smtpPassword: "",
+                                smtpFromEmail: "",
+                                smtpPort: 587,
+                                smtpUseSsl: true,
+                                hasSmtpPassword: false,
+                              }
+                            : prev
+                        );
+                      }}
+                      style={{ marginTop: '0.2rem' }}
+                    />
+                    <span style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      <strong>Cimmple hosted</strong>
+                      <br />
+                      <span style={{ color: '#6b7280', fontSize: '0.8125rem' }}>
+                        Use the Cimmple mail server. No SMTP password required here.
+                      </span>
+                    </span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', maxWidth: '320px' }}>
+                    <input
+                      type="radio"
+                      name="emailDeliveryMode"
+                      checked={settings.emailDeliveryMode === 'Custom'}
+                      onChange={() => {
+                        setSettings((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                emailDeliveryMode: "Custom",
+                                // Blank slate for the tenant's own SMTP — never carry platform values
+                                smtpServer: "",
+                                smtpUsername: "",
+                                smtpPassword: "",
+                                smtpFromEmail: "",
+                                smtpPort: 587,
+                                smtpUseSsl: true,
+                                hasSmtpPassword: false,
+                              }
+                            : prev
+                        );
+                      }}
+                      style={{ marginTop: '0.2rem' }}
+                    />
+                    <span style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      <strong>Custom SMTP</strong>
+                      <br />
+                      <span style={{ color: '#6b7280', fontSize: '0.8125rem' }}>
+                        Use your own mail server credentials (saved for this tenant).
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    SMTP Server
+                    From Name
                   </label>
                   <input
                     type="text"
-                    value={settings.smtpServer}
-                    onChange={(e) => updateSetting('smtpServer', e.target.value)}
-                    placeholder="smtp.example.com"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    SMTP Port
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="65535"
-                    value={settings.smtpPort}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 587;
-                      updateSetting('smtpPort', Math.max(1, Math.min(65535, val)));
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>Common ports: 25, 465 (SSL), 587 (TLS)</small>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    SMTP Username
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.smtpUsername}
-                    onChange={(e) => updateSetting('smtpUsername', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    SMTP Password
-                  </label>
-                  <input
-                    type="password"
-                    value={settings.smtpPassword}
-                    onChange={(e) => updateSetting('smtpPassword', e.target.value)}
-                    placeholder={settings.hasSmtpPassword ? '•••••••• (saved — leave blank to keep)' : 'Enter SMTP password'}
-                    autoComplete="new-password"
+                    value={settings.smtpFromName}
+                    onChange={(e) => updateSetting('smtpFromName', e.target.value)}
+                    placeholder="Your company name"
                     style={{
                       width: '100%',
                       padding: '0.75rem',
@@ -1061,65 +1090,141 @@ const SystemSettingsComponent: React.FC = () => {
                     }}
                   />
                   <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                    {settings.hasSmtpPassword
-                      ? 'A password is already saved. Leave blank to keep it, or enter a new one to replace it.'
-                      : 'Password is never shown after save.'}
+                    Display name on outbound mail (optional override for hosted mode).
                   </small>
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    From Email
-                  </label>
-                  <input
-                    type="email"
-                    value={settings.smtpFromEmail}
-                    onChange={(e) => updateSetting('smtpFromEmail', e.target.value)}
-                    placeholder="noreply@example.com"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    From Name
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.smtpFromName}
-                    onChange={(e) => updateSetting('smtpFromName', e.target.value)}
-                    placeholder="Cimmple ERP"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={settings.smtpUseSsl}
-                      onChange={(e) => updateSetting('smtpUseSsl', e.target.checked)}
-                      style={{ width: '1rem', height: '1rem' }}
-                    />
-                    <span style={{ fontSize: '0.875rem' }}>Use SSL/TLS</span>
-                  </label>
-                </div>
+
+                {(settings.emailDeliveryMode || 'Hosted') === 'Hosted' ? (
+                  <div style={{ gridColumn: '1 / -1', padding: '1rem', background: '#f9fafb', borderRadius: '0.5rem', border: '1px solid #e5e7eb' }}>
+                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151' }}>
+                      Outbound email will be sent through the Cimmple platform mail server configured by your provider.
+                      You do not need to enter SMTP host, username, or password.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        SMTP Server
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.smtpServer}
+                        onChange={(e) => updateSetting('smtpServer', e.target.value)}
+                        placeholder="smtp.example.com"
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        SMTP Port
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="65535"
+                        value={settings.smtpPort}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 587;
+                          updateSetting('smtpPort', Math.max(1, Math.min(65535, val)));
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                      <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>Common ports: 25, 465 (SSL), 587 (TLS)</small>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        SMTP Username
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.smtpUsername}
+                        onChange={(e) => updateSetting('smtpUsername', e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        SMTP Password
+                      </label>
+                      <input
+                        type="password"
+                        value={settings.smtpPassword}
+                        onChange={(e) => updateSetting('smtpPassword', e.target.value)}
+                        placeholder={settings.hasSmtpPassword ? '•••••••• (saved — leave blank to keep)' : 'Enter SMTP password'}
+                        autoComplete="new-password"
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                      <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                        {settings.hasSmtpPassword
+                          ? 'A password is already saved. Leave blank to keep it, or enter a new one to replace it.'
+                          : 'Password is never shown after save.'}
+                      </small>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
+                        From Email
+                      </label>
+                      <input
+                        type="email"
+                        value={settings.smtpFromEmail}
+                        onChange={(e) => updateSetting('smtpFromEmail', e.target.value)}
+                        placeholder="noreply@example.com"
+                        style={{
+                          width: '100%',
+                          padding: '0.75rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                          fontSize: '0.875rem'
+                        }}
+                      />
+                    </div>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={settings.smtpUseSsl}
+                          onChange={(e) => updateSetting('smtpUseSsl', e.target.checked)}
+                          style={{ width: '1rem', height: '1rem' }}
+                        />
+                        <span style={{ fontSize: '0.875rem' }}>Use SSL/TLS</span>
+                      </label>
+                    </div>
+                  </>
+                )}
+
                 <div style={{ gridColumn: '1 / -1', marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid #e5e7eb' }}>
                   <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
                     Test connection
                   </h4>
                   <p style={{ margin: '0 0 1rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
-                    Sends a short HTML test message using the values above (unsaved changes are included).
-                    Leave password blank only if a password is already saved for this tenant.
+                    {(settings.emailDeliveryMode || 'Hosted') === 'Hosted'
+                      ? 'Sends a test via the Cimmple platform mail server.'
+                      : 'Sends a test using the custom SMTP values above (unsaved changes are included). Leave password blank to use the saved one.'}
                   </p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
                     <div style={{ flex: '1 1 220px', minWidth: '200px' }}>

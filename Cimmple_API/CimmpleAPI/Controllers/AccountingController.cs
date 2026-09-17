@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
@@ -21,11 +22,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly DocumentPdfService _documentPdfService;
+        private readonly IConfiguration _configuration;
 
-        public AccountingController(CimmpleDbContext context, DocumentPdfService documentPdfService)
+        public AccountingController(
+            CimmpleDbContext context,
+            DocumentPdfService documentPdfService,
+            IConfiguration configuration)
         {
             _context = context;
             _documentPdfService = documentPdfService;
+            _configuration = configuration;
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
@@ -2234,7 +2240,7 @@ namespace CimmpleAPI.Controllers
                 Attachments = attachments
             };
 
-            var (ok, error) = EmailService.TrySend(settings, mail);
+            var (ok, error) = EmailService.TrySend(settings, mail, _configuration);
 
             _context.ArReminderLogs.Add(new ArReminderLog
             {
