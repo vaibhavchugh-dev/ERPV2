@@ -122,6 +122,8 @@ export interface VendorQuotationMaster {
   locationId?: number;
   quotationType?: string;
   parentQuotationID?: number;
+  /** True when multi-vendor child RFQs exist for this master */
+  hasChildQuotations?: boolean;
   Attachments?: QuotationAttachment[];
   Comments?: QuotationComment[];
 }
@@ -1160,7 +1162,11 @@ export class QuotationService {
             id: a.id || a.Id || 0,
             name: a.name || a.Name || "",
             size: a.size || a.Size || 0,
-            fileUrl: a.fileUrl || a.FileUrl || ""
+            fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+            fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+            uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+            pageNo: a.pageNo || a.PageNo || "0",
+            createdBy: a.createdBy || a.CreatedBy || 0,
           })) : undefined,
         };
       });
