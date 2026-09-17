@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { DocumentService, Document, DocumentCategory } from "../../Common/Services/DocumentService";
+import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import DocumentUploadModal from "./DocumentUploadModal";
 import DocumentDetailModal from "./DocumentDetailModal";
 import "./Documents.scss";
@@ -11,19 +13,18 @@ import {
   faSearch,
   faFilter,
   faFile,
-  faFilePdf,
-  faFileImage,
-  faFileWord,
-  faFileExcel,
-  faFilePowerpoint,
-  faFileArchive,
-  faFileAlt,
   faDownload,
   faTrash,
   faEye,
   faHistory,
   faTags,
 } from "@fortawesome/free-solid-svg-icons";
+
+const parseTags = (tags?: string): string[] =>
+  (tags || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 
 const Documents: React.FC = () => {
   const location = useLocation();
@@ -32,6 +33,7 @@ const Documents: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | undefined>(undefined);
+  const [selectedTag, setSelectedTag] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
@@ -40,6 +42,11 @@ const Documents: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [viewMode, setViewMode] = useState<"grid" | "list">("list");
+
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  const viewerUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadCategories();
@@ -127,6 +134,7 @@ const Documents: React.FC = () => {
   };
 
   const handleDownload = async (document: Document, versionId?: number) => {
+    const toastId = toast.info("Downloading document...", { autoClose: false });
     try {
       const blob = await DocumentService.DownloadDocument(document.id, versionId);
       const url = window.URL.createObjectURL(blob);
@@ -137,10 +145,92 @@ const Documents: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       window.document.body.removeChild(a);
+      toast.dismiss(toastId);
       toast.success("Download started");
     } catch (error: any) {
       console.error("Error downloading document:", error);
+      toast.dismiss(toastId);
       toast.error(`Error downloading document: ${error.message || "Unknown error"}`);
+    }
+  };
+
+  const revokeViewerUrl = () => {
+    if (viewerUrlRef.current) {
+      URL.revokeObjectURL(viewerUrlRef.current);
+      viewerUrlRef.current = null;
+    }
+  };
+
+  const closeDocumentViewer = useCallback(() => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+    revokeViewerUrl();
+  }, []);
+
+  const handlePreview = async (doc: Document, versionId?: number) => {
+    try {
+      revokeViewerUrl();
+      const versionName =
+        versionId != null
+          ? undefined
+          : doc.fileName || doc.documentName;
+      setViewerDocuments([
+        {
+          id: doc.id,
+          name: versionName || doc.fileName || doc.documentName,
+          contentType: doc.mimeType,
+          size: doc.fileSize,
+          versionId,
+        },
+      ]);
+      setActiveViewerIndex(0);
+      setDocumentViewerOpen(true);
+    } catch (error: any) {
+      console.error("Error opening preview:", error);
+      toast.error(`Error opening preview: ${error.message || "Unknown error"}`);
+    }
+  };
+
+  const handleNeedDocument = useCallback(
+    async (file: DocumentViewerFile, _index: number, _signal: AbortSignal) => {
+      try {
+        const blob = await DocumentService.DownloadDocument(
+          Number(file.id),
+          file.versionId
+        );
+        const url = URL.createObjectURL(blob);
+        revokeViewerUrl();
+        viewerUrlRef.current = url;
+        return { url, contentType: blob.type || file.contentType };
+      } catch (error: any) {
+        console.error("Error loading document for preview:", error);
+        toast.error(`Error loading preview: ${error.message || "Unknown error"}`);
+        return null;
+      }
+    },
+    []
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = documents.find((d) => d.id === Number(file.id)) || selectedDocument;
+    if (match) {
+      await handleDownload(match, file.versionId);
+      return;
+    }
+    try {
+      const blob = await DocumentService.DownloadDocument(Number(file.id));
+      const url = window.URL.createObjectURL(blob);
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      window.document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      window.document.body.removeChild(a);
+      toast.success("Download started");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to download document");
     }
   };
 
@@ -148,13 +238,35 @@ const Documents: React.FC = () => {
     return DocumentService.getFileIcon(document.fileExtension, document.mimeType);
   };
 
-  const filteredDocuments = documents.filter((doc) => {
-    if (selectedCategoryId && doc.categoryId !== selectedCategoryId) return false;
-    if (searchTerm && !doc.documentName.toLowerCase().includes(searchTerm.toLowerCase())) {
-      return false;
-    }
-    return true;
-  });
+  const pageTags = useMemo(() => {
+    const set = new Set<string>();
+    documents.forEach((d) => parseTags(d.tags).forEach((t) => set.add(t)));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [documents]);
+
+  const filteredDocuments = useMemo(() => {
+    if (!selectedTag) return documents;
+    const tagLower = selectedTag.toLowerCase();
+    return documents.filter((d) =>
+      parseTags(d.tags).some((t) => t.toLowerCase() === tagLower)
+    );
+  }, [documents, selectedTag]);
+
+  const renderTagChips = (tags?: string) => {
+    const list = parseTags(tags);
+    if (list.length === 0) return null;
+    return (
+      <div className="document-tags">
+        {list.slice(0, 4).map((tag) => (
+          <span key={tag} className="tag-chip" title={tag}>
+            <FontAwesomeIcon icon={faTags} />
+            {tag}
+          </span>
+        ))}
+        {list.length > 4 && <span className="tag-chip more">+{list.length - 4}</span>}
+      </div>
+    );
+  };
 
   return (
     <div className="documents-page">
@@ -170,7 +282,7 @@ const Documents: React.FC = () => {
           <FontAwesomeIcon icon={faSearch} />
           <input
             type="text"
-            placeholder="Search documents..."
+            placeholder="Search by name, number, or tags…"
             value={searchTerm}
             onChange={(e) => {
               setSearchTerm(e.target.value);
@@ -182,6 +294,7 @@ const Documents: React.FC = () => {
         <div className="filter-group">
           <FontAwesomeIcon icon={faFilter} />
           <select
+            className="filter-select"
             value={selectedCategoryId || ""}
             onChange={(e) => {
               setSelectedCategoryId(e.target.value ? parseInt(e.target.value) : undefined);
@@ -196,6 +309,25 @@ const Documents: React.FC = () => {
             ))}
           </select>
         </div>
+
+        {pageTags.length > 0 && (
+          <div className="filter-group">
+            <FontAwesomeIcon icon={faTags} />
+            <select
+              className="filter-select"
+              value={selectedTag}
+              onChange={(e) => setSelectedTag(e.target.value)}
+              title="Filter by tag on this page"
+            >
+              <option value="">All Tags</option>
+              {pageTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="view-toggle">
           <button
@@ -221,6 +353,14 @@ const Documents: React.FC = () => {
           <p>No documents found</p>
           <button className="btn btn-primary" onClick={() => setShowUploadModal(true)}>
             Upload Your First Document
+          </button>
+        </div>
+      ) : filteredDocuments.length === 0 ? (
+        <div className="empty-state">
+          <FontAwesomeIcon icon={faTags} size="3x" />
+          <p>No documents match the selected tag</p>
+          <button className="btn btn-primary" onClick={() => setSelectedTag("")}>
+            Clear Tag Filter
           </button>
         </div>
       ) : viewMode === "grid" ? (
@@ -252,6 +392,7 @@ const Documents: React.FC = () => {
                     <span className="version-badge">v{document.currentVersionNumber}</span>
                   )}
                 </p>
+                {renderTagChips(document.tags)}
                 <p className="document-date">
                   {new Date(document.createdDate).toLocaleDateString()}
                 </p>
@@ -259,8 +400,8 @@ const Documents: React.FC = () => {
               <div className="document-actions">
                 <button
                   className="btn-icon"
-                  onClick={() => handleDocumentClick(document)}
-                  title="View"
+                  onClick={() => handlePreview(document)}
+                  title="Preview"
                 >
                   <FontAwesomeIcon icon={faEye} />
                 </button>
@@ -296,9 +437,10 @@ const Documents: React.FC = () => {
           <table>
             <thead>
               <tr>
-                <th>Name</th>
                 <th>Document #</th>
+                <th>Name</th>
                 <th>Category</th>
+                <th>Tags</th>
                 <th>Size</th>
                 <th>Version</th>
                 <th>Created</th>
@@ -308,14 +450,6 @@ const Documents: React.FC = () => {
             <tbody>
               {filteredDocuments.map((document) => (
                 <tr key={document.id}>
-                  <td>
-                    <div className="document-name-cell">
-                      <FontAwesomeIcon icon={getFileIcon(document) as any} />
-                      <span onClick={() => handleDocumentClick(document)}>
-                        {document.documentName}
-                      </span>
-                    </div>
-                  </td>
                   <td>
                     {document.documentNumber ? (
                       <span>
@@ -328,7 +462,16 @@ const Documents: React.FC = () => {
                       "-"
                     )}
                   </td>
+                  <td>
+                    <div className="document-name-cell">
+                      <FontAwesomeIcon icon={getFileIcon(document) as any} />
+                      <span onClick={() => handleDocumentClick(document)}>
+                        {document.documentName}
+                      </span>
+                    </div>
+                  </td>
                   <td>{document.categoryName || "-"}</td>
+                  <td>{renderTagChips(document.tags) || "-"}</td>
                   <td>{DocumentService.formatFileSize(document.fileSize)}</td>
                   <td>
                     {document.requiresVersionControl && document.currentVersionNumber
@@ -340,8 +483,8 @@ const Documents: React.FC = () => {
                     <div className="action-buttons">
                       <button
                         className="btn-icon"
-                        onClick={() => handleDocumentClick(document)}
-                        title="View"
+                        onClick={() => handlePreview(document)}
+                        title="Preview"
                       >
                         <FontAwesomeIcon icon={faEye} />
                       </button>
@@ -378,6 +521,7 @@ const Documents: React.FC = () => {
           </button>
           <span>
             Page {page} of {totalPages}
+            {totalCount > 0 && ` (${totalCount})`}
           </span>
           <button
             disabled={page === totalPages}
@@ -403,13 +547,59 @@ const Documents: React.FC = () => {
           onClose={() => {
             setShowDetailModal(false);
             setSelectedDocument(null);
-            loadDocuments();
           }}
+          onChanged={loadDocuments}
+          onPreview={handlePreview}
         />
       )}
+
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download document");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          window.document.body
+        )}
     </div>
   );
 };
 
 export default Documents;
-

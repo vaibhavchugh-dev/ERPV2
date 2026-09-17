@@ -50,28 +50,43 @@ namespace CimmpleAPI.Utilities
             return cloudConn ?? "";
         }
 
+        /// <summary>
+        /// Full blob path under the container. Prefer container.GetBlockBlobReference(path)
+        /// over Directory + relative name when UploadFileName contains '/' (Documents nested paths).
+        /// </summary>
+        private static string BuildBlobPath(FileInfor fileInfo)
+        {
+            var dir = (fileInfo.Dirname ?? "").Replace('\\', '/').Trim('/');
+            var name = (fileInfo.UploadFileName ?? "").Replace('\\', '/').Trim('/');
+            if (string.IsNullOrEmpty(dir)) return name;
+            if (string.IsNullOrEmpty(name)) return dir;
+            return $"{dir}/{name}";
+        }
+
+        private static CloudBlockBlob GetBlockBlob(CloudBlobContainer container, FileInfor fileInfo)
+        {
+            return container.GetBlockBlobReference(BuildBlobPath(fileInfo));
+        }
+
         public byte[]? GetFilebyte(FileInfor fileInfo)
         {
             try
             {
                 if (fileInfo.tenantID != 0)
                 {
-                    string FileName = fileInfo.UploadFileName;
                     string CloudConn = GetCloudConnectionString();
                     if (string.IsNullOrEmpty(CloudConn)) return null;
 
                     CloudStorageAccount account = CloudStorageAccount.Parse(CloudConn);
                     CloudBlobClient serviceClient = account.CreateCloudBlobClient();
                     var container = serviceClient.GetContainerReference(fileInfo.ContainerName);
-                    CloudBlobDirectory Dir = container.GetDirectoryReference(fileInfo.Dirname);
-                    Dir.Container.CreateIfNotExistsAsync().Wait();
-                    var blob = Dir.GetBlobReference(FileName);
-                    
+                    var blob = GetBlockBlob(container, fileInfo);
+
                     if (!blob.ExistsAsync().Result)
                     {
                         return null;
                     }
-                    
+
                     Stream stream = new MemoryStream();
                     blob.DownloadToStreamAsync(stream).Wait();
                     stream.Position = 0;
@@ -109,7 +124,11 @@ namespace CimmpleAPI.Utilities
             try
             {
                 string CloudConn = GetCloudConnectionString();
-                if (string.IsNullOrEmpty(CloudConn)) return false;
+                if (string.IsNullOrEmpty(CloudConn))
+                {
+                    Console.WriteLine("UploadFileOnServer: Azure connection string is missing (AzureConnection:storageConnectionString / AzureConnString / gcwConfig).");
+                    return false;
+                }
 
                 int Index = 0;
                 foreach (FileInfor fileDet in fileInfo)
@@ -121,9 +140,7 @@ namespace CimmpleAPI.Utilities
                     CloudBlobClient serviceClient = account.CreateCloudBlobClient();
                     var container = serviceClient.GetContainerReference(fileDet.ContainerName);
                     await container.CreateIfNotExistsAsync();
-                    CloudBlobDirectory Dir = container.GetDirectoryReference(fileDet.Dirname);
-                    await Dir.Container.CreateIfNotExistsAsync();
-                    CloudBlockBlob blob = Dir.GetBlockBlobReference(fileDet.UploadFileName);
+                    CloudBlockBlob blob = GetBlockBlob(container, fileDet);
 
                     if (FileName.Length > 0)
                     {
@@ -137,8 +154,9 @@ namespace CimmpleAPI.Utilities
 
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.WriteLine($"UploadFileOnServer failed: {ex.Message}");
                 return false;
             }
         }
@@ -159,9 +177,7 @@ namespace CimmpleAPI.Utilities
                 CloudBlobClient serviceClient = account.CreateCloudBlobClient();
                 var container = serviceClient.GetContainerReference(fileDet.ContainerName);
                 await container.CreateIfNotExistsAsync();
-                CloudBlobDirectory Dir = container.GetDirectoryReference(fileDet.Dirname);
-                await Dir.Container.CreateIfNotExistsAsync();
-                CloudBlockBlob blob = Dir.GetBlockBlobReference(fileDet.UploadFileName);
+                CloudBlockBlob blob = GetBlockBlob(container, fileDet);
 
                 using (var stream = new MemoryStream(content))
                 {
@@ -190,11 +206,8 @@ namespace CimmpleAPI.Utilities
                     var container = serviceClient.GetContainerReference(fileDet.ContainerName);
                     try
                     {
-                        CloudBlobDirectory Dir = container.GetDirectoryReference(fileDet.Dirname);
-                        await Dir.Container.CreateIfNotExistsAsync();
-                        CloudBlockBlob blob = Dir.GetBlockBlobReference(fileDet.UploadFileName);
-
-                        await blob.DeleteAsync();
+                        CloudBlockBlob blob = GetBlockBlob(container, fileDet);
+                        await blob.DeleteIfExistsAsync();
                     }
                     catch (Exception)
                     {

@@ -18,13 +18,48 @@ const toStoredPhotos = (photos?: string[] | string | null): string | null => {
   return urls.length ? JSON.stringify(urls) : null;
 };
 
+export function isLegacyNcrPhotoPath(photo: string): boolean {
+  if (!photo) return false;
+  const normalized = photo.replace(/\\/g, "/");
+  return (
+    normalized.startsWith("/uploads/") ||
+    normalized.startsWith("uploads/") ||
+    normalized.startsWith("http") ||
+    normalized.startsWith("data:") ||
+    normalized.startsWith("blob:")
+  );
+}
+
 export function resolveNcrPhotoUrl(photo: string): string {
   if (!photo) return "";
   if (photo.startsWith("data:") || photo.startsWith("http") || photo.startsWith("blob:")) {
     return photo;
   }
-  const host = API_ROOT.backendHost.replace(/\/api\/?$/, "");
-  return `${host}${photo.startsWith("/") ? "" : "/"}${photo}`;
+  // Legacy local wwwroot paths remain publicly reachable under the API host.
+  const normalized = photo.replace(/\\/g, "/");
+  if (normalized.startsWith("/uploads/") || normalized.startsWith("uploads/")) {
+    const host = API_ROOT.backendHost.replace(/\/api\/?$/, "");
+    return `${host}${normalized.startsWith("/") ? "" : "/"}${normalized}`;
+  }
+  // Azure blob names are loaded via fetchNcrPhotoObjectUrl (auth required).
+  return "";
+}
+
+export async function fetchNcrPhotoObjectUrl(ncrId: number, photo: string): Promise<string> {
+  if (!photo) return "";
+  if (photo.startsWith("data:") || photo.startsWith("blob:") || photo.startsWith("http")) {
+    return photo;
+  }
+  if (isLegacyNcrPhotoPath(photo) && (photo.startsWith("/uploads/") || photo.startsWith("uploads/"))) {
+    return resolveNcrPhotoUrl(photo);
+  }
+
+  const response = await Instense.get(`/Quality/GetNCRPhoto/${ncrId}`, {
+    params: { file: photo },
+    responseType: "blob",
+  });
+  const blob: Blob = response.data;
+  return URL.createObjectURL(blob);
 }
 
 export interface NonConformanceReport {
@@ -236,7 +271,9 @@ export class QualityService {
     }
   }
 
-  static async CreateNCR(ncr: Omit<NonConformanceReport, 'ncrId' | 'ncrNumber'>): Promise<NonConformanceReport | null> {
+  static async CreateNCR(
+    ncr: Omit<NonConformanceReport, 'ncrId' | 'ncrNumber'>
+  ): Promise<(NonConformanceReport & { assignmentEmails?: string[] }) | null> {
     try {
       console.log("QualityService.CreateNCR called with data:", ncr);
 
@@ -255,6 +292,9 @@ export class QualityService {
           result.photos = [];
         }
       }
+      if (result && Array.isArray(response.data.assignmentEmails)) {
+        result.assignmentEmails = response.data.assignmentEmails;
+      }
 
       return result;
     } catch (error) {
@@ -263,15 +303,23 @@ export class QualityService {
     }
   }
 
-  static async UpdateNCR(ncrId: number, updates: Partial<NonConformanceReport>): Promise<boolean> {
+  static async UpdateNCR(
+    ncrId: number,
+    updates: Partial<NonConformanceReport>
+  ): Promise<{ success: boolean; assignmentEmails?: string[] }> {
     try {
       const updateData = {
         ...updates,
         photos: toStoredPhotos(updates.photos as string[] | string | undefined)
       };
 
-      await Instense.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
-      return true;
+      const response = await Instense.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
+      return {
+        success: true,
+        assignmentEmails: Array.isArray(response.data?.assignmentEmails)
+          ? response.data.assignmentEmails
+          : undefined,
+      };
     } catch (error) {
       console.error("Error updating NCR:", error);
       throw new Error(getApiErrorMessage(error, "Failed to update NCR"));

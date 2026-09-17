@@ -44,8 +44,15 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
       try {
         const loadedSettings = await SystemSettingsService.GetSettings(tenantId);
-        setSettings(loadedSettings);
-        applyRuntimeSettings(loadedSettings);
+        const safeSettings = {
+          ...loadedSettings,
+          smtpPassword: "",
+          hasSmtpPassword:
+            !!(loadedSettings as any).hasSmtpPassword ||
+            !!(loadedSettings as any).HasSmtpPassword,
+        };
+        setSettings(safeSettings);
+        applyRuntimeSettings(safeSettings);
       } catch (err: any) {
         console.warn('[SettingsContext] Failed to load settings, using defaults:', err.message);
         // Use defaults in React, but keep any sessionTimeoutMinutes already set by login

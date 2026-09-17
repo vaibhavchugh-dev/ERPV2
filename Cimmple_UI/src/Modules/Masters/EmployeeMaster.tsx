@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
@@ -25,6 +26,8 @@ const DEFAULT_HIDDEN_COLUMNS = ["userName"];
 const COLUMN_PREFERENCE_KEY = "employeeMaster.hiddenColumns";
 
 const EmployeeMasterComponent: React.FC = () => {
+  const history = useHistory();
+  const location = useLocation();
   const [employees, setEmployees] = useState<EmployeeMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -46,6 +49,33 @@ const EmployeeMasterComponent: React.FC = () => {
 
   useEffect(() => {
     loadEmployees();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openId = params.get("open");
+    if (openId) {
+      const id = parseInt(openId, 10);
+      if (!isNaN(id) && id > 0) {
+        setSelectedEmployeeId(id);
+        setShowSlideout(true);
+        history.replace(location.pathname);
+      }
+    }
+  }, [location.search, history, location.pathname]);
+
+  useEffect(() => {
+    const handleOpenEntity = (event: CustomEvent) => {
+      if (event.detail.type === "employee") {
+        setSelectedEmployeeId(event.detail.id);
+        setShowSlideout(true);
+      }
+    };
+
+    window.addEventListener("openEntity", handleOpenEntity as EventListener);
+    return () => {
+      window.removeEventListener("openEntity", handleOpenEntity as EventListener);
+    };
   }, []);
 
   const loadEmployees = async () => {

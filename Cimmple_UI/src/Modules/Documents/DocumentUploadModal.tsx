@@ -132,9 +132,15 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="document-upload-modal" onClick={(e) => e.stopPropagation()}>
+        {loading && (
+          <div className="upload-loading-overlay" role="status" aria-live="polite">
+            <div className="upload-loading-spinner" />
+            <p>Uploading document...</p>
+          </div>
+        )}
         <div className="modal-header">
           <h3>Upload Document</h3>
-          <button className="btn-close" onClick={onClose}>
+          <button className="btn-close" onClick={onClose} disabled={loading}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>

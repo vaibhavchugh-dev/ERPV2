@@ -50,9 +50,11 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import {
   InventoryService,
   JobMaterialUsage,
@@ -61,7 +63,7 @@ import {
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
-import { faPrint } from "@fortawesome/free-solid-svg-icons";
+import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "./JobOrderSlideout.scss";
 
@@ -188,6 +190,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [, setElapsedTick] = useState(0);
   const [trackingSaving, setTrackingSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [trackingDialog, setTrackingDialog] = useState<null | {
     type:
       | "pause"
@@ -1002,7 +1005,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         Status: statusToSave,
         EnableJobTracking: enableJobTracking,
         RoutingSteps: stepsToSave,
-        Attachments: persistedAttachments,
+        // Omit empty Attachments when pending uploads follow so we don't wipe JSON before SaveFile.
+        Attachments:
+          persistedAttachments.length > 0 ||
+          deletedAttachmentIds.length > 0 ||
+          pendingFiles.length === 0
+            ? persistedAttachments
+            : undefined,
         DeletedAttachmentIds: deletedAttachmentIds,
         Comments: comments,
         MaterialRequirements: formData.MaterialRequirements || [],
@@ -1032,7 +1041,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error saving job order:", error);
-      toast.error(`Error saving job order: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving job order: ${getApiErrorMessage(error, "Unknown error")}`);
     } finally {
       setLoading(false);
     }
@@ -2481,6 +2490,27 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 >
                   <FontAwesomeIcon icon={faPrint} spin={printing} />
                   {printing ? "Generating…" : "Print"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email job order"
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <FontAwesomeIcon icon={faEnvelope} />
+                  Email
                 </button>
                 <button
                   type="button"
@@ -4628,6 +4658,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
         }}
         onRefreshImpact={refreshDeletionImpact}
         isLoading={loading}
+      />
+
+      <SendDocumentEmailDialog
+        open={showEmailDialog}
+        kind="jobOrder"
+        documentId={jobOrderId}
+        documentLabel={formatDisplayJobOrderNumber(formData.JobOrderNumber) || undefined}
+        onClose={() => setShowEmailDialog(false)}
       />
 
       {ncrSlideout && (

@@ -21,6 +21,18 @@ export function toStoredPhotos(
   return urls.length ? JSON.stringify(urls) : null;
 }
 
+export function isLegacyNcrPhotoPath(photo: string): boolean {
+  if (!photo) return false;
+  const normalized = photo.replace(/\\/g, "/");
+  return (
+    normalized.startsWith("/uploads/") ||
+    normalized.startsWith("uploads/") ||
+    normalized.startsWith("http") ||
+    normalized.startsWith("data:") ||
+    normalized.startsWith("blob:")
+  );
+}
+
 export function resolveNcrPhotoUrl(photo: string): string {
   if (!photo) return "";
   if (
@@ -30,8 +42,35 @@ export function resolveNcrPhotoUrl(photo: string): string {
   ) {
     return photo;
   }
-  const host = API_ROOT.replace(/\/api\/?$/, "");
-  return `${host}${photo.startsWith("/") ? "" : "/"}${photo}`;
+  const normalized = photo.replace(/\\/g, "/");
+  if (normalized.startsWith("/uploads/") || normalized.startsWith("uploads/")) {
+    const host = API_ROOT.replace(/\/api\/?$/, "");
+    return `${host}${normalized.startsWith("/") ? "" : "/"}${normalized}`;
+  }
+  return "";
+}
+
+export async function fetchNcrPhotoObjectUrl(
+  ncrId: number,
+  photo: string
+): Promise<string> {
+  if (!photo) return "";
+  if (photo.startsWith("data:") || photo.startsWith("blob:") || photo.startsWith("http")) {
+    return photo;
+  }
+  if (
+    photo.replace(/\\/g, "/").startsWith("/uploads/") ||
+    photo.replace(/\\/g, "/").startsWith("uploads/")
+  ) {
+    return resolveNcrPhotoUrl(photo);
+  }
+
+  const response = await api.get(`/Quality/GetNCRPhoto/${ncrId}`, {
+    params: { file: photo },
+    responseType: "blob",
+  });
+  const blob: Blob = response.data;
+  return URL.createObjectURL(blob);
 }
 
 export type NCRCategory =

@@ -15,6 +15,7 @@ import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
@@ -22,6 +23,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
@@ -74,6 +76,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -1042,12 +1045,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         return;
       }
       
-      const result = await OrderService.SaveOrder(formDataToSave);
+      const result = await OrderService.SaveOrder(formDataToSave, pendingFiles);
 
       const savedId = result.id > 0 ? result.id : formDataToSave.OrderID;
-      if (savedId > 0 && pendingFiles.length > 0) {
-        await OrderService.OrderSaveFile(savedId, pendingFiles);
-      }
 
       revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
       setDeletedAttachmentIds([]);
@@ -1075,7 +1075,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
       console.error("Error saving order:", error);
-      toast.error(`Error saving order: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
+      toast.error(`Error saving order: ${getApiErrorMessage(error, "Unknown error")}`);
     } finally {
       setLoading(false);
     }
@@ -1548,6 +1548,18 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
                     <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
                     <rect x="6" y="14" width="12" height="8"></rect>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
                 <button
@@ -2983,6 +2995,20 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         onRefreshImpact={refreshDeletionImpact}
         onDeleteAll={handleDeleteAll}
         isLoading={loading}
+      />
+
+      <SendDocumentEmailDialog
+        open={showEmailDialog}
+        kind="order"
+        documentId={effectiveOrderId}
+        documentLabel={
+          formData.PONumber > 0
+            ? formData.PONumber < 1000
+              ? `CO#${formData.PONumber + 999}`
+              : `CO#${formData.PONumber}`
+            : undefined
+        }
+        onClose={() => setShowEmailDialog(false)}
       />
     </div>
   );

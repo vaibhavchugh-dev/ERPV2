@@ -6,14 +6,15 @@ import {
   QualityService,
   NonConformanceReport,
   NCRStatus,
-  resolveNcrPhotoUrl,
 } from "../../Common/Services/QualityService";
+import NcrStoredPhotoImg from "./NcrStoredPhotoImg";
 import { JobOrderService, JobOrderMaster, JobOrderRoutingStep } from "../../Common/Services/JobOrderService";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
 import { VendorService, VendorMaster } from "../../Common/Services/VendorService";
 import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/VendorOrderService";
 import { PdfService } from "../../Common/Services/PdfService";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import { NCRCodeService, NCRCodeMaster } from "../../Common/Services/NCRCodeService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
@@ -177,6 +178,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [employees, setEmployees] = useState<EmployeeMaster[]>([]);
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
@@ -584,12 +586,14 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
         ncrCode: ncr.ncrCode || "",
       };
 
-      let result: NonConformanceReport | null = null;
+      let result: (NonConformanceReport & { assignmentEmails?: string[] }) | null = null;
       let savedId = ncrId;
+      let assignmentEmails: string[] = [];
 
       if (ncrId > 0) {
-        await QualityService.UpdateNCR(ncrId, ncrData);
+        const updateResult = await QualityService.UpdateNCR(ncrId, ncrData);
         result = { ...(ncrData as NonConformanceReport), ncrId };
+        assignmentEmails = updateResult.assignmentEmails || [];
         toast.success("NCR updated successfully");
       } else {
         result = await QualityService.CreateNCR(
@@ -600,8 +604,14 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           return;
         }
         savedId = result.ncrId;
+        assignmentEmails = result.assignmentEmails || [];
         toast.success("NCR created successfully");
         await Promise.resolve(onCreated?.(result));
+      }
+
+      for (const msg of assignmentEmails) {
+        if (/failed|no email|skipped/i.test(msg)) toast.warn(msg);
+        else toast.success(msg);
       }
 
       if (pendingPhotos.length && savedId > 0) {
@@ -759,6 +769,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {ncrId > 0 && (
+              <>
               <button
                 type="button"
                 className="btn-icon"
@@ -773,6 +784,20 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                   <rect x="6" y="14" width="12" height="8"></rect>
                 </svg>
               </button>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => setShowEmailDialog(true)}
+                disabled={saving}
+                title="Email NCR"
+                style={{ color: "#6366f1" }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                  <polyline points="22,6 12,13 2,6"></polyline>
+                </svg>
+              </button>
+              </>
             )}
             <div className="status-field-inline">
               <div
@@ -1156,7 +1181,11 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                     <div className="photo-preview-grid">
                       {storedPhotos.map((photo, index) => (
                         <div key={`stored-${index}`} className="photo-preview-item">
-                          <img src={resolveNcrPhotoUrl(photo)} alt={`Attachment ${index + 1}`} />
+                          <NcrStoredPhotoImg
+                            ncrId={ncr.ncrId || 0}
+                            photo={photo}
+                            alt={`Attachment ${index + 1}`}
+                          />
                           <button
                             type="button"
                             className="photo-delete-btn"
@@ -1369,6 +1398,21 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
             setShowDeletionDialog(false);
             setDeletionImpact(null);
           }}
+        />
+
+        <SendDocumentEmailDialog
+          open={showEmailDialog}
+          kind="ncr"
+          documentId={ncrId}
+          defaultToEmail={
+            (ncr.vendorId && ncr.vendorId > 0
+              ? vendors.find((v) => v.vendor_id === ncr.vendorId)?.email
+              : ncr.customerId && ncr.customerId > 0
+                ? customers.find((c) => c.customer_id === ncr.customerId)?.email
+                : "") || ""
+          }
+          documentLabel={ncr.ncrNumber || undefined}
+          onClose={() => setShowEmailDialog(false)}
         />
       </div>
     </div>

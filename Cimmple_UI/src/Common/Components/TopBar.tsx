@@ -322,7 +322,7 @@ const TopBar: React.FC = () => {
       'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
       'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
       'locations', 'processes', 'jobTemplates', 'priceBreakdowns', 'creditCards', 'chartOfAccounts',
-      'shipments', 'ncrReports', 'users', 'documents'
+      'shipments', 'ncrReports', 'users', 'employees', 'documents'
     ];
     for (const cat of categories) {
       const list = resultsData[cat];
@@ -397,8 +397,12 @@ const TopBar: React.FC = () => {
     }, 100);
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
+  const handleLogout = async () => {
+    try {
+      await AuthService.logout();
+    } catch {
+      AuthService.clearSession("erp");
+    }
     User.isAuthenticated = false;
     history.push("/login");
   };

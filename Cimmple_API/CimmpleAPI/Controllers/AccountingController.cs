@@ -5,9 +5,13 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Pdf;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -16,10 +20,12 @@ namespace CimmpleAPI.Controllers
     public class AccountingController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly DocumentPdfService _documentPdfService;
 
-        public AccountingController(CimmpleDbContext context)
+        public AccountingController(CimmpleDbContext context, DocumentPdfService documentPdfService)
         {
             _context = context;
+            _documentPdfService = documentPdfService;
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
@@ -520,15 +526,18 @@ namespace CimmpleAPI.Controllers
                 if (txn == null)
                     return NotFound(new { error = "Transaction not found" });
 
+                if (txn.TransactionDate.HasValue &&
+                    GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, txn.TransactionDate.Value))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(txn.TransactionDate.Value);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before changing bank reconciliation."
+                    });
+                }
+
                 txn.IsReconciled = request.Reconciled;
                 txn.ReconciledUtc = request.Reconciled ? DateTime.UtcNow : null;
-
-                if (request.Reconciled && txn.BankId.HasValue)
-                {
-                    var bank = _context.BankMaster.FirstOrDefault(b => b.Id == txn.BankId.Value && b.TenantId == tenantId);
-                    if (bank != null)
-                        bank.LastReconciledDate = DateTime.UtcNow.Date;
-                }
 
                 _context.SaveChanges();
                 return Ok(new { result = new { message = "Transaction reconciliation updated successfully", reconciled = txn.IsReconciled } });
@@ -555,19 +564,25 @@ namespace CimmpleAPI.Controllers
                     .Where(t => t.TenantId == tenantId && request.TransactionIds.Contains(t.TransactionID))
                     .ToList();
 
+                var locked = txns
+                    .Where(t => t.TransactionDate.HasValue &&
+                                GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, t.TransactionDate.Value))
+                    .Select(t => GlWorkflowService.PeriodKeyFromDate(t.TransactionDate!.Value))
+                    .Distinct()
+                    .ToList();
+                if (locked.Count > 0)
+                {
+                    return Conflict(new
+                    {
+                        error = $"Accounting period(s) {string.Join(", ", locked)} are closed. Reopen on Period Close & Audit before clearing those transactions."
+                    });
+                }
+
                 var now = DateTime.UtcNow;
                 foreach (var txn in txns)
                 {
                     txn.IsReconciled = true;
                     txn.ReconciledUtc = now;
-                }
-
-                var bankIds = txns.Where(t => t.BankId.HasValue).Select(t => t.BankId!.Value).Distinct().ToList();
-                if (bankIds.Count > 0)
-                {
-                    var banks = _context.BankMaster.Where(b => b.TenantId == tenantId && bankIds.Contains(b.Id)).ToList();
-                    foreach (var bank in banks)
-                        bank.LastReconciledDate = now.Date;
                 }
 
                 _context.SaveChanges();
@@ -578,6 +593,427 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine($"Error in BulkReconcileTransactions: {ex.Message}");
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        [HttpGet("GetBankReconciliationContext")]
+        public IActionResult GetBankReconciliationContext([FromQuery] int bankId)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (bankId <= 0)
+                    return BadRequest(new { error = "bankId is required" });
+
+                var bank = _context.BankMaster.AsNoTracking()
+                    .FirstOrDefault(b => b.Id == bankId && b.TenantId == tenantId);
+                if (bank == null)
+                    return NotFound(new { error = "Bank account not found" });
+
+                var periods = _context.BankReconciliationPeriods
+                    .AsNoTracking()
+                    .Where(p => p.TenantId == tenantId && p.BankId == bankId)
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .Take(24)
+                    .ToList();
+
+                var open = periods.FirstOrDefault(p =>
+                    string.Equals(p.Status, "Open", StringComparison.OrdinalIgnoreCase));
+                var lastCompleted = periods
+                    .Where(p => string.Equals(p.Status, "Completed", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .FirstOrDefault();
+
+                var beginningBalance = lastCompleted?.EndingBalance ?? bank.Balance;
+                decimal? clearedBalance = null;
+                decimal? difference = null;
+                decimal? clearedCredits = null;
+                decimal? clearedDebits = null;
+                if (open != null)
+                {
+                    var cleared = ComputePeriodCleared(tenantId, bankId, open.StatementDate.Date, open.BeginningBalance);
+                    clearedBalance = cleared.ClearedBalance;
+                    clearedCredits = cleared.ClearedCredits;
+                    clearedDebits = cleared.ClearedDebits;
+                    // Statement ending − cleared balance (0 when reconciled)
+                    difference = open.EndingBalance - cleared.ClearedBalance;
+                }
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        bankId,
+                        bankOpeningBalance = bank.Balance,
+                        suggestedBeginningBalance = beginningBalance,
+                        lastReconciledDate = bank.LastReconciledDate.HasValue
+                            ? bank.LastReconciledDate.Value.ToString("yyyy-MM-dd")
+                            : (string?)null,
+                        openPeriod = open == null
+                            ? null
+                            : MapPeriodDto(open, clearedBalance, difference, clearedCredits, clearedDebits),
+                        lastCompletedPeriod = lastCompleted == null
+                            ? null
+                            : MapPeriodDto(lastCompleted, lastCompleted.ClearedBalance, null, null, null),
+                        periods = periods.Select(p => MapPeriodDto(
+                            p,
+                            p.Id == open?.Id ? clearedBalance : p.ClearedBalance,
+                            p.Id == open?.Id ? difference : null,
+                            p.Id == open?.Id ? clearedCredits : null,
+                            p.Id == open?.Id ? clearedDebits : null)).ToList()
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in GetBankReconciliationContext: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("StartBankReconciliationPeriod")]
+        public IActionResult StartBankReconciliationPeriod([FromBody] StartBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.BankId <= 0)
+                    return BadRequest(new { error = "bankId is required" });
+                if (!DateTime.TryParse(request.StatementDate, out var statementDate))
+                    return BadRequest(new { error = "Valid statementDate is required" });
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, statementDate))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(statementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before starting bank reconciliation."
+                    });
+                }
+
+                var bank = _context.BankMaster.FirstOrDefault(b => b.Id == request.BankId && b.TenantId == tenantId);
+                if (bank == null)
+                    return NotFound(new { error = "Bank account not found" });
+
+                var hasOpen = _context.BankReconciliationPeriods.Any(p =>
+                    p.TenantId == tenantId &&
+                    p.BankId == request.BankId &&
+                    p.Status == "Open");
+                if (hasOpen)
+                    return BadRequest(new { error = "An open reconciliation period already exists for this bank. Complete it first." });
+
+                var lastCompleted = _context.BankReconciliationPeriods
+                    .Where(p => p.TenantId == tenantId && p.BankId == request.BankId && p.Status == "Completed")
+                    .OrderByDescending(p => p.StatementDate)
+                    .ThenByDescending(p => p.Id)
+                    .FirstOrDefault();
+
+                var beginning = lastCompleted?.EndingBalance ?? bank.Balance;
+                var period = new BankReconciliationPeriod
+                {
+                    TenantId = tenantId,
+                    BankId = request.BankId,
+                    BeginningBalance = beginning,
+                    EndingBalance = request.EndingBalance,
+                    StatementDate = statementDate.Date,
+                    Status = "Open",
+                    CreatedUtc = DateTime.UtcNow
+                };
+                _context.BankReconciliationPeriods.Add(period);
+                _context.SaveChanges();
+
+                var cleared = ComputePeriodCleared(tenantId, request.BankId, period.StatementDate.Date, period.BeginningBalance);
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        period.EndingBalance - cleared.ClearedBalance,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in StartBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("UpdateBankReconciliationPeriod")]
+        public IActionResult UpdateBankReconciliationPeriod([FromBody] UpdateBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.PeriodId <= 0)
+                    return BadRequest(new { error = "periodId is required" });
+
+                var period = _context.BankReconciliationPeriods
+                    .FirstOrDefault(p => p.Id == request.PeriodId && p.TenantId == tenantId);
+                if (period == null)
+                    return NotFound(new { error = "Reconciliation period not found" });
+                if (!string.Equals(period.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { error = "Only an open period can be updated" });
+
+                if (!string.IsNullOrWhiteSpace(request.StatementDate))
+                {
+                    if (!DateTime.TryParse(request.StatementDate, out var statementDate))
+                        return BadRequest(new { error = "Valid statementDate is required" });
+                    if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, statementDate))
+                    {
+                        var pk = GlWorkflowService.PeriodKeyFromDate(statementDate);
+                        return Conflict(new
+                        {
+                            error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before updating the statement date."
+                        });
+                    }
+                    period.StatementDate = statementDate.Date;
+                }
+
+                if (request.EndingBalance.HasValue)
+                    period.EndingBalance = request.EndingBalance.Value;
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, period.StatementDate))
+                {
+                    var pk = GlWorkflowService.PeriodKeyFromDate(period.StatementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before changing this reconciliation."
+                    });
+                }
+
+                _context.SaveChanges();
+
+                var cleared = ComputePeriodCleared(tenantId, period.BankId, period.StatementDate.Date, period.BeginningBalance);
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        period.EndingBalance - cleared.ClearedBalance,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in UpdateBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        [HttpPost("CompleteBankReconciliationPeriod")]
+        public IActionResult CompleteBankReconciliationPeriod([FromBody] CompleteBankReconciliationPeriodRequest request)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (request == null || request.PeriodId <= 0)
+                    return BadRequest(new { error = "periodId is required" });
+
+                var period = _context.BankReconciliationPeriods
+                    .FirstOrDefault(p => p.Id == request.PeriodId && p.TenantId == tenantId);
+                if (period == null)
+                    return NotFound(new { error = "Reconciliation period not found" });
+                if (!string.Equals(period.Status, "Open", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new { error = "Period is already completed" });
+
+                if (GlWorkflowService.IsDateInLockedPeriod(_context, tenantId, period.StatementDate))
+                {
+                    var pkLock = GlWorkflowService.PeriodKeyFromDate(period.StatementDate);
+                    return Conflict(new
+                    {
+                        error = $"Accounting period {pkLock} is closed. Reopen that period on Period Close & Audit before completing bank reconciliation."
+                    });
+                }
+
+                var statementEnd = period.StatementDate.Date;
+                var cleared = ComputePeriodCleared(tenantId, period.BankId, statementEnd, period.BeginningBalance);
+                var diff = period.EndingBalance - cleared.ClearedBalance;
+                if (Math.Abs(diff) >= 0.01m)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Cannot complete: difference is {diff:0.00} (statement ending − cleared). Cleared credits {cleared.ClearedCredits:0.00}, cleared debits {cleared.ClearedDebits:0.00}."
+                    });
+                }
+
+                var alreadyLinked = (
+                    from item in _context.BankReconciliationPeriodItems
+                    join p in _context.BankReconciliationPeriods on item.PeriodId equals p.Id
+                    where p.TenantId == tenantId && p.BankId == period.BankId
+                    select item.TransactionId
+                ).ToHashSet();
+
+                var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+                var endInclusive = statementEnd.AddDays(1).AddTicks(-1);
+                var toLink = _context.Transactions
+                    .AsNoTracking()
+                    .Where(t => t.TenantId == tenantId &&
+                                t.BankId == period.BankId &&
+                                t.IsReconciled &&
+                                t.TransactionType != null &&
+                                bankTypeSet.Contains(t.TransactionType) &&
+                                t.TransactionDate != null &&
+                                t.TransactionDate <= endInclusive)
+                    .Select(t => t.TransactionID)
+                    .ToList()
+                    .Where(id => !alreadyLinked.Contains(id))
+                    .ToList();
+
+                foreach (var txnId in toLink)
+                {
+                    _context.BankReconciliationPeriodItems.Add(new BankReconciliationPeriodItem
+                    {
+                        PeriodId = period.Id,
+                        TransactionId = txnId
+                    });
+                }
+
+                period.ClearedBalance = cleared.ClearedBalance;
+                period.Status = "Completed";
+                period.CompletedUtc = DateTime.UtcNow;
+                period.CompletedByUserId = GetUserId();
+
+                var bank = _context.BankMaster.FirstOrDefault(b => b.Id == period.BankId && b.TenantId == tenantId);
+                if (bank != null)
+                    bank.LastReconciledDate = statementEnd;
+
+                var bankLabel = bank == null
+                    ? $"Bank {period.BankId}"
+                    : (string.IsNullOrWhiteSpace(bank.NickName) ? bank.BankName : bank.NickName);
+                GlWorkflowService.AddAudit(
+                    _context,
+                    tenantId,
+                    "BankReconComplete",
+                    GetUserId(),
+                    null,
+                    null,
+                    GlWorkflowService.PeriodKeyFromDate(statementEnd),
+                    $"{bankLabel}: statement {statementEnd:yyyy-MM-dd}, ending {period.EndingBalance:0.00}");
+
+                _context.SaveChanges();
+                return Ok(new
+                {
+                    result = MapPeriodDto(
+                        period,
+                        cleared.ClearedBalance,
+                        0m,
+                        cleared.ClearedCredits,
+                        cleared.ClearedDebits)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in CompleteBankReconciliationPeriod: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        private readonly struct PeriodClearedTotals
+        {
+            public PeriodClearedTotals(decimal clearedCredits, decimal clearedDebits, decimal clearedBalance)
+            {
+                ClearedCredits = clearedCredits;
+                ClearedDebits = clearedDebits;
+                ClearedBalance = clearedBalance;
+            }
+
+            /// <summary>Sum of cleared credit magnitudes (deposits / customer receipts).</summary>
+            public decimal ClearedCredits { get; }
+            /// <summary>Sum of cleared debit magnitudes (payments / withdrawals).</summary>
+            public decimal ClearedDebits { get; }
+            /// <summary>Beginning + credits − debits.</summary>
+            public decimal ClearedBalance { get; }
+        }
+
+        /// <summary>
+        /// Cleared balance for an open statement period:
+        /// Beginning + cleared credits − cleared debits
+        /// (only reconciled cash txns dated on/before statement date, not already closed in a prior period).
+        /// </summary>
+        private PeriodClearedTotals ComputePeriodCleared(
+            int tenantId,
+            int bankId,
+            DateTime statementDate,
+            decimal beginningBalance)
+        {
+            var bankTypeSet = new[] { "Payment", "Deposit", "Withdrawal" };
+            var endInclusive = statementDate.Date.AddDays(1).AddTicks(-1);
+
+            var alreadyInCompleted = (
+                from item in _context.BankReconciliationPeriodItems.AsNoTracking()
+                join p in _context.BankReconciliationPeriods.AsNoTracking() on item.PeriodId equals p.Id
+                where p.TenantId == tenantId &&
+                      p.BankId == bankId &&
+                      p.Status == "Completed"
+                select item.TransactionId
+            ).ToHashSet();
+
+            var raw = _context.Transactions
+                .AsNoTracking()
+                .Where(t => t.TenantId == tenantId &&
+                            t.BankId == bankId &&
+                            t.IsReconciled &&
+                            t.TransactionType != null &&
+                            bankTypeSet.Contains(t.TransactionType) &&
+                            t.TransactionDate != null &&
+                            t.TransactionDate <= endInclusive)
+                .Select(t => new
+                {
+                    t.TransactionID,
+                    t.Amount,
+                    t.isCustomer,
+                    t.TransactionType
+                })
+                .ToList()
+                .Where(t => !alreadyInCompleted.Contains(t.TransactionID));
+
+            decimal credits = 0;
+            decimal debits = 0;
+            foreach (var t in raw)
+            {
+                var (signed, isCredit) = AccountingRules.MapBankTransactionSign(
+                    t.Amount ?? 0, t.isCustomer, t.TransactionType);
+                if (isCredit)
+                    credits += Math.Abs(signed);
+                else
+                    debits += Math.Abs(signed);
+            }
+
+            var clearedBalance = beginningBalance + credits - debits;
+            return new PeriodClearedTotals(credits, debits, clearedBalance);
+        }
+
+        private static object MapPeriodDto(
+            BankReconciliationPeriod p,
+            decimal? clearedBalance,
+            decimal? difference,
+            decimal? clearedCredits,
+            decimal? clearedDebits)
+        {
+            return new
+            {
+                id = p.Id,
+                bankId = p.BankId,
+                beginningBalance = p.BeginningBalance,
+                endingBalance = p.EndingBalance,
+                statementDate = p.StatementDate.ToString("yyyy-MM-dd"),
+                status = p.Status,
+                clearedCredits,
+                clearedDebits,
+                clearedBalance,
+                // Statement ending − cleared balance
+                difference,
+                completedUtc = p.CompletedUtc,
+                createdUtc = p.CreatedUtc
+            };
         }
 
         [HttpGet("GetAccountingSettings")]
@@ -1488,6 +1924,9 @@ namespace CimmpleAPI.Controllers
                 if (_context.GlAccountingPeriodLocks.Any(x => x.TenantId == tid && x.PeriodKey == pk))
                     return Conflict(new { error = $"Period {pk} is already closed." });
 
+                if (!GlWorkflowService.TryEnsureBankReconsCompleteForGlPeriod(_context, tid, pk, out var bankErr))
+                    return Conflict(new { error = bankErr });
+
                 _context.GlAccountingPeriodLocks.Add(new GlAccountingPeriodLock
                 {
                     TenantId = tid,
@@ -1495,7 +1934,8 @@ namespace CimmpleAPI.Controllers
                     ClosedUtc = DateTime.UtcNow,
                     ClosedByUserId = GetUserId()
                 });
-                GlWorkflowService.AddAudit(_context, tid, "PeriodClose", GetUserId(), null, null, pk, null);
+                GlWorkflowService.AddAudit(_context, tid, "PeriodClose", GetUserId(), null, null, pk,
+                    "GL period closed after bank reconciliation check");
                 _context.SaveChanges();
 
                 return Ok(new { result = new { message = $"Period {pk} closed.", periodKey = pk } });
@@ -1580,21 +2020,32 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SendArReminder")]
-        public IActionResult SendArReminder([FromBody] SendArReminderRequest request)
+        public async Task<IActionResult> SendArReminder([FromBody] SendArReminderRequest request)
         {
             try
             {
-                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
-                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                await AccountingGapSchemaService.EnsureAsync(_context);
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
                 var tenantId = GetTenantId();
                 if (request == null || request.InvoiceId <= 0)
                     return BadRequest(new { error = "Invoice id is required." });
 
-                var result = SendOneArReminder(tenantId, request.InvoiceId);
+                if (!TryGetActiveLocationId(out var locationId, out var forbid))
+                    return forbid!;
+
+                var result = await SendOneArReminderAsync(tenantId, request.InvoiceId, locationId);
                 if (!result.ok)
                     return BadRequest(new { error = result.error });
 
-                return Ok(new { result = new { message = "Payment reminder sent", toEmail = result.toEmail } });
+                return Ok(new
+                {
+                    result = new
+                    {
+                        message = "Payment reminder sent",
+                        toEmail = result.toEmail,
+                        attachedPdf = result.attachedPdf
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -1603,13 +2054,16 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SendBulkArReminders")]
-        public IActionResult SendBulkArReminders([FromBody] BulkArReminderRequest? request)
+        public async Task<IActionResult> SendBulkArReminders([FromBody] BulkArReminderRequest? request)
         {
             try
             {
-                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
-                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                await AccountingGapSchemaService.EnsureAsync(_context);
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
                 var tenantId = GetTenantId();
+
+                if (!TryGetActiveLocationId(out var locationId, out var forbid))
+                    return forbid!;
 
                 var invoiceIds = request?.InvoiceIds?.Where(id => id > 0).Distinct().ToList()
                     ?? _context.InvoiceMaster
@@ -1624,7 +2078,7 @@ namespace CimmpleAPI.Controllers
                 var failures = new List<object>();
                 foreach (var id in invoiceIds)
                 {
-                    var r = SendOneArReminder(tenantId, id);
+                    var r = await SendOneArReminderAsync(tenantId, id, locationId);
                     if (r.ok) sent++;
                     else failures.Add(new { invoiceId = id, error = r.error });
                 }
@@ -1663,66 +2117,140 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private (bool ok, string? error, string? toEmail) SendOneArReminder(int tenantId, int invoiceId)
+        private async Task<(bool ok, string? error, string? toEmail, bool attachedPdf)> SendOneArReminderAsync(
+            int tenantId,
+            int invoiceId,
+            int? locationId)
         {
-            var invoice = _context.InvoiceMaster
-                .FirstOrDefault(im => im.Id == invoiceId && im.TenantId == tenantId);
+            var invoice = await _context.InvoiceMaster
+                .FirstOrDefaultAsync(im => im.Id == invoiceId && im.TenantId == tenantId);
             if (invoice == null)
-                return (false, "Invoice not found", null);
+                return (false, "Invoice not found", null, false);
             if (invoice.IsVoided)
-                return (false, "Cannot send reminder for a voided invoice", null);
+                return (false, "Cannot send reminder for a voided invoice", null, false);
 
             var balance = invoice.TotalAmount - invoice.PaidAmount;
             if (balance <= 0.009m)
-                return (false, "Invoice is fully paid", null);
+                return (false, "Invoice is fully paid", null, false);
 
-            var orderId = _context.InvoiceDetail
+            var orderId = await _context.InvoiceDetail
                 .Where(d => d.InvoiceId == invoice.Id)
                 .Select(d => d.OrderId)
-                .FirstOrDefault();
-            var order = _context.CustomerOrder
+                .FirstOrDefaultAsync();
+            var order = await _context.CustomerOrder
                 .AsNoTracking()
-                .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
             string? toEmail = null;
             string customerName = order?.CustomerName ?? "Customer";
             if (order != null)
             {
-                toEmail = _context.CustomerMaster
+                toEmail = await _context.CustomerMaster
                     .AsNoTracking()
                     .Where(c => c.Tenantid == tenantId && c.customer_id == order.CustomerID)
                     .Select(c => c.ContactEmail ?? c.email)
-                    .FirstOrDefault();
+                    .FirstOrDefaultAsync();
             }
 
-            var settings = _context.SystemSettings.AsNoTracking()
-                .FirstOrDefault(s => s.TenantId == tenantId);
-            var company = _context.AccountingDefaults.AsNoTracking()
-                .FirstOrDefault(d => d.TenantId == tenantId)?.CompanyName ?? "Cimmple";
+            var settings = await _context.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+            if (settings == null)
+                return (false, "System settings are not configured for this tenant.", null, false);
+
+            var company = await _context.AccountingDefaults.AsNoTracking()
+                .Where(d => d.TenantId == tenantId)
+                .Select(d => d.CompanyName)
+                .FirstOrDefaultAsync();
+            if (string.IsNullOrWhiteSpace(company))
+                company = "Cimmple";
 
             var invoiceLabel = !string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo)
                 ? invoice.PrefixInvoiceNo
                 : invoice.InvoiceNo.ToString();
-            var subject = $"Payment reminder — Invoice {invoiceLabel}";
-            var body =
-                $"Dear {customerName},\n\n" +
-                $"This is a friendly reminder that invoice {invoiceLabel} dated {invoice.InvoiceDate:yyyy-MM-dd} " +
-                $"has an outstanding balance of {balance:0.00} (due {invoice.DueDate:yyyy-MM-dd}).\n\n" +
-                $"Thank you,\n{company}";
 
-            var (ok, error) = AccountingEmailService.TrySend(settings!, toEmail ?? "", subject, body);
+            var currencyCode = string.IsNullOrWhiteSpace(settings.DefaultCurrency) ? "USD" : settings.DefaultCurrency;
+            var locale = string.IsNullOrWhiteSpace(settings.Locale) ? "en-US" : settings.Locale;
+            var decimalPlaces = settings.DecimalPlaces > 0 ? settings.DecimalPlaces : 2;
+            var decimalSep = string.IsNullOrWhiteSpace(settings.DecimalSeparator) ? "." : settings.DecimalSeparator;
+            var thousandsSep = string.IsNullOrWhiteSpace(settings.ThousandsSeparator) ? "," : settings.ThousandsSeparator;
+            var currencySymbol = CurrencyFormattingHelper.ResolveCurrencySymbol(
+                currencyCode, settings.CurrencySymbol, locale);
+            var balanceText = CurrencyFormattingHelper.FormatAmount(
+                balance, currencyCode, currencySymbol, locale, decimalPlaces, decimalSep, thousandsSep);
+
+            var subject = $"Payment reminder — Invoice {invoiceLabel}";
+            var safeCustomer = WebUtility.HtmlEncode(customerName);
+            var safeCompany = WebUtility.HtmlEncode(company);
+            var safeLabel = WebUtility.HtmlEncode(invoiceLabel);
+            var body =
+                $"<p>Dear {safeCustomer},</p>" +
+                $"<p>This is a friendly reminder that invoice <strong>{safeLabel}</strong> " +
+                $"dated {invoice.InvoiceDate:yyyy-MM-dd} has an outstanding balance of " +
+                $"<strong>{WebUtility.HtmlEncode(balanceText)}</strong> " +
+                $"(due {invoice.DueDate:yyyy-MM-dd}).</p>" +
+                "<p>Please find the invoice PDF attached.</p>" +
+                $"<p>Thank you,<br/>{safeCompany}</p>";
+
+            var attachments = new List<EmailAttachment>();
+            var attachedPdf = false;
+            try
+            {
+                var pdf = await _documentPdfService.BuildInvoiceAsync(invoiceId, tenantId, locationId);
+                if (string.IsNullOrEmpty(pdf.Error) && pdf.Bytes is { Length: > 0 })
+                {
+                    attachments.Add(new EmailAttachment
+                    {
+                        FileName = string.IsNullOrWhiteSpace(pdf.FileName)
+                            ? $"Invoice_{invoiceLabel}.pdf"
+                            : pdf.FileName,
+                        Content = pdf.Bytes,
+                        ContentType = "application/pdf"
+                    });
+                    attachedPdf = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Reminder can still go out without the PDF; surface attach failure in log.
+                Console.WriteLine($"[SendArReminder] PDF attach failed for invoice {invoiceId}: {ex.Message}");
+            }
+
+            if (!attachedPdf)
+            {
+                body =
+                    $"<p>Dear {safeCustomer},</p>" +
+                    $"<p>This is a friendly reminder that invoice <strong>{safeLabel}</strong> " +
+                    $"dated {invoice.InvoiceDate:yyyy-MM-dd} has an outstanding balance of " +
+                    $"<strong>{WebUtility.HtmlEncode(balanceText)}</strong> " +
+                    $"(due {invoice.DueDate:yyyy-MM-dd}).</p>" +
+                    $"<p>Thank you,<br/>{safeCompany}</p>";
+            }
+
+            var mail = new MailRequest
+            {
+                To = toEmail ?? "",
+                Subject = subject,
+                Body = body,
+                IsHtml = true,
+                Attachments = attachments
+            };
+
+            var (ok, error) = EmailService.TrySend(settings, mail);
+
             _context.ArReminderLogs.Add(new ArReminderLog
             {
                 TenantId = tenantId,
                 InvoiceId = invoiceId,
                 SentUtc = DateTime.UtcNow,
                 ToEmail = toEmail,
-                Status = ok ? "Sent" : "Failed",
-                Error = error,
+                Status = ok ? (attachedPdf ? "Sent" : "SentNoPdf") : "Failed",
+                Error = ok
+                    ? (attachedPdf ? null : "Reminder sent without invoice PDF attachment.")
+                    : error,
                 ActorUserId = GetUserId()
             });
-            _context.SaveChanges();
+            await _context.SaveChangesAsync();
 
-            return (ok, error, toEmail);
+            return (ok, error, toEmail, attachedPdf);
         }
 
         private (DateTime start, DateTime end) GetFiscalYearBounds(int tenantId, int calendarYearHint)
@@ -1915,6 +2443,25 @@ namespace CimmpleAPI.Controllers
     public class BulkReconciliationRequest
     {
         public int[] TransactionIds { get; set; }
+    }
+
+    public class StartBankReconciliationPeriodRequest
+    {
+        public int BankId { get; set; }
+        public string StatementDate { get; set; }
+        public decimal EndingBalance { get; set; }
+    }
+
+    public class UpdateBankReconciliationPeriodRequest
+    {
+        public int PeriodId { get; set; }
+        public string StatementDate { get; set; }
+        public decimal? EndingBalance { get; set; }
+    }
+
+    public class CompleteBankReconciliationPeriodRequest
+    {
+        public int PeriodId { get; set; }
     }
 
     public class AccountingSettingsRequest

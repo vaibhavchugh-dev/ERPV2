@@ -40,6 +40,35 @@ export interface BankAccount {
   lastReconciled: string;
 }
 
+export interface BankReconciliationPeriod {
+  id: number;
+  bankId: number;
+  beginningBalance: number;
+  endingBalance: number;
+  statementDate: string;
+  status: "Open" | "Completed" | string;
+  /** Absolute sum of cleared credit (deposit) amounts this period */
+  clearedCredits?: number | null;
+  /** Absolute sum of cleared debit (payment/withdrawal) amounts this period */
+  clearedDebits?: number | null;
+  /** Beginning + credits − debits */
+  clearedBalance?: number | null;
+  /** Statement ending − cleared balance */
+  difference?: number | null;
+  completedUtc?: string | null;
+  createdUtc?: string;
+}
+
+export interface BankReconciliationContext {
+  bankId: number;
+  bankOpeningBalance: number;
+  suggestedBeginningBalance: number;
+  lastReconciledDate?: string | null;
+  openPeriod: BankReconciliationPeriod | null;
+  lastCompletedPeriod: BankReconciliationPeriod | null;
+  periods: BankReconciliationPeriod[];
+}
+
 export interface ReconciliationFilters {
   reconciled: string;
   dateRange: string;
@@ -134,6 +163,56 @@ export class AccountingService {
       const result = response.data.result;
       return result;
     });
+  };
+
+  public static GetBankReconciliationContext = async (
+    bankAccountId: number
+  ): Promise<BankReconciliationContext | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.get(`/Accounting/GetBankReconciliationContext`, {
+      params: { tenantId: tenantID, bankId: bankAccountId },
+    }).then((response) => response.data.result as BankReconciliationContext);
+  };
+
+  public static StartBankReconciliationPeriod = async (
+    bankId: number,
+    statementDate: string,
+    endingBalance: number
+  ): Promise<BankReconciliationPeriod | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Accounting/StartBankReconciliationPeriod`, {
+      tenantId: tenantID,
+      bankId,
+      statementDate,
+      endingBalance,
+    }).then((response) => response.data.result as BankReconciliationPeriod);
+  };
+
+  public static UpdateBankReconciliationPeriod = async (
+    periodId: number,
+    fields: { statementDate?: string; endingBalance?: number }
+  ): Promise<BankReconciliationPeriod | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Accounting/UpdateBankReconciliationPeriod`, {
+      tenantId: tenantID,
+      periodId,
+      statementDate: fields.statementDate,
+      endingBalance: fields.endingBalance,
+    }).then((response) => response.data.result as BankReconciliationPeriod);
+  };
+
+  public static CompleteBankReconciliationPeriod = async (
+    periodId: number
+  ): Promise<BankReconciliationPeriod | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Accounting/CompleteBankReconciliationPeriod`, {
+      tenantId: tenantID,
+      periodId,
+    }).then((response) => response.data.result as BankReconciliationPeriod);
   };
 
   public static GenerateFinancialReport = async (
@@ -442,17 +521,23 @@ export class AccountingService {
   };
 
   public static SendArReminder = async (invoiceId: number): Promise<any> => {
-    return Instense.post(`/Accounting/SendArReminder`, { invoiceId }).then(
-      (response) => response.data.result
-    );
+    return Instense.post(
+      `/Accounting/SendArReminder`,
+      { invoiceId },
+      { timeout: 135_000 }
+    ).then((response) => response.data.result);
   };
 
   public static SendBulkArReminders = async (
     invoiceIds?: number[]
   ): Promise<{ sent: number; failed: number; failures: any[] }> => {
-    return Instense.post(`/Accounting/SendBulkArReminders`, {
-      invoiceIds: invoiceIds ?? null,
-    }).then((response) => response.data.result);
+    return Instense.post(
+      `/Accounting/SendBulkArReminders`,
+      {
+        invoiceIds: invoiceIds ?? null,
+      },
+      { timeout: 300_000 }
+    ).then((response) => response.data.result);
   };
 }
 

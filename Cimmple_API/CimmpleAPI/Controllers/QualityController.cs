@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,6 +11,8 @@ using System.IO;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
+using CimmpleAPI.Services;
 
 namespace CimmpleAPI.Controllers
 {
@@ -26,11 +29,16 @@ namespace CimmpleAPI.Controllers
 
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private readonly IConfiguration _configuration;
 
-        public QualityController(CimmpleDbContext context, IWebHostEnvironment environment)
+        public QualityController(
+            CimmpleDbContext context,
+            IWebHostEnvironment environment,
+            IConfiguration configuration)
         {
             _context = context;
             _environment = environment;
+            _configuration = configuration;
         }
 
         private static int _ncrExternalColumnsReady;
@@ -1156,7 +1164,21 @@ END");
                 };
 
                 Console.WriteLine($"Returning NCR creation result with ncrId: {result.ncrId}, ncrNumber: {result.ncrNumber}");
-                return Ok(new { result });
+
+                var assignmentEmails = await TryNotifyNcrAssigneesAsync(
+                    ncr.TenantId,
+                    actualResponseNcrNumber,
+                    ncr.Title,
+                    ncr.Severity,
+                    ncr.Status,
+                    previousInvestigatedBy: null,
+                    newInvestigatedBy: ncr.InvestigatedBy,
+                    investigatedByName: ncr.InvestigatedByName,
+                    previousApprovedBy: null,
+                    newApprovedBy: ncr.ApprovedBy,
+                    approvedByName: ncr.ApprovedByName);
+
+                return Ok(new { result, assignmentEmails });
             }
             catch (Exception ex)
             {
@@ -1178,6 +1200,34 @@ END");
                 await ResolveNcrCodeFieldsAsync(ncrUpdate);
                 Console.WriteLine($"UpdateNCR called for id: {id}");
                 Console.WriteLine($"Update data - Title: '{ncrUpdate.Title}', Status: '{ncrUpdate.Status}'");
+
+                int? previousInvestigatedBy = null;
+                int? previousApprovedBy = null;
+                string? existingNcrNumber = null;
+                int existingTenantId = ncrUpdate.TenantId;
+
+                using (var preload = _context.Database.GetDbConnection().CreateCommand())
+                {
+                    preload.CommandText = @"
+                        SELECT InvestigatedBy, ApprovedBy, NcrNumber, TenantId
+                        FROM CimmpleFlow.NonConformanceReports
+                        WHERE NcrId = @Id";
+                    AddParameter(preload, "@Id", id);
+                    await _context.Database.OpenConnectionAsync();
+                    using var reader = await preload.ExecuteReaderAsync();
+                    if (await reader.ReadAsync())
+                    {
+                        previousInvestigatedBy = reader.IsDBNull(0) ? null : reader.GetInt32(0);
+                        previousApprovedBy = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                        existingNcrNumber = reader.IsDBNull(2) ? null : reader.GetString(2);
+                        if (!reader.IsDBNull(3))
+                            existingTenantId = reader.GetInt32(3);
+                    }
+                    else
+                    {
+                        return NotFound(new { error = new { message = "NCR not found" } });
+                    }
+                }
 
                 using (var command = _context.Database.GetDbConnection().CreateCommand())
                 {
@@ -1296,13 +1346,100 @@ END");
                         return NotFound(new { error = new { message = "NCR not found" } });
                     }
 
-                    return Ok(new { success = true });
+                    var assignmentEmails = await TryNotifyNcrAssigneesAsync(
+                        existingTenantId,
+                        existingNcrNumber ?? $"NCR-{id}",
+                        ncrUpdate.Title,
+                        ncrUpdate.Severity,
+                        ncrUpdate.Status,
+                        previousInvestigatedBy,
+                        ncrUpdate.InvestigatedBy,
+                        ncrUpdate.InvestigatedByName,
+                        previousApprovedBy,
+                        ncrUpdate.ApprovedBy,
+                        ncrUpdate.ApprovedByName);
+
+                    return Ok(new { success = true, assignmentEmails });
                 }
             }
             catch (Exception ex)
             {
                 return BadRequest(new { error = new { message = ex.Message } });
             }
+        }
+
+        private async Task<List<string>> TryNotifyNcrAssigneesAsync(
+            int tenantId,
+            string ncrNumber,
+            string? title,
+            string? severity,
+            string? status,
+            int? previousInvestigatedBy,
+            int? newInvestigatedBy,
+            string? investigatedByName,
+            int? previousApprovedBy,
+            int? newApprovedBy,
+            string? approvedByName)
+        {
+            var messages = new List<string>();
+            try
+            {
+                var settings = await _context.SystemSettings.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+                if (settings == null || !settings.EnableEmailNotifications)
+                    return messages;
+
+                var companyName = !string.IsNullOrWhiteSpace(settings.SmtpFromName)
+                    ? settings.SmtpFromName
+                    : "Cimmple";
+
+                async Task NotifyRoleAsync(int? previousId, int? newId, string? nameHint, string roleLabel)
+                {
+                    var prev = previousId.GetValueOrDefault();
+                    var next = newId.GetValueOrDefault();
+                    if (next <= 0 || next == prev)
+                        return;
+
+                    var user = await _context.UserDetails.AsNoTracking()
+                        .FirstOrDefaultAsync(u => u.User_UniqueID == next && u.TenantID == tenantId);
+                    if (user == null || string.IsNullOrWhiteSpace(user.Email))
+                    {
+                        messages.Add($"{roleLabel} assigned, but no email is on file for that user.");
+                        return;
+                    }
+
+                    var displayName = !string.IsNullOrWhiteSpace(nameHint)
+                        ? nameHint!
+                        : $"{user.FirstName} {user.LastName}".Trim();
+                    if (string.IsNullOrWhiteSpace(displayName))
+                        displayName = user.UserName ?? roleLabel;
+
+                    var (ok, error) = NcrEmailService.TrySendAssignmentNotice(
+                        settings,
+                        _configuration,
+                        user.Email!,
+                        displayName,
+                        roleLabel,
+                        ncrNumber,
+                        title ?? "",
+                        severity,
+                        status,
+                        companyName);
+
+                    messages.Add(ok
+                        ? $"{roleLabel} notified at {user.Email}."
+                        : $"{roleLabel} notification failed: {error}");
+                }
+
+                await NotifyRoleAsync(previousInvestigatedBy, newInvestigatedBy, investigatedByName, "Investigator");
+                await NotifyRoleAsync(previousApprovedBy, newApprovedBy, approvedByName, "Approver");
+            }
+            catch (Exception ex)
+            {
+                messages.Add($"Assignment email skipped: {ex.Message}");
+            }
+
+            return messages;
         }
 
         private void AddParameter(System.Data.Common.DbCommand command, string name, object value)
@@ -1519,13 +1656,6 @@ END");
                     return BadRequest(new { error = new { message = $"A maximum of {MaxPhotosPerNcr} photos is allowed per NCR" } });
                 }
 
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var folderPath = Path.Combine(webRootPath, "uploads", "ncr-photos", ncr.TenantId.ToString(), ncrId.ToString());
-                if (!Directory.Exists(folderPath))
-                {
-                    Directory.CreateDirectory(folderPath);
-                }
-
                 foreach (var file in files)
                 {
                     if (file == null || file.Length == 0)
@@ -1545,13 +1675,26 @@ END");
                     }
 
                     var uniqueFileName = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}{extension}";
-                    var filePath = Path.Combine(folderPath, uniqueFileName);
-                    using (var stream = new FileStream(filePath, FileMode.Create))
+                    var blobName = $"{ncrId}/{uniqueFileName}";
+                    var fileInfo = ModuleFileStorage.CreateFileInfo(
+                        ncr.TenantId,
+                        ModuleFileStorage.NcrPhotosFolder,
+                        blobName);
+
+                    var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                    if (!uploadedOk)
                     {
-                        await file.CopyToAsync(stream);
+                        return StatusCode(500, new
+                        {
+                            error = new
+                            {
+                                message = "Failed to upload photo to Azure Storage. Configure AzureConnection:storageConnectionString."
+                            }
+                        });
                     }
 
-                    existing.Add($"/uploads/ncr-photos/{ncr.TenantId}/{ncrId}/{uniqueFileName}");
+                    // Store blob name (not /uploads/...). Legacy local paths still supported on read.
+                    existing.Add(blobName);
                 }
 
                 ncr.Photos = JsonSerializer.Serialize(existing);
@@ -1564,6 +1707,86 @@ END");
             {
                 return BadRequest(new { error = new { message = ex.Message } });
             }
+        }
+
+        /// <summary>
+        /// Stream an NCR photo from Azure (or legacy local wwwroot path).
+        /// </summary>
+        [HttpGet("GetNCRPhoto/{ncrId}")]
+        public IActionResult GetNCRPhoto(int ncrId, [FromQuery] string file)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(file))
+                {
+                    return BadRequest(new { error = new { message = "file is required" } });
+                }
+
+                var ncr = _context.NonConformanceReports.AsNoTracking().FirstOrDefault(n => n.NcrId == ncrId);
+                if (ncr == null)
+                {
+                    return NotFound(new { error = new { message = "NCR not found" } });
+                }
+
+                var allowed = ParsePhotoUrls(ncr.Photos);
+                var normalized = file.Replace('\\', '/').TrimStart('/');
+                var match = allowed.FirstOrDefault(p =>
+                    string.Equals(p.Replace('\\', '/').TrimStart('/'), normalized, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(p, file, StringComparison.OrdinalIgnoreCase));
+
+                if (match == null)
+                {
+                    return NotFound(new { error = new { message = "Photo not found on NCR" } });
+                }
+
+                // Legacy local disk path
+                if (IsLegacyNcrPhotoPath(match))
+                {
+                    var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+                    var relative = match.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+                    var fullPath = Path.Combine(webRootPath, relative);
+                    if (!System.IO.File.Exists(fullPath))
+                    {
+                        return NotFound(new { error = new { message = "Photo file not found on disk" } });
+                    }
+
+                    var bytes = System.IO.File.ReadAllBytes(fullPath);
+                    var contentType = ModuleFileStorage.GetContentType(match);
+                    return File(bytes, contentType);
+                }
+
+                var blobName = match.Replace('\\', '/').TrimStart('/');
+                // Strip accidental "uploads/ncr-photos/{tenant}/" if stored oddly
+                var azurePrefix = $"uploads/ncr-photos/{ncr.TenantId}/";
+                if (blobName.StartsWith(azurePrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    blobName = blobName.Substring(azurePrefix.Length);
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    ncr.TenantId,
+                    ModuleFileStorage.NcrPhotosFolder,
+                    blobName);
+
+                var azureBytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (azureBytes == null || azureBytes.Length == 0)
+                {
+                    return NotFound(new { error = new { message = "Photo not found in Azure Storage" } });
+                }
+
+                return File(azureBytes, ModuleFileStorage.GetContentType(blobName));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = new { message = ex.Message } });
+            }
+        }
+
+        private static bool IsLegacyNcrPhotoPath(string path)
+        {
+            var normalized = path.Replace('\\', '/');
+            return normalized.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase)
+                   || normalized.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase);
         }
 
         private static List<string> ParsePhotoUrls(string? photos)

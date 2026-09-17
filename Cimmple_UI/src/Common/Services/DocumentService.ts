@@ -165,26 +165,55 @@ export class DocumentService {
     const params: any = {};
     if (versionId) params.versionId = versionId;
 
-    const response = await Instense.get(`${baseUrl}/${documentId}/download`, {
-      params,
-      responseType: "blob",
-    });
-
-    return response.data;
+    try {
+      const response = await Instense.get(`${baseUrl}/${documentId}/download`, {
+        params,
+        responseType: "blob",
+      });
+      return response.data;
+    } catch (error: any) {
+      throw await this.toDownloadError(error);
+    }
   }
 
   /**
    * Download a specific version
    */
   static async DownloadVersion(documentId: number, versionId: number): Promise<Blob> {
-    const response = await Instense.get(
-      `${baseUrl}/${documentId}/download-version/${versionId}`,
-      {
-        responseType: "blob",
-      }
-    );
+    try {
+      const response = await Instense.get(
+        `${baseUrl}/${documentId}/download-version/${versionId}`,
+        {
+          responseType: "blob",
+        }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw await this.toDownloadError(error);
+    }
+  }
 
-    return response.data;
+  private static async toDownloadError(error: any): Promise<Error> {
+    const data = error?.response?.data;
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text();
+        try {
+          const json = JSON.parse(text);
+          return new Error(json.error || json.message || text || "Download failed");
+        } catch {
+          return new Error(text || error?.message || "Download failed");
+        }
+      } catch {
+        return new Error(error?.message || "Download failed");
+      }
+    }
+    return new Error(
+      error?.response?.data?.error ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "Download failed"
+    );
   }
 
   /**

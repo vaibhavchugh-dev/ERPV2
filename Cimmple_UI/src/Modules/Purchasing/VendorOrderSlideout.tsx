@@ -16,12 +16,14 @@ import VendorInvoiceModal from "./VendorInvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import {
   VENDOR_ORDER_LINE_TYPES,
@@ -118,6 +120,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const [coaAccounts, setCoaAccounts] = useState<ChartofAccountMaster[]>([]);
   const [companyDefaultExpenseGlcode, setCompanyDefaultExpenseGlcode] = useState("");
   const [defaultExpenseGlcode, setDefaultExpenseGlcode] = useState("");
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [vendorEmail, setVendorEmail] = useState("");
 
   // Print modal state
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -359,9 +363,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               accountIdToGlcode((vendor as any)?.defaultExpenseAccountId) ||
               companyDefaultExpenseGlcode;
             setDefaultExpenseGlcode(vendorGl);
+            const contactEmail =
+              vendor?.VendorContact?.find((c) => c.isDefault)?.email ||
+              vendor?.VendorContact?.[0]?.email ||
+              vendor?.email ||
+              "";
+            setVendorEmail(contactEmail.trim());
           } catch {
             /* keep company default */
           }
+        } else {
+          setVendorEmail("");
         }
         if (result.Attachments && Array.isArray(result.Attachments)) {
           setAttachments(result.Attachments.map((a: any) => ({
@@ -489,6 +501,12 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
             companyDefaultExpenseGlcode;
           setDefaultExpenseGlcode(vendorExpenseGl);
+          const contactEmail =
+            fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
+            fullVendorDetails.VendorContact?.[0]?.email ||
+            fullVendorDetails.email ||
+            "";
+          setVendorEmail(contactEmail.trim());
           setFormData(prev => ({
             ...prev,
             BuyerName: defaultContactPerson,
@@ -1309,7 +1327,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
       onClose(true);
     } catch (error: any) {
-      toast.error(`Error saving order: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving order: ${getApiErrorMessage(error, "Unknown error")}`);
       console.error("Error saving order:", error);
     } finally {
       setLoading(false);
@@ -1392,6 +1410,18 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
                     <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
                     <rect x="6" y="14" width="12" height="8"></rect>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
                 <button
@@ -2796,6 +2826,21 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           onRefreshImpact={refreshDeletionImpact}
           onDeleteAll={handleDeleteAll}
           isLoading={loading}
+        />
+
+        <SendDocumentEmailDialog
+          open={showEmailDialog}
+          kind="vendorOrder"
+          documentId={orderId}
+          defaultToEmail={vendorEmail}
+          documentLabel={
+            formData.PONumber > 0
+              ? formData.PONumber < 1000
+                ? `VO#${formData.PONumber + 999}`
+                : `VO#${formData.PONumber}`
+              : undefined
+          }
+          onClose={() => setShowEmailDialog(false)}
         />
       </div>
     </div>

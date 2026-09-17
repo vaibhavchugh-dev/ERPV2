@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { UserManagementService } from "../../Common/Services/UserManagementService";
+import {
+  getPasswordPolicyHints,
+  validatePasswordAgainstPolicy,
+} from "../../Common/Utils/passwordPolicy";
+import { getCachedSettings } from "../../Common/Utils/settingsRuntime";
 import "./ResetPasswordModal.scss";
 
 export interface ResetPasswordUser {
   userId: number;
   userName?: string;
   displayName?: string;
+  email?: string;
 }
 
 interface ResetPasswordModalProps {
@@ -22,6 +28,7 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ newPassword?: string; confirmPassword?: string }>({});
+  const [emailTemporaryPassword, setEmailTemporaryPassword] = useState(true);
 
   useEffect(() => {
     setNewPassword("");
@@ -29,7 +36,8 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
     setShowNew(false);
     setShowConfirm(false);
     setErrors({});
-  }, [user.userId]);
+    setEmailTemporaryPassword(!!user.email?.trim());
+  }, [user.userId, user.email]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -39,12 +47,13 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [loading, onClose]);
 
+  const passwordHints = getPasswordPolicyHints(getCachedSettings());
+
   const validate = (): boolean => {
     const next: { newPassword?: string; confirmPassword?: string } = {};
-    if (!newPassword.trim()) {
-      next.newPassword = "New password is required";
-    } else if (newPassword.length < 8) {
-      next.newPassword = "Password must be at least 8 characters";
+    const policyError = validatePasswordAgainstPolicy(newPassword, getCachedSettings());
+    if (policyError) {
+      next.newPassword = policyError;
     }
     if (!confirmPassword.trim()) {
       next.confirmPassword = "Confirm password is required";
@@ -68,12 +77,17 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
         userId: user.userId,
         tenantId: tenantID,
         newPassword,
+        emailTemporaryPassword,
       });
 
       toast.success(
         result?.message ||
           "Password reset successfully. User must change password on next login."
       );
+      if (result?.emailMessage) {
+        if (/failed|no email/i.test(result.emailMessage)) toast.warn(result.emailMessage);
+        else toast.success(result.emailMessage);
+      }
       onSuccess?.();
       onClose();
     } catch (error: any) {
@@ -138,6 +152,32 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
             The user will be required to change this password on next login.
           </div>
 
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.5rem",
+              marginBottom: "1rem",
+              fontSize: "0.875rem",
+              color: "#374151",
+              cursor: user.email?.trim() ? "pointer" : "not-allowed",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={emailTemporaryPassword}
+              disabled={!user.email?.trim() || loading}
+              onChange={(e) => setEmailTemporaryPassword(e.target.checked)}
+              style={{ marginTop: "0.15rem" }}
+            />
+            <span>
+              Email temporary password to user
+              {user.email?.trim()
+                ? ` (${user.email})`
+                : " (no email on file)"}
+            </span>
+          </label>
+
           <div className="form-group">
             <label htmlFor="reset-new-password">
               New Password <span className="required">*</span>
@@ -167,6 +207,9 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
               </button>
             </div>
             {errors.newPassword && <span className="error-message">{errors.newPassword}</span>}
+            <small className="reset-password-hint">
+              Must include {passwordHints.join(", ")}.
+            </small>
           </div>
 
           <div className="form-group">

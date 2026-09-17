@@ -22,10 +22,10 @@ import {
   NCRSeverity,
   NCRStatus,
   QualityService,
-  resolveNcrPhotoUrl,
   RootCauseCategory,
 } from "../../services/qualityService";
 import { formatJobNumber } from "../../utils/formatJobNumber";
+import { NcrStoredPhotoImg } from "./NcrStoredPhotoImg";
 
 const MAX_PHOTOS = 10;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -967,9 +967,9 @@ export function NcrFormPage() {
                     key={`${photo}-${index}`}
                     className="relative overflow-hidden rounded-xl border border-slate-200"
                   >
-                    <img
-                      src={resolveNcrPhotoUrl(photo)}
-                      alt=""
+                    <NcrStoredPhotoImg
+                      ncrId={ncr.ncrId || 0}
+                      photo={photo}
                       className="h-24 w-full object-cover"
                     />
                     <button

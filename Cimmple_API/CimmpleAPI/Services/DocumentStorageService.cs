@@ -91,23 +91,51 @@ namespace CimmpleAPI.Services
                 return null;
             }
 
-            if (IsLegacyLocalPath(filePath))
-            {
-                var fullPath = GetLegacyFullPath(filePath);
-                if (!File.Exists(fullPath))
-                {
-                    return null;
-                }
+            var normalized = filePath.Replace('\\', '/').Trim();
 
-                return File.ReadAllBytes(fullPath);
+            // 1. Legacy local path (uploads/documents/...)
+            if (IsLegacyLocalPath(normalized))
+            {
+                var fullPath = GetLegacyFullPath(normalized);
+                if (File.Exists(fullPath))
+                {
+                    return File.ReadAllBytes(fullPath);
+                }
             }
 
+            // 2. Azure under data/{tenantId}/Documents/{filePath}
             var fileInfo = ModuleFileStorage.CreateFileInfo(
                 tenantId,
                 ModuleFileStorage.DocumentsFolder,
-                filePath);
+                normalized);
 
-            return ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+            var azureBytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+            if (azureBytes != null && azureBytes.Length > 0)
+            {
+                return azureBytes;
+            }
+
+            // 3. Local fallback under wwwroot/uploads/documents/{relative}
+            //    (older rows sometimes stored path relative to the documents folder only)
+            var underDocs = Path.Combine(
+                _legacyBaseUploadPath,
+                normalized.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(underDocs))
+            {
+                return File.ReadAllBytes(underDocs);
+            }
+
+            // 4. Local fallback under wwwroot/{relative}
+            var underWebRoot = Path.Combine(
+                _environment.ContentRootPath,
+                "wwwroot",
+                normalized.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(underWebRoot))
+            {
+                return File.ReadAllBytes(underWebRoot);
+            }
+
+            return null;
         }
 
         /// <summary>

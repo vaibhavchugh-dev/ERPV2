@@ -253,8 +253,14 @@ export class OrderService {
   };
 
   public static SaveOrder = async (
-    request: OrderMasterReq
-  ): Promise<{ id: number; poNumber?: number; message: string }> => {
+    request: OrderMasterReq,
+    newFiles?: File[]
+  ): Promise<{
+    id: number;
+    poNumber?: number;
+    message: string;
+    attachments?: OrderAttachment[];
+  }> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     
@@ -267,6 +273,11 @@ export class OrderService {
 
     // Convert date strings to date-only yyyy-MM-dd (no timezone shift)
     const convertDate = (dateStr: string): string => toDateOnlyApiString(dateStr);
+
+    // Existing attachments only (no pending File blobs in JSON). New files go in multipart.
+    const existingAttachments = (request.Attachments || []).filter(
+      (a) => !(a as any).isPending && !(a as any).file
+    );
 
     const payload: any = {
       OrderID: request.OrderID || 0,
@@ -307,7 +318,7 @@ export class OrderService {
         LeadTime: d.LeadTime || "",
         Notes: d.Notes || "",
       })),
-      Attachments: (request.Attachments || []).map(a => ({
+      Attachments: existingAttachments.map(a => ({
         Id: Math.floor(a.id || 0),
         Name: a.name || "",
         Size: a.size || 0,
@@ -333,18 +344,30 @@ export class OrderService {
       return value;
     }));
 
+    const formData = new FormData();
+    formData.append("formField", JSON.stringify(cleanPayload));
+    appendFilesToFormData(formData, newFiles || []);
+
     const url = `/Order/SaveOrder`;
-    return Instense.post(url, cleanPayload, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    }).then((response) => {
-      const result = response.data.result;
+    return postMultipart<{ result?: any }>(url, formData).then((responseData) => {
+      const result = responseData.result;
       if (result && result.id) {
         return {
           id: result.id,
           poNumber: result.poNumber,
           message: result.message || "Order saved successfully",
+          attachments: Array.isArray(result.attachments)
+            ? result.attachments.map((a: any) => ({
+                id: a.id || a.Id || 0,
+                name: a.name || a.Name || "",
+                size: a.size || a.Size || 0,
+                fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+                fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+                uploadFile: a.uploadFile || a.UploadFile || "",
+                pageNo: a.pageNo || a.PageNo || "0",
+                createdBy: a.createdBy || a.CreatedBy || 0,
+              }))
+            : undefined,
         };
       }
       return { id: request.OrderID || 0, message: "Order saved successfully" };

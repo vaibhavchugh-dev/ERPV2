@@ -58,6 +58,8 @@ export interface EmployeeMasterReq {
   SSN: string;
   /** Plaintext password when enabling/changing login access — never returned from GET */
   Password?: string;
+  /** When 1, send welcome email with credentials if password + email present */
+  SendWelcomeEmail?: number;
   /** True when a password hash exists (can authenticate if username + active) */
   HasPassword?: boolean;
   /** True when username + password exist and status is Active */

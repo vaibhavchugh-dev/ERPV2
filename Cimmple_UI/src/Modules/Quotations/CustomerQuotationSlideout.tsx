@@ -17,6 +17,7 @@ import { PriceBreakdownService, PriceBreakdownMaster } from "../../Common/Servic
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
@@ -72,6 +73,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const listNeedsRefreshRef = useRef(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -1523,8 +1525,54 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         }
       }}
     >
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div
-        className={`customer-quotation-slideout-card ${documentViewerOpen ? "is-document-workspace" : ""}`}
+        className="customer-quotation-slideout-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="customer-quotation-slideout-header">
@@ -1571,6 +1619,18 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <polyline points="6 9 6 2 18 2 18 9"></polyline>
                     <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
                     <rect x="6" y="14" width="12" height="8"></rect>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
                 <button
@@ -1643,27 +1703,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           </div>
         </div>
 
-        <div className="customer-quotation-slideout-workspace">
-          {documentViewerOpen && (
-            <div className="customer-quotation-slideout-viewer-pane">
-              <DocumentViewerWorkspace
-                documents={viewerDocuments}
-                activeIndex={activeViewerIndex}
-                onActiveIndexChange={setActiveViewerIndex}
-                onClose={closeDocumentViewer}
-                onNeedDocument={handleNeedDocument}
-                onPrefetchDocument={handlePrefetchDocument}
-                onDownload={(file) => {
-                  handleViewerDownload(file).catch((error: any) => {
-                    toast.error(error?.message || "Failed to download attachment");
-                  });
-                }}
-                mode="view"
-              />
-            </div>
-          )}
-
-          <div className="customer-quotation-slideout-form-pane">
         <form className="customer-quotation-slideout-form" onSubmit={handleSubmit}>
           <div className="customer-quotation-slideout-content">
             {/* Basic Information */}
@@ -2601,8 +2640,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             </button>
           </div>
         </form>
-          </div>
-        </div>
       </div>
 
       {/* Combined Price Breakdown Matrix Popup */}
@@ -2976,6 +3013,20 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         onRefreshImpact={refreshDeletionImpact}
         onDeleteAll={handleDeleteAll}
         isLoading={loading}
+      />
+
+      <SendDocumentEmailDialog
+        open={showEmailDialog}
+        kind="quotation"
+        documentId={effectiveQuotationId > 0 ? effectiveQuotationId : formData.OrderID}
+        documentLabel={
+          formData.PONumber > 0
+            ? formData.PONumber < 1000
+              ? `CQ#${formData.PONumber + 999}`
+              : `CQ#${formData.PONumber}`
+            : undefined
+        }
+        onClose={() => setShowEmailDialog(false)}
       />
     </div>
   );

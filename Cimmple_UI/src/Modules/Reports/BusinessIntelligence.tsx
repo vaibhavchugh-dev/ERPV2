@@ -35,7 +35,6 @@ interface ReportType {
   icon: any;
   category: string;
   kind: "report" | "link";
-  status?: "available" | "coming-soon";
   path?: string;
 }
 
@@ -67,7 +66,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faUsers,
     category: "Sales & Revenue",
     kind: "report",
-    status: "available",
   },
   {
     id: "sales-trends",
@@ -76,7 +74,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartLine,
     category: "Sales & Revenue",
     kind: "report",
-    status: "available",
   },
   {
     id: "product-revenue",
@@ -85,7 +82,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faBox,
     category: "Sales & Revenue",
     kind: "report",
-    status: "available",
   },
   {
     id: "quotation-conversion",
@@ -94,7 +90,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartBar,
     category: "Sales & Revenue",
     kind: "report",
-    status: "available",
   },
   {
     id: "revenue-by-location",
@@ -103,7 +98,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faMapMarkerAlt,
     category: "Sales & Revenue",
     kind: "report",
-    status: "available",
   },
   {
     id: "job-status-dashboard",
@@ -112,7 +106,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faBriefcase,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "job-completion-time",
@@ -121,7 +114,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faCalendar,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "on-time-delivery",
@@ -130,7 +122,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faTruck,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "production-efficiency",
@@ -139,7 +130,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartArea,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "workstation-utilization",
@@ -148,7 +138,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faDesktop,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "process-performance",
@@ -157,7 +146,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faCog,
     category: "Operations",
     kind: "report",
-    status: "available",
   },
   {
     id: "vendor-performance",
@@ -166,7 +154,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartBar,
     category: "Purchasing & Vendors",
     kind: "report",
-    status: "available",
   },
   {
     id: "purchase-trends",
@@ -175,7 +162,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartLine,
     category: "Purchasing & Vendors",
     kind: "report",
-    status: "available",
   },
   {
     id: "vendor-cost-analysis",
@@ -184,7 +170,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faDollarSign,
     category: "Purchasing & Vendors",
     kind: "report",
-    status: "available",
   },
   {
     id: "material-cost-trends",
@@ -193,7 +178,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartPie,
     category: "Purchasing & Vendors",
     kind: "report",
-    status: "available",
   },
   {
     id: "vendor-delivery",
@@ -202,7 +186,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faTruck,
     category: "Purchasing & Vendors",
     kind: "report",
-    status: "available",
   },
   {
     id: "inventory-valuation",
@@ -211,7 +194,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faWarehouse,
     category: "Inventory & Materials",
     kind: "report",
-    status: "available",
   },
   {
     id: "stock-movement",
@@ -220,7 +202,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faBox,
     category: "Inventory & Materials",
     kind: "report",
-    status: "available",
   },
   {
     id: "material-usage",
@@ -229,7 +210,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartLine,
     category: "Inventory & Materials",
     kind: "report",
-    status: "available",
   },
   {
     id: "inventory-turnover",
@@ -238,7 +218,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartBar,
     category: "Inventory & Materials",
     kind: "report",
-    status: "available",
   },
   {
     id: "ncr-trends",
@@ -247,7 +226,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faShieldAlt,
     category: "Quality Metrics",
     kind: "report",
-    status: "available",
   },
   {
     id: "defect-rate",
@@ -256,7 +234,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartPie,
     category: "Quality Metrics",
     kind: "report",
-    status: "available",
   },
   {
     id: "quality-cost",
@@ -265,7 +242,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faDollarSign,
     category: "Quality Metrics",
     kind: "report",
-    status: "available",
   },
   {
     id: "root-cause-analysis",
@@ -274,7 +250,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faTable,
     category: "Quality Metrics",
     kind: "report",
-    status: "available",
   },
   {
     id: "customer-profitability",
@@ -283,7 +258,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faUsers,
     category: "Customer Analytics",
     kind: "report",
-    status: "available",
   },
   {
     id: "customer-lifetime-value",
@@ -292,7 +266,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartLine,
     category: "Customer Analytics",
     kind: "report",
-    status: "available",
   },
   {
     id: "customer-order-history",
@@ -301,7 +274,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faFileInvoice,
     category: "Customer Analytics",
     kind: "report",
-    status: "available",
   },
   {
     id: "top-customers",
@@ -310,7 +282,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faChartBar,
     category: "Customer Analytics",
     kind: "report",
-    status: "available",
   },
   {
     id: "customer-payment-behavior",
@@ -319,7 +290,6 @@ const REPORT_CATALOG: ReportType[] = [
     icon: faDollarSign,
     category: "Customer Analytics",
     kind: "report",
-    status: "available",
   },
   {
     id: "financial-reports",
@@ -490,10 +460,8 @@ const Reports: React.FC = () => {
 
   const selectedMeta = REPORT_CATALOG.find((r) => r.id === selectedReport);
   const isLink = selectedMeta?.kind === "link";
-  const isComingSoon =
-    selectedMeta?.kind === "report" && selectedMeta.status !== "available";
   const hasPreview =
-    !!reportData && loadedReportId === selectedReport && !isLink && !isComingSoon;
+    !!reportData && loadedReportId === selectedReport && !isLink;
 
   const buildReportParams = (format: "pdf" | "csv" | "json") => {
     const base: Record<string, unknown> = {
@@ -548,10 +516,6 @@ const Reports: React.FC = () => {
       toast.error("Please select a report");
       return;
     }
-    if (item.status !== "available") {
-      toast.info(`${item.name} is coming soon.`);
-      return;
-    }
     if (!validateCustomRange()) return;
 
     setSelectedReport(reportId);
@@ -582,10 +546,6 @@ const Reports: React.FC = () => {
   const exportReport = async (format: "pdf" | "csv") => {
     if (!selectedMeta || isLink) {
       toast.error("Please select a report");
-      return;
-    }
-    if (isComingSoon) {
-      toast.info(`${selectedMeta.name} is coming soon.`);
       return;
     }
     if (!validateCustomRange()) return;
@@ -702,9 +662,9 @@ const Reports: React.FC = () => {
                   <button
                     type="button"
                     className="rpt-btn rpt-btn-primary"
-                    disabled={loading || !selectedReport || isComingSoon}
+                    disabled={loading || !selectedReport}
                     onClick={() => runReport(selectedReport)}
-                    title={isComingSoon ? "Coming soon" : "Run report"}
+                    title="Run report"
                   >
                     <FontAwesomeIcon icon={faPlay} />
                     {loading ? "Running…" : "Run report"}
@@ -713,9 +673,9 @@ const Reports: React.FC = () => {
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
-                      disabled={exporting || loading || !selectedReport || isComingSoon}
+                      disabled={exporting || loading || !selectedReport}
                       onClick={() => exportReport("pdf")}
-                      title={isComingSoon ? "Coming soon" : "Export PDF"}
+                      title="Export PDF"
                     >
                       <FontAwesomeIcon icon={faDownload} />
                       PDF
@@ -723,9 +683,9 @@ const Reports: React.FC = () => {
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
-                      disabled={exporting || loading || !selectedReport || isComingSoon}
+                      disabled={exporting || loading || !selectedReport}
                       onClick={() => exportReport("csv")}
-                      title={isComingSoon ? "Coming soon" : "Export CSV"}
+                      title="Export CSV"
                     >
                       CSV
                     </button>
@@ -842,14 +802,7 @@ const Reports: React.FC = () => {
               </div>
             )}
 
-            {!loading && !errorMessage && isComingSoon && (
-              <div className="rpt-state">
-                <h3>Coming soon</h3>
-                <p>{selectedMeta?.name} is not available yet.</p>
-              </div>
-            )}
-
-            {!loading && !errorMessage && !isComingSoon && !hasPreview && (
+            {!loading && !errorMessage && !hasPreview && (
               <div className="rpt-state">
                 <h3>Ready to run</h3>
                 <p>

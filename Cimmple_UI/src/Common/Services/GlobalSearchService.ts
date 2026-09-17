@@ -5,7 +5,7 @@ export interface SearchResult {
   type: 'customer' | 'vendor' | 'product' | 'rawMaterial' | 'order' | 'invoice' | 'jobOrder' | 'quotation' |
         'bank' | 'workstation' | 'location' | 'process' | 'jobTemplate' | 'priceBreakdown' | 
         'creditCard' | 'chartOfAccount' | 'vendorOrder' | 'vendorInvoice' | 
-        'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'document';
+        'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'employee' | 'document';
   name?: string;
   code?: string;
   email?: string;
@@ -87,6 +87,7 @@ export interface GlobalSearchResults {
   shipments: SearchResult[];
   ncrReports: SearchResult[];
   users: SearchResult[];
+  employees: SearchResult[];
   documents: SearchResult[];
 }
 
@@ -114,6 +115,7 @@ const emptyResults = (): GlobalSearchResults => ({
   shipments: [],
   ncrReports: [],
   users: [],
+  employees: [],
   documents: [],
 });
 
@@ -135,6 +137,7 @@ export class GlobalSearchService {
         ...data,
         products: data.products || [],
         rawMaterials: data.rawMaterials || [],
+        employees: data.employees || [],
       };
     } catch (error) {
       console.error("Error performing global search:", error);
@@ -191,6 +194,8 @@ export class GlobalSearchService {
         return `/quality?open=${result.id}`;
       case 'user':
         return `/user-management?open=${result.id}`;
+      case 'employee':
+        return `/masters/employee?open=${result.id}`;
       case 'document':
         return `/documents?open=${result.id}`;
       default:
@@ -245,6 +250,10 @@ export class GlobalSearchService {
         return result.ncrNumber || result.title || '';
       case 'user':
         return `${result.firstName || ''} ${result.lastName || ''}`.trim() || result.userName || '';
+      case 'employee':
+        return result.empCode
+          ? `${result.empCode} — ${`${result.firstName || ''} ${result.lastName || ''}`.trim()}`
+          : `${result.firstName || ''} ${result.lastName || ''}`.trim() || result.userName || '';
       case 'document':
         return result.documentNumber || result.name || '';
       case 'product':

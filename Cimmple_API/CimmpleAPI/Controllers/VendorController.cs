@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 
 namespace CimmpleAPI.Controllers
 {
@@ -19,11 +20,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IAuthService _authService;
+        private readonly IConfiguration _configuration;
 
-        public VendorController(CimmpleDbContext context, IAuthService authService)
+        public VendorController(
+            CimmpleDbContext context,
+            IAuthService authService,
+            IConfiguration configuration)
         {
             _context = context;
             _authService = authService;
+            _configuration = configuration;
         }
 
         [HttpGet("GetVendorlist")]
@@ -199,7 +205,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var (ok, error, result) = await ApplyVendorPortalAccessAsync(
-                    request.VendorId, tenantId, request.Enabled, request.NewPassword);
+                    request.VendorId, tenantId, request.Enabled, request.NewPassword, request.SendInviteEmail);
 
                 if (!ok)
                 {
@@ -220,7 +226,7 @@ namespace CimmpleAPI.Controllers
         }
 
         private async Task<(bool ok, string? error, object? result)> ApplyVendorPortalAccessAsync(
-            int vendorId, int tenantId, bool enabled, string? newPassword)
+            int vendorId, int tenantId, bool enabled, string? newPassword, bool? sendInviteEmail = null)
         {
             try
             {
@@ -362,6 +368,35 @@ namespace CimmpleAPI.Controllers
                     portalUser.User_UniqueID, trimSettings.PasswordHistoryCount);
             }
 
+            string? inviteEmailMessage = null;
+            var shouldInvite = sendInviteEmail != false
+                && passwordProvided
+                && !string.IsNullOrWhiteSpace(newPassword);
+            var inviteTo = !string.IsNullOrWhiteSpace(portalUser.Email)
+                ? portalUser.Email
+                : (vendor.email ?? vendor.ContactEmail);
+            if (shouldInvite && !string.IsNullOrWhiteSpace(inviteTo))
+            {
+                var settings = await _context.SystemSettings.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId)
+                    ?? new SystemSettings { TenantId = tenantId };
+                var (emailOk, emailError) = IdentityEmailService.TrySendVendorPortalInvite(
+                    settings,
+                    _configuration,
+                    inviteTo!,
+                    vendor.company_name ?? portalUser.FirstName ?? "Vendor",
+                    vendor.vendorcode ?? "",
+                    portalUser.UserName ?? "",
+                    newPassword!);
+                inviteEmailMessage = emailOk
+                    ? $"Portal invite emailed to {inviteTo}."
+                    : $"Portal access saved, but invite email failed: {emailError}";
+            }
+            else if (shouldInvite)
+            {
+                inviteEmailMessage = "Portal access saved, but vendor has no email on file for the invite.";
+            }
+
             return (true, null, new
             {
                 message = isNew ? "Vendor portal access enabled" : "Vendor portal access updated",
@@ -369,8 +404,16 @@ namespace CimmpleAPI.Controllers
                 portalHasPassword = !string.IsNullOrEmpty(portalUser.Password),
                 portalUserId = portalUser.User_UniqueID,
                 portalUserName = portalUser.UserName,
-                vendorCode = vendor.vendorcode
+                vendorCode = vendor.vendorcode,
+                inviteEmailMessage
             });
+        }
+
+        private static string? ExtractInviteEmailMessage(object? portalResult)
+        {
+            if (portalResult == null) return null;
+            var prop = portalResult.GetType().GetProperty("inviteEmailMessage");
+            return prop?.GetValue(portalResult) as string;
         }
 
         private async Task<string> GenerateUniquePortalUserNameAsync(string? vendorCode, int tenantId, int vendorId)
@@ -504,17 +547,23 @@ namespace CimmpleAPI.Controllers
 
                     UpsertVendorCoaMapping(newVendor.vendor_id, request.coaAccountId, request.defaultExpenseAccountId);
 
+                    string? inviteEmailMessage = null;
                     if (request.portalAccessEnabled.HasValue)
                     {
-                        var (ok, portalError, _) = await ApplyVendorPortalAccessAsync(
-                            newVendor.vendor_id, request.TenantID, request.portalAccessEnabled.Value, request.portalPassword);
+                        var (ok, portalError, portalResult) = await ApplyVendorPortalAccessAsync(
+                            newVendor.vendor_id,
+                            request.TenantID,
+                            request.portalAccessEnabled.Value,
+                            request.portalPassword,
+                            request.sendPortalInviteEmail);
                         if (!ok)
                         {
                             return BadRequest(new { error = portalError });
                         }
+                        inviteEmailMessage = ExtractInviteEmailMessage(portalResult);
                     }
 
-                    return Ok(new { result = new { vendor_id = newVendor.vendor_id, message = "Vendor created successfully" } });
+                    return Ok(new { result = new { vendor_id = newVendor.vendor_id, message = "Vendor created successfully", inviteEmailMessage } });
                 }
                 else
                 {
@@ -600,17 +649,23 @@ namespace CimmpleAPI.Controllers
 
                     UpsertVendorCoaMapping(request.vendor_id, request.coaAccountId, request.defaultExpenseAccountId);
 
+                    string? inviteEmailMessage = null;
                     if (request.portalAccessEnabled.HasValue)
                     {
-                        var (ok, portalError, _) = await ApplyVendorPortalAccessAsync(
-                            existingVendor.vendor_id, request.TenantID, request.portalAccessEnabled.Value, request.portalPassword);
+                        var (ok, portalError, portalResult) = await ApplyVendorPortalAccessAsync(
+                            existingVendor.vendor_id,
+                            request.TenantID,
+                            request.portalAccessEnabled.Value,
+                            request.portalPassword,
+                            request.sendPortalInviteEmail);
                         if (!ok)
                         {
                             return BadRequest(new { error = portalError });
                         }
+                        inviteEmailMessage = ExtractInviteEmailMessage(portalResult);
                     }
 
-                    return Ok(new { result = new { vendor_id = existingVendor.vendor_id, message = "Vendor updated successfully" } });
+                    return Ok(new { result = new { vendor_id = existingVendor.vendor_id, message = "Vendor updated successfully", inviteEmailMessage } });
                 }
             }
             catch (Exception ex)
@@ -1246,6 +1301,8 @@ namespace CimmpleAPI.Controllers
         public bool? portalAccessEnabled { get; set; }
         /// <summary>Optional new portal password (required when enabling without an existing password).</summary>
         public string? portalPassword { get; set; }
+        /// <summary>When true (default), email portal credentials after enable/password set.</summary>
+        public bool? sendPortalInviteEmail { get; set; }
     }
 
     public class VendorContactReq
@@ -1322,6 +1379,8 @@ namespace CimmpleAPI.Controllers
         public int TenantId { get; set; }
         public bool Enabled { get; set; }
         public string? NewPassword { get; set; }
+        /// <summary>When true (default), email portal credentials after enable/password set.</summary>
+        public bool? SendInviteEmail { get; set; }
     }
 }
 
