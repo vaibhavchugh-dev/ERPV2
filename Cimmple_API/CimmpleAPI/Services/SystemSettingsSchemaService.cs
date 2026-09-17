@@ -42,6 +42,7 @@ BEGIN
         [MaxConcurrentSessions] int NOT NULL DEFAULT 3,
         [FailedLoginAttempts] int NOT NULL DEFAULT 5,
         [AccountLockoutMinutes] int NOT NULL DEFAULT 15,
+        [EmailDeliveryMode] nvarchar(20) NULL DEFAULT 'Hosted',
         [SmtpServer] nvarchar(255) NULL,
         [SmtpPort] int NOT NULL DEFAULT 587,
         [SmtpUseSsl] bit NOT NULL DEFAULT 1,
@@ -114,6 +115,50 @@ BEGIN
         WHERE t.UserId = d.UserId AND t.CreatedDate = d.CreatedDate AND t.PasswordHash = d.PasswordHash
     );
 END");
+
+            // Must be a separate batch from CREATE/other statements: SQL Server compiles the
+            // whole batch and rejects UPDATE referencing a column that is only ADD'ed above.
+            await EnsureEmailDeliveryModeColumnAsync(context);
+        }
+
+        private static async Task EnsureEmailDeliveryModeColumnAsync(CimmpleDbContext context)
+        {
+            await context.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.columns c
+    INNER JOIN sys.tables t ON c.object_id = t.object_id
+    INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+    WHERE s.name = N'CimmpleFlow'
+      AND t.name = N'SystemSettings'
+      AND c.name = N'EmailDeliveryMode'
+)
+BEGIN
+    ALTER TABLE CimmpleFlow.SystemSettings ADD [EmailDeliveryMode] nvarchar(20) NULL;
+END");
+
+            await context.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NOT NULL
+AND EXISTS (
+    SELECT 1
+    FROM sys.columns c
+    INNER JOIN sys.tables t ON c.object_id = t.object_id
+    INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+    WHERE s.name = N'CimmpleFlow'
+      AND t.name = N'SystemSettings'
+      AND c.name = N'EmailDeliveryMode'
+)
+BEGIN
+    UPDATE CimmpleFlow.SystemSettings
+    SET EmailDeliveryMode = N'Custom'
+    WHERE EmailDeliveryMode IS NULL
+      AND NULLIF(LTRIM(RTRIM(SmtpServer)), N'') IS NOT NULL;
+
+    UPDATE CimmpleFlow.SystemSettings
+    SET EmailDeliveryMode = N'Hosted'
+    WHERE EmailDeliveryMode IS NULL;
+END");
         }
 
         public static bool IsMissingTableException(Exception ex)
@@ -123,6 +168,7 @@ END");
                 message += " " + ex.InnerException.Message;
 
             return message.Contains("Invalid object name", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("Invalid column name", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
         }
     }
