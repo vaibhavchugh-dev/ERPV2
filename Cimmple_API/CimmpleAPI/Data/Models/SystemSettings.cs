@@ -38,6 +38,8 @@ namespace CimmpleAPI.Data.Models
         public int AccountLockoutMinutes { get; set; } = 15;
         
         // Email/SMTP Settings
+        /// <summary>Hosted = Cimmple PlatformSmtp; Custom = tenant SMTP fields.</summary>
+        public string EmailDeliveryMode { get; set; } = "Hosted";
         public string SmtpServer { get; set; } = "";
         public int SmtpPort { get; set; } = 587;
         public bool SmtpUseSsl { get; set; } = true;

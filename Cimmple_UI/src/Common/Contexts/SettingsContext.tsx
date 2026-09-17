@@ -44,8 +44,15 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
 
       try {
         const loadedSettings = await SystemSettingsService.GetSettings(tenantId);
+        const modeRaw =
+          (loadedSettings as any).emailDeliveryMode ||
+          (loadedSettings as any).EmailDeliveryMode ||
+          "Hosted";
         const safeSettings = {
           ...loadedSettings,
+          emailDeliveryMode: (String(modeRaw).toLowerCase() === "custom"
+            ? "Custom"
+            : "Hosted") as "Hosted" | "Custom",
           smtpPassword: "",
           hasSmtpPassword:
             !!(loadedSettings as any).hasSmtpPassword ||

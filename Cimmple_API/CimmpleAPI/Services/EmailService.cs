@@ -22,6 +22,21 @@ namespace CimmpleAPI.Services
         private const int MaxAttempts = 2;
         private const int RetryDelayMs = 1500;
 
+        /// <summary>
+        /// Resolves Hosted (platform) vs Custom (tenant) SMTP, then sends.
+        /// </summary>
+        public static (bool ok, string? error) TrySend(
+            SystemSettings? tenantSettings,
+            MailRequest request,
+            Microsoft.Extensions.Configuration.IConfiguration? configuration,
+            bool skipNotificationGate = false)
+        {
+            var (resolved, resolveError) = SmtpSettingsResolver.Resolve(tenantSettings, configuration);
+            if (resolved == null)
+                return (false, resolveError ?? "Email settings are not configured.");
+            return TrySend(resolved, request, skipNotificationGate);
+        }
+
         public static (bool ok, string? error) TrySend(
             SystemSettings settings,
             MailRequest request,
