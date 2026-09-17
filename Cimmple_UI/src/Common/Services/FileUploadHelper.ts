@@ -140,7 +140,10 @@ export function appendFilesToFormData(
   files: File[],
   fieldName = "file"
 ): FormData {
-  files.forEach((file) => formData.append(fieldName, file));
+  files.forEach((file) => {
+    // Pass filename explicitly — avoids edge-case FormData/File name collisions in some browsers.
+    formData.append(fieldName, file, file.name || "upload");
+  });
   return formData;
 }
 
@@ -150,6 +153,10 @@ export async function postMultipart<T = unknown>(
   onProgress?: UploadProgressHandler
 ): Promise<T> {
   const { data } = await Instense.post<T>(url, formData, {
+    headers: {
+      // Let the browser set multipart boundary; do not force Content-Type.
+      "Content-Type": undefined as unknown as string,
+    },
     onUploadProgress: (event: AxiosProgressEvent) => {
       if (!onProgress || !event.total) return;
       const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
@@ -157,4 +164,31 @@ export async function postMultipart<T = unknown>(
     },
   });
   return data;
+}
+
+/** Strip File/Blob/localUrl from attachment metadata before JSON saves. */
+export function toPersistedAttachmentMeta<T extends FileUploadMeta>(
+  attachments: T[] | undefined | null
+): Array<{
+  id: number;
+  name: string;
+  size: number;
+  fileUrl: string;
+  fileUniqueno: number;
+  uploadFile: string;
+  pageNo: string;
+  createdBy: number;
+}> {
+  return (attachments || [])
+    .filter((a) => !a.isPending && !a.file)
+    .map((a) => ({
+      id: Math.floor(a.id || 0),
+      name: a.name || "",
+      size: a.size || 0,
+      fileUrl: a.fileUrl || a.uploadFile || "",
+      fileUniqueno: a.fileUniqueno || 0,
+      uploadFile: a.uploadFile || a.fileUrl || "",
+      pageNo: a.pageNo || "0",
+      createdBy: a.createdBy || 0,
+    }));
 }

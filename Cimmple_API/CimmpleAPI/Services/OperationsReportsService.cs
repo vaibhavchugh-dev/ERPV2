@@ -65,8 +65,8 @@ public static class OperationsReportsService
         var leadDays = new List<double>(jobs.Count);
         var table = ReportResultFactory.Section(
                 "Completed jobs",
-                "JO#", "Job#", "Customer", "Part", "Order", "Completed", "Lead Days")
-            .WithNumeric(6);
+                "JO #", "Customer", "Part", "Order", "Completed", "Lead Days")
+            .WithNumeric(5);
 
         foreach (var j in jobs.OrderByDescending(x => x.OrderDate).ThenByDescending(x => x.JobOrderNumber))
         {
@@ -74,8 +74,7 @@ public static class OperationsReportsService
             var lead = (completed.Date - j.OrderDate.Date).TotalDays;
             leadDays.Add(lead);
             table.AddRow(
-                j.JobOrderNumber.ToString(),
-                j.JobNumber ?? "",
+                FormatJobOrderNumber(j.JobOrderNumber),
                 j.CustomerName ?? "",
                 FormatPart(j.PartNo, j.PartName),
                 j.OrderDate.ToString("yyyy-MM-dd"),
@@ -155,7 +154,7 @@ public static class OperationsReportsService
 
         var table = ReportResultFactory.Section(
             "Jobs due in period",
-            "JO#", "Customer", "Part", "Due", "Completed On", "Status", "On Time");
+            "JO #", "Customer", "Part", "Due", "Completed On", "Status", "On Time");
 
         var onTimeCount = 0;
         foreach (var j in jobs.OrderBy(x => x.DueDate).ThenBy(x => x.JobOrderNumber))
@@ -167,7 +166,7 @@ public static class OperationsReportsService
             if (onTime) onTimeCount++;
 
             table.AddRow(
-                j.JobOrderNumber.ToString(),
+                FormatJobOrderNumber(j.JobOrderNumber),
                 j.CustomerName ?? "",
                 FormatPart(j.PartNo, j.PartName),
                 j.DueDate.ToString("yyyy-MM-dd"),
@@ -435,6 +434,9 @@ public static class OperationsReportsService
         if (string.IsNullOrEmpty(name)) return no;
         return $"{no} — {name}";
     }
+
+    private static string FormatJobOrderNumber(int number) =>
+        number < 1000 ? $"JO#{number + 999}" : $"JO#{number}";
 
     private static List<RoutingStepParse> ParseSteps(string? json)
     {

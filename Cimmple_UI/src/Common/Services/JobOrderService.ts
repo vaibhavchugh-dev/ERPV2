@@ -610,7 +610,17 @@ export class JobOrderService {
       OrderDate: toDateOnlyApiString(request.OrderDate),
       EnableJobTracking: !!request.EnableJobTracking,
     };
-    return Instense.post(url, payload).then((response) => {
+    const cleanPayload = JSON.parse(
+      JSON.stringify(payload, (_key, value) => {
+        if (typeof File !== "undefined" && value instanceof File) return undefined;
+        if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+        if (typeof value === "function") return undefined;
+        return value;
+      })
+    );
+    return Instense.post(url, cleanPayload, {
+      headers: { "Content-Type": "application/json" },
+    }).then((response) => {
       const result = response.data.result;
       if (result && result.id) {
         return { id: result.id, message: result.message || "Job order saved successfully" };

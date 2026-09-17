@@ -39,6 +39,12 @@ public static class PurchasingReportsService
 
         var orderIds = orders.Select(o => o.OrderID).ToList();
 
+        var headerDueByOrder = QueryVendorOrders(db, tenantId, locationId)
+            .Where(o => orderIds.Contains(o.OrderID))
+            .Select(o => new { o.OrderID, o.ExternalOrderDate })
+            .ToList()
+            .ToDictionary(o => o.OrderID, o => o.ExternalOrderDate);
+
         var details = db.VendorOrderDetails.AsNoTracking()
             .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID))
             .Select(d => new { d.ID, d.OrderID, d.DueDateDateTime })
@@ -86,14 +92,16 @@ public static class PurchasingReportsService
             {
                 if (!detailsByOrder.TryGetValue(o.OrderID, out var lines))
                     continue;
+                headerDueByOrder.TryGetValue(o.OrderID, out var headerDue);
                 foreach (var line in lines)
                 {
-                    if (line.DueDateDateTime == default)
+                    var due = ResolveVendorDueDate(headerDue, line.DueDateDateTime);
+                    if (!due.HasValue)
                         continue;
                     if (!maxReceivedByDetail.TryGetValue(line.ID, out var received))
                         continue;
                     dueLines++;
-                    if (received.Date <= line.DueDateDateTime.Date)
+                    if (received.Date <= due.Value.Date)
                         onTimeLines++;
                 }
             }
@@ -193,6 +201,8 @@ public static class PurchasingReportsService
                 PartNo = d.PartNo ?? "",
                 d.UnitPrice,
                 d.QtyOrdered,
+                d.Discount,
+                d.DiscountType,
             }).ToList();
 
         var groups = lines
@@ -210,7 +220,7 @@ public static class PurchasingReportsService
         foreach (var g in groups)
         {
             var qty = g.Sum(x => (decimal)x.QtyOrdered);
-            var spend = g.Sum(x => x.UnitPrice * x.QtyOrdered);
+            var spend = g.Sum(x => LineNetSpend(x.UnitPrice, x.QtyOrdered, x.Discount, x.DiscountType));
             var avg = qty > 0 ? spend / qty : g.Average(x => x.UnitPrice);
             table.AddRow(
                 g.Key.Vendor,
@@ -224,7 +234,8 @@ public static class PurchasingReportsService
         report.Sections.Add(table);
         report.AddStat("Vendor/part combos", ReportResultFactory.Num(groups.Count()));
         report.AddStat("Lines", ReportResultFactory.Num(lines.Count));
-        report.AddStat("Spend", ReportResultFactory.Money(lines.Sum(l => l.UnitPrice * l.QtyOrdered)));
+        report.AddStat("Spend", ReportResultFactory.Money(
+            lines.Sum(l => LineNetSpend(l.UnitPrice, l.QtyOrdered, l.Discount, l.DiscountType))));
 
         return report;
     }
@@ -259,6 +270,8 @@ public static class PurchasingReportsService
                 d.RawMaterialId,
                 d.UnitPrice,
                 d.QtyOrdered,
+                d.Discount,
+                d.DiscountType,
             }).ToList();
 
         var groups = lines
@@ -281,7 +294,7 @@ public static class PurchasingReportsService
         foreach (var g in groups)
         {
             var qty = g.Sum(x => (decimal)x.QtyOrdered);
-            var spend = g.Sum(x => x.UnitPrice * x.QtyOrdered);
+            var spend = g.Sum(x => LineNetSpend(x.UnitPrice, x.QtyOrdered, x.Discount, x.DiscountType));
             var avg = qty > 0 ? spend / qty : g.Average(x => x.UnitPrice);
             table.AddRow(
                 g.Key.Month.ToString("yyyy-MM"),
@@ -328,8 +341,18 @@ public static class PurchasingReportsService
                 o.PONumber,
                 PartNo = d.PartNo ?? "",
                 d.ID,
-                d.DueDateDateTime,
-            }).ToList();
+                HeaderDue = o.ExternalOrderDate,
+                LineDue = d.DueDateDateTime,
+            }).ToList()
+            .Select(l => new
+            {
+                l.VendorName,
+                l.PONumber,
+                l.PartNo,
+                l.ID,
+                DueDate = ResolveVendorDueDate(l.HeaderDue, l.LineDue),
+            })
+            .ToList();
 
         var detailIds = lines.Select(l => l.ID).ToList();
         var maxReceived = db.VendorReceiving.AsNoTracking()
@@ -347,13 +370,14 @@ public static class PurchasingReportsService
         var scored = 0;
         var onTime = 0;
         foreach (var line in lines
-                     .Where(l => l.DueDateDateTime != default)
-                     .OrderBy(l => l.DueDateDateTime)
+                     .Where(l => l.DueDate.HasValue)
+                     .OrderBy(l => l.DueDate)
                      .ThenBy(l => l.PONumber))
         {
+            var due = line.DueDate!.Value;
             maxReceived.TryGetValue(line.ID, out var received);
             var hasRecv = maxReceived.ContainsKey(line.ID);
-            var isOnTime = hasRecv && received.Date <= line.DueDateDateTime.Date;
+            var isOnTime = hasRecv && received.Date <= due.Date;
             if (hasRecv)
             {
                 scored++;
@@ -364,19 +388,50 @@ public static class PurchasingReportsService
                 string.IsNullOrWhiteSpace(line.VendorName) ? "(unknown)" : line.VendorName.Trim(),
                 line.PONumber.ToString(),
                 string.IsNullOrWhiteSpace(line.PartNo) ? "(no part)" : line.PartNo.Trim(),
-                line.DueDateDateTime.ToString("yyyy-MM-dd"),
+                due.ToString("yyyy-MM-dd"),
                 hasRecv ? received.ToString("yyyy-MM-dd") : "—",
                 !hasRecv ? "—" : (isOnTime ? "Yes" : "No"));
         }
 
         report.Sections.Add(table);
-        report.AddStat("Lines with due date", ReportResultFactory.Num(lines.Count(l => l.DueDateDateTime != default)));
+        report.AddStat("Lines with due date", ReportResultFactory.Num(lines.Count(l => l.DueDate.HasValue)));
         report.AddStat("Received", ReportResultFactory.Num(scored));
         report.AddStat(
             "On-time rate",
             scored == 0 ? "—" : ReportResultFactory.Pct((decimal)onTime / scored * 100m));
 
         return report;
+    }
+
+    /// <summary>
+    /// Prefer the Vendor Order header Due Date (ExternalOrderDate); fall back to line due only when header is unset.
+    /// </summary>
+    private static DateTime? ResolveVendorDueDate(DateTime? headerDue, DateTime lineDue)
+    {
+        if (headerDue.HasValue && headerDue.Value != default)
+            return headerDue.Value.Date;
+        if (lineDue != default)
+            return lineDue.Date;
+        return null;
+    }
+
+    /// <summary>Net line spend after Percent or Amount discount (matches Vendor Order UI / PDF).</summary>
+    private static decimal LineNetSpend(decimal unitPrice, int qtyOrdered, decimal discount, string? discountType)
+    {
+        var subtotal = unitPrice * qtyOrdered;
+        if (subtotal <= 0) return 0m;
+        var discountAmount = CalculateDiscountAmount(subtotal, discount, discountType);
+        var net = subtotal - discountAmount;
+        return net < 0 ? 0m : net;
+    }
+
+    private static decimal CalculateDiscountAmount(decimal subtotal, decimal discount, string? discountType)
+    {
+        if (discount <= 0 || subtotal <= 0) return 0m;
+        if (string.Equals(discountType, "Amount", StringComparison.OrdinalIgnoreCase))
+            return Math.Min(Math.Max(discount, 0m), subtotal);
+        var pct = Math.Min(Math.Max(discount, 0m), 100m);
+        return subtotal * (pct / 100m);
     }
 
     private static IQueryable<Data.Models.VendorOrder> QueryVendorOrders(

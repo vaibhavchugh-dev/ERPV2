@@ -694,12 +694,9 @@ namespace CimmpleAPI.Controllers
                     var request = JsonSerializer.Deserialize<JobOrderAttachmentUploadContext>(form["formField"]!, options);
                     if (request != null)
                     {
-                        jobOrderId = request.JobOrderId > 0 ? request.JobOrderId
-                            : request.JobOrderID > 0 ? request.JobOrderID
-                            : request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.JobOrderId > 0) jobOrderId = request.JobOrderId;
+                        else if (request.OrderId > 0) jobOrderId = request.OrderId;
                         if (request.TenantId > 0) tenantId = request.TenantId;
-                        if (request.TenantID > 0) tenantId = request.TenantID;
-                        if (request.Tenantid > 0) tenantId = request.Tenantid;
                     }
                 }
 
@@ -1645,12 +1642,8 @@ namespace CimmpleAPI.Controllers
     public class JobOrderAttachmentUploadContext
     {
         public int JobOrderId { get; set; }
-        public int JobOrderID { get; set; }
         public int OrderId { get; set; }
-        public int OrderID { get; set; }
         public int TenantId { get; set; }
-        public int TenantID { get; set; }
-        public int Tenantid { get; set; }
     }
 
     public class JobMaterialRequirementReq

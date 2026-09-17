@@ -391,7 +391,17 @@ export class VendorOrderService {
       OrderID: payload.OrderID,
       Tenantid: payload.Tenantid
     });
-    const response = await Instense.post(url, payload);
+    const cleanPayload = JSON.parse(
+      JSON.stringify(payload, (_key, value) => {
+        if (typeof File !== "undefined" && value instanceof File) return undefined;
+        if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+        if (typeof value === "function") return undefined;
+        return value;
+      })
+    );
+    const response = await Instense.post(url, cleanPayload, {
+      headers: { "Content-Type": "application/json" },
+    });
 
     const result = response.data.result;
     if (result && result.id) {

@@ -181,6 +181,9 @@ public static class OperationalReportExportService
                 continue;
 
             var colCount = columns.GetArrayLength();
+            var headers = columns.EnumerateArray()
+                .Select(c => c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : c.ToString())
+                .ToList();
             var numeric = new bool[colCount];
             if (TryGetProperty(section, "numericFlags", out var flags) ||
                 TryGetProperty(section, "NumericFlags", out flags))
@@ -197,37 +200,47 @@ public static class OperationalReportExportService
                 }
             }
 
+            var rowsList = new List<List<string>>();
+            if ((TryGetProperty(section, "rows", out var rows) || TryGetProperty(section, "Rows", out rows))
+                && rows.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var row in rows.EnumerateArray())
+                {
+                    if (row.ValueKind != JsonValueKind.Array) continue;
+                    var cells = row.EnumerateArray()
+                        .Select(c => c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : c.ToString())
+                        .ToList();
+                    while (cells.Count < colCount) cells.Add("");
+                    if (cells.Count > colCount) cells = cells.Take(colCount).ToList();
+                    rowsList.Add(cells);
+                }
+            }
+
+            var widths = ComputeColumnWidths(headers, rowsList, numeric);
+
             col.Item().PaddingTop(6).Text(title).FontSize(10).Bold();
             col.Item().PaddingBottom(6).Table(table =>
             {
                 table.ColumnsDefinition(c =>
                 {
                     for (var i = 0; i < colCount; i++)
-                        c.RelativeColumn(1);
+                        c.RelativeColumn(widths[i]);
                 });
                 table.Header(h =>
                 {
-                    foreach (var c in columns.EnumerateArray())
+                    for (var i = 0; i < colCount; i++)
                     {
-                        var text = c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : c.ToString();
-                        h.Cell().Element(HeaderCell).Text(text);
+                        var cell = h.Cell().Element(HeaderCell);
+                        if (numeric[i]) cell.AlignRight().Text(headers[i]);
+                        else cell.Text(headers[i]);
                     }
                 });
 
-                if (!TryGetProperty(section, "rows", out var rows) &&
-                    !TryGetProperty(section, "Rows", out rows))
-                    return;
-                if (rows.ValueKind != JsonValueKind.Array) return;
-
-                foreach (var row in rows.EnumerateArray())
+                foreach (var cells in rowsList)
                 {
-                    if (row.ValueKind != JsonValueKind.Array) continue;
-                    var cells = row.EnumerateArray().ToList();
                     for (var i = 0; i < colCount; i++)
                     {
-                        var text = i < cells.Count
-                            ? (cells[i].ValueKind == JsonValueKind.String ? cells[i].GetString() ?? "" : cells[i].ToString())
-                            : "";
+                        var text = i < cells.Count ? cells[i] : "";
                         var cell = table.Cell().Element(BodyCell);
                         if (numeric[i]) cell.AlignRight().Text(text);
                         else cell.Text(text);
@@ -237,14 +250,43 @@ public static class OperationalReportExportService
         }
     }
 
+    /// <summary>
+    /// Content-weighted relative widths so narrow numeric columns don't crowd text columns.
+    /// </summary>
+    private static float[] ComputeColumnWidths(List<string> headers, List<List<string>> rows, bool[] numeric)
+    {
+        var n = headers.Count;
+        var scores = new float[n];
+        for (var i = 0; i < n; i++)
+        {
+            var maxLen = headers[i]?.Length ?? 0;
+            foreach (var row in rows)
+            {
+                if (i < row.Count)
+                    maxLen = Math.Max(maxLen, row[i]?.Length ?? 0);
+            }
+
+            // Soft floor/ceiling so tiny or huge cells don't dominate layout
+            var clamped = Math.Clamp(maxLen, 4, 36);
+            // Prefer slightly wider text columns; keep numeric columns compact
+            scores[i] = numeric[i] ? Math.Max(1.0f, clamped * 0.55f) : Math.Max(1.4f, clamped * 0.85f);
+        }
+
+        return scores;
+    }
+
     private static IContainer HeaderCell(IContainer c) =>
         c.DefaultTextStyle(x => x.SemiBold().FontSize(7))
             .PaddingVertical(3)
+            .PaddingHorizontal(2)
             .BorderBottom(1)
             .BorderColor(Colors.Grey.Lighten1);
 
     private static IContainer BodyCell(IContainer c) =>
-        c.PaddingVertical(2).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten3);
+        c.PaddingVertical(2)
+            .PaddingHorizontal(2)
+            .BorderBottom(0.5f)
+            .BorderColor(Colors.Grey.Lighten3);
 
     private static bool TryGetProperty(JsonElement root, string name, out JsonElement value)
     {

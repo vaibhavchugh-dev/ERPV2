@@ -3113,10 +3113,8 @@ namespace CimmpleAPI.Controllers
                     var request = JsonSerializer.Deserialize<QuotationAttachmentUploadContext>(form["formField"]!, options);
                     if (request != null)
                     {
-                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.OrderId > 0) orderId = request.OrderId;
                         if (request.TenantId > 0) tenantId = request.TenantId;
-                        if (request.TenantID > 0) tenantId = request.TenantID;
-                        if (request.Tenantid > 0) tenantId = request.Tenantid;
                     }
                 }
 
@@ -3370,11 +3368,9 @@ namespace CimmpleAPI.Controllers
                     var request = JsonSerializer.Deserialize<QuotationAttachmentUploadContext>(form["formField"]!, options);
                     if (request != null)
                     {
-                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
-                        itemNo = request.ItemNo > 0 ? request.ItemNo : request.ItemNO;
+                        if (request.OrderId > 0) orderId = request.OrderId;
+                        if (request.ItemNo > 0) itemNo = request.ItemNo;
                         if (request.TenantId > 0) tenantId = request.TenantId;
-                        if (request.TenantID > 0) tenantId = request.TenantID;
-                        if (request.Tenantid > 0) tenantId = request.Tenantid;
                     }
                 }
 
@@ -3733,10 +3729,8 @@ namespace CimmpleAPI.Controllers
                     var request = JsonSerializer.Deserialize<QuotationAttachmentUploadContext>(form["formField"]!, options);
                     if (request != null)
                     {
-                        orderId = request.OrderId > 0 ? request.OrderId : request.OrderID;
+                        if (request.OrderId > 0) orderId = request.OrderId;
                         if (request.TenantId > 0) tenantId = request.TenantId;
-                        if (request.TenantID > 0) tenantId = request.TenantID;
-                        if (request.Tenantid > 0) tenantId = request.Tenantid;
                     }
                 }
 
@@ -4248,12 +4242,8 @@ namespace CimmpleAPI.Controllers
     public class QuotationAttachmentUploadContext
     {
         public int OrderId { get; set; }
-        public int OrderID { get; set; }
         public int ItemNo { get; set; }
-        public int ItemNO { get; set; }
         public int TenantId { get; set; }
-        public int TenantID { get; set; }
-        public int Tenantid { get; set; }
     }
 
     public class QuotationReq

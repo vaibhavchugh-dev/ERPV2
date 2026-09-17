@@ -47,20 +47,25 @@ public static class InventoryReportsService
                 b.ProductId,
                 b.RawMaterialId,
                 b.QuantityOnHand,
-                b.UnitCost,
+                BalanceUnitCost = b.UnitCost,
+                MasterUnitCost = rm != null ? (decimal?)rm.UnitCost : null,
             }
         ).ToList();
 
-        var rows = rawRows.Select(r => new
+        var rows = rawRows.Select(r =>
         {
-            r.LocationId,
-            LocationName = !string.IsNullOrWhiteSpace(r.LocName) ? r.LocName!
-                : !string.IsNullOrWhiteSpace(r.LocCode) ? r.LocCode!
-                : $"Location #{r.LocationId}",
-            ItemName = ResolveItemName(r.ProductPartNo, r.ProductPartName, r.RawPartNo, r.RawPartName,
-                r.ProductId, r.RawMaterialId),
-            r.QuantityOnHand,
-            r.UnitCost,
+            var unitCost = ResolveUnitCost(r.BalanceUnitCost, r.MasterUnitCost);
+            return new
+            {
+                r.LocationId,
+                LocationName = !string.IsNullOrWhiteSpace(r.LocName) ? r.LocName!
+                    : !string.IsNullOrWhiteSpace(r.LocCode) ? r.LocCode!
+                    : $"Location #{r.LocationId}",
+                ItemName = ResolveItemName(r.ProductPartNo, r.ProductPartName, r.RawPartNo, r.RawPartName,
+                    r.ProductId, r.RawMaterialId),
+                r.QuantityOnHand,
+                UnitCost = unitCost,
+            };
         }).ToList();
 
         var grouped = rows
@@ -96,7 +101,8 @@ public static class InventoryReportsService
         report.AddStat("Unvalued Lines", ReportResultFactory.Num(unvaluedCount), warn: unvaluedCount > 0);
         report.SummaryNote =
             "Point-in-time balances as of period end (dates ignored for valuation). " +
-            "Value = Qty On Hand × (UnitCost ?? 0). Lines with null UnitCost and qty > 0 are flagged as unvalued.";
+            "Unit Cost uses InventoryBalance.UnitCost when set, otherwise Raw Material master UnitCost. " +
+            "Value = Qty On Hand × (UnitCost ?? 0). Lines with no cost and qty > 0 are flagged as unvalued.";
 
         var section = ReportResultFactory.Section(
                 "Inventory Valuation",
@@ -327,16 +333,21 @@ public static class InventoryReportsService
                 RawPartNo = rm != null ? rm.PartNo : null,
                 RawPartName = rm != null ? rm.PartName : null,
                 b.QuantityOnHand,
-                b.UnitCost,
+                BalanceUnitCost = b.UnitCost,
+                MasterUnitCost = rm != null ? (decimal?)rm.UnitCost : null,
             }
         ).AsEnumerable()
-        .Select(b => new
+        .Select(b =>
         {
-            Key = ItemKey(b.ProductId, b.RawMaterialId),
-            ItemName = ResolveItemName(b.ProductPartNo, b.ProductPartName, b.RawPartNo, b.RawPartName,
-                b.ProductId, b.RawMaterialId),
-            OnHandValue = b.QuantityOnHand * (b.UnitCost ?? 0m),
-            UnitCost = b.UnitCost ?? 0m,
+            var unitCost = ResolveUnitCost(b.BalanceUnitCost, b.MasterUnitCost) ?? 0m;
+            return new
+            {
+                Key = ItemKey(b.ProductId, b.RawMaterialId),
+                ItemName = ResolveItemName(b.ProductPartNo, b.ProductPartName, b.RawPartNo, b.RawPartName,
+                    b.ProductId, b.RawMaterialId),
+                OnHandValue = b.QuantityOnHand * unitCost,
+                UnitCost = unitCost,
+            };
         })
         .ToList();
 
@@ -425,6 +436,15 @@ public static class InventoryReportsService
 
         report.Sections.Add(section);
         return report;
+    }
+
+    private static decimal? ResolveUnitCost(decimal? balanceUnitCost, decimal? masterUnitCost)
+    {
+        if (balanceUnitCost.HasValue)
+            return balanceUnitCost.Value;
+        if (masterUnitCost.HasValue && masterUnitCost.Value > 0)
+            return masterUnitCost.Value;
+        return null;
     }
 
     private static string ItemKey(int? productId, int? rawMaterialId) =>
