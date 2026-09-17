@@ -14,9 +14,12 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// For local development, ensure the API listens on a predictable URL.
-// This overrides launchSettings when running via 'dotnet run'.
-builder.WebHost.UseUrls("http://localhost:5172");
+// For local development only: bind a predictable URL for 'dotnet run'.
+// Do NOT set this in Production — IIS/ANCM must control the listen URL.
+if (builder.Environment.IsDevelopment())
+{
+    builder.WebHost.UseUrls("http://localhost:5172");
+}
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
