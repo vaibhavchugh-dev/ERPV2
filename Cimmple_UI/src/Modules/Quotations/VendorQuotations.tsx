@@ -259,22 +259,18 @@ const VendorQuotations: React.FC = () => {
           return <span style={{ color: "#9ca3af" }}>-</span>;
         }
 
-        // Determine the parent ID for comparison
-        // If this quotation has a parent, use that parent ID
-        // If this is a master quotation, use its own orderID
-        const parentId = quotation.parentQuotationID || quotation.orderID;
+        // Listing only shows masters; open Compare with this row's orderID.
+        // Children are IsResponseOnly and hidden from the list.
+        const parentId = quotation.orderID;
 
-        // Show Compare button if:
-        // 1. Quotation is not converted (already checked above)
-        // 2. ParentQuotationID === orderID (master quotation used for multi-vendor - has children)
-        // 
-        // Note: Children are filtered from listing (IsResponseOnly = true), so we can't check
-        // the quotations array. Instead, we check if ParentQuotationID === orderID, which
-        // indicates the backend marked it as a master with children.
-        const isMultiVendorMaster = quotation.parentQuotationID === quotation.orderID;
-        
+        // Show Compare when this master has multi-vendor children.
+        // Prefer API hasChildQuotations (ParentQuotationID on children → master).
+        // Keep legacy self-link ParentQuotationID === orderID for older data.
+        const isMultiVendorMaster =
+          quotation.hasChildQuotations === true ||
+          quotation.parentQuotationID === quotation.orderID;
+
         if (!isMultiVendorMaster) {
-          // Not a multi-vendor master quotation - no Compare button
           return <span style={{ color: "#9ca3af" }}>-</span>;
         }
 

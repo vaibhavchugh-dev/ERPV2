@@ -1008,6 +1008,14 @@ namespace CimmpleAPI.Controllers
 
                 // Roll up child (response-only) conversions onto master rows for Order # display
                 var masterIds = quotations.Select(q => q.orderID).ToList();
+                var mastersWithChildren = _context.VendorQuotations
+                    .AsNoTracking()
+                    .Where(q => q.Tenantid == tenantid
+                        && q.ParentQuotationID.HasValue
+                        && masterIds.Contains(q.ParentQuotationID.Value))
+                    .Select(q => q.ParentQuotationID!.Value)
+                    .Distinct()
+                    .ToHashSet();
                 var childConversions = _context.VendorQuotations
                     .AsNoTracking()
                     .Where(q => q.Tenantid == tenantid
@@ -1072,7 +1080,10 @@ namespace CimmpleAPI.Controllers
                         convertedOrderOrderId,
                         q.locationId,
                         q.QuotationType,
-                        q.parentQuotationID
+                        q.parentQuotationID,
+                        // True when multi-vendor children exist (ParentQuotationID points at this master).
+                        // Masters no longer self-link ParentQuotationID; Compare uses this flag.
+                        hasChildQuotations = mastersWithChildren.Contains(q.orderID)
                     };
                 }).ToList();
 
@@ -1384,7 +1395,11 @@ namespace CimmpleAPI.Controllers
                         id = a.Id,
                         name = a.Name,
                         size = a.Size,
-                        fileUrl = a.FileUrl
+                        fileUrl = a.FileUrl,
+                        fileUniqueno = a.FileUniqueno,
+                        uploadFile = a.UploadFile,
+                        pageNo = a.PageNo,
+                        createdBy = a.CreatedBy
                     }).ToList() : null,
                     Comments = comments != null ? comments.Select(c => new
                     {

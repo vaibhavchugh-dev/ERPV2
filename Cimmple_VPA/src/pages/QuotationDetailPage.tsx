@@ -21,6 +21,10 @@ import {
   QuotationService,
   VendorQuotationMasterReq,
 } from "../services/quotationService";
+import {
+  DEFAULT_UPLOAD_EXTENSIONS,
+  validateSelectedFiles,
+} from "../utils/fileUploadHelper";
 
 function formatQuotationNumber(number: number): string {
   const displayNumber = number < 1000 ? number + 999 : number;
@@ -155,12 +159,15 @@ export function QuotationDetailPage() {
   const [formData, setFormData] = useState<VendorQuotationMasterReq>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [viewingFileKey, setViewingFileKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
   const [attachments, setAttachments] = useState<QuotationAttachment[]>([]);
   const [lineItemAttachments, setLineItemAttachments] = useState<Map<number, QuotationAttachment[]>>(new Map());
   const [lineItemAttachmentCounters, setLineItemAttachmentCounters] = useState<Map<number, number>>(new Map());
+
+  const fileAcceptAttr = DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(",");
 
   const dismissSuccess = useCallback(() => setSuccess(""), []);
 
@@ -229,10 +236,21 @@ export function QuotationDetailPage() {
     if (!files || files.length === 0) return;
 
     const currentAtts = lineItemAttachments.get(index) || [];
+    const { valid, errors } = validateSelectedFiles(Array.from(files), {
+      existing: currentAtts.map((a) => ({ name: a.name, size: a.size })),
+    });
+    if (errors.length > 0) {
+      setError(errors.slice(0, 3).join(" "));
+    }
+    if (valid.length === 0) {
+      e.target.value = "";
+      return;
+    }
+
     const counter = lineItemAttachmentCounters.get(index) || 1;
     let newCounter = counter;
 
-    const newAttachments: QuotationAttachment[] = Array.from(files).map((file) => {
+    const newAttachments: QuotationAttachment[] = valid.map((file) => {
       const id = newCounter++;
       return {
         id,
@@ -268,10 +286,15 @@ export function QuotationDetailPage() {
 
   const handleViewHeaderAttachment = async (attachment: QuotationAttachment) => {
     const fileUniqueno = attachment.fileUniqueno || attachment.id;
-    if (!fileUniqueno || formData.OrderID <= 0) {
-      setError("Attachment is not available for viewing");
+    const viewKey = `header-${fileUniqueno}`;
+    if (viewingFileKey || !fileUniqueno || formData.OrderID <= 0) {
+      if (!fileUniqueno || formData.OrderID <= 0) {
+        setError("Attachment is not available for viewing");
+      }
       return;
     }
+    setViewingFileKey(viewKey);
+    setError("");
     try {
       const { blob, contentType } = await QuotationService.vendorQuotationGetFile({
         orderId: formData.OrderID,
@@ -281,10 +304,15 @@ export function QuotationDetailPage() {
     } catch (err: unknown) {
       const ax = err as { message?: string };
       setError(ax?.message || "Failed to open attachment");
+    } finally {
+      setViewingFileKey(null);
     }
   };
 
   const handleViewLineAttachment = async (index: number, att: QuotationAttachment) => {
+    const viewKey = `line-${index}-${att.fileUniqueno || att.id}-${att.name}`;
+    if (viewingFileKey) return;
+
     if (att.isPending && att.localUrl) {
       window.open(att.localUrl, "_blank", "noopener,noreferrer");
       return;
@@ -295,6 +323,8 @@ export function QuotationDetailPage() {
       setError("Attachment is not available for viewing");
       return;
     }
+    setViewingFileKey(viewKey);
+    setError("");
     try {
       const { blob, contentType } = await QuotationService.vendorQuotationDetailGetFile({
         orderId: formData.OrderID,
@@ -305,6 +335,8 @@ export function QuotationDetailPage() {
     } catch (err: unknown) {
       const ax = err as { message?: string };
       setError(ax?.message || "Failed to open attachment");
+    } finally {
+      setViewingFileKey(null);
     }
   };
 
@@ -657,11 +689,13 @@ export function QuotationDetailPage() {
                           <IconPaperclip className="shrink-0 text-slate-500" />
                           <button
                             type="button"
-                            className="flex-1 truncate text-left text-accent underline"
+                            className="flex-1 truncate text-left text-accent underline disabled:cursor-wait disabled:opacity-60"
+                            disabled={!!viewingFileKey}
                             onClick={() => handleViewLineAttachment(index, att)}
                           >
-                            {att.name}
-                            {att.isPending ? " (pending)" : ""}
+                            {viewingFileKey === `line-${index}-${att.fileUniqueno || att.id}-${att.name}`
+                              ? "Loading…"
+                              : `${att.name}${att.isPending ? " (pending)" : ""}`}
                           </button>
                           {!isReadOnly && (
                             <button
@@ -692,6 +726,7 @@ export function QuotationDetailPage() {
                           <input
                             type="file"
                             multiple
+                            accept={fileAcceptAttr}
                             id={`lineItemFile-${index}`}
                             className="hidden"
                             onChange={(e) => handleLineItemFileUpload(index, e)}
@@ -731,9 +766,10 @@ export function QuotationDetailPage() {
                     <button
                       type="button"
                       onClick={() => handleViewHeaderAttachment(attachment)}
-                      className="inline-flex items-center gap-1 text-accent"
+                      disabled={!!viewingFileKey}
+                      className="inline-flex items-center gap-1 text-accent disabled:cursor-wait disabled:opacity-60"
                     >
-                      View
+                      {viewingFileKey === `header-${attachment.fileUniqueno || attachment.id}` ? "Loading…" : "View"}
                       <IconExternal />
                     </button>
                   )}

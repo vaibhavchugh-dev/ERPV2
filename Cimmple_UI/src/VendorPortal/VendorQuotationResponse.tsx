@@ -6,7 +6,11 @@ import {
   QuotationDetailReq,
   QuotationAttachment,
 } from "../Common/Services/QuotationService";
-import { getApiErrorMessage } from "../Common/Services/FileUploadHelper";
+import {
+  DEFAULT_UPLOAD_EXTENSIONS,
+  getApiErrorMessage,
+  validateSelectedFiles,
+} from "../Common/Services/FileUploadHelper";
 import "./VendorPortal.scss";
 
 type LineAttachment = QuotationAttachment & { isPending?: boolean; file?: File; localUrl?: string };
@@ -46,10 +50,13 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [viewingFileKey, setViewingFileKey] = useState<string | null>(null);
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
   const [attachments, setAttachments] = useState<QuotationAttachment[]>([]);
   const [lineItemAttachments, setLineItemAttachments] = useState<Map<number, LineAttachment[]>>(new Map());
   const [lineItemAttachmentCounters, setLineItemAttachmentCounters] = useState<Map<number, number>>(new Map());
+
+  const fileAcceptAttr = DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(",");
 
   useEffect(() => {
     loadQuotation();
@@ -306,12 +313,25 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
   const handleLineItemFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    
+
     const currentAtts = lineItemAttachments.get(index) || [];
+    const { valid, errors } = validateSelectedFiles(Array.from(files), {
+      existing: currentAtts.map((a) => ({ name: a.name, size: a.size })),
+    });
+    if (errors.length > 0) {
+      const preview = errors.slice(0, 3).join(" ");
+      const suffix = errors.length > 3 ? ` (+${errors.length - 3} more)` : "";
+      toast.error(`${preview}${suffix}`);
+    }
+    if (valid.length === 0) {
+      if (e.target) e.target.value = "";
+      return;
+    }
+
     const counter = lineItemAttachmentCounters.get(index) || 1;
     let newCounter = counter;
-    
-    const newAttachments: LineAttachment[] = Array.from(files).map((file) => {
+
+    const newAttachments: LineAttachment[] = valid.map((file) => {
       const id = newCounter++;
       return {
         id,
@@ -325,19 +345,19 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
         localUrl: URL.createObjectURL(file),
       };
     });
-    
-    setLineItemAttachments(prev => {
+
+    setLineItemAttachments((prev) => {
       const newMap = new Map(prev);
       newMap.set(index, [...currentAtts, ...newAttachments]);
       return newMap;
     });
-    
-    setLineItemAttachmentCounters(prev => {
+
+    setLineItemAttachmentCounters((prev) => {
       const newMap = new Map(prev);
       newMap.set(index, newCounter);
       return newMap;
     });
-    
+
     if (e.target) {
       e.target.value = "";
     }
@@ -345,10 +365,14 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
 
   const handleViewHeaderAttachment = async (attachment: QuotationAttachment) => {
     const fileUniqueno = attachment.fileUniqueno || attachment.id;
-    if (!fileUniqueno || formData.OrderID <= 0) {
-      toast.error("Attachment is not available for viewing");
+    const viewKey = `header-${fileUniqueno}`;
+    if (viewingFileKey || !fileUniqueno || formData.OrderID <= 0) {
+      if (!fileUniqueno || formData.OrderID <= 0) {
+        toast.error("Attachment is not available for viewing");
+      }
       return;
     }
+    setViewingFileKey(viewKey);
     try {
       const { blob, contentType } = await QuotationService.VendorQuotationGetFile({
         orderId: formData.OrderID,
@@ -359,10 +383,15 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error: any) {
       toast.error(error?.message || "Failed to open attachment");
+    } finally {
+      setViewingFileKey(null);
     }
   };
 
   const handleViewLineAttachment = async (index: number, att: LineAttachment) => {
+    const viewKey = `line-${index}-${att.fileUniqueno || att.id}-${att.name}`;
+    if (viewingFileKey) return;
+
     if (att.isPending && att.localUrl) {
       window.open(att.localUrl, "_blank", "noopener,noreferrer");
       return;
@@ -373,6 +402,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
       toast.error("Attachment is not available for viewing");
       return;
     }
+    setViewingFileKey(viewKey);
     try {
       const { blob, contentType } = await QuotationService.VendorQuotationDetailGetFile({
         orderId: formData.OrderID,
@@ -384,6 +414,8 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error: any) {
       toast.error(error?.message || "Failed to open attachment");
+    } finally {
+      setViewingFileKey(null);
     }
   };
 
@@ -657,6 +689,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => handleViewLineAttachment(index, att)}
+                                      disabled={!!viewingFileKey}
                                       style={{
                                         flex: 1,
                                         overflow: "hidden",
@@ -666,13 +699,16 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                         border: "none",
                                         padding: 0,
                                         textAlign: "left",
-                                        cursor: "pointer",
+                                        cursor: viewingFileKey ? "wait" : "pointer",
                                         color: "#4f46e5",
                                         textDecoration: "underline",
+                                        opacity: viewingFileKey && viewingFileKey !== `line-${index}-${att.fileUniqueno || att.id}-${att.name}` ? 0.6 : 1,
                                       }}
-                                      title="View attachment"
+                                      title={viewingFileKey === `line-${index}-${att.fileUniqueno || att.id}-${att.name}` ? "Loading…" : "View attachment"}
                                     >
-                                      {att.name}{att.isPending ? " (pending)" : ""}
+                                      {viewingFileKey === `line-${index}-${att.fileUniqueno || att.id}-${att.name}`
+                                        ? "Loading…"
+                                        : `${att.name}${att.isPending ? " (pending)" : ""}`}
                                     </button>
                                     {!isReadOnlyResponse && (
                                     <button
@@ -709,6 +745,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                 <input
                                   type="file"
                                   multiple
+                                  accept={fileAcceptAttr}
                                   onChange={(e) => handleLineItemFileUpload(index, e)}
                                   style={{ display: "none" }}
                                   id={`lineItemFile-${index}`}
@@ -786,16 +823,18 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                         <button
                           type="button"
                           onClick={() => handleViewHeaderAttachment(attachment)}
+                          disabled={!!viewingFileKey}
                           style={{ 
                             color: "#6366f1", 
                             background: "none",
                             border: "none",
-                            cursor: "pointer",
+                            cursor: viewingFileKey ? "wait" : "pointer",
                             fontSize: "0.875rem",
-                            fontWeight: 500
+                            fontWeight: 500,
+                            opacity: viewingFileKey && viewingFileKey !== `header-${attachment.fileUniqueno || attachment.id}` ? 0.6 : 1,
                           }}
                         >
-                          View
+                          {viewingFileKey === `header-${attachment.fileUniqueno || attachment.id}` ? "Loading…" : "View"}
                         </button>
                       ) : null}
                     </div>

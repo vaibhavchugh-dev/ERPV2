@@ -33,6 +33,15 @@ interface QuotationData {
   parentQuotationID?: number | null;
 }
 
+interface ComparisonAttachment {
+  id: number;
+  name: string;
+  size: number;
+  fileUrl?: string;
+  fileUniqueno?: number;
+  uploadFile?: string;
+}
+
 interface DetailData {
   orderID: number;
   itemNo: number;
@@ -48,7 +57,7 @@ interface DetailData {
   glcode?: string;
   lineType?: string;
   rawMaterialId?: number;
-  attachments?: Array<{id: number; name: string; size: number; fileUrl?: string}>;
+  attachments?: ComparisonAttachment[];
 }
 
 const calculateCompareLineTotal = (detail: DetailData): number => {
@@ -90,6 +99,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   const [lineItemSelections, setLineItemSelections] = useState<Map<string, number>>(new Map());
   const [creatingOrders, setCreatingOrders] = useState(false);
   const [convertingQuotationId, setConvertingQuotationId] = useState<number | null>(null);
+  const [viewingAttachmentKey, setViewingAttachmentKey] = useState<string | null>(null);
   // Default to card view
   const [viewMode, setViewMode] = useState<'table' | 'compact' | 'card'>(() => {
     return 'card';
@@ -99,6 +109,106 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     loadComparisonData();
   }, [parentQuotationId]);
 
+  const mapComparisonAttachment = (a: any): ComparisonAttachment => ({
+    id: a.id || a.Id || 0,
+    name: a.name || a.Name || "",
+    size: a.size || a.Size || 0,
+    fileUrl: a.fileUrl || a.FileUrl || "",
+    fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+    uploadFile: a.uploadFile || a.UploadFile || "",
+  });
+
+  const handleViewDetailAttachment = useCallback(
+    async (orderId: number, itemNo: number, att: ComparisonAttachment) => {
+      const fileUniqueno = att.fileUniqueno || att.id;
+      const viewKey = `${orderId}-${itemNo}-${fileUniqueno}-${att.name}`;
+      if (viewingAttachmentKey || !fileUniqueno || orderId <= 0 || itemNo <= 0) {
+        if (!fileUniqueno || orderId <= 0 || itemNo <= 0) {
+          toast.error("Attachment is not available for viewing");
+        }
+        return;
+      }
+      setViewingAttachmentKey(viewKey);
+      try {
+        const { blob, contentType } = await QuotationService.VendorQuotationDetailGetFile({
+          orderId,
+          itemNo,
+          fileUniqueno,
+        });
+        const url = URL.createObjectURL(new Blob([blob], { type: contentType || blob.type }));
+        window.open(url, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      } catch (error: any) {
+        toast.error(error?.message || "Failed to open attachment");
+      } finally {
+        setViewingAttachmentKey(null);
+      }
+    },
+    [viewingAttachmentKey]
+  );
+
+  const renderDetailAttachments = (
+    orderId: number,
+    itemNo: number,
+    atts: ComparisonAttachment[] | undefined,
+    fontSize = "0.8125rem"
+  ) => {
+    if (!atts || !Array.isArray(atts) || atts.length === 0) {
+      return "-";
+    }
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+        {atts.map((att) => {
+          const fileUniqueno = att.fileUniqueno || att.id;
+          const viewKey = `${orderId}-${itemNo}-${fileUniqueno}-${att.name}`;
+          const isLoading = viewingAttachmentKey === viewKey;
+          const canView = !!(fileUniqueno && orderId > 0 && itemNo > 0);
+          return (
+            <div key={`${att.id}-${att.name}`}>
+              {canView ? (
+                <button
+                  type="button"
+                  onClick={() => handleViewDetailAttachment(orderId, itemNo, att)}
+                  disabled={!!viewingAttachmentKey}
+                  style={{
+                    color: "#6366f1",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    textDecoration: "underline",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.25rem",
+                    fontSize,
+                    cursor: viewingAttachmentKey ? "wait" : "pointer",
+                    opacity: viewingAttachmentKey && !isLoading ? 0.6 : 1,
+                    textAlign: "left",
+                  }}
+                  title={isLoading ? "Loading…" : "View attachment"}
+                >
+                  <span>📎</span>
+                  <span>{isLoading ? "Loading…" : att.name || "Unnamed"}</span>
+                </button>
+              ) : (
+                <span
+                  style={{
+                    color: "#6b7280",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.25rem",
+                    fontSize,
+                  }}
+                >
+                  <span>📎</span>
+                  <span>{att.name || "Unnamed"}</span>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
   const loadComparisonData = async () => {
     setLoading(true);
     try {
@@ -109,21 +219,15 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
         // Map details and ensure attachments are properly formatted
         const mappedDetails: DetailData[] = (result.details || []).map((d: any) => {
           // Handle attachments - check both camelCase and PascalCase
-          let attachments: Array<{id: number; name: string; size: number; fileUrl?: string}> | null = null;
+          let attachments: ComparisonAttachment[] | null = null;
           if (d.attachments) {
-            attachments = Array.isArray(d.attachments) ? d.attachments.map((a: any) => ({
-              id: a.id || a.Id || 0,
-              name: a.name || a.Name || "",
-              size: a.size || a.Size || 0,
-              fileUrl: a.fileUrl || a.FileUrl || ""
-            })) : null;
+            attachments = Array.isArray(d.attachments)
+              ? d.attachments.map(mapComparisonAttachment)
+              : null;
           } else if (d.Attachments) {
-            attachments = Array.isArray(d.Attachments) ? d.Attachments.map((a: any) => ({
-              id: a.id || a.Id || 0,
-              name: a.name || a.Name || "",
-              size: a.size || a.Size || 0,
-              fileUrl: a.fileUrl || a.FileUrl || ""
-            })) : null;
+            attachments = Array.isArray(d.Attachments)
+              ? d.Attachments.map(mapComparisonAttachment)
+              : null;
           }
           
           return {
@@ -1077,44 +1181,12 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
                                     {/* Attachments Column */}
                                     <td style={{ padding: "0.75rem", verticalAlign: "top", width: "14%" }}>
-                                      {(() => {
-                                        const atts = quotationDetail?.attachments;
-                                        const hasAttachments = atts && Array.isArray(atts) && atts.length > 0;
-                                        if (!hasAttachments) {
-                                          return "-";
-                                        }
-                                        return (
-                                          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                                            {atts.map((att) => (
-                                              <div key={att.id || Math.random()}>
-                                                {att.fileUrl ? (
-                                                  <a 
-                                                    href={att.fileUrl} 
-                                                    target="_blank" 
-                                                    rel="noopener noreferrer" 
-                                                    style={{ 
-                                                      color: "#6366f1", 
-                                                      textDecoration: "none",
-                                                      display: "flex",
-                                                      alignItems: "center",
-                                                      gap: "0.25rem",
-                                                      fontSize: "0.8125rem"
-                                                    }}
-                                                  >
-                                                    <span>📎</span>
-                                                    <span>{att.name || "Unnamed"}</span>
-                                                  </a>
-                                                ) : (
-                                                  <span style={{ color: "#6b7280", display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.8125rem" }}>
-                                                    <span>📎</span>
-                                                    <span>{att.name || "Unnamed"}</span>
-                                                  </span>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        );
-                                      })()}
+                                      {renderDetailAttachments(
+                                        quotation.orderID,
+                                        lineItem.itemNo,
+                                        quotationDetail?.attachments,
+                                        "0.8125rem"
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -1221,44 +1293,12 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                     ) : "-"}
                                   </td>
                                   <td style={{ fontSize: "0.75rem", color: "#6b7280", maxWidth: "200px", padding: "0.5rem", verticalAlign: "top" }}>
-                                    {(() => {
-                                      const atts = quotationDetail?.attachments;
-                                      const hasAttachments = atts && Array.isArray(atts) && atts.length > 0;
-                                      if (!hasAttachments) {
-                                        return "-";
-                                      }
-                                      return (
-                                        <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                                        {atts.map((att) => (
-                                          <div key={att.id || Math.random()}>
-                                            {att.fileUrl ? (
-                                              <a 
-                                                href={att.fileUrl} 
-                                                target="_blank" 
-                                                rel="noopener noreferrer" 
-                                                style={{ 
-                                                  color: "#6366f1", 
-                                                  textDecoration: "none",
-                                                  display: "flex",
-                                                  alignItems: "center",
-                                                  gap: "0.25rem",
-                                                  fontSize: "0.75rem"
-                                                }}
-                                              >
-                                                <span>📎</span>
-                                                <span>{att.name || "Unnamed"}</span>
-                                              </a>
-                                            ) : (
-                                              <span style={{ color: "#6b7280", display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.75rem" }}>
-                                                <span>📎</span>
-                                                <span>{att.name || "Unnamed"}</span>
-                                              </span>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                      );
-                                    })()}
+                                    {renderDetailAttachments(
+                                      quotation.orderID,
+                                      lineItem.itemNo,
+                                      quotationDetail?.attachments,
+                                      "0.75rem"
+                                    )}
                                   </td>
                                 </React.Fragment>
                               );
@@ -1389,42 +1429,18 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                       )}
                                       {(() => {
                                         const atts = quotationDetail?.attachments;
-                                        const hasAttachments = atts && Array.isArray(atts) && atts.length > 0;
-                                        if (!hasAttachments) {
+                                        if (!atts || !Array.isArray(atts) || atts.length === 0) {
                                           return null;
                                         }
                                         return (
                                           <div style={{ color: "#6b7280", fontSize: "0.75rem", marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #e5e7eb" }}>
                                             <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>Attachments:</div>
-                                            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                                              {atts.map((att) => (
-                                                <div key={att.id || Math.random()}>
-                                                  {att.fileUrl ? (
-                                                    <a 
-                                                      href={att.fileUrl} 
-                                                      target="_blank" 
-                                                      rel="noopener noreferrer" 
-                                                      style={{ 
-                                                        color: "#6366f1", 
-                                                        textDecoration: "none",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: "0.25rem",
-                                                        fontSize: "0.75rem"
-                                                      }}
-                                                    >
-                                                      <span>📎</span>
-                                                      <span>{att.name || "Unnamed"}</span>
-                                                    </a>
-                                                  ) : (
-                                                    <span style={{ color: "#6b7280", display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.75rem" }}>
-                                                      <span>📎</span>
-                                                      <span>{att.name || "Unnamed"}</span>
-                                                    </span>
-                                                  )}
-                                                </div>
-                                              ))}
-                                            </div>
+                                            {renderDetailAttachments(
+                                              quotation.orderID,
+                                              lineItem.itemNo,
+                                              atts,
+                                              "0.75rem"
+                                            )}
                                           </div>
                                         );
                                       })()}
