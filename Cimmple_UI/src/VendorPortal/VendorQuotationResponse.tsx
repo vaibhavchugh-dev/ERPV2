@@ -227,7 +227,17 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
         ...formData,
         Status: "Responded",
         ParentQuotationID: formData.ParentQuotationID,
-        Attachments: attachments,
+        // Never send pending File blobs in JSON — Axios may auto-switch to multipart and throw.
+        Attachments: (attachments || [])
+          .filter((a) => !a.isPending)
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            fileUrl: a.fileUrl || a.uploadFile || "",
+            fileUniqueno: a.fileUniqueno || 0,
+            uploadFile: a.uploadFile || a.fileUrl || "",
+          })),
         Details: detailsWithAttachments,
       };
 
