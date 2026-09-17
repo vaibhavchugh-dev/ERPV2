@@ -28,6 +28,7 @@ export const getDefaultSystemSettings = (tenantId: number): SystemSettings => ({
   smtpUseSsl: true,
   smtpUsername: "",
   smtpPassword: "",
+  hasSmtpPassword: false,
   smtpFromEmail: "",
   smtpFromName: "",
   defaultPageSize: 10,

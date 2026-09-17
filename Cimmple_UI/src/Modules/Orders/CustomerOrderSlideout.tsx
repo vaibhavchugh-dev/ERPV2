@@ -15,6 +15,7 @@ import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
@@ -75,6 +76,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -1551,6 +1553,18 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                 <button
                   type="button"
                   className="btn-icon"
+                  onClick={() => setShowEmailDialog(true)}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
                   onClick={handleDuplicate}
                   title="Duplicate"
                   style={{ color: "#6366f1" }}
@@ -2981,6 +2995,20 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         onRefreshImpact={refreshDeletionImpact}
         onDeleteAll={handleDeleteAll}
         isLoading={loading}
+      />
+
+      <SendDocumentEmailDialog
+        open={showEmailDialog}
+        kind="order"
+        documentId={effectiveOrderId}
+        documentLabel={
+          formData.PONumber > 0
+            ? formData.PONumber < 1000
+              ? `CO#${formData.PONumber + 999}`
+              : `CO#${formData.PONumber}`
+            : undefined
+        }
+        onClose={() => setShowEmailDialog(false)}
       />
     </div>
   );

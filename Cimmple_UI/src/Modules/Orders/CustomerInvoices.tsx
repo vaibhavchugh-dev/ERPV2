@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
-import { faEye, faPrint, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
+import { faEye, faPrint, faEnvelope, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { CustomerInvoicesService, CustomerInvoiceSummary } from "../../Common/Services/CustomerInvoicesService";
@@ -9,6 +9,7 @@ import { InvoiceService } from "../../Common/Services/InvoiceService";
 import { PdfService } from "../../Common/Services/PdfService";
 import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
+import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
@@ -386,6 +387,7 @@ const CustomerInvoices: React.FC = () => {
   // Payment modal state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<CustomerInvoiceSummary | null>(null);
+  const [emailInvoiceId, setEmailInvoiceId] = useState<number | null>(null);
 
   useEffect(() => {
     loadInvoices();
@@ -710,6 +712,22 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
+          <button
+            type="button"
+            onClick={() => setEmailInvoiceId(row.id)}
+            title="Email Invoice"
+            style={{
+              padding: "0.25rem 0.5rem",
+              backgroundColor: "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: "0.25rem",
+              cursor: "pointer",
+              fontSize: "0.75rem",
+            }}
+          >
+            <FontAwesomeIcon icon={faEnvelope} />
+          </button>
           {row.status === 'Unpaid' && (
             <button
               type="button"
@@ -812,6 +830,14 @@ const CustomerInvoices: React.FC = () => {
           }}
         />
       )}
+
+      <SendDocumentEmailDialog
+        open={emailInvoiceId != null && emailInvoiceId > 0}
+        kind="invoice"
+        documentId={emailInvoiceId ?? 0}
+        documentLabel={invoices.find((i) => i.id === emailInvoiceId)?.invoiceNo}
+        onClose={() => setEmailInvoiceId(null)}
+      />
     </div>
   );
 };

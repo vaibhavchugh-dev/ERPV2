@@ -147,6 +147,7 @@ const UserManagementComponent: React.FC = () => {
       userId: user.userUniqueID,
       userName: user.userName,
       displayName: displayName || undefined,
+      email: user.email,
     });
   };
 

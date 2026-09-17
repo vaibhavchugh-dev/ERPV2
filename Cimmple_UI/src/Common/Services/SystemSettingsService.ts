@@ -38,6 +38,8 @@ export interface SystemSettings {
   smtpUseSsl: boolean;
   smtpUsername: string;
   smtpPassword: string;
+  /** True when a password is stored server-side (actual password is never returned). */
+  hasSmtpPassword?: boolean;
   smtpFromEmail: string;
   smtpFromName: string;
   
@@ -91,6 +93,23 @@ export class SystemSettingsService {
       tenantId,
       ...companyInfo
     });
+    return response.data;
+  }
+
+  /** Sends a test message using current form SMTP values (empty password keeps the saved one). */
+  public static async TestSmtp(payload: {
+    tenantId: number;
+    toEmail?: string;
+    smtpServer?: string;
+    smtpPort?: number;
+    smtpUseSsl?: boolean;
+    smtpUsername?: string;
+    smtpPassword?: string;
+    smtpFromEmail?: string;
+    smtpFromName?: string;
+  }): Promise<{ message: string }> {
+    const url = `/SystemSettings/TestSmtp`;
+    const response = await Instense.post(url, payload, { timeout: 135_000 });
     return response.data;
   }
 }

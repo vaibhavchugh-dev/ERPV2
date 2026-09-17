@@ -59,6 +59,7 @@ builder.Services.AddDbContext<CimmpleDbContext>(options =>
 
 // Register PDF Service
 builder.Services.AddScoped<CimmpleAPI.Services.Pdf.PdfService>();
+builder.Services.AddScoped<CimmpleAPI.Services.Pdf.DocumentPdfService>();
 
 // Register Document Storage Service
 builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();

@@ -271,7 +271,9 @@ export class QualityService {
     }
   }
 
-  static async CreateNCR(ncr: Omit<NonConformanceReport, 'ncrId' | 'ncrNumber'>): Promise<NonConformanceReport | null> {
+  static async CreateNCR(
+    ncr: Omit<NonConformanceReport, 'ncrId' | 'ncrNumber'>
+  ): Promise<(NonConformanceReport & { assignmentEmails?: string[] }) | null> {
     try {
       console.log("QualityService.CreateNCR called with data:", ncr);
 
@@ -290,6 +292,9 @@ export class QualityService {
           result.photos = [];
         }
       }
+      if (result && Array.isArray(response.data.assignmentEmails)) {
+        result.assignmentEmails = response.data.assignmentEmails;
+      }
 
       return result;
     } catch (error) {
@@ -298,15 +303,23 @@ export class QualityService {
     }
   }
 
-  static async UpdateNCR(ncrId: number, updates: Partial<NonConformanceReport>): Promise<boolean> {
+  static async UpdateNCR(
+    ncrId: number,
+    updates: Partial<NonConformanceReport>
+  ): Promise<{ success: boolean; assignmentEmails?: string[] }> {
     try {
       const updateData = {
         ...updates,
         photos: toStoredPhotos(updates.photos as string[] | string | undefined)
       };
 
-      await Instense.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
-      return true;
+      const response = await Instense.put(`/Quality/UpdateNCR/${ncrId}`, updateData);
+      return {
+        success: true,
+        assignmentEmails: Array.isArray(response.data?.assignmentEmails)
+          ? response.data.assignmentEmails
+          : undefined,
+      };
     } catch (error) {
       console.error("Error updating NCR:", error);
       throw new Error(getApiErrorMessage(error, "Failed to update NCR"));

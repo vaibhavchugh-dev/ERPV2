@@ -50,6 +50,13 @@ namespace CimmpleAPI.Controllers
             EnableInAppNotifications = true
         };
 
+        private static SystemSettings RedactSmtpPassword(SystemSettings settings)
+        {
+            settings.HasSmtpPassword = !string.IsNullOrEmpty(settings.SmtpPassword);
+            settings.SmtpPassword = "";
+            return settings;
+        }
+
         // GET: api/SystemSettings/GetSettings
         [HttpGet("GetSettings")]
         public async Task<IActionResult> GetSettings([FromQuery] int tenantId)
@@ -59,12 +66,13 @@ namespace CimmpleAPI.Controllers
                 await SystemSettingsSchemaService.EnsureTablesAsync(_context);
 
                 var settings = await _context.SystemSettings
+                    .AsNoTracking()
                     .FirstOrDefaultAsync(s => s.TenantId == tenantId);
 
                 if (settings == null)
                     return Ok(CreateDefaultSettings(tenantId));
 
-                return Ok(settings);
+                return Ok(RedactSmtpPassword(settings));
             }
             catch (Exception ex)
             {
@@ -199,6 +207,103 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Sends a test message using the provided SMTP fields (or saved tenant settings).
+        /// Bypasses the email-notifications gate so admins can verify SMTP while notifications are off.
+        /// </summary>
+        [HttpPost("TestSmtp")]
+        public async Task<IActionResult> TestSmtp([FromBody] TestSmtpRequest? request)
+        {
+            try
+            {
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+
+                var tenantId = request?.TenantId > 0 ? request.TenantId : GetTenantId();
+                var saved = await _context.SystemSettings
+                    .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+
+                var settings = BuildSmtpSettingsForTest(tenantId, saved, request);
+                var toEmail = !string.IsNullOrWhiteSpace(request?.ToEmail)
+                    ? request!.ToEmail!.Trim()
+                    : settings.SmtpFromEmail?.Trim() ?? "";
+
+                if (string.IsNullOrWhiteSpace(toEmail))
+                    return BadRequest(new { message = "Enter a test recipient email, or set From Email first." });
+
+                var mail = new MailRequest
+                {
+                    To = toEmail,
+                    Subject = "Cimmple SMTP test",
+                    Body =
+                        "<p>This is a test message from Cimmple System Settings.</p>" +
+                        $"<p>Tenant id: {tenantId}<br/>Sent at (UTC): {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}</p>",
+                    IsHtml = true
+                };
+
+                var (ok, error) = EmailService.TrySend(settings, mail, skipNotificationGate: true);
+                if (!ok)
+                {
+                    Console.WriteLine($"[TestSmtp] Send failed: {error}");
+                    return BadRequest(new { message = error ?? "Failed to send test email." });
+                }
+
+                return Ok(new { message = $"Test email sent to {toEmail}." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[TestSmtp] Error: {ex.Message}");
+                return StatusCode(500, new { message = "Error sending test email", error = ex.Message });
+            }
+        }
+
+        private static SystemSettings BuildSmtpSettingsForTest(
+            int tenantId,
+            SystemSettings? saved,
+            TestSmtpRequest? request)
+        {
+            var settings = saved != null
+                ? new SystemSettings
+                {
+                    TenantId = tenantId,
+                    SmtpServer = saved.SmtpServer,
+                    SmtpPort = saved.SmtpPort,
+                    SmtpUseSsl = saved.SmtpUseSsl,
+                    SmtpUsername = saved.SmtpUsername,
+                    SmtpPassword = saved.SmtpPassword,
+                    SmtpFromEmail = saved.SmtpFromEmail,
+                    SmtpFromName = saved.SmtpFromName,
+                    EnableEmailNotifications = true
+                }
+                : new SystemSettings
+                {
+                    TenantId = tenantId,
+                    SmtpPort = 587,
+                    SmtpUseSsl = true,
+                    EnableEmailNotifications = true
+                };
+
+            if (request == null)
+                return settings;
+
+            if (!string.IsNullOrWhiteSpace(request.SmtpServer))
+                settings.SmtpServer = request.SmtpServer.Trim();
+            if (request.SmtpPort.HasValue && request.SmtpPort.Value > 0)
+                settings.SmtpPort = request.SmtpPort.Value;
+            if (request.SmtpUseSsl.HasValue)
+                settings.SmtpUseSsl = request.SmtpUseSsl.Value;
+            if (request.SmtpUsername != null)
+                settings.SmtpUsername = request.SmtpUsername;
+            // Empty password in the form means "keep saved password"
+            if (!string.IsNullOrEmpty(request.SmtpPassword))
+                settings.SmtpPassword = request.SmtpPassword;
+            if (!string.IsNullOrWhiteSpace(request.SmtpFromEmail))
+                settings.SmtpFromEmail = request.SmtpFromEmail.Trim();
+            if (request.SmtpFromName != null)
+                settings.SmtpFromName = request.SmtpFromName;
+
+            return settings;
+        }
+
         // POST: api/SystemSettings/SaveCompanyInfo
         [HttpPost("SaveCompanyInfo")]
         public async Task<IActionResult> SaveCompanyInfo([FromBody] CompanyInfoDto dto)
@@ -283,5 +388,21 @@ namespace CimmpleAPI.Controllers
         public string Zip { get; set; } = "";
         public string Country { get; set; } = "";
         public string WebAddress { get; set; } = "";
+    }
+
+    public class TestSmtpRequest
+    {
+        public int TenantId { get; set; }
+
+        /// <summary>Optional override; defaults to From Email.</summary>
+        public string? ToEmail { get; set; }
+
+        public string? SmtpServer { get; set; }
+        public int? SmtpPort { get; set; }
+        public bool? SmtpUseSsl { get; set; }
+        public string? SmtpUsername { get; set; }
+        public string? SmtpPassword { get; set; }
+        public string? SmtpFromEmail { get; set; }
+        public string? SmtpFromName { get; set; }
     }
 }

@@ -5,9 +5,13 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Pdf;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -16,10 +20,12 @@ namespace CimmpleAPI.Controllers
     public class AccountingController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly DocumentPdfService _documentPdfService;
 
-        public AccountingController(CimmpleDbContext context)
+        public AccountingController(CimmpleDbContext context, DocumentPdfService documentPdfService)
         {
             _context = context;
+            _documentPdfService = documentPdfService;
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
@@ -2014,21 +2020,32 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SendArReminder")]
-        public IActionResult SendArReminder([FromBody] SendArReminderRequest request)
+        public async Task<IActionResult> SendArReminder([FromBody] SendArReminderRequest request)
         {
             try
             {
-                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
-                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                await AccountingGapSchemaService.EnsureAsync(_context);
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
                 var tenantId = GetTenantId();
                 if (request == null || request.InvoiceId <= 0)
                     return BadRequest(new { error = "Invoice id is required." });
 
-                var result = SendOneArReminder(tenantId, request.InvoiceId);
+                if (!TryGetActiveLocationId(out var locationId, out var forbid))
+                    return forbid!;
+
+                var result = await SendOneArReminderAsync(tenantId, request.InvoiceId, locationId);
                 if (!result.ok)
                     return BadRequest(new { error = result.error });
 
-                return Ok(new { result = new { message = "Payment reminder sent", toEmail = result.toEmail } });
+                return Ok(new
+                {
+                    result = new
+                    {
+                        message = "Payment reminder sent",
+                        toEmail = result.toEmail,
+                        attachedPdf = result.attachedPdf
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -2037,13 +2054,16 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("SendBulkArReminders")]
-        public IActionResult SendBulkArReminders([FromBody] BulkArReminderRequest? request)
+        public async Task<IActionResult> SendBulkArReminders([FromBody] BulkArReminderRequest? request)
         {
             try
             {
-                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
-                SystemSettingsSchemaService.EnsureTablesAsync(_context).GetAwaiter().GetResult();
+                await AccountingGapSchemaService.EnsureAsync(_context);
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
                 var tenantId = GetTenantId();
+
+                if (!TryGetActiveLocationId(out var locationId, out var forbid))
+                    return forbid!;
 
                 var invoiceIds = request?.InvoiceIds?.Where(id => id > 0).Distinct().ToList()
                     ?? _context.InvoiceMaster
@@ -2058,7 +2078,7 @@ namespace CimmpleAPI.Controllers
                 var failures = new List<object>();
                 foreach (var id in invoiceIds)
                 {
-                    var r = SendOneArReminder(tenantId, id);
+                    var r = await SendOneArReminderAsync(tenantId, id, locationId);
                     if (r.ok) sent++;
                     else failures.Add(new { invoiceId = id, error = r.error });
                 }
@@ -2097,66 +2117,140 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private (bool ok, string? error, string? toEmail) SendOneArReminder(int tenantId, int invoiceId)
+        private async Task<(bool ok, string? error, string? toEmail, bool attachedPdf)> SendOneArReminderAsync(
+            int tenantId,
+            int invoiceId,
+            int? locationId)
         {
-            var invoice = _context.InvoiceMaster
-                .FirstOrDefault(im => im.Id == invoiceId && im.TenantId == tenantId);
+            var invoice = await _context.InvoiceMaster
+                .FirstOrDefaultAsync(im => im.Id == invoiceId && im.TenantId == tenantId);
             if (invoice == null)
-                return (false, "Invoice not found", null);
+                return (false, "Invoice not found", null, false);
             if (invoice.IsVoided)
-                return (false, "Cannot send reminder for a voided invoice", null);
+                return (false, "Cannot send reminder for a voided invoice", null, false);
 
             var balance = invoice.TotalAmount - invoice.PaidAmount;
             if (balance <= 0.009m)
-                return (false, "Invoice is fully paid", null);
+                return (false, "Invoice is fully paid", null, false);
 
-            var orderId = _context.InvoiceDetail
+            var orderId = await _context.InvoiceDetail
                 .Where(d => d.InvoiceId == invoice.Id)
                 .Select(d => d.OrderId)
-                .FirstOrDefault();
-            var order = _context.CustomerOrder
+                .FirstOrDefaultAsync();
+            var order = await _context.CustomerOrder
                 .AsNoTracking()
-                .FirstOrDefault(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
             string? toEmail = null;
             string customerName = order?.CustomerName ?? "Customer";
             if (order != null)
             {
-                toEmail = _context.CustomerMaster
+                toEmail = await _context.CustomerMaster
                     .AsNoTracking()
                     .Where(c => c.Tenantid == tenantId && c.customer_id == order.CustomerID)
                     .Select(c => c.ContactEmail ?? c.email)
-                    .FirstOrDefault();
+                    .FirstOrDefaultAsync();
             }
 
-            var settings = _context.SystemSettings.AsNoTracking()
-                .FirstOrDefault(s => s.TenantId == tenantId);
-            var company = _context.AccountingDefaults.AsNoTracking()
-                .FirstOrDefault(d => d.TenantId == tenantId)?.CompanyName ?? "Cimmple";
+            var settings = await _context.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.TenantId == tenantId);
+            if (settings == null)
+                return (false, "System settings are not configured for this tenant.", null, false);
+
+            var company = await _context.AccountingDefaults.AsNoTracking()
+                .Where(d => d.TenantId == tenantId)
+                .Select(d => d.CompanyName)
+                .FirstOrDefaultAsync();
+            if (string.IsNullOrWhiteSpace(company))
+                company = "Cimmple";
 
             var invoiceLabel = !string.IsNullOrWhiteSpace(invoice.PrefixInvoiceNo)
                 ? invoice.PrefixInvoiceNo
                 : invoice.InvoiceNo.ToString();
-            var subject = $"Payment reminder — Invoice {invoiceLabel}";
-            var body =
-                $"Dear {customerName},\n\n" +
-                $"This is a friendly reminder that invoice {invoiceLabel} dated {invoice.InvoiceDate:yyyy-MM-dd} " +
-                $"has an outstanding balance of {balance:0.00} (due {invoice.DueDate:yyyy-MM-dd}).\n\n" +
-                $"Thank you,\n{company}";
 
-            var (ok, error) = AccountingEmailService.TrySend(settings!, toEmail ?? "", subject, body);
+            var currencyCode = string.IsNullOrWhiteSpace(settings.DefaultCurrency) ? "USD" : settings.DefaultCurrency;
+            var locale = string.IsNullOrWhiteSpace(settings.Locale) ? "en-US" : settings.Locale;
+            var decimalPlaces = settings.DecimalPlaces > 0 ? settings.DecimalPlaces : 2;
+            var decimalSep = string.IsNullOrWhiteSpace(settings.DecimalSeparator) ? "." : settings.DecimalSeparator;
+            var thousandsSep = string.IsNullOrWhiteSpace(settings.ThousandsSeparator) ? "," : settings.ThousandsSeparator;
+            var currencySymbol = CurrencyFormattingHelper.ResolveCurrencySymbol(
+                currencyCode, settings.CurrencySymbol, locale);
+            var balanceText = CurrencyFormattingHelper.FormatAmount(
+                balance, currencyCode, currencySymbol, locale, decimalPlaces, decimalSep, thousandsSep);
+
+            var subject = $"Payment reminder — Invoice {invoiceLabel}";
+            var safeCustomer = WebUtility.HtmlEncode(customerName);
+            var safeCompany = WebUtility.HtmlEncode(company);
+            var safeLabel = WebUtility.HtmlEncode(invoiceLabel);
+            var body =
+                $"<p>Dear {safeCustomer},</p>" +
+                $"<p>This is a friendly reminder that invoice <strong>{safeLabel}</strong> " +
+                $"dated {invoice.InvoiceDate:yyyy-MM-dd} has an outstanding balance of " +
+                $"<strong>{WebUtility.HtmlEncode(balanceText)}</strong> " +
+                $"(due {invoice.DueDate:yyyy-MM-dd}).</p>" +
+                "<p>Please find the invoice PDF attached.</p>" +
+                $"<p>Thank you,<br/>{safeCompany}</p>";
+
+            var attachments = new List<EmailAttachment>();
+            var attachedPdf = false;
+            try
+            {
+                var pdf = await _documentPdfService.BuildInvoiceAsync(invoiceId, tenantId, locationId);
+                if (string.IsNullOrEmpty(pdf.Error) && pdf.Bytes is { Length: > 0 })
+                {
+                    attachments.Add(new EmailAttachment
+                    {
+                        FileName = string.IsNullOrWhiteSpace(pdf.FileName)
+                            ? $"Invoice_{invoiceLabel}.pdf"
+                            : pdf.FileName,
+                        Content = pdf.Bytes,
+                        ContentType = "application/pdf"
+                    });
+                    attachedPdf = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Reminder can still go out without the PDF; surface attach failure in log.
+                Console.WriteLine($"[SendArReminder] PDF attach failed for invoice {invoiceId}: {ex.Message}");
+            }
+
+            if (!attachedPdf)
+            {
+                body =
+                    $"<p>Dear {safeCustomer},</p>" +
+                    $"<p>This is a friendly reminder that invoice <strong>{safeLabel}</strong> " +
+                    $"dated {invoice.InvoiceDate:yyyy-MM-dd} has an outstanding balance of " +
+                    $"<strong>{WebUtility.HtmlEncode(balanceText)}</strong> " +
+                    $"(due {invoice.DueDate:yyyy-MM-dd}).</p>" +
+                    $"<p>Thank you,<br/>{safeCompany}</p>";
+            }
+
+            var mail = new MailRequest
+            {
+                To = toEmail ?? "",
+                Subject = subject,
+                Body = body,
+                IsHtml = true,
+                Attachments = attachments
+            };
+
+            var (ok, error) = EmailService.TrySend(settings, mail);
+
             _context.ArReminderLogs.Add(new ArReminderLog
             {
                 TenantId = tenantId,
                 InvoiceId = invoiceId,
                 SentUtc = DateTime.UtcNow,
                 ToEmail = toEmail,
-                Status = ok ? "Sent" : "Failed",
-                Error = error,
+                Status = ok ? (attachedPdf ? "Sent" : "SentNoPdf") : "Failed",
+                Error = ok
+                    ? (attachedPdf ? null : "Reminder sent without invoice PDF attachment.")
+                    : error,
                 ActorUserId = GetUserId()
             });
-            _context.SaveChanges();
+            await _context.SaveChangesAsync();
 
-            return (ok, error, toEmail);
+            return (ok, error, toEmail, attachedPdf);
         }
 
         private (DateTime start, DateTime end) GetFiscalYearBounds(int tenantId, int calendarYearHint)

@@ -62,6 +62,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   const [portalHasPassword, setPortalHasPassword] = useState(false);
   const [portalPassword, setPortalPassword] = useState("");
   const [portalPasswordConfirm, setPortalPasswordConfirm] = useState("");
+  const [sendPortalInviteEmail, setSendPortalInviteEmail] = useState(true);
   const [vendorCode, setVendorCode] = useState("");
   const [initialPortalAccessEnabled, setInitialPortalAccessEnabled] = useState(false);
 
@@ -100,6 +101,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       setPortalHasPassword(false);
       setPortalPassword("");
       setPortalPasswordConfirm("");
+      setSendPortalInviteEmail(true);
       setContacts([
         {
           id: 0,
@@ -166,6 +168,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         setPortalHasPassword(!!(vendor as any).portalHasPassword);
         setPortalPassword("");
         setPortalPasswordConfirm("");
+        setSendPortalInviteEmail(true);
 
         const shippingMatchesBilling =
           vendorData.shippingaddress === vendorData.address &&
@@ -558,6 +561,10 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         ...formData,
         VendorContact: contacts,
         portalAccessEnabled,
+        sendPortalInviteEmail:
+          portalAccessEnabled && portalPassword.trim() !== ""
+            ? sendPortalInviteEmail
+            : false,
       };
       if (portalPassword.trim()) {
         saveData.portalPassword = portalPassword.trim();
@@ -568,6 +575,14 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
           ? vendorId
           : (saveResult?.vendor_id ?? saveResult?.vendorId ?? 0);
 
+      const inviteFromSave =
+        saveResult?.inviteEmailMessage ?? saveResult?.InviteEmailMessage;
+      if (inviteFromSave) {
+        if (/failed|no email/i.test(String(inviteFromSave)))
+          toast.warn(String(inviteFromSave));
+        else toast.success(String(inviteFromSave));
+      }
+
       const portalChanged =
         portalAccessEnabled !== initialPortalAccessEnabled ||
         (portalAccessEnabled && portalPassword.trim() !== "");
@@ -577,13 +592,26 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       if (savedVendorId > 0 && portalChanged) {
         const passwordAlreadySentWithVendorSave = portalPassword.trim() !== "";
         try {
-          await VendorService.SaveVendorPortalAccess({
+          const portalResult = await VendorService.SaveVendorPortalAccess({
             vendorId: savedVendorId,
             enabled: portalAccessEnabled,
             newPassword: passwordAlreadySentWithVendorSave
               ? undefined
               : portalPassword.trim() || undefined,
+            sendInviteEmail:
+              portalAccessEnabled &&
+              !passwordAlreadySentWithVendorSave &&
+              !!portalPassword.trim()
+                ? sendPortalInviteEmail
+                : passwordAlreadySentWithVendorSave
+                  ? false
+                  : sendPortalInviteEmail,
           });
+          if (portalResult?.inviteEmailMessage) {
+            if (/failed|no email/i.test(portalResult.inviteEmailMessage))
+              toast.warn(portalResult.inviteEmailMessage);
+            else toast.success(portalResult.inviteEmailMessage);
+          }
         } catch (portalError: any) {
           const status = portalError?.response?.status;
           const message = String(
@@ -990,6 +1018,24 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                       )}
                     </div>
                   </div>
+                  {portalPassword.trim() !== "" && (
+                    <label
+                      className="checkbox-wrapper"
+                      style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={sendPortalInviteEmail}
+                        onChange={(e) => {
+                          setSendPortalInviteEmail(e.target.checked);
+                          setIsStateChanged(true);
+                        }}
+                      />
+                      <span style={{ fontSize: "0.875rem", color: "#374151" }}>
+                        Email portal credentials to vendor
+                      </span>
+                    </label>
+                  )}
                 </>
               )}
             </div>

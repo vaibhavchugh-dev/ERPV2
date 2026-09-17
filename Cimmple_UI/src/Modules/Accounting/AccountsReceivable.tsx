@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { faCheckCircle, faEnvelope, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock, faBan } from "@fortawesome/free-solid-svg-icons";
+import { faCheckCircle, faEnvelope, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock, faBan, faSpinner } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { InvoiceService, InvoiceSummary } from "../../Common/Services/InvoiceService";
 import { AccountingService } from "../../Common/Services/AccountingService";
@@ -231,6 +231,8 @@ const AccountsReceivable: React.FC = () => {
   const [openPaymentOnLoad, setOpenPaymentOnLoad] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showBulkPayment, setShowBulkPayment] = useState(false);
+  const [sendingReminderId, setSendingReminderId] = useState<number | null>(null);
+  const [sendingBulkReminders, setSendingBulkReminders] = useState(false);
 
   useEffect(() => {
     loadInvoices();
@@ -308,13 +310,32 @@ const AccountsReceivable: React.FC = () => {
       toast.error("Email notifications are disabled in System Settings (General).");
       return;
     }
+    if (sendingReminderId != null || sendingBulkReminders) {
+      return;
+    }
+
+    setSendingReminderId(invoice.id);
+    const toastId = toast.info(
+      `Sending payment reminder for ${invoice.invoiceNo}… this may take a moment.`,
+      { autoClose: false }
+    );
     try {
       const result = await AccountingService.SendArReminder(invoice.id);
-      toast.success(
-        `Payment reminder sent${result?.toEmail ? ` to ${result.toEmail}` : ""} for invoice ${invoice.invoiceNo}`
-      );
+      toast.update(toastId, {
+        render:
+          `Payment reminder sent${result?.toEmail ? ` to ${result.toEmail}` : ""} for invoice ${invoice.invoiceNo}` +
+          (result?.attachedPdf ? " (invoice PDF attached)" : ""),
+        type: "success",
+        autoClose: 4000,
+      });
     } catch (error: any) {
-      toast.error(error?.response?.data?.error || "Failed to send payment reminder");
+      toast.update(toastId, {
+        render: error?.response?.data?.error || "Failed to send payment reminder",
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setSendingReminderId(null);
     }
   };
 
@@ -353,6 +374,9 @@ const AccountsReceivable: React.FC = () => {
       toast.error("Email notifications are disabled in System Settings (General).");
       return;
     }
+    if (sendingReminderId != null || sendingBulkReminders) {
+      return;
+    }
     const overdueInvoices = invoices.filter(
       (inv) => canRecordPayment(inv) && inv.daysOverdue && inv.daysOverdue > 0
     );
@@ -361,18 +385,39 @@ const AccountsReceivable: React.FC = () => {
       return;
     }
 
+    setSendingBulkReminders(true);
+    const toastId = toast.info(
+      `Sending payment reminders for ${overdueInvoices.length} overdue invoice(s)… this may take a moment.`,
+      { autoClose: false }
+    );
     try {
       const result = await AccountingService.SendBulkArReminders(
         overdueInvoices.map((i) => i.id)
       );
       if (result?.sent > 0) {
-        toast.success(`Payment reminders sent to ${result.sent} customer(s)`);
+        toast.update(toastId, {
+          render: `Payment reminders sent to ${result.sent} customer(s) (invoice PDF attached when available)`,
+          type: "success",
+          autoClose: 4000,
+        });
+      } else {
+        toast.update(toastId, {
+          render: "No payment reminders were sent",
+          type: "info",
+          autoClose: 4000,
+        });
       }
       if (result?.failed > 0) {
         toast.warning(`${result.failed} reminder(s) failed — check SMTP settings and customer emails`);
       }
     } catch (error: any) {
-      toast.error(error?.response?.data?.error || "Failed to send bulk reminders");
+      toast.update(toastId, {
+        render: error?.response?.data?.error || "Failed to send bulk reminders",
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setSendingBulkReminders(false);
     }
   };
 
@@ -500,22 +545,24 @@ const AccountsReceivable: React.FC = () => {
           <div style={{ display: "flex", gap: "1rem" }}>
             <button
               onClick={handleBulkReminders}
+              disabled={sendingBulkReminders || sendingReminderId != null}
               style={{
                 padding: "0.5rem 1rem",
                 backgroundColor: "#f59e0b",
                 color: "white",
                 border: "none",
                 borderRadius: "0.375rem",
-                cursor: "pointer",
+                cursor: sendingBulkReminders || sendingReminderId != null ? "wait" : "pointer",
                 fontSize: "0.875rem",
                 fontWeight: "500",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.5rem",
+                opacity: sendingBulkReminders || sendingReminderId != null ? 0.75 : 1,
               }}
             >
-              <FontAwesomeIcon icon={faEnvelope} />
-              Send Bulk Reminders
+              <FontAwesomeIcon icon={sendingBulkReminders ? faSpinner : faEnvelope} spin={sendingBulkReminders} />
+              {sendingBulkReminders ? "Sending Reminders…" : "Send Bulk Reminders"}
             </button>
             <button
               onClick={handleRecordPaymentsClick}
@@ -801,18 +848,35 @@ const AccountsReceivable: React.FC = () => {
                           <>
                             <button
                               onClick={() => handleSendReminder(invoice)}
+                              disabled={sendingReminderId != null || sendingBulkReminders}
                               style={{
                                 padding: "0.25rem 0.5rem",
                                 backgroundColor: "#f59e0b",
                                 color: "white",
                                 border: "none",
                                 borderRadius: "0.25rem",
-                                cursor: "pointer",
+                                cursor:
+                                  sendingReminderId != null || sendingBulkReminders
+                                    ? "wait"
+                                    : "pointer",
                                 fontSize: "0.75rem",
+                                opacity:
+                                  sendingReminderId != null && sendingReminderId !== invoice.id
+                                    ? 0.5
+                                    : sendingBulkReminders
+                                      ? 0.5
+                                      : 1,
                               }}
-                              title="Send Reminder"
+                              title={
+                                sendingReminderId === invoice.id
+                                  ? "Sending payment reminder…"
+                                  : "Send payment reminder with invoice PDF"
+                              }
                             >
-                              <FontAwesomeIcon icon={faEnvelope} />
+                              <FontAwesomeIcon
+                                icon={sendingReminderId === invoice.id ? faSpinner : faEnvelope}
+                                spin={sendingReminderId === invoice.id}
+                              />
                             </button>
                             <button
                               onClick={() => handleRecordPayment(invoice)}
