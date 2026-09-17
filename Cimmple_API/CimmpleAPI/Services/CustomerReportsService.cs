@@ -276,34 +276,46 @@ public static class CustomerReportsService
 
         var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId);
 
-        var paid = invoices.Where(i => i.PaymentDate.HasValue).ToList();
-        var unpaid = invoices.Count(i => !i.PaymentDate.HasValue);
-        var late = paid.Count(i => i.PaymentDate!.Value.Date > i.DueDate.Date);
-        var daysToPay = paid
+        var fullyPaid = invoices.Where(i => IsFullyPaid(i)).ToList();
+        var partial = invoices.Where(i => IsPartialPaid(i)).ToList();
+        var unpaid = invoices.Count(i => EffectivePaidAmount(i) <= 0.009m);
+        var late = fullyPaid.Count(i => i.PaymentDate.HasValue && i.PaymentDate!.Value.Date > i.DueDate.Date);
+        var daysToPay = fullyPaid
+            .Where(i => i.PaymentDate.HasValue)
             .Select(i => (i.PaymentDate!.Value.Date - i.InvoiceDate.Date).TotalDays)
             .ToList();
         var avgDays = daysToPay.Count > 0 ? daysToPay.Average() : 0d;
-        var pctLate = paid.Count > 0 ? (decimal)late / paid.Count * 100m : 0m;
+        var pctLate = fullyPaid.Count > 0 ? (decimal)late / fullyPaid.Count * 100m : 0m;
 
         report.AddStat("Invoices", ReportResultFactory.Num(invoices.Count));
         report.AddStat("Unpaid", ReportResultFactory.Num(unpaid), warn: unpaid > 0);
+        report.AddStat("Partial", ReportResultFactory.Num(partial.Count), warn: partial.Count > 0);
         report.AddStat("% Paid Late", ReportResultFactory.Pct(pctLate), warn: late > 0);
         report.AddStat("Avg Days to Pay", ReportResultFactory.Days(avgDays));
 
         var section = ReportResultFactory.Section(
                 "Invoice Payment Detail",
-                "Invoice#", "Customer", "Invoice Date", "Due", "Paid", "Days to Pay", "Late")
-            .WithNumeric(5);
+                "Invoice#", "Customer", "Invoice Date", "Due", "Total", "Paid Amt", "Status", "Paid On", "Days to Pay", "Late")
+            .WithNumeric(4, 5, 8);
         foreach (var inv in invoices.OrderByDescending(i => i.InvoiceDate).ThenByDescending(i => i.InvoiceNo))
         {
-            var paidStr = inv.PaymentDate.HasValue ? inv.PaymentDate.Value.ToString("yyyy-MM-dd") : "—";
+            var paidAmt = EffectivePaidAmount(inv);
+            var status = ResolvePaymentStatus(inv, paidAmt);
+            var paidOn = inv.PaymentDate.HasValue ? inv.PaymentDate.Value.ToString("yyyy-MM-dd") : "—";
             string daysStr = "—";
             string lateStr = "—";
-            if (inv.PaymentDate.HasValue)
+            if (inv.PaymentDate.HasValue && IsFullyPaid(inv))
             {
                 var days = (inv.PaymentDate.Value.Date - inv.InvoiceDate.Date).TotalDays;
                 daysStr = ReportResultFactory.Days(days);
                 lateStr = inv.PaymentDate.Value.Date > inv.DueDate.Date ? "Yes" : "No";
+            }
+            else if (status == "Partial" || status == "Unpaid" || status == "Overdue")
+            {
+                // Still open: mark late when past due with any remaining balance
+                lateStr = DateTime.Now.Date > inv.DueDate.Date && paidAmt < inv.TotalAmount - 0.009m
+                    ? "Yes"
+                    : "No";
             }
 
             section.AddRow(
@@ -311,7 +323,10 @@ public static class CustomerReportsService
                 string.IsNullOrWhiteSpace(inv.CustomerName) ? $"Customer #{inv.CustomerId}" : inv.CustomerName,
                 inv.InvoiceDate.ToString("yyyy-MM-dd"),
                 inv.DueDate.ToString("yyyy-MM-dd"),
-                paidStr,
+                ReportResultFactory.Money(inv.TotalAmount),
+                ReportResultFactory.Money(paidAmt),
+                status,
+                paidOn,
                 daysStr,
                 lateStr);
         }
@@ -329,8 +344,41 @@ public static class CustomerReportsService
         public DateTime DueDate { get; set; }
         public DateTime? PaymentDate { get; set; }
         public decimal TotalAmount { get; set; }
+        public decimal PaidAmount { get; set; }
         public int CustomerId { get; set; }
         public string CustomerName { get; set; } = "";
+    }
+
+    private static decimal EffectivePaidAmount(InvoiceRow invoice)
+    {
+        if (invoice.PaidAmount > 0)
+            return invoice.PaidAmount;
+        if (invoice.PaymentDate.HasValue)
+            return invoice.TotalAmount;
+        return 0m;
+    }
+
+    private static bool IsFullyPaid(InvoiceRow invoice)
+    {
+        var paid = EffectivePaidAmount(invoice);
+        return paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0;
+    }
+
+    private static bool IsPartialPaid(InvoiceRow invoice)
+    {
+        var paid = EffectivePaidAmount(invoice);
+        return paid > 0.009m && !IsFullyPaid(invoice);
+    }
+
+    private static string ResolvePaymentStatus(InvoiceRow invoice, decimal paid)
+    {
+        if (paid >= invoice.TotalAmount - 0.009m && invoice.TotalAmount > 0)
+            return "Paid";
+        if (paid > 0.009m)
+            return "Partial";
+        if (invoice.DueDate.Date < DateTime.Now.Date)
+            return "Overdue";
+        return "Unpaid";
     }
 
     /// <summary>
@@ -358,6 +406,7 @@ public static class CustomerReportsService
                 im.DueDate,
                 im.PaymentDate,
                 im.TotalAmount,
+                im.PaidAmount,
                 co.CustomerID,
                 CustomerName = co.CustomerName ?? "",
                 co.locationId,
@@ -385,6 +434,7 @@ public static class CustomerReportsService
                     DueDate = first.DueDate,
                     PaymentDate = first.PaymentDate,
                     TotalAmount = first.TotalAmount,
+                    PaidAmount = first.PaidAmount,
                     CustomerId = first.CustomerID,
                     CustomerName = first.CustomerName,
                 };

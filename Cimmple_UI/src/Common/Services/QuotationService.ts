@@ -1227,7 +1227,19 @@ export class QuotationService {
     request.UserToken = storage?.userToken || request.UserToken || 0;
 
     const url = `/Quotation/SaveVendorQuotation`;
-    return Instense.post(url, request).then((response) => {
+    // Plain JSON only — strip non-serializable File/Blob fields that make Axios
+    // auto-convert to multipart and throw "Function collides with other property".
+    const cleanPayload = JSON.parse(
+      JSON.stringify(request, (_key, value) => {
+        if (typeof File !== "undefined" && value instanceof File) return undefined;
+        if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+        if (typeof value === "function") return undefined;
+        return value;
+      })
+    );
+    return Instense.post(url, cleanPayload, {
+      headers: { "Content-Type": "application/json" },
+    }).then((response) => {
       const result = response.data.result;
       // Return the result which contains the id
       if (result && result.id) {

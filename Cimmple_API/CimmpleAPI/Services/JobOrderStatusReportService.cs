@@ -54,7 +54,6 @@ public static class JobOrderStatusReportService
             .Select(x => new
             {
                 x.Job.JobOrderNumber,
-                JobNumber = x.Job.JobNumber ?? "",
                 CustomerName = x.Job.CustomerName ?? "",
                 PartNo = x.Job.PartNo ?? "",
                 PartName = x.Job.PartName ?? "",
@@ -73,7 +72,6 @@ public static class JobOrderStatusReportService
             return new
             {
                 r.JobOrderNumber,
-                r.JobNumber,
                 r.CustomerName,
                 r.PartNo,
                 r.PartName,
@@ -116,14 +114,13 @@ public static class JobOrderStatusReportService
         report.Sections.Add(statusSection);
 
         var jobsSection = ReportResultFactory
-            .Section("Job orders", "JO #", "Job #", "Customer", "Part", "Qty", "Status", "Order", "Due", "Overdue")
-            .WithNumeric(0, 4);
+            .Section("Job orders", "JO #", "Customer", "Part", "Qty", "Status", "Order", "Due", "Overdue")
+            .WithNumeric(3);
         foreach (var j in jobs)
         {
             var part = string.Join(" — ", new[] { j.PartNo, j.PartName }.Where(s => !string.IsNullOrWhiteSpace(s)));
             jobsSection.AddRow(
-                j.JobOrderNumber.ToString(),
-                j.JobNumber,
+                FormatJobOrderNumber(j.JobOrderNumber),
                 j.CustomerName,
                 string.IsNullOrWhiteSpace(part) ? "—" : part,
                 $"{ReportResultFactory.Qty(j.QtyOrdered)}{(string.IsNullOrWhiteSpace(j.Unit) ? "" : " " + j.Unit)}",
@@ -136,4 +133,7 @@ public static class JobOrderStatusReportService
 
         return report;
     }
+
+    private static string FormatJobOrderNumber(int number) =>
+        number < 1000 ? $"JO#{number + 999}" : $"JO#{number}";
 }
