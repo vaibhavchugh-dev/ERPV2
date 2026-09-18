@@ -153,6 +153,8 @@ namespace CimmpleAPI.Data
         public DbSet<BankReconciliationPeriod> BankReconciliationPeriods { get; set; }
         public DbSet<BankReconciliationPeriodItem> BankReconciliationPeriodItems { get; set; }
         public DbSet<ReportSchedule> ReportSchedules { get; set; }
+        public DbSet<Notification> Notifications { get; set; }
+        public DbSet<EmailOutbox> EmailOutbox { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -766,6 +768,32 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.LastRunError).HasMaxLength(2000);
                 entity.HasIndex(e => new { e.TenantId, e.IsEnabled, e.NextRunUtc });
                 entity.HasIndex(e => new { e.IsEnabled, e.NextRunUtc });
+            });
+
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.ToTable("Notifications");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Type).HasMaxLength(64);
+                entity.Property(e => e.Title).HasMaxLength(200);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.Property(e => e.EntityType).HasMaxLength(64);
+                entity.Property(e => e.LinkPath).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.RecipientUserId, e.IsRead, e.CreatedAt });
+            });
+
+            modelBuilder.Entity<EmailOutbox>(entity =>
+            {
+                entity.ToTable("EmailOutbox");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.ToAddresses).HasMaxLength(1000);
+                entity.Property(e => e.CcAddresses).HasMaxLength(1000);
+                entity.Property(e => e.Subject).HasMaxLength(300);
+                entity.Property(e => e.LastError).HasMaxLength(2000);
+                entity.Property(e => e.LockedBy).HasMaxLength(128);
+                entity.HasIndex(e => new { e.Status, e.CreatedUtc });
+                entity.HasIndex(e => new { e.Status, e.LockedUntilUtc });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>

@@ -18,15 +18,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly IAuthService _authService;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
         public UserManagementController(
             CimmpleDbContext context,
             IAuthService authService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _authService = authService;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         // GET: api/UserManagement/GetUsers
@@ -312,7 +315,9 @@ namespace CimmpleAPI.Controllers
                 if (resetDto.EmailTemporaryPassword && !string.IsNullOrWhiteSpace(user.Email))
                 {
                     var displayName = $"{user.FirstName} {user.LastName}".Trim();
-                    var (emailOk, emailError) = IdentityEmailService.TrySendPasswordResetNotice(
+                    var (emailOk, emailError) = await IdentityEmailService.TryQueuePasswordResetNoticeAsync(
+                        _emailOutbox,
+                        user.TenantID,
                         settings,
                         _configuration,
                         user.Email,
@@ -321,7 +326,7 @@ namespace CimmpleAPI.Controllers
                         resetDto.NewPassword!,
                         includePassword: true);
                     emailMessage = emailOk
-                        ? $"Temporary password emailed to {user.Email}."
+                        ? $"Temporary password email queued for {user.Email}."
                         : $"Password was reset, but email failed: {emailError}";
                 }
                 else if (resetDto.EmailTemporaryPassword)

@@ -23,15 +23,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly DocumentPdfService _documentPdfService;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
         public AccountingController(
             CimmpleDbContext context,
             DocumentPdfService documentPdfService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _documentPdfService = documentPdfService;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
@@ -2119,7 +2122,7 @@ namespace CimmpleAPI.Controllers
                 Attachments = attachments
             };
 
-            var (ok, error) = EmailService.TrySend(settings, mail, _configuration);
+            var (ok, error) = await _emailOutbox.EnqueueAsync(tenantId, mail);
 
             _context.ArReminderLogs.Add(new ArReminderLog
             {
@@ -2127,9 +2130,9 @@ namespace CimmpleAPI.Controllers
                 InvoiceId = invoiceId,
                 SentUtc = DateTime.UtcNow,
                 ToEmail = toEmail,
-                Status = ok ? (attachedPdf ? "Sent" : "SentNoPdf") : "Failed",
+                Status = ok ? (attachedPdf ? "Queued" : "QueuedNoPdf") : "Failed",
                 Error = ok
-                    ? (attachedPdf ? null : "Reminder sent without invoice PDF attachment.")
+                    ? (attachedPdf ? null : "Reminder queued without invoice PDF attachment.")
                     : error,
                 ActorUserId = GetUserId()
             });
