@@ -22,12 +22,18 @@ public static class SalesReportsService
         var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId);
 
         var byCustomer = invoices
-            .GroupBy(x => string.IsNullOrWhiteSpace(x.CustomerName) ? "(Unknown)" : x.CustomerName.Trim())
+            .GroupBy(x => new
+            {
+                CustomerId = x.CustomerId > 0 ? x.CustomerId : 0,
+                Customer = string.IsNullOrWhiteSpace(x.CustomerName) ? "(Unknown)" : x.CustomerName.Trim()
+            })
             .Select(g => new
             {
-                Customer = g.Key,
+                g.Key.CustomerId,
+                g.Key.Customer,
                 Invoices = g.Count(),
                 Revenue = g.Sum(x => x.TotalAmount),
+                Items = g.OrderByDescending(x => x.InvoiceDate).ToList()
             })
             .OrderByDescending(x => x.Revenue)
             .ThenBy(x => x.Customer)
@@ -55,6 +61,22 @@ public static class SalesReportsService
         {
             var avg = row.Invoices > 0 ? row.Revenue / row.Invoices : 0m;
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "customer",
+                    EntityId = row.CustomerId > 0 ? row.CustomerId : null,
+                    Title = row.Customer,
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        EntityId = inv.Id,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
                 row.Customer,
                 ReportResultFactory.Num(row.Invoices),
                 ReportResultFactory.Money(row.Revenue),
@@ -252,6 +274,7 @@ public static class SalesReportsService
             .ThenByDescending(q => q.PONumber)
             .Select(q => new
             {
+                q.OrderID,
                 q.CustomerName,
                 q.PONumber,
                 q.OrderDate,
@@ -265,11 +288,13 @@ public static class SalesReportsService
                 var converted = (q.isConverted == 1) || (q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0);
                 return new
                 {
+                    q.OrderID,
                     Customer = string.IsNullOrWhiteSpace(q.CustomerName) ? "(Unknown)" : q.CustomerName.Trim(),
                     QuoteNo = FormatQuoteNumber(q.PONumber),
                     Date = q.OrderDate.ToString("yyyy-MM-dd"),
                     Amount = q.TotalAmount,
                     Converted = converted,
+                    ConvertedOrderId = q.convertedOrderId,
                 };
             })
             .ToList();
@@ -294,7 +319,40 @@ public static class SalesReportsService
 
         foreach (var row in quotes)
         {
+            var details = new List<ReportDrillItemDto>
+            {
+                new()
+                {
+                    Label = row.QuoteNo,
+                    SubLabel = row.Customer,
+                    Date = row.Date,
+                    Amount = ReportResultFactory.Money(row.Amount),
+                    Status = row.Converted ? "Converted" : "Open",
+                    EntityId = row.OrderID,
+                    LinkPath = "/quotations/customer"
+                }
+            };
+            if (row.Converted && row.ConvertedOrderId.HasValue && row.ConvertedOrderId.Value > 0)
+            {
+                details.Add(new ReportDrillItemDto
+                {
+                    Label = $"Order #{row.ConvertedOrderId.Value}",
+                    SubLabel = "Converted customer order",
+                    Status = "Order",
+                    EntityId = row.ConvertedOrderId.Value,
+                    LinkPath = "/orders/customer"
+                });
+            }
+
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "quotation",
+                    EntityId = row.OrderID,
+                    Title = $"{row.QuoteNo} — {row.Customer}",
+                    LinkPath = "/quotations/customer",
+                    Details = details
+                },
                 row.Customer,
                 row.QuoteNo,
                 row.Date,
@@ -400,6 +458,8 @@ public static class SalesReportsService
             select new
             {
                 inv.Id,
+                inv.InvoiceNo,
+                PrefixInvoiceNo = inv.PrefixInvoiceNo ?? "",
                 inv.InvoiceDate,
                 inv.TotalAmount,
                 CustomerName = o != null ? o.CustomerName : null,
@@ -422,6 +482,8 @@ public static class SalesReportsService
                 return new BilledInvoiceRow
                 {
                     Id = g.Key,
+                    InvoiceNo = first.InvoiceNo,
+                    PrefixInvoiceNo = first.PrefixInvoiceNo ?? "",
                     InvoiceDate = first.InvoiceDate,
                     TotalAmount = first.TotalAmount,
                     CustomerName = first.CustomerName ?? "",
@@ -432,12 +494,17 @@ public static class SalesReportsService
             .ToList();
     }
 
+    private static string FormatInvoiceNo(string? prefix, int invoiceNo) =>
+        !string.IsNullOrWhiteSpace(prefix) ? prefix! : invoiceNo.ToString();
+
     private static string FormatQuoteNumber(int poNumber) =>
         poNumber < 1000 ? $"CQ#{poNumber + 999}" : $"CQ#{poNumber}";
 
     private sealed class BilledInvoiceRow
     {
         public int Id { get; set; }
+        public int InvoiceNo { get; set; }
+        public string PrefixInvoiceNo { get; set; } = "";
         public DateTime InvoiceDate { get; set; }
         public decimal TotalAmount { get; set; }
         public string CustomerName { get; set; } = "";

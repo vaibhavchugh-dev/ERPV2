@@ -21,6 +21,9 @@ public static class CustomerStatementReportService
         public decimal Charges { get; set; }
         public decimal Payments { get; set; }
         public decimal Balance { get; set; }
+        public int? InvoiceId { get; set; }
+        public int? TransactionId { get; set; }
+        public string LinkPath { get; set; } = "/orders/customer-invoices";
     }
 
     public sealed class StatementDto
@@ -163,7 +166,9 @@ public static class CustomerStatementReportService
                     Description = "Sales invoice",
                     Charges = inv.TotalAmount,
                     Payments = 0,
-                    Balance = running
+                    Balance = running,
+                    InvoiceId = inv.Id,
+                    LinkPath = "/orders/customer-invoices"
                 });
             }
 
@@ -181,7 +186,9 @@ public static class CustomerStatementReportService
                     Description = pay.Description ?? "Payment received",
                     Charges = 0,
                     Payments = amt,
-                    Balance = running
+                    Balance = running,
+                    TransactionId = pay.TransactionID,
+                    LinkPath = "/orders/customer-invoices"
                 });
             }
 
