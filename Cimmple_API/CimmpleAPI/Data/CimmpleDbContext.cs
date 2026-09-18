@@ -155,6 +155,9 @@ namespace CimmpleAPI.Data
         public DbSet<ReportSchedule> ReportSchedules { get; set; }
         public DbSet<Notification> Notifications { get; set; }
         public DbSet<EmailOutbox> EmailOutbox { get; set; }
+        public DbSet<Conversation> Conversations { get; set; }
+        public DbSet<ConversationParticipant> ConversationParticipants { get; set; }
+        public DbSet<ConversationMessage> ConversationMessages { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -794,6 +797,30 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.LockedBy).HasMaxLength(128);
                 entity.HasIndex(e => new { e.Status, e.CreatedUtc });
                 entity.HasIndex(e => new { e.Status, e.LockedUntilUtc });
+            });
+
+            modelBuilder.Entity<Conversation>(entity =>
+            {
+                entity.ToTable("Conversations");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Subject).HasMaxLength(200);
+                entity.HasIndex(e => new { e.TenantId, e.LastMessageAt });
+            });
+
+            modelBuilder.Entity<ConversationParticipant>(entity =>
+            {
+                entity.ToTable("ConversationParticipants");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.ConversationId, e.UserId }).IsUnique();
+                entity.HasIndex(e => new { e.TenantId, e.UserId });
+            });
+
+            modelBuilder.Entity<ConversationMessage>(entity =>
+            {
+                entity.ToTable("ConversationMessages");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.HasIndex(e => new { e.ConversationId, e.CreatedAt });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>

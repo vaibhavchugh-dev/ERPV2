@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { BarcodeScannerSheet } from "../components/BarcodeScannerSheet";
+import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
 import {
   DashboardAlert,
@@ -190,7 +191,10 @@ export function DashboardPage() {
               Shop floor
             </p>
           </div>
-          <NotificationBell />
+          <div className="flex shrink-0 items-center gap-2">
+            <MessagesButton />
+            <NotificationBell />
+          </div>
         </header>
 
         {/* Scanner — top of dashboard */}

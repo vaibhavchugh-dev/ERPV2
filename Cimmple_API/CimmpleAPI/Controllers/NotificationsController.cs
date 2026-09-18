@@ -11,13 +11,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly NotificationService _notificationService;
+        private readonly ConversationService _conversationService;
 
         public NotificationsController(
             CimmpleDbContext context,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            ConversationService conversationService)
         {
             _context = context;
             _notificationService = notificationService;
+            _conversationService = conversationService;
         }
 
         [HttpGet("GetUnreadCount")]
@@ -30,11 +33,14 @@ namespace CimmpleAPI.Controllers
 
             await _notificationService.EnsureSchemaAsync();
 
+            var chatTypes = NotificationService.ChatNotificationTypes;
+
             var count = await _context.Notifications.AsNoTracking()
                 .CountAsync(n =>
                     n.TenantId == tenantId &&
                     n.RecipientUserId == userId.Value &&
-                    !n.IsRead);
+                    !n.IsRead &&
+                    !chatTypes.Contains(n.Type));
 
             return Ok(new { result = count });
         }
@@ -52,11 +58,23 @@ namespace CimmpleAPI.Controllers
             if (take <= 0) take = 30;
             if (take > 100) take = 100;
 
+            var chatTypes = NotificationService.ChatNotificationTypes;
+
             var query = _context.Notifications.AsNoTracking()
-                .Where(n => n.TenantId == tenantId && n.RecipientUserId == userId.Value);
+                .Where(n =>
+                    n.TenantId == tenantId &&
+                    n.RecipientUserId == userId.Value &&
+                    !chatTypes.Contains(n.Type));
 
             if (unreadOnly)
                 query = query.Where(n => !n.IsRead);
+
+            var unreadCount = await _context.Notifications.AsNoTracking()
+                .CountAsync(n =>
+                    n.TenantId == tenantId &&
+                    n.RecipientUserId == userId.Value &&
+                    !n.IsRead &&
+                    !chatTypes.Contains(n.Type));
 
             var items = await query
                 .OrderByDescending(n => n.CreatedAt)
@@ -78,7 +96,39 @@ namespace CimmpleAPI.Controllers
                 })
                 .ToListAsync();
 
-            return Ok(new { result = items });
+            // Compact list payload: strip chat mention tokens + short preview (dropdown only).
+            var result = items.Select(n => new
+            {
+                n.Id,
+                n.Type,
+                n.Title,
+                Body = TruncateNotificationPreview(StripMentionTokensForPreview(n.Body), 180),
+                n.EntityType,
+                n.EntityId,
+                n.LinkPath,
+                n.IsRead,
+                n.ReadAt,
+                n.EmailSent,
+                n.CreatedAt,
+                n.ActorUserId
+            }).ToList();
+
+            return Ok(new { result, unreadCount });
+        }
+
+        private static string StripMentionTokensForPreview(string? body)
+        {
+            if (string.IsNullOrEmpty(body)) return "";
+            return System.Text.RegularExpressions.Regex.Replace(
+                body,
+                @"@\[([a-zA-Z]+):(\d+)\|([^\]]+)\]",
+                "@$3");
+        }
+
+        private static string TruncateNotificationPreview(string value, int max)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= max) return value ?? "";
+            return value.Substring(0, max).TrimEnd() + "…";
         }
 
         [HttpPost("MarkRead")]
@@ -136,55 +186,31 @@ namespace CimmpleAPI.Controllers
             if (request.RecipientUserId == actorId.Value)
                 return BadRequest(new { error = "Cannot send a notification to yourself." });
 
-            await _notificationService.EnsureSchemaAsync();
+            var result = await _conversationService.PostDmAsync(
+                tenantId,
+                actorId.Value,
+                request.RecipientUserId,
+                request.Body.Trim(),
+                subject: string.IsNullOrWhiteSpace(request.Title) ? null : request.Title.Trim(),
+                sendEmail: request.SendEmail);
 
-            var recipientExists = await _context.UserDetails.AsNoTracking()
-                .AnyAsync(u => u.User_UniqueID == request.RecipientUserId && u.TenantID == tenantId);
-            if (!recipientExists)
-                return BadRequest(new { error = "Recipient user was not found in this tenant." });
-
-            var actor = await _context.UserDetails.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.User_UniqueID == actorId.Value && u.TenantID == tenantId);
-            var actorName = actor == null
-                ? "A teammate"
-                : $"{actor.FirstName} {actor.LastName}".Trim();
-            if (string.IsNullOrWhiteSpace(actorName))
-                actorName = actor?.UserName ?? "A teammate";
-
-            var title = string.IsNullOrWhiteSpace(request.Title)
-                ? $"Message from {actorName}"
-                : request.Title.Trim();
-
-            var create = await _notificationService.CreateAsync(new NotificationCreateRequest
-            {
-                TenantId = tenantId,
-                RecipientUserId = request.RecipientUserId,
-                ActorUserId = actorId.Value,
-                Type = NotificationService.TypeUserMessage,
-                Title = title,
-                Body = request.Body.Trim(),
-                EntityType = request.EntityType,
-                EntityId = request.EntityId,
-                LinkPath = request.LinkPath,
-                SendEmail = request.SendEmail,
-                EmailSubject = title
-            });
-
-            if (!string.IsNullOrEmpty(create.Error) && create.Notification == null && !create.EmailSent)
-                return BadRequest(new { error = create.Error });
+            if (!string.IsNullOrEmpty(result.Error) && result.MessageId <= 0)
+                return BadRequest(new { error = result.Error });
 
             return Ok(new
             {
                 result = new
                 {
-                    id = create.Notification?.Id,
-                    inboxCreated = create.InboxCreated,
-                    emailSent = create.EmailSent,
-                    emailError = create.EmailError
+                    id = result.MessageId,
+                    conversationId = result.ConversationId,
+                    messageId = result.MessageId,
+                    inboxCreated = result.InboxCreated,
+                    emailSent = result.EmailSent,
+                    emailError = result.EmailError
                 },
-                message = create.InboxCreated
-                    ? (create.EmailSent ? "Notification sent (in-app + email)." : "Notification sent in-app.")
-                    : (create.EmailSent ? "Notification emailed." : "Notification processed.")
+                message = result.InboxCreated
+                    ? (result.EmailSent ? "Message sent (in-app + email)." : "Message sent in-app.")
+                    : (result.EmailSent ? "Message emailed." : "Message processed.")
             });
         }
 

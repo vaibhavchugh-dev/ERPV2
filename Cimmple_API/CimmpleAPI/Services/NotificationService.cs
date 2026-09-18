@@ -34,7 +34,16 @@ namespace CimmpleAPI.Services
     {
         public const string TypeNcrAssignment = "NcrAssignment";
         public const string TypeUserMessage = "UserMessage";
+        public const string TypeChatMessage = "ChatMessage";
+        public const string TypeChatUserMention = "ChatUserMention";
         public const string TypeCommentMention = "CommentMention";
+
+        /// <summary>Types that belong in Messages, not the alert bell.</summary>
+        public static readonly string[] ChatNotificationTypes =
+        {
+            TypeChatMessage,
+            TypeChatUserMention
+        };
         public const string TypeApInvoiceApproved = "ApInvoiceApproved";
         public const string TypeNcrPendingApproval = "NcrPendingApproval";
         public const string TypeNcrClosed = "NcrClosed";

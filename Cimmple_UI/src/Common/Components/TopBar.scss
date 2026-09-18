@@ -428,6 +428,23 @@
   font-weight: 600 !important;
   color: #111827 !important;
   margin-bottom: 0.2rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.5rem !important;
+}
+
+.messages-unread-pill {
+  flex-shrink: 0 !important;
+  min-width: 1.1rem !important;
+  padding: 0 0.35rem !important;
+  border-radius: 9999px !important;
+  background-color: #4f46e5 !important;
+  color: #ffffff !important;
+  font-size: 0.65rem !important;
+  font-weight: 600 !important;
+  line-height: 1.15rem !important;
+  text-align: center !important;
 }
 
 .notification-item-body {

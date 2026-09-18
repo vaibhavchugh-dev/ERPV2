@@ -145,6 +145,31 @@ export class GlobalSearchService {
     }
   }
 
+  /** Fast CO/CQ/JO/VO/VQ/NCR search for chat @ mentions. */
+  public static async SearchDocuments(query: string, tenantId: number, limit: number = 6): Promise<GlobalSearchResults> {
+    if (!query || query.trim() === '') {
+      return emptyResults();
+    }
+    try {
+      const response = await Instense.get(`/GlobalSearch/SearchDocuments`, {
+        params: { query: query.trim(), tenantId, limit }
+      });
+      const data = response.data || {};
+      return {
+        ...emptyResults(),
+        orders: data.orders || [],
+        quotations: data.quotations || [],
+        jobOrders: data.jobOrders || [],
+        vendorOrders: data.vendorOrders || [],
+        vendorQuotations: data.vendorQuotations || [],
+        ncrReports: data.ncrReports || [],
+      };
+    } catch (error) {
+      console.error("Error performing document search:", error);
+      return emptyResults();
+    }
+  }
+
   public static getResultUrl(result: SearchResult): string {
     switch (result.type) {
       case 'customer':

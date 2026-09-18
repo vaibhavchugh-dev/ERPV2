@@ -39,9 +39,15 @@ export function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const hasItemsRef = useRef(false);
+  useEffect(() => {
+    hasItemsRef.current = items.length > 0;
+  }, [items.length]);
+
   const refreshCount = useCallback(async () => {
     try {
-      const count = await NotificationService.GetUnreadCount();
+      const { items: list, unreadCount: count } = await NotificationService.GetMine(20, false);
+      setItems(list);
       setUnreadCount(count);
     } catch {
       /* soft-fail */
@@ -49,12 +55,13 @@ export function NotificationBell() {
   }, []);
 
   const loadList = useCallback(async () => {
-    setLoading(true);
+    if (!hasItemsRef.current) setLoading(true);
     try {
-      const list = await NotificationService.GetMine(30, false);
+      const { items: list, unreadCount: count } = await NotificationService.GetMine(20, false);
       setItems(list);
+      setUnreadCount(count);
     } catch {
-      setItems([]);
+      if (!hasItemsRef.current) setItems([]);
     } finally {
       setLoading(false);
     }
@@ -92,10 +99,10 @@ export function NotificationBell() {
     };
   }, [open, loadList]);
 
-  const handleOpen = async () => {
+  const handleOpen = () => {
     const next = !open;
     setOpen(next);
-    if (next) await loadList();
+    if (next) void loadList();
   };
 
   const handleMarkAll = async () => {
@@ -158,7 +165,7 @@ export function NotificationBell() {
             )}
           </div>
           <div className="max-h-80 overflow-y-auto">
-            {loading ? (
+            {loading && items.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">Loading…</div>
             ) : items.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">No notifications yet</div>

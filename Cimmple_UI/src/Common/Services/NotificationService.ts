@@ -27,6 +27,8 @@ export interface SendNotificationRequest {
 
 export interface SendNotificationResult {
   id?: number | null;
+  conversationId?: number | null;
+  messageId?: number | null;
   inboxCreated: boolean;
   emailSent: boolean;
   emailError?: string | null;
@@ -38,11 +40,19 @@ export class NotificationService {
     return typeof response.data?.result === "number" ? response.data.result : 0;
   }
 
-  public static async GetMine(take = 30, unreadOnly = false): Promise<AppNotification[]> {
+  public static async GetMine(
+    take = 20,
+    unreadOnly = false
+  ): Promise<{ items: AppNotification[]; unreadCount: number }> {
     const response = await Instense.get("/Notifications/GetMine", {
       params: { take, unreadOnly },
     });
-    return Array.isArray(response.data?.result) ? response.data.result : [];
+    const items = Array.isArray(response.data?.result) ? response.data.result : [];
+    const unreadCount =
+      typeof response.data?.unreadCount === "number"
+        ? response.data.unreadCount
+        : items.filter((n: AppNotification) => !n.isRead).length;
+    return { items, unreadCount };
   }
 
   public static async MarkRead(ids: number[]): Promise<number> {
