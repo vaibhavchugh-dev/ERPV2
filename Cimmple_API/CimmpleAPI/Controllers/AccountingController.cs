@@ -1357,6 +1357,17 @@ namespace CimmpleAPI.Controllers
 
                 var unpaidInvoices = unpaidInvoicesQuery.ToList();
 
+                // Resolve customer name via first linked order when available
+                var invoiceIds = unpaidInvoices.Select(i => i.Id).ToList();
+                var customerByInvoice = (
+                    from id in _context.InvoiceDetail.AsNoTracking()
+                    join co in _context.CustomerOrder.AsNoTracking() on id.OrderId equals co.OrderID
+                    where invoiceIds.Contains(id.InvoiceId) && co.Tenantid == tenantId
+                    select new { id.InvoiceId, co.CustomerName, co.CustomerID }
+                ).ToList()
+                 .GroupBy(x => x.InvoiceId)
+                 .ToDictionary(g => g.Key, g => g.First());
+
                 var items = unpaidInvoices.Select(im =>
                     new AccountingRules.AgingItem(
                         im.DueDate,
@@ -1365,11 +1376,38 @@ namespace CimmpleAPI.Controllers
                 var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
                 var total = buckets.Sum(b => b.Amount);
 
-                return buckets.Select(b => new
+                var invoicesByBucket = unpaidInvoices
+                    .Select(im =>
+                    {
+                        customerByInvoice.TryGetValue(im.Id, out var cust);
+                        return new
+                        {
+                            bucket = AccountingRules.AgingBucketName(im.DueDate, asOfDate),
+                            invoiceId = im.Id,
+                            invoiceNo = string.IsNullOrWhiteSpace(im.PrefixInvoiceNo)
+                                ? im.InvoiceNo.ToString()
+                                : im.PrefixInvoiceNo,
+                            invoiceDate = im.InvoiceDate.ToString("yyyy-MM-dd"),
+                            dueDate = im.DueDate.ToString("yyyy-MM-dd"),
+                            customerId = cust?.CustomerID,
+                            customerName = cust?.CustomerName ?? "",
+                            openBalance = AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount),
+                            linkPath = "/orders/customer-invoices"
+                        };
+                    })
+                    .GroupBy(x => x.bucket)
+                    .ToDictionary(g => g.Key, g => g.OrderBy(x => x.dueDate).ToList());
+
+                return buckets.Select(b =>
                 {
-                    bucket = b.Name,
-                    amount = b.Amount,
-                    percentage = b.Percentage(total)
+                    invoicesByBucket.TryGetValue(b.Name, out var invList);
+                    return new
+                    {
+                        bucket = b.Name,
+                        amount = b.Amount,
+                        percentage = b.Percentage(total),
+                        invoices = (object?)invList ?? Array.Empty<object>()
+                    };
                 }).ToArray();
             }
             catch (Exception ex)
@@ -1377,11 +1415,11 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine($"Error calculating AR aging: {ex.Message}");
                 return new[]
                 {
-                    new { bucket = "Current", amount = 0m, percentage = 0m },
-                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m }
+                    new { bucket = "Current", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() }
                 };
             }
         }
@@ -1408,11 +1446,34 @@ namespace CimmpleAPI.Controllers
                 var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
                 var total = buckets.Sum(b => b.Amount);
 
-                return buckets.Select(b => new
+                var invoicesByBucket = unpaidInvoices
+                    .Select(vim => new
+                    {
+                        bucket = AccountingRules.AgingBucketName(vim.DueDate, asOfDate),
+                        invoiceId = vim.Id,
+                        invoiceNo = !string.IsNullOrWhiteSpace(vim.prefixinvoiceno)
+                            ? vim.prefixinvoiceno
+                            : (vim.InvoiceNo ?? vim.Id.ToString()),
+                        invoiceDate = vim.InvoiceDate.ToString("yyyy-MM-dd"),
+                        dueDate = vim.DueDate.ToString("yyyy-MM-dd"),
+                        vendorId = vim.vid,
+                        vendorName = vim.VendorName ?? "",
+                        openBalance = AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount),
+                        linkPath = "/purchasing/vendor-invoices"
+                    })
+                    .GroupBy(x => x.bucket)
+                    .ToDictionary(g => g.Key, g => g.OrderBy(x => x.dueDate).ToList());
+
+                return buckets.Select(b =>
                 {
-                    bucket = b.Name,
-                    amount = b.Amount,
-                    percentage = b.Percentage(total)
+                    invoicesByBucket.TryGetValue(b.Name, out var invList);
+                    return new
+                    {
+                        bucket = b.Name,
+                        amount = b.Amount,
+                        percentage = b.Percentage(total),
+                        invoices = (object?)invList ?? Array.Empty<object>()
+                    };
                 }).ToArray();
             }
             catch (Exception ex)
@@ -1420,11 +1481,11 @@ namespace CimmpleAPI.Controllers
                 Console.WriteLine($"Error calculating AP aging: {ex.Message}");
                 return new[]
                 {
-                    new { bucket = "Current", amount = 0m, percentage = 0m },
-                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m },
-                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m }
+                    new { bucket = "Current", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
+                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() }
                 };
             }
         }

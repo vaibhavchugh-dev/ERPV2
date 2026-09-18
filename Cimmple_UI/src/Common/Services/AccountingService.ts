@@ -381,6 +381,7 @@ export class AccountingService {
     startDate: string;
     endDate: string;
     tenantId?: number;
+    locationId?: number | null;
   }): Promise<any | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = params.tenantId ?? storage?.tenantID ?? 0;
@@ -390,6 +391,7 @@ export class AccountingService {
         startDate: params.startDate,
         endDate: params.endDate,
         tenantId: tenantID,
+        locationId: params.locationId || undefined,
       },
     }).then((response) => response.data.result);
   };

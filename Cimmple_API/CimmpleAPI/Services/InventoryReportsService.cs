@@ -63,13 +63,15 @@ public static class InventoryReportsService
                     : $"Location #{r.LocationId}",
                 ItemName = ResolveItemName(r.ProductPartNo, r.ProductPartName, r.RawPartNo, r.RawPartName,
                     r.ProductId, r.RawMaterialId),
+                r.ProductId,
+                r.RawMaterialId,
                 r.QuantityOnHand,
                 UnitCost = unitCost,
             };
         }).ToList();
 
         var grouped = rows
-            .GroupBy(r => new { r.LocationId, r.LocationName, r.ItemName })
+            .GroupBy(r => new { r.LocationId, r.LocationName, r.ItemName, r.ProductId, r.RawMaterialId })
             .Select(g =>
             {
                 var qty = g.Sum(x => x.QuantityOnHand);
@@ -81,8 +83,11 @@ public static class InventoryReportsService
                 var unvalued = g.Any(x => !x.UnitCost.HasValue && x.QuantityOnHand > 0);
                 return new
                 {
+                    g.Key.LocationId,
                     g.Key.LocationName,
                     g.Key.ItemName,
+                    g.Key.ProductId,
+                    g.Key.RawMaterialId,
                     Qty = qty,
                     UnitCost = unitCost,
                     Value = value,
@@ -111,6 +116,26 @@ public static class InventoryReportsService
         foreach (var row in grouped)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "inventory-item",
+                    EntityId = row.ProductId ?? row.RawMaterialId,
+                    EntityKey = row.ItemName,
+                    Title = $"{row.ItemName} @ {row.LocationName}",
+                    LinkPath = "/inventory",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = row.ItemName,
+                            SubLabel = row.LocationName,
+                            Amount = ReportResultFactory.Money(row.Value),
+                            Status = row.Unvalued ? "Unvalued" : $"Qty {ReportResultFactory.Qty(row.Qty)}",
+                            EntityId = row.ProductId ?? row.RawMaterialId,
+                            LinkPath = "/inventory"
+                        }
+                    }
+                },
                 row.LocationName,
                 row.ItemName,
                 ReportResultFactory.Qty(row.Qty),
@@ -150,22 +175,41 @@ public static class InventoryReportsService
             join tt in db.InventoryTransactionType.AsNoTracking()
                 on t.TransactionTypeId equals tt.Id into ttGroup
             from tt in ttGroup.DefaultIfEmpty()
+            join p in db.ProductMaster.AsNoTracking() on t.ProductId equals p.Id into pGroup
+            from p in pGroup.DefaultIfEmpty()
+            join rm in db.RawMaterialMaster.AsNoTracking() on t.RawMaterialId equals rm.Id into rmGroup
+            from rm in rmGroup.DefaultIfEmpty()
             select new
             {
+                t.Id,
                 t.TransactionDate,
                 TypeName = tt != null ? tt.Name : null,
                 TypeCode = tt != null ? tt.Code : null,
                 t.TransactionTypeId,
                 t.Quantity,
+                t.ProductId,
+                t.RawMaterialId,
+                ProductPartNo = p != null ? p.partno : null,
+                ProductPartName = p != null ? p.partname : null,
+                RawPartNo = rm != null ? rm.PartNo : null,
+                RawPartName = rm != null ? rm.PartName : null,
+                t.ReferenceType,
+                t.ReferenceId,
             }
         ).AsEnumerable()
         .Select(t => new
         {
+            t.Id,
             t.TransactionDate,
             TypeName = !string.IsNullOrWhiteSpace(t.TypeName) ? t.TypeName!
                 : !string.IsNullOrWhiteSpace(t.TypeCode) ? t.TypeCode!
                 : $"Type #{t.TransactionTypeId}",
             t.Quantity,
+            ItemName = ResolveItemName(t.ProductPartNo, t.ProductPartName, t.RawPartNo, t.RawPartName,
+                t.ProductId, t.RawMaterialId),
+            Ref = string.IsNullOrWhiteSpace(t.ReferenceType)
+                ? ""
+                : $"{t.ReferenceType}{(t.ReferenceId.HasValue ? " #" + t.ReferenceId : "")}"
         })
         .ToList();
 
@@ -178,6 +222,7 @@ public static class InventoryReportsService
                 InQty = g.Where(x => x.Quantity > 0).Sum(x => x.Quantity),
                 OutQty = g.Where(x => x.Quantity < 0).Sum(x => Math.Abs(x.Quantity)),
                 Net = g.Sum(x => x.Quantity),
+                Items = g.OrderByDescending(x => Math.Abs(x.Quantity)).Take(100).ToList()
             })
             .ToList();
 
@@ -191,6 +236,7 @@ public static class InventoryReportsService
                 InQty = g.Where(x => x.Quantity > 0).Sum(x => x.Quantity),
                 OutQty = g.Where(x => x.Quantity < 0).Sum(x => Math.Abs(x.Quantity)),
                 Net = g.Sum(x => x.Quantity),
+                Items = g.OrderByDescending(x => x.TransactionDate).Take(100).ToList()
             })
             .ToList();
 
@@ -204,7 +250,30 @@ public static class InventoryReportsService
                 "Date", "In Qty", "Out Qty", "Net")
             .WithNumeric(1, 2, 3);
         foreach (var row in byDate)
-            dateSection.AddRow(row.Label, ReportResultFactory.Qty(row.InQty), ReportResultFactory.Qty(row.OutQty), ReportResultFactory.Qty(row.Net));
+        {
+            dateSection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "stock-date",
+                    EntityKey = row.Label,
+                    Title = $"Movements — {row.Label}",
+                    LinkPath = "/inventory",
+                    Details = row.Items.Select(t => new ReportDrillItemDto
+                    {
+                        Label = t.ItemName,
+                        SubLabel = string.IsNullOrWhiteSpace(t.Ref) ? t.TypeName : $"{t.TypeName} · {t.Ref}",
+                        Date = t.TransactionDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Qty(t.Quantity),
+                        Status = t.Quantity >= 0 ? "In" : "Out",
+                        EntityId = t.Id,
+                        LinkPath = "/inventory"
+                    }).ToList()
+                },
+                row.Label,
+                ReportResultFactory.Qty(row.InQty),
+                ReportResultFactory.Qty(row.OutQty),
+                ReportResultFactory.Qty(row.Net));
+        }
         report.Sections.Add(dateSection);
 
         var typeSection = ReportResultFactory.Section(
@@ -212,7 +281,30 @@ public static class InventoryReportsService
                 "Type", "In Qty", "Out Qty", "Net")
             .WithNumeric(1, 2, 3);
         foreach (var row in byType)
-            typeSection.AddRow(row.Label, ReportResultFactory.Qty(row.InQty), ReportResultFactory.Qty(row.OutQty), ReportResultFactory.Qty(row.Net));
+        {
+            typeSection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "stock-type",
+                    EntityKey = row.Label,
+                    Title = $"Type: {row.Label}",
+                    LinkPath = "/inventory",
+                    Details = row.Items.Select(t => new ReportDrillItemDto
+                    {
+                        Label = t.ItemName,
+                        SubLabel = string.IsNullOrWhiteSpace(t.Ref) ? t.TransactionDate.ToString("yyyy-MM-dd") : t.Ref,
+                        Date = t.TransactionDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Qty(t.Quantity),
+                        Status = t.Quantity >= 0 ? "In" : "Out",
+                        EntityId = t.Id,
+                        LinkPath = "/inventory"
+                    }).ToList()
+                },
+                row.Label,
+                ReportResultFactory.Qty(row.InQty),
+                ReportResultFactory.Qty(row.OutQty),
+                ReportResultFactory.Qty(row.Net));
+        }
         report.Sections.Add(typeSection);
 
         return report;

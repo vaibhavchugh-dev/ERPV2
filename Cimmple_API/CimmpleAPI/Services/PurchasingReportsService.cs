@@ -63,9 +63,13 @@ public static class PurchasingReportsService
         var detailsByOrder = details.GroupBy(d => d.OrderID).ToDictionary(g => g.Key, g => g.ToList());
 
         var byVendor = orders
-            .GroupBy(o => string.IsNullOrWhiteSpace(o.VendorName) ? $"Vendor #{o.VendorID}" : o.VendorName.Trim())
+            .GroupBy(o => new
+            {
+                o.VendorID,
+                Name = string.IsNullOrWhiteSpace(o.VendorName) ? $"Vendor #{o.VendorID}" : o.VendorName.Trim()
+            })
             .OrderByDescending(g => g.Sum(x => x.TotalAmount))
-            .ThenBy(g => g.Key);
+            .ThenBy(g => g.Key.Name);
 
         var table = ReportResultFactory.Section(
                 "Spend by vendor",
@@ -111,7 +115,23 @@ public static class PurchasingReportsService
                 : ReportResultFactory.Pct((decimal)onTimeLines / dueLines * 100m);
 
             table.AddRow(
-                g.Key,
+                new ReportRowMetaDto
+                {
+                    EntityType = "vendor",
+                    EntityId = g.Key.VendorID > 0 ? g.Key.VendorID : null,
+                    Title = g.Key.Name,
+                    LinkPath = "/purchasing/vendor-orders",
+                    Details = g.OrderByDescending(o => o.TotalAmount).Select(o => new ReportDrillItemDto
+                    {
+                        Label = $"PO #{o.OrderID}",
+                        SubLabel = string.IsNullOrWhiteSpace(o.Status) ? "—" : o.Status,
+                        Amount = ReportResultFactory.Money(o.TotalAmount),
+                        Status = o.Status ?? "",
+                        EntityId = o.OrderID,
+                        LinkPath = "/purchasing/vendor-orders"
+                    }).ToList()
+                },
+                g.Key.Name,
                 ReportResultFactory.Num(poCount),
                 ReportResultFactory.Money(spend),
                 otPct,
@@ -144,7 +164,15 @@ public static class PurchasingReportsService
 
         var orders = QueryVendorOrders(db, tenantId, locationId)
             .Where(o => o.OrderDate >= start && o.OrderDate < endExclusive)
-            .Select(o => new { o.OrderDate, o.TotalAmount })
+            .Select(o => new
+            {
+                o.OrderID,
+                o.PONumber,
+                o.OrderDate,
+                o.TotalAmount,
+                VendorName = o.VendorName ?? "",
+                Status = o.Status ?? ""
+            })
             .ToList();
 
         var byMonth = orders
@@ -158,8 +186,26 @@ public static class PurchasingReportsService
 
         foreach (var g in byMonth)
         {
+            var monthKey = g.Key.ToString("yyyy-MM");
             table.AddRow(
-                g.Key.ToString("yyyy-MM"),
+                new ReportRowMetaDto
+                {
+                    EntityType = "po-month",
+                    EntityKey = monthKey,
+                    Title = $"POs — {monthKey}",
+                    LinkPath = "/purchasing/vendor-orders",
+                    Details = g.OrderByDescending(o => o.OrderDate).Select(o => new ReportDrillItemDto
+                    {
+                        Label = $"PO {o.PONumber}",
+                        SubLabel = string.IsNullOrWhiteSpace(o.VendorName) ? "—" : o.VendorName.Trim(),
+                        Date = o.OrderDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(o.TotalAmount),
+                        Status = o.Status,
+                        EntityId = o.OrderID,
+                        LinkPath = "/purchasing/vendor-orders"
+                    }).ToList()
+                },
+                monthKey,
                 ReportResultFactory.Num(g.Count()),
                 ReportResultFactory.Money(g.Sum(x => x.TotalAmount)));
         }
@@ -197,6 +243,9 @@ public static class PurchasingReportsService
                   && o.OrderDate < endExclusive
             select new
             {
+                o.OrderID,
+                o.VendorID,
+                o.PONumber,
                 VendorName = o.VendorName ?? "",
                 PartNo = d.PartNo ?? "",
                 d.UnitPrice,
@@ -207,6 +256,7 @@ public static class PurchasingReportsService
 
         var groups = lines
             .GroupBy(l => (
+                VendorId: l.VendorID,
                 Vendor: string.IsNullOrWhiteSpace(l.VendorName) ? "(unknown)" : l.VendorName.Trim(),
                 Part: string.IsNullOrWhiteSpace(l.PartNo) ? "(no part)" : l.PartNo.Trim()))
             .OrderBy(g => g.Key.Vendor)
@@ -222,7 +272,35 @@ public static class PurchasingReportsService
             var qty = g.Sum(x => (decimal)x.QtyOrdered);
             var spend = g.Sum(x => LineNetSpend(x.UnitPrice, x.QtyOrdered, x.Discount, x.DiscountType));
             var avg = qty > 0 ? spend / qty : g.Average(x => x.UnitPrice);
+            var poDetails = g
+                .GroupBy(x => x.OrderID)
+                .Select(og =>
+                {
+                    var first = og.First();
+                    var lineSpend = og.Sum(x => LineNetSpend(x.UnitPrice, x.QtyOrdered, x.Discount, x.DiscountType));
+                    return new { first.PONumber, OrderId = og.Key, Part = g.Key.Part, Spend = lineSpend };
+                })
+                .OrderByDescending(x => x.Spend)
+                .Select(x => new ReportDrillItemDto
+                {
+                    Label = $"PO {x.PONumber}",
+                    SubLabel = x.Part,
+                    Amount = ReportResultFactory.Money(x.Spend),
+                    EntityId = x.OrderId,
+                    LinkPath = "/purchasing/vendor-orders"
+                })
+                .ToList();
+
             table.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "vendor-part",
+                    EntityId = g.Key.VendorId > 0 ? g.Key.VendorId : null,
+                    EntityKey = g.Key.Part,
+                    Title = $"{g.Key.Vendor} — {g.Key.Part}",
+                    LinkPath = "/purchasing/vendor-orders",
+                    Details = poDetails
+                },
                 g.Key.Vendor,
                 g.Key.Part,
                 ReportResultFactory.Num(g.Count()),
@@ -337,6 +415,7 @@ public static class PurchasingReportsService
                   && o.OrderDate < endExclusive
             select new
             {
+                o.OrderID,
                 VendorName = o.VendorName ?? "",
                 o.PONumber,
                 PartNo = d.PartNo ?? "",
@@ -346,6 +425,7 @@ public static class PurchasingReportsService
             }).ToList()
             .Select(l => new
             {
+                l.OrderID,
                 l.VendorName,
                 l.PONumber,
                 l.PartNo,
@@ -384,10 +464,31 @@ public static class PurchasingReportsService
                 if (isOnTime) onTime++;
             }
 
+            var vendor = string.IsNullOrWhiteSpace(line.VendorName) ? "(unknown)" : line.VendorName.Trim();
+            var part = string.IsNullOrWhiteSpace(line.PartNo) ? "(no part)" : line.PartNo.Trim();
             table.AddRow(
-                string.IsNullOrWhiteSpace(line.VendorName) ? "(unknown)" : line.VendorName.Trim(),
+                new ReportRowMetaDto
+                {
+                    EntityType = "vendor-po",
+                    EntityId = line.OrderID,
+                    Title = $"PO {line.PONumber} — {part}",
+                    LinkPath = "/purchasing/vendor-orders",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = $"PO {line.PONumber}",
+                            SubLabel = $"{vendor} · {part}",
+                            Date = due.ToString("yyyy-MM-dd"),
+                            Status = !hasRecv ? "Not received" : (isOnTime ? "On time" : "Late"),
+                            EntityId = line.OrderID,
+                            LinkPath = "/purchasing/vendor-orders"
+                        }
+                    }
+                },
+                vendor,
                 line.PONumber.ToString(),
-                string.IsNullOrWhiteSpace(line.PartNo) ? "(no part)" : line.PartNo.Trim(),
+                part,
                 due.ToString("yyyy-MM-dd"),
                 hasRecv ? received.ToString("yyyy-MM-dd") : "—",
                 !hasRecv ? "—" : (isOnTime ? "Yes" : "No"));

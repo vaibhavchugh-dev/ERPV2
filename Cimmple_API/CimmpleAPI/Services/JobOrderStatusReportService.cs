@@ -53,6 +53,7 @@ public static class JobOrderStatusReportService
             .ThenByDescending(x => x.Job.JobOrderNumber)
             .Select(x => new
             {
+                x.Job.JobOrderID,
                 x.Job.JobOrderNumber,
                 CustomerName = x.Job.CustomerName ?? "",
                 PartNo = x.Job.PartNo ?? "",
@@ -71,6 +72,7 @@ public static class JobOrderStatusReportService
             var isOverdue = r.DueDate.Date < today && !ClosedStatuses.Contains(status);
             return new
             {
+                r.JobOrderID,
                 r.JobOrderNumber,
                 r.CustomerName,
                 r.PartNo,
@@ -110,7 +112,28 @@ public static class JobOrderStatusReportService
         var statusSection = ReportResultFactory.Section("By status", "Status", "Count")
             .WithNumeric(1);
         foreach (var g in byStatus)
-            statusSection.AddRow(g.Key, ReportResultFactory.Num(g.Count()));
+        {
+            var list = g.ToList();
+            statusSection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "job-status",
+                    EntityKey = g.Key,
+                    Title = $"Status: {g.Key}",
+                    LinkPath = "/job-orders",
+                    Details = list.Select(j => new ReportDrillItemDto
+                    {
+                        Label = FormatJobOrderNumber(j.JobOrderNumber),
+                        SubLabel = j.CustomerName,
+                        Date = j.DueDate,
+                        Status = j.Status,
+                        EntityId = j.JobOrderID,
+                        LinkPath = "/job-orders"
+                    }).ToList()
+                },
+                g.Key,
+                ReportResultFactory.Num(g.Count()));
+        }
         report.Sections.Add(statusSection);
 
         var jobsSection = ReportResultFactory
@@ -119,8 +142,28 @@ public static class JobOrderStatusReportService
         foreach (var j in jobs)
         {
             var part = string.Join(" — ", new[] { j.PartNo, j.PartName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            var joLabel = FormatJobOrderNumber(j.JobOrderNumber);
             jobsSection.AddRow(
-                FormatJobOrderNumber(j.JobOrderNumber),
+                new ReportRowMetaDto
+                {
+                    EntityType = "job",
+                    EntityId = j.JobOrderID,
+                    Title = joLabel,
+                    LinkPath = "/job-orders",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = joLabel,
+                            SubLabel = j.CustomerName,
+                            Date = j.OrderDate,
+                            Status = j.Status + (j.IsOverdue ? " (Overdue)" : ""),
+                            EntityId = j.JobOrderID,
+                            LinkPath = "/job-orders"
+                        }
+                    }
+                },
+                joLabel,
                 j.CustomerName,
                 string.IsNullOrWhiteSpace(part) ? "—" : part,
                 $"{ReportResultFactory.Qty(j.QtyOrdered)}{(string.IsNullOrWhiteSpace(j.Unit) ? "" : " " + j.Unit)}",

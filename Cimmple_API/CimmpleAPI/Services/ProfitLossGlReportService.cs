@@ -13,6 +13,7 @@ public static class ProfitLossGlReportService
 
     public sealed class LineDto
     {
+        public int AccountId { get; set; }
         public string AccountCode { get; set; } = "";
         public string AccountName { get; set; } = "";
         /// <summary>Economic sign: revenue increases profit (credit-normal); expenses as positive costs.</summary>
@@ -123,6 +124,7 @@ public static class ProfitLossGlReportService
 
             buckets[section].Add(new LineDto
             {
+                AccountId = id,
                 AccountCode = coa.AccountCode ?? "",
                 AccountName = coa.AccountName ?? "",
                 Amount = net

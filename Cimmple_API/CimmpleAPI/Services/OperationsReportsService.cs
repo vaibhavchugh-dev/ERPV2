@@ -165,8 +165,28 @@ public static class OperationsReportsService
             var onTime = isClosed && completed.Date <= j.DueDate.Date;
             if (onTime) onTimeCount++;
 
+            var joLabel = FormatJobOrderNumber(j.JobOrderNumber);
             table.AddRow(
-                FormatJobOrderNumber(j.JobOrderNumber),
+                new ReportRowMetaDto
+                {
+                    EntityType = "job",
+                    EntityId = j.JobOrderID,
+                    Title = joLabel,
+                    LinkPath = "/job-orders",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = joLabel,
+                            SubLabel = j.CustomerName ?? "",
+                            Date = j.DueDate.ToString("yyyy-MM-dd"),
+                            Status = onTime ? "On time" : (isClosed ? "Late" : status),
+                            EntityId = j.JobOrderID,
+                            LinkPath = "/job-orders"
+                        }
+                    }
+                },
+                joLabel,
                 j.CustomerName ?? "",
                 FormatPart(j.PartNo, j.PartName),
                 j.DueDate.ToString("yyyy-MM-dd"),

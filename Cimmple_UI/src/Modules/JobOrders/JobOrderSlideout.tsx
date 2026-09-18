@@ -65,6 +65,7 @@ import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./JobOrderSlideout.scss";
 
 interface JobOrderSlideoutProps {
@@ -2439,6 +2440,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           document.body
         )}
       <div className="job-order-slideout-card" onClick={(e) => e.stopPropagation()}>
+        <SlideoutHydratingOverlay show={initialLoading} label="Loading job order…" />
         <div className="job-order-slideout-header">
           <div className="jo-header-title-block">
             <h2>{jobOrderId > 0 ? "Edit Job Order" : "New Job Order"}</h2>

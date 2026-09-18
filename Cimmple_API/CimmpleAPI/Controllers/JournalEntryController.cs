@@ -321,7 +321,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int accountId,
             [FromQuery] DateTime startDate,
             [FromQuery] DateTime endDate,
-            [FromQuery] int tenantId = 0)
+            [FromQuery] int tenantId = 0,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -337,56 +338,134 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Account not found for this tenant." });
 
                 var endInclusive = endDate.Date.AddDays(1).AddTicks(-1);
+                int? loc = locationId.HasValue && locationId.Value > 0 ? locationId : null;
 
-                var fromRows = (
-                    from f in _context.JournalEntryFrom.AsNoTracking()
-                    join je in _context.JournalEntries.AsNoTracking() on f.JournalEntryId equals je.Id
-                    where je.TenantId == tid && f.AccountId == accountId
-                          && je.EntryDate >= startDate.Date && je.EntryDate <= endInclusive
-                    select new
+                var rows = new List<(DateTime Date, int SortId, string SourceType, int? JournalEntryId, int? TransactionId, string Ref, string Description, decimal Debit, decimal Credit)>();
+
+                var journalQuery = _context.JournalEntries.AsNoTracking()
+                    .Where(je => je.TenantId == tid
+                                 && je.EntryDate >= startDate.Date
+                                 && je.EntryDate <= endInclusive);
+                if (loc.HasValue)
+                    journalQuery = journalQuery.Where(je => je.locationId == loc.Value);
+                var journalIds = journalQuery.Select(je => je.Id).ToList();
+
+                if (journalIds.Count > 0)
+                {
+                    var fromRows = (
+                        from f in _context.JournalEntryFrom.AsNoTracking()
+                        join je in _context.JournalEntries.AsNoTracking() on f.JournalEntryId equals je.Id
+                        where journalIds.Contains(f.JournalEntryId) && f.AccountId == accountId
+                        select new { je.Id, je.EntryDate, Ref = je.ReferenceNumber ?? "", HeaderDesc = je.Description ?? "", LineDesc = f.Description ?? "", Debit = f.Amount }
+                    ).ToList();
+                    foreach (var x in fromRows)
                     {
-                        je.Id,
-                        je.EntryDate,
-                        Ref = je.ReferenceNumber ?? "",
-                        HeaderDesc = je.Description ?? "",
-                        LineDesc = f.Description ?? "",
-                        Debit = f.Amount,
-                        Credit = 0m
-                    }).ToList();
+                        var memo = string.IsNullOrWhiteSpace(x.LineDesc) ? x.HeaderDesc : x.LineDesc;
+                        rows.Add((x.EntryDate, x.Id, "journal", x.Id, null, x.Ref, memo, x.Debit, 0m));
+                    }
 
-                var toRows = (
-                    from t in _context.JournalEntryTo.AsNoTracking()
-                    join je in _context.JournalEntries.AsNoTracking() on t.JournalEntryId equals je.Id
-                    where je.TenantId == tid && t.AccountId == accountId
-                          && je.EntryDate >= startDate.Date && je.EntryDate <= endInclusive
-                    select new
+                    var toRows = (
+                        from t in _context.JournalEntryTo.AsNoTracking()
+                        join je in _context.JournalEntries.AsNoTracking() on t.JournalEntryId equals je.Id
+                        where journalIds.Contains(t.JournalEntryId) && t.AccountId == accountId
+                        select new { je.Id, je.EntryDate, Ref = je.ReferenceNumber ?? "", HeaderDesc = je.Description ?? "", LineDesc = t.Description ?? "", Credit = t.Amount }
+                    ).ToList();
+                    foreach (var x in toRows)
                     {
-                        je.Id,
-                        je.EntryDate,
-                        Ref = je.ReferenceNumber ?? "",
-                        HeaderDesc = je.Description ?? "",
-                        LineDesc = t.Description ?? "",
-                        Debit = 0m,
-                        Credit = t.Amount
-                    }).ToList();
+                        var memo = string.IsNullOrWhiteSpace(x.LineDesc) ? x.HeaderDesc : x.LineDesc;
+                        rows.Add((x.EntryDate, x.Id, "journal", x.Id, null, x.Ref, memo, 0m, x.Credit));
+                    }
+                }
 
-                var merged = fromRows.Concat(toRows)
-                    .OrderBy(x => x.EntryDate)
-                    .ThenBy(x => x.Id)
+                var txQuery = _context.Transactions.AsNoTracking()
+                    .Where(t => t.TenantId == tid
+                                && t.TransactionDate != null
+                                && t.TransactionDate >= startDate.Date
+                                && t.TransactionDate <= endInclusive);
+                if (loc.HasValue)
+                    txQuery = txQuery.Where(t => t.locationId == loc.Value);
+                var txIds = txQuery.Select(t => t.TransactionID).ToList();
+
+                if (txIds.Count > 0)
+                {
+                    var txMeta = _context.Transactions.AsNoTracking()
+                        .Where(t => txIds.Contains(t.TransactionID))
+                        .Select(t => new
+                        {
+                            t.TransactionID,
+                            t.TransactionDate,
+                            t.invoiceNo,
+                            t.CheckNo,
+                            t.Description,
+                            t.Amount
+                        })
+                        .ToList()
+                        .ToDictionary(t => t.TransactionID);
+
+                    var deposits = _context.Deposits.AsNoTracking()
+                        .Where(d => d.TenantID == tid && d.AccountID == accountId && txIds.Contains(d.TransactionID))
+                        .ToList();
+                    foreach (var d in deposits)
+                    {
+                        txMeta.TryGetValue(d.TransactionID, out var t);
+                        var date = t?.TransactionDate ?? startDate.Date;
+                        var desc = !string.IsNullOrWhiteSpace(d.DepositDetails)
+                            ? d.DepositDetails!
+                            : (t?.Description ?? "Deposit");
+                        rows.Add((date, d.TransactionID, "deposit", null, d.TransactionID,
+                            t?.invoiceNo ?? t?.CheckNo ?? "", desc, d.Amount, 0m));
+                    }
+
+                    var withdrawals = _context.Withdrawals.AsNoTracking()
+                        .Where(w => w.TenantID == tid && w.AccountID == accountId && txIds.Contains(w.TransactionID))
+                        .ToList();
+                    foreach (var w in withdrawals)
+                    {
+                        txMeta.TryGetValue(w.TransactionID, out var t);
+                        var date = t?.TransactionDate ?? startDate.Date;
+                        var desc = !string.IsNullOrWhiteSpace(w.WithdrawalDetails)
+                            ? w.WithdrawalDetails!
+                            : (t?.Description ?? "Withdrawal");
+                        rows.Add((date, w.TransactionID, "withdrawal", null, w.TransactionID,
+                            t?.invoiceNo ?? t?.CheckNo ?? "", desc, 0m, w.Amount));
+                    }
+
+                    var transCoa = _context.TransCoa.AsNoTracking()
+                        .Where(tc => tc.Tenantid == tid && tc.accountid == accountId && txIds.Contains(tc.Transid))
+                        .ToList();
+                    foreach (var tc in transCoa)
+                    {
+                        if (!txMeta.TryGetValue(tc.Transid, out var t)) continue;
+                        var amt = t.Amount ?? 0;
+                        // Match GlAccountBalanceService: TransCoa attributes full transaction amount as debit-side
+                        var debit = amt >= 0 ? amt : 0m;
+                        var credit = amt < 0 ? Math.Abs(amt) : 0m;
+                        rows.Add((t.TransactionDate!.Value, tc.Transid, "trans-coa", null, tc.Transid,
+                            t.invoiceNo ?? t.CheckNo ?? "",
+                            tc.Transname ?? t.Description ?? "Transaction COA",
+                            debit, credit));
+                    }
+                }
+
+                var ordered = rows
+                    .OrderBy(r => r.Date)
+                    .ThenBy(r => r.SortId)
+                    .ThenBy(r => r.SourceType)
                     .ToList();
 
                 decimal running = 0;
                 var lines = new List<object>();
-                foreach (var x in merged)
+                foreach (var x in ordered)
                 {
                     running += x.Debit - x.Credit;
-                    var memo = string.IsNullOrWhiteSpace(x.LineDesc) ? x.HeaderDesc : x.LineDesc;
                     lines.Add(new
                     {
-                        journalEntryId = x.Id,
-                        entryDate = x.EntryDate.ToString("yyyy-MM-dd"),
+                        sourceType = x.SourceType,
+                        journalEntryId = x.JournalEntryId,
+                        transactionId = x.TransactionId,
+                        entryDate = x.Date.ToString("yyyy-MM-dd"),
                         referenceNumber = x.Ref,
-                        description = memo,
+                        description = x.Description,
                         debit = x.Debit,
                         credit = x.Credit,
                         runningBalance = Math.Round(running, 2, MidpointRounding.AwayFromZero)
@@ -403,6 +482,8 @@ namespace CimmpleAPI.Controllers
                         accountType = coa.AccountType ?? "",
                         periodStart = startDate.ToString("yyyy-MM-dd"),
                         periodEnd = endDate.ToString("yyyy-MM-dd"),
+                        locationId = loc,
+                        includesDepositsWithdrawals = true,
                         lineCount = lines.Count,
                         lines
                     }

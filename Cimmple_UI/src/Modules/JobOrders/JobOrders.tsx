@@ -35,10 +35,18 @@ const JobOrders: React.FC = () => {
     loadJobOrders();
   }, [locationIdParam]);
 
-  // Handle URL parameter to open slideout (from global search / dashboard)
+  // Handle URL parameter to open slideout / seed status filter (from reports drill-down)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get("open");
+    const status = params.get("status");
+    let replaced = false;
+
+    if (status && status.trim()) {
+      setStatusFilter(status.trim());
+      replaced = true;
+    }
+
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -48,7 +56,12 @@ const JobOrders: React.FC = () => {
         setHeaderPreview(null);
         setShowSlideout(true);
         history.replace(location.pathname, returnTo ? { returnTo } : undefined);
+        return;
       }
+    }
+
+    if (replaced) {
+      history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
 
