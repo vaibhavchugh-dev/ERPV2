@@ -62,12 +62,19 @@ Instense.interceptors.request.use((config) => {
     ? localStorage.getItem("vendorStorage")
     : localStorage.getItem("storage");
 
+  const requestUrl = typeof config.url === "string" ? config.url : "";
+  const isAuthEndpoint =
+    requestUrl.includes("/Auth/Login") ||
+    requestUrl.includes("/Auth/VendorLogin") ||
+    requestUrl.includes("/Auth/Refresh") ||
+    requestUrl.includes("/Auth/BootstrapPassword");
+
   const token = getBearerToken();
-  if (token) {
+  if (token && !isAuthEndpoint) {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
-  if (storageRaw) {
+  if (storageRaw && !isAuthEndpoint) {
     try {
       const storage = JSON.parse(storageRaw);
       if (storage) {
@@ -81,7 +88,7 @@ Instense.interceptors.request.use((config) => {
   }
 
   const locationId = localStorage.getItem("locationId");
-  if (!isVendor && locationId && locationId !== "0") {
+  if (!isAuthEndpoint && !isVendor && locationId && locationId !== "0") {
     config.headers["X-Location-Id"] = locationId;
   }
 

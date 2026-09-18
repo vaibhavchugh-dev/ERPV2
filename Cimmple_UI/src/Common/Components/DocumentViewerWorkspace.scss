@@ -143,6 +143,7 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
 
   &__document-shell {
@@ -325,6 +326,8 @@
     text-align: center;
     color: #4b5563;
     padding: 2rem;
+    width: 100%;
+    box-sizing: border-box;
 
     h4 {
       margin: 0;
@@ -343,6 +346,16 @@
     &.error h4 {
       color: #b91c1c;
     }
+  }
+
+  &__body > &__status,
+  &__canvas > &__status {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    min-height: 0;
+    margin: 0;
+    background: rgba(248, 250, 252, 0.92);
   }
 
   &__spinner {

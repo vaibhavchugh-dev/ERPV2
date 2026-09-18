@@ -122,6 +122,8 @@ export interface VendorQuotationMaster {
   locationId?: number;
   quotationType?: string;
   parentQuotationID?: number;
+  /** True when multi-vendor child RFQs exist for this master */
+  hasChildQuotations?: boolean;
   Attachments?: QuotationAttachment[];
   Comments?: QuotationComment[];
 }
@@ -1160,7 +1162,11 @@ export class QuotationService {
             id: a.id || a.Id || 0,
             name: a.name || a.Name || "",
             size: a.size || a.Size || 0,
-            fileUrl: a.fileUrl || a.FileUrl || ""
+            fileUrl: a.fileUrl || a.FileUrl || a.uploadFile || a.UploadFile || "",
+            fileUniqueno: a.fileUniqueno || a.FileUniqueno || 0,
+            uploadFile: a.uploadFile || a.UploadFile || a.fileUrl || a.FileUrl || "",
+            pageNo: a.pageNo || a.PageNo || "0",
+            createdBy: a.createdBy || a.CreatedBy || 0,
           })) : undefined,
         };
       });
@@ -1227,7 +1233,19 @@ export class QuotationService {
     request.UserToken = storage?.userToken || request.UserToken || 0;
 
     const url = `/Quotation/SaveVendorQuotation`;
-    return Instense.post(url, request).then((response) => {
+    // Plain JSON only — strip non-serializable File/Blob fields that make Axios
+    // auto-convert to multipart and throw "Function collides with other property".
+    const cleanPayload = JSON.parse(
+      JSON.stringify(request, (_key, value) => {
+        if (typeof File !== "undefined" && value instanceof File) return undefined;
+        if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+        if (typeof value === "function") return undefined;
+        return value;
+      })
+    );
+    return Instense.post(url, cleanPayload, {
+      headers: { "Content-Type": "application/json" },
+    }).then((response) => {
       const result = response.data.result;
       // Return the result which contains the id
       if (result && result.id) {

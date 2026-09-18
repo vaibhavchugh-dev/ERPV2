@@ -18,7 +18,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="QRCoder" Version="1.7.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" GeneratePathProperty="true" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
@@ -28,5 +29,22 @@
     <PackageReference Include="WindowsAzure.Storage" Version="9.3.2" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.22.2" />
   </ItemGroup>
+
+  <!-- net7 framework-dependent publish often omits this DLL; IIS then fails to start or login. -->
+  <Target Name="CopyCodePagesAssembly" AfterTargets="ResolvePackageAssets;ComputeFilesToPublish">
+    <PropertyGroup>
+      <_CodePagesDll Condition="Exists('$(PkgSystem_Text_Encoding_CodePages)\lib\net7.0\System.Text.Encoding.CodePages.dll')">$(PkgSystem_Text_Encoding_CodePages)\lib\net7.0\System.Text.Encoding.CodePages.dll</_CodePagesDll>
+      <_CodePagesDll Condition="'$(_CodePagesDll)' == '' And Exists('$(PkgSystem_Text_Encoding_CodePages)\lib\net6.0\System.Text.Encoding.CodePages.dll')">$(PkgSystem_Text_Encoding_CodePages)\lib\net6.0\System.Text.Encoding.CodePages.dll</_CodePagesDll>
+      <_CodePagesDll Condition="'$(_CodePagesDll)' == '' And Exists('$(PkgSystem_Text_Encoding_CodePages)\lib\net8.0\System.Text.Encoding.CodePages.dll')">$(PkgSystem_Text_Encoding_CodePages)\lib\net8.0\System.Text.Encoding.CodePages.dll</_CodePagesDll>
+      <_CodePagesDll Condition="'$(_CodePagesDll)' == '' And Exists('$(PkgSystem_Text_Encoding_CodePages)\lib\netstandard2.0\System.Text.Encoding.CodePages.dll')">$(PkgSystem_Text_Encoding_CodePages)\lib\netstandard2.0\System.Text.Encoding.CodePages.dll</_CodePagesDll>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_CodePagesDll)' != ''">
+      <ReferenceCopyLocalPaths Include="$(_CodePagesDll)" />
+      <ResolvedFileToPublish Include="$(_CodePagesDll)">
+        <RelativePath>System.Text.Encoding.CodePages.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
 </Project>

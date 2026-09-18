@@ -16,7 +16,7 @@ namespace CimmpleAPI.Data.Models
         public string? Password { get; set; }
         public string? Status { get; set; }
         public int? Role { get; set; }
-        public DateTime PwdResetDate { get; set; }
+        public DateTime? PwdResetDate { get; set; }
         public string? Phone1 { get; set; }
         public string? EmployeeType { get; set; }
         public string? Date_of_hire { get; set; }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
 import {
   faCheckCircle,
@@ -33,7 +33,8 @@ const BankReconciliation: React.FC = () => {
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
   const [periodActivity, setPeriodActivity] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [reconciling, setReconciling] = useState(false);
+  const [reconcilingId, setReconcilingId] = useState<number | null>(null);
+  const [bulkReconciling, setBulkReconciling] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [starting, setStarting] = useState(false);
   const [reconContext, setReconContext] = useState<BankReconciliationContext | null>(null);
@@ -50,6 +51,20 @@ const BankReconciliation: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<ReconSortColumn>("date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [showImport, setShowImport] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  const loadGenRef = useRef(0);
+  const statementDateRef = useRef(statementDate);
+  const statementBalanceRef = useRef(statementBalance);
+  const filtersRef = useRef(filters);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipTxnEffectRef = useRef(false);
+
+  statementDateRef.current = statementDate;
+  statementBalanceRef.current = statementBalance;
+  filtersRef.current = filters;
+
+  const isBusyReconciling = reconcilingId != null || bulkReconciling;
 
   const openPeriod = reconContext?.openPeriod ?? null;
   const hasOpenPeriod = !!openPeriod;
@@ -195,21 +210,43 @@ const BankReconciliation: React.FC = () => {
   }, [locationIdParam]);
 
   useEffect(() => {
-    if (selectedAccount > 0) {
-      loadReconContext(selectedAccount).then(() => {
-        // transactions load after context so statement date clamp is available
-      });
-    } else {
+    if (selectedAccount <= 0) {
       setReconContext(null);
       setTransactions([]);
+      setPeriodActivity(0);
+      setDifferences([]);
+      setLoadError(false);
+      return;
     }
+    let cancelled = false;
+    (async () => {
+      // Avoid a second load when context sets statementDate / hasOpenPeriod.
+      skipTxnEffectRef.current = true;
+      const ctx = await loadReconContext(selectedAccount);
+      if (cancelled) return;
+      await loadTransactions(ctx?.openPeriod?.statementDate ?? "");
+    })();
+    return () => {
+      cancelled = true;
+      loadGenRef.current += 1;
+    };
   }, [selectedAccount, loadReconContext]);
 
   useEffect(() => {
-    if (selectedAccount > 0) {
-      loadTransactions();
+    if (selectedAccount <= 0) return;
+    if (skipTxnEffectRef.current) {
+      skipTxnEffectRef.current = false;
+      return;
     }
-  }, [selectedAccount, filters, statementDate, hasOpenPeriod]);
+    loadTransactions();
+  }, [filters, statementDate, hasOpenPeriod]);
+
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      loadGenRef.current += 1;
+    };
+  }, []);
 
   const loadBankAccounts = async () => {
     try {
@@ -255,15 +292,24 @@ const BankReconciliation: React.FC = () => {
     }
   };
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (overrideStatementDate?: string | null) => {
+    if (selectedAccount <= 0) return;
+    const gen = ++loadGenRef.current;
+    const activeFilters = filtersRef.current;
+    const effectiveStatementDate =
+      overrideStatementDate !== undefined
+        ? overrideStatementDate || ""
+        : statementDateRef.current;
+
     setLoading(true);
+    setLoadError(false);
     try {
       const endDate = new Date();
       const startDate = new Date();
       let startYmd: string | undefined;
       let endYmd: string | undefined;
 
-      switch (filters.dateRange) {
+      switch (activeFilters.dateRange) {
         case "Last 7 Days":
           startDate.setDate(endDate.getDate() - 7);
           startYmd = toLocalYmd(startDate);
@@ -293,8 +339,12 @@ const BankReconciliation: React.FC = () => {
           endYmd = "2099-12-31";
       }
 
-      if (statementDate && endYmd && statementDate < endYmd) {
-        endYmd = statementDate;
+      // Clamp end to statement date, but never invert the range (would return []).
+      if (effectiveStatementDate && endYmd && effectiveStatementDate < endYmd) {
+        endYmd = effectiveStatementDate;
+      }
+      if (startYmd && endYmd && startYmd > endYmd) {
+        startYmd = "1900-01-01";
       }
 
       const rows = await AccountingService.GetBankTransactions(
@@ -303,23 +353,25 @@ const BankReconciliation: React.FC = () => {
         endYmd
       );
 
+      if (gen !== loadGenRef.current) return;
+
       if (rows) {
         let filteredTransactions = rows;
-        if (statementDate) {
+        if (effectiveStatementDate) {
           filteredTransactions = filteredTransactions.filter(
-            (t) => txnDateYmd(t.date) <= statementDate
+            (t) => txnDateYmd(t.date) <= effectiveStatementDate
           );
         }
-        if (filters.reconciled !== "all") {
-          const isReconciled = filters.reconciled === "reconciled";
+        if (activeFilters.reconciled !== "all") {
+          const isReconciled = activeFilters.reconciled === "reconciled";
           filteredTransactions = filteredTransactions.filter(
             (t) => t.reconciled === isReconciled
           );
         }
-        if (filters.amountRange !== "All") {
+        if (activeFilters.amountRange !== "All") {
           filteredTransactions = filteredTransactions.filter((transaction) => {
             const absAmount = Math.abs(transaction.amount);
-            switch (filters.amountRange) {
+            switch (activeFilters.amountRange) {
               case "Under $100":
                 return absAmount < 100;
               case "$100 - $500":
@@ -339,20 +391,25 @@ const BankReconciliation: React.FC = () => {
         setDifferences(filteredTransactions.filter((t) => !t.reconciled));
       }
     } catch (error) {
+      if (gen !== loadGenRef.current) return;
       console.error("Error loading bank transactions:", error);
       toast.error("Failed to load bank transactions");
+      setLoadError(true);
+      // Keep prior list so a failed refresh does not look like "no matches".
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   };
 
   const refreshAfterClear = async () => {
-    await loadTransactions();
-    await loadReconContext(selectedAccount);
+    skipTxnEffectRef.current = true;
+    const ctx = await loadReconContext(selectedAccount);
+    const nextDate = ctx?.openPeriod?.statementDate || statementDateRef.current || "";
+    await loadTransactions(nextDate);
   };
 
   const handleReconcile = async (transactionId: number) => {
-    if (reconciling) return;
+    if (isBusyReconciling) return;
     if (!hasOpenPeriod) {
       toast.info("Start a reconciliation period before clearing transactions");
       return;
@@ -360,7 +417,7 @@ const BankReconciliation: React.FC = () => {
     const transaction = transactions.find((t) => t.id === transactionId);
     if (!transaction) return;
 
-    setReconciling(true);
+    setReconcilingId(transactionId);
     const toastId = toast.info("Updating…", { autoClose: false });
     try {
       await AccountingService.ReconcileBankTransaction(transactionId, !transaction.reconciled);
@@ -372,12 +429,12 @@ const BankReconciliation: React.FC = () => {
       toast.dismiss(toastId);
       toast.error(error?.response?.data?.error || "Failed to update reconciliation status");
     } finally {
-      setReconciling(false);
+      setReconcilingId(null);
     }
   };
 
   const handleBulkReconcile = async () => {
-    if (reconciling) return;
+    if (isBusyReconciling) return;
     if (!hasOpenPeriod) {
       toast.info("Start a reconciliation period before clearing transactions");
       return;
@@ -388,7 +445,7 @@ const BankReconciliation: React.FC = () => {
       return;
     }
 
-    setReconciling(true);
+    setBulkReconciling(true);
     const toastId = toast.info("Reconciling…", { autoClose: false });
     try {
       await AccountingService.BulkReconcileTransactions(unreconciled.map((t) => t.id));
@@ -400,7 +457,7 @@ const BankReconciliation: React.FC = () => {
       toast.dismiss(toastId);
       toast.error(error?.response?.data?.error || "Failed to reconcile transactions");
     } finally {
-      setReconciling(false);
+      setBulkReconciling(false);
     }
   };
 
@@ -423,8 +480,9 @@ const BankReconciliation: React.FC = () => {
         ending
       );
       toast.success("Reconciliation period started");
+      skipTxnEffectRef.current = true;
       await loadReconContext(selectedAccount);
-      await loadTransactions();
+      await loadTransactions(startDateInput);
     } catch (error: any) {
       toast.error(error?.response?.data?.error || "Failed to start reconciliation period");
     } finally {
@@ -457,13 +515,45 @@ const BankReconciliation: React.FC = () => {
     }
   };
 
+  const schedulePersistStatementFields = (date: string, balanceStr: string) => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    if (!hasOpenPeriod || !date) return;
+    persistTimerRef.current = setTimeout(() => {
+      persistStatementFields(date, balanceStr);
+    }, 300);
+  };
+
+  const handleStatementDateChange = (value: string) => {
+    setStatementDate(value);
+    // Optimistic banner update so Summary reflects the pick immediately.
+    setReconContext((prev) =>
+      prev?.openPeriod
+        ? { ...prev, openPeriod: { ...prev.openPeriod, statementDate: value } }
+        : prev
+    );
+    schedulePersistStatementFields(value, statementBalanceRef.current);
+  };
+
+  const handleStatementBalanceChange = (value: string) => {
+    setStatementBalance(value);
+    schedulePersistStatementFields(statementDateRef.current, value);
+  };
+
   const handleStatementDateBlur = () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     if (hasOpenPeriod && statementDate) {
       persistStatementFields(statementDate, statementBalance);
     }
   };
 
   const handleStatementBalanceBlur = () => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     if (hasOpenPeriod && statementDate) {
       persistStatementFields(statementDate, statementBalance);
     }
@@ -479,8 +569,9 @@ const BankReconciliation: React.FC = () => {
     try {
       await AccountingService.CompleteBankReconciliationPeriod(openPeriod.id);
       toast.success("Reconciliation period completed");
+      skipTxnEffectRef.current = true;
       await loadReconContext(selectedAccount);
-      await loadTransactions();
+      await loadTransactions("");
     } catch (error: any) {
       toast.error(error?.response?.data?.error || "Failed to complete reconciliation");
     } finally {
@@ -501,14 +592,27 @@ const BankReconciliation: React.FC = () => {
   };
 
   const handleStatementImported = async (result: BankStatementImportResult) => {
+    skipTxnEffectRef.current = true;
+    // Avoid empty list when import sets an older statement date against a rolling filter.
+    setFilters((prev) =>
+      prev.dateRange === "All Dates" ? prev : { ...prev, dateRange: "All Dates" }
+    );
+    filtersRef.current = {
+      ...filtersRef.current,
+      dateRange: "All Dates",
+    };
+
+    let nextDate = statementDateRef.current;
     if (openPeriod) {
-      const nextDate = result.statementDate || statementDate || openPeriod.statementDate;
+      nextDate = result.statementDate || statementDate || openPeriod.statementDate;
       const nextBal =
         result.statementBalance != null && result.statementBalance !== ""
           ? result.statementBalance
           : statementBalance || String(openPeriod.endingBalance);
       setStatementDate(nextDate);
       setStatementBalance(nextBal);
+      statementDateRef.current = nextDate;
+      statementBalanceRef.current = nextBal;
       try {
         await AccountingService.UpdateBankReconciliationPeriod(openPeriod.id, {
           statementDate: nextDate,
@@ -890,7 +994,7 @@ const BankReconciliation: React.FC = () => {
                 <input
                   type="date"
                   value={statementDate}
-                  onChange={(e) => setStatementDate(e.target.value)}
+                  onChange={(e) => handleStatementDateChange(e.target.value)}
                   onBlur={handleStatementDateBlur}
                   style={inputStyle}
                 />
@@ -912,7 +1016,7 @@ const BankReconciliation: React.FC = () => {
                   type="number"
                   step="0.01"
                   value={statementBalance}
-                  onChange={(e) => setStatementBalance(e.target.value)}
+                  onChange={(e) => handleStatementBalanceChange(e.target.value)}
                   onBlur={handleStatementBalanceBlur}
                   style={inputStyle}
                 />
@@ -1132,24 +1236,24 @@ const BankReconciliation: React.FC = () => {
 
           <button
             onClick={handleBulkReconcile}
-            disabled={reconciling || loading || !hasOpenPeriod}
+            disabled={isBusyReconciling || loading || !hasOpenPeriod}
             style={{
               padding: "0.5rem 1rem",
-              backgroundColor: reconciling || !hasOpenPeriod ? "#6b7280" : "#10b981",
+              backgroundColor: bulkReconciling || !hasOpenPeriod ? "#6b7280" : "#10b981",
               color: "white",
               border: "none",
               borderRadius: "0.375rem",
-              cursor: reconciling || loading || !hasOpenPeriod ? "not-allowed" : "pointer",
+              cursor: isBusyReconciling || loading || !hasOpenPeriod ? "not-allowed" : "pointer",
               fontSize: "0.875rem",
               fontWeight: 500,
               display: "flex",
               alignItems: "center",
               gap: "0.5rem",
-              opacity: reconciling || loading || !hasOpenPeriod ? 0.7 : 1,
+              opacity: isBusyReconciling || loading || !hasOpenPeriod ? 0.7 : 1,
             }}
           >
             <FontAwesomeIcon icon={faCheckCircle} />
-            {reconciling ? "Reconciling…" : "Reconcile All"}
+            {bulkReconciling ? "Reconciling…" : "Reconcile All"}
           </button>
         </div>
       </div>
@@ -1298,11 +1402,11 @@ const BankReconciliation: React.FC = () => {
                     <td style={{ padding: "1rem 1.5rem", textAlign: "center" }}>
                       <button
                         onClick={() => handleReconcile(transaction.id)}
-                        disabled={reconciling || !hasOpenPeriod}
+                        disabled={isBusyReconciling || !hasOpenPeriod}
                         style={{
                           padding: "0.25rem 0.75rem",
                           backgroundColor:
-                            reconciling || !hasOpenPeriod
+                            !hasOpenPeriod || reconcilingId === transaction.id
                               ? "#9ca3af"
                               : transaction.reconciled
                                 ? "#ef4444"
@@ -1310,17 +1414,18 @@ const BankReconciliation: React.FC = () => {
                           color: "white",
                           border: "none",
                           borderRadius: "0.25rem",
-                          cursor: reconciling || !hasOpenPeriod ? "not-allowed" : "pointer",
+                          cursor:
+                            isBusyReconciling || !hasOpenPeriod ? "not-allowed" : "pointer",
                           fontSize: "0.75rem",
                           fontWeight: 500,
-                          opacity: reconciling || !hasOpenPeriod ? 0.7 : 1,
+                          opacity: isBusyReconciling || !hasOpenPeriod ? 0.7 : 1,
                         }}
                       >
                         <FontAwesomeIcon
                           icon={transaction.reconciled ? faExclamationTriangle : faCheckCircle}
                           style={{ marginRight: "0.25rem" }}
                         />
-                        {reconciling
+                        {reconcilingId === transaction.id
                           ? "Updating…"
                           : transaction.reconciled
                             ? "Unreconcile"
@@ -1336,7 +1441,9 @@ const BankReconciliation: React.FC = () => {
 
         {transactions.length === 0 && !loading && (
           <div style={{ textAlign: "center", padding: "2rem", color: "#6b7280" }}>
-            No bank transactions found matching the current filters.
+            {loadError
+              ? "Could not load bank transactions. Try refreshing or adjusting filters."
+              : "No bank transactions found matching the current filters."}
           </div>
         )}
       </div>

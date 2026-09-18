@@ -48,7 +48,7 @@ namespace CimmpleAPI.Services
                 Subject = "Your Cimmple account",
                 Body = body,
                 IsHtml = true
-            });
+            }, configuration);
         }
 
         public static (bool sent, string? error) TrySendPasswordResetNotice(
@@ -97,7 +97,7 @@ namespace CimmpleAPI.Services
                 Subject = "Your Cimmple password was reset",
                 Body = body,
                 IsHtml = true
-            });
+            }, configuration);
         }
 
         public static (bool sent, string? error) TrySendVendorPortalInvite(
@@ -135,7 +135,7 @@ namespace CimmpleAPI.Services
                 Subject = "Your Cimmple vendor portal access",
                 Body = body,
                 IsHtml = true
-            });
+            }, configuration);
         }
     }
 }

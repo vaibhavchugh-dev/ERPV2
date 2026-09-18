@@ -42,6 +42,7 @@ BEGIN
         [MaxConcurrentSessions] int NOT NULL DEFAULT 3,
         [FailedLoginAttempts] int NOT NULL DEFAULT 5,
         [AccountLockoutMinutes] int NOT NULL DEFAULT 15,
+        [EmailDeliveryMode] nvarchar(20) NULL DEFAULT 'Hosted',
         [SmtpServer] nvarchar(255) NULL,
         [SmtpPort] int NOT NULL DEFAULT 587,
         [SmtpUseSsl] bit NOT NULL DEFAULT 1,
@@ -114,6 +115,122 @@ BEGIN
         WHERE t.UserId = d.UserId AND t.CreatedDate = d.CreatedDate AND t.PasswordHash = d.PasswordHash
     );
 END");
+
+            // Must be a separate batch from CREATE/other statements: SQL Server compiles the
+            // whole batch and rejects UPDATE referencing a column that is only ADD'ed above.
+            await EnsureEmailDeliveryModeColumnAsync(context);
+            await EnsureLoginSchemaAsync(context);
+        }
+
+        /// <summary>
+        /// Columns/tables required by /api/Auth/Login. Missing ones produce IIS 500 with an empty body.
+        /// </summary>
+        public static async Task EnsureLoginSchemaAsync(CimmpleDbContext context)
+        {
+            await context.Database.ExecuteSqlRawAsync(@"
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'CimmpleFlow')
+    EXEC(N'CREATE SCHEMA CimmpleFlow');
+
+IF OBJECT_ID(N'CimmpleFlow.UserDetails', N'U') IS NULL
+   AND OBJECT_ID(N'CimmpleFlow.UserDetails', N'SN') IS NULL
+   AND OBJECT_ID(N'dbo.UserDetails', N'U') IS NOT NULL
+    EXEC(N'CREATE SYNONYM CimmpleFlow.UserDetails FOR dbo.UserDetails');
+");
+
+            await AddUserDetailsLoginColumnsAsync(context, "dbo.UserDetails");
+            await AddUserDetailsLoginColumnsAsync(context, "CimmpleFlow.UserDetails");
+            await EnsureEmailDeliveryModeColumnAsync(context);
+
+            await context.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'dbo.SystemSettings', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.SystemSettings', N'EmailDeliveryMode') IS NULL
+    EXEC(N'ALTER TABLE dbo.SystemSettings ADD EmailDeliveryMode nvarchar(20) NULL');
+
+IF OBJECT_ID(N'CimmpleFlow.UserRole', N'U') IS NOT NULL
+AND COL_LENGTH(N'CimmpleFlow.UserRole', N'RoleTag') IS NULL
+    EXEC(N'ALTER TABLE CimmpleFlow.UserRole ADD RoleTag nvarchar(max) NULL');
+
+IF OBJECT_ID(N'dbo.UserRole', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.UserRole', N'RoleTag') IS NULL
+    EXEC(N'ALTER TABLE dbo.UserRole ADD RoleTag nvarchar(max) NULL');
+
+IF OBJECT_ID(N'CimmpleFlow.Locations', N'U') IS NOT NULL
+AND COL_LENGTH(N'CimmpleFlow.Locations', N'LocType') IS NULL
+    EXEC(N'ALTER TABLE CimmpleFlow.Locations ADD LocType INT NOT NULL CONSTRAINT DF_Flow_Locations_LocType DEFAULT (0)');
+
+IF OBJECT_ID(N'CimmpleFlow.Locations', N'U') IS NOT NULL
+AND COL_LENGTH(N'CimmpleFlow.Locations', N'ParentLocationId') IS NULL
+    EXEC(N'ALTER TABLE CimmpleFlow.Locations ADD ParentLocationId INT NULL');
+");
+        }
+
+        private static async Task AddUserDetailsLoginColumnsAsync(CimmpleDbContext context, string tableName)
+        {
+            var constraintPrefix = tableName.Replace(".", "_");
+            await context.Database.ExecuteSqlRawAsync($@"
+IF OBJECT_ID(N'{tableName}', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'{tableName}', N'DefaultLocationId') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD DefaultLocationId INT NULL');
+    IF COL_LENGTH(N'{tableName}', N'CanAccessAllLocations') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD CanAccessAllLocations BIT NOT NULL CONSTRAINT DF_{constraintPrefix}_CanAccessAllLocations DEFAULT (0)');
+    IF COL_LENGTH(N'{tableName}', N'FailedLoginCount') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD FailedLoginCount INT NOT NULL CONSTRAINT DF_{constraintPrefix}_FailedLoginCount DEFAULT (0)');
+    IF COL_LENGTH(N'{tableName}', N'LockoutEndUtc') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD LockoutEndUtc DATETIME2 NULL');
+    IF COL_LENGTH(N'{tableName}', N'ProfilePic') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD ProfilePic nvarchar(max) NULL');
+    IF COL_LENGTH(N'{tableName}', N'Department') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD Department nvarchar(max) NULL');
+    IF COL_LENGTH(N'{tableName}', N'EmployeeCategory') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD EmployeeCategory nvarchar(max) NULL');
+    IF COL_LENGTH(N'{tableName}', N'Apartment') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD Apartment nvarchar(max) NULL');
+    IF COL_LENGTH(N'{tableName}', N'PasswordSalt') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD PasswordSalt nvarchar(max) NULL');
+    IF COL_LENGTH(N'{tableName}', N'VendorId') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD VendorId INT NULL');
+END");
+        }
+
+        private static async Task EnsureEmailDeliveryModeColumnAsync(CimmpleDbContext context)
+        {
+            await context.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.columns c
+    INNER JOIN sys.tables t ON c.object_id = t.object_id
+    INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+    WHERE s.name = N'CimmpleFlow'
+      AND t.name = N'SystemSettings'
+      AND c.name = N'EmailDeliveryMode'
+)
+BEGIN
+    ALTER TABLE CimmpleFlow.SystemSettings ADD [EmailDeliveryMode] nvarchar(20) NULL;
+END");
+
+            await context.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'CimmpleFlow.SystemSettings', N'U') IS NOT NULL
+AND EXISTS (
+    SELECT 1
+    FROM sys.columns c
+    INNER JOIN sys.tables t ON c.object_id = t.object_id
+    INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+    WHERE s.name = N'CimmpleFlow'
+      AND t.name = N'SystemSettings'
+      AND c.name = N'EmailDeliveryMode'
+)
+BEGIN
+    UPDATE CimmpleFlow.SystemSettings
+    SET EmailDeliveryMode = N'Custom'
+    WHERE EmailDeliveryMode IS NULL
+      AND NULLIF(LTRIM(RTRIM(SmtpServer)), N'') IS NOT NULL;
+
+    UPDATE CimmpleFlow.SystemSettings
+    SET EmailDeliveryMode = N'Hosted'
+    WHERE EmailDeliveryMode IS NULL;
+END");
         }
 
         public static bool IsMissingTableException(Exception ex)
@@ -123,6 +240,7 @@ END");
                 message += " " + ex.InnerException.Message;
 
             return message.Contains("Invalid object name", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("Invalid column name", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
         }
     }
