@@ -31,17 +31,20 @@ namespace CimmpleAPI.Controllers
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
         private readonly NotificationService _notificationService;
+        private readonly EmailOutboxService _emailOutbox;
 
         public QualityController(
             CimmpleDbContext context,
             IWebHostEnvironment environment,
             IConfiguration configuration,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _environment = environment;
             _configuration = configuration;
             _notificationService = notificationService;
+            _emailOutbox = emailOutbox;
         }
 
         private static int _ncrExternalColumnsReady;
@@ -1511,7 +1514,9 @@ END");
                         return;
                     }
 
-                    var (ok, error) = NcrEmailService.TrySendAssignmentNotice(
+                    var (ok, error) = await NcrEmailService.TryQueueAssignmentNoticeAsync(
+                        _emailOutbox,
+                        tenantId,
                         settings,
                         _configuration,
                         user.Email!,
@@ -1524,7 +1529,7 @@ END");
                         companyName);
 
                     messages.Add(ok
-                        ? $"{roleLabel} notified at {user.Email}."
+                        ? $"{roleLabel} email queued for {user.Email}."
                         : $"{roleLabel} notification failed: {error}");
 
                     if (ok && inbox.Notification != null)

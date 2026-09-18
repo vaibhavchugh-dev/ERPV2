@@ -21,15 +21,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly IAuthService _authService;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
         public VendorController(
             CimmpleDbContext context,
             IAuthService authService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _authService = authService;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         [HttpGet("GetVendorlist")]
@@ -380,7 +383,9 @@ namespace CimmpleAPI.Controllers
                 var settings = await _context.SystemSettings.AsNoTracking()
                     .FirstOrDefaultAsync(s => s.TenantId == tenantId)
                     ?? new SystemSettings { TenantId = tenantId };
-                var (emailOk, emailError) = IdentityEmailService.TrySendVendorPortalInvite(
+                var (emailOk, emailError) = await IdentityEmailService.TryQueueVendorPortalInviteAsync(
+                    _emailOutbox,
+                    tenantId,
                     settings,
                     _configuration,
                     inviteTo!,
@@ -389,7 +394,7 @@ namespace CimmpleAPI.Controllers
                     portalUser.UserName ?? "",
                     newPassword!);
                 inviteEmailMessage = emailOk
-                    ? $"Portal invite emailed to {inviteTo}."
+                    ? $"Portal invite email queued for {inviteTo}."
                     : $"Portal access saved, but invite email failed: {emailError}";
             }
             else if (shouldInvite)

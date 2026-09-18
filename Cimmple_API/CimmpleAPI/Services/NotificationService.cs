@@ -46,11 +46,16 @@ namespace CimmpleAPI.Services
 
         private readonly CimmpleDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
-        public NotificationService(CimmpleDbContext context, IConfiguration configuration)
+        public NotificationService(
+            CimmpleDbContext context,
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         public async Task EnsureSchemaAsync()
@@ -156,23 +161,20 @@ namespace CimmpleAPI.Services
                         linkHtml +
                         $"<p>Thank you,<br/>{WebUtility.HtmlEncode(company)}</p>";
 
-                    var (ok, error) = EmailService.TrySend(settings, new MailRequest
-                    {
-                        To = user.Email!,
-                        Subject = subject,
-                        Body = body,
-                        IsHtml = true
-                    }, _configuration);
+                    var (ok, error) = await _emailOutbox.EnqueueAsync(
+                        request.TenantId,
+                        new MailRequest
+                        {
+                            To = user.Email!,
+                            Subject = subject,
+                            Body = body,
+                            IsHtml = true
+                        },
+                        relatedNotificationId: notification?.Id);
 
+                    // EmailSent means accepted into the outbox; worker marks Notification.EmailSent on SMTP success.
                     result.EmailSent = ok;
                     result.EmailError = ok ? null : error;
-
-                    if (ok && notification != null)
-                    {
-                        notification.EmailSent = true;
-                        notification.EmailSentAt = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
-                    }
                 }
             }
             else if (request.SendEmail && !emailEnabled)

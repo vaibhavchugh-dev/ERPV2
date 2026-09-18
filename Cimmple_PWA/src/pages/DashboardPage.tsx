@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { BarcodeScannerSheet } from "../components/BarcodeScannerSheet";
+import { NotificationBell } from "../components/NotificationBell";
 import {
   DashboardAlert,
   DashboardService,
@@ -181,7 +182,7 @@ export function DashboardPage() {
               />
             </svg>
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-xl font-extrabold tracking-tight leading-tight text-slate-900 dark:text-white">
               Dashboard
             </h1>
@@ -189,6 +190,7 @@ export function DashboardPage() {
               Shop floor
             </p>
           </div>
+          <NotificationBell />
         </header>
 
         {/* Scanner — top of dashboard */}
