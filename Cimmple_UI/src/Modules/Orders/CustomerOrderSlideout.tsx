@@ -33,6 +33,7 @@ import {
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./CustomerOrderSlideout.scss";
 
 const JobOrderSlideout = lazy(() => import("../JobOrders/JobOrderSlideout"));
@@ -70,11 +71,35 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     BuyerName: "",
     QuotationId: undefined,
     QuotationNo: "",
-    Details: [],
+    Details: [
+      {
+        ID: 0,
+        ItemNo: 1,
+        PartName: "",
+        PartNo: "",
+        DueDate: "",
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: 1,
+        Unit: "EA",
+        UnitPrice: 0,
+        JobPriority: 0,
+        Discount: 0,
+        DiscountType: "Percent",
+        ProductId: undefined,
+        LeadTime: "",
+        Notes: "",
+        ShippedQty: 0,
+        ShippingStatus: "Not Started",
+        InvoicedQty: 0,
+        InvoiceStatus: "Not Invoiced",
+      },
+    ],
   });
 
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(orderId > 0);
   const [printing, setPrinting] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
@@ -212,7 +237,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     const today = todayDateOnlyDisplay();
     
     setFormData((prev) => {
-      // If it's a new order (orderId === 0) and no details exist, add one default line item
+      // Always keep at least one blank line so the Line Items table is visible while loading.
       const defaultDetail: OrderDetailReq = {
         ID: 0,
         ItemNo: 1,
@@ -244,16 +269,25 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         ...(orderId === 0
           ? {
               OrderDate: prev.OrderDate || today,
-              Details: prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+              Details:
+                prev.Details.length === 0 ||
+                (prev.Details.length === 1 && isBlankQuoteOrOrderLine(prev.Details[0]))
+                  ? [defaultDetail]
+                  : prev.Details,
             }
-          : {}),
+          : {
+              Details: [defaultDetail],
+            }),
       };
     });
 
     loadCustomers();
 
     if (orderId > 0) {
+      setIsHydrating(true);
       loadOrder(orderId);
+    } else {
+      setIsHydrating(false);
     }
   }, [orderId]);
 
@@ -282,13 +316,45 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     const idToLoad = targetOrderId ?? orderId;
     if (!idToLoad || idToLoad <= 0) return;
     setLoading(true);
+    setIsHydrating(true);
     try {
       const order = await OrderService.GetOrderById(idToLoad);
       if (!order) {
+        setIsHydrating(false);
+        setLoading(false);
         return;
       }
 
-      setFormData(order);
+      setFormData({
+        ...order,
+        Details:
+          order.Details && order.Details.length > 0
+            ? order.Details
+            : [
+                {
+                  ID: 0,
+                  ItemNo: 1,
+                  PartName: "",
+                  PartNo: "",
+                  DueDate: todayDateOnlyDisplay(),
+                  JobNumber: "",
+                  JobDesc: "",
+                  QtyOrdered: 1,
+                  Unit: "EA",
+                  UnitPrice: 0,
+                  JobPriority: 0,
+                  Discount: 0,
+                  DiscountType: "Percent" as const,
+                  ProductId: undefined,
+                  LeadTime: todayDateOnlyDisplay(),
+                  Notes: "",
+                  ShippedQty: 0,
+                  ShippingStatus: "Not Started",
+                  InvoicedQty: 0,
+                  InvoiceStatus: "Not Invoiced",
+                },
+              ],
+      });
 
       if (order.Attachments && Array.isArray(order.Attachments) && order.Attachments.length > 0) {
         const cleanedAttachments: ModuleAttachment[] = order.Attachments.map((a) => {
@@ -339,6 +405,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       setIsStateChanged(false);
       // Show header/lines immediately; related data loads in parallel below
       setLoading(false);
+      setIsHydrating(false);
 
       if (order.Details && order.Details.length > 0) {
         const [jobOrders, shippable, shipmentsData, invoiceable, invoicesData] =
@@ -396,6 +463,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       console.error("Error loading order:", error);
       toast.error(`Error loading order: ${error.message || "Unknown error"}`);
       setLoading(false);
+      setIsHydrating(false);
     }
   };
 
@@ -1524,6 +1592,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           document.body
         )}
       <div className="customer-order-slideout-card" onClick={(e) => e.stopPropagation()}>
+        <SlideoutHydratingOverlay show={isHydrating} label="Loading order…" />
         <div className="customer-order-slideout-header">
           <div>
             <h2>{effectiveOrderId > 0 ? "Edit Order" : "New Order"}</h2>
@@ -1772,8 +1841,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
               </div>
               {errors.Details && <span className="error-message">{errors.Details}</span>}
               
-              {formData.Details.length > 0 && (
-                <div className="line-items-table-container" style={{ overflowX: "auto" }}>
+              <div className="line-items-table-container" style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
@@ -2494,7 +2562,6 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     </tfoot>
                   </table>
                 </div>
-              )}
             </div>
 
             {/* Shipments Section */}
