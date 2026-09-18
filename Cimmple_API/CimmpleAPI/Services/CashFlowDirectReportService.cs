@@ -19,6 +19,11 @@ public static class CashFlowDirectReportService
         public string Reference { get; set; } = "";
         public string Category { get; set; } = "";
         public decimal Amount { get; set; }
+        /// <summary>Payment / bank transaction id when available.</summary>
+        public int? TransactionId { get; set; }
+        public int? AccountId { get; set; }
+        public bool? IsCustomer { get; set; }
+        public string SourceType { get; set; } = "";
     }
 
     public sealed class SectionDto
@@ -130,7 +135,10 @@ public static class CashFlowDirectReportService
                 Description = t.Description ?? "Customer payment",
                 Reference = t.invoiceNo ?? t.CheckNo ?? "",
                 Category = "Cash received from customers",
-                Amount = amt
+                Amount = amt,
+                TransactionId = t.TransactionID,
+                IsCustomer = true,
+                SourceType = "payment"
             });
         }
 
@@ -155,7 +163,10 @@ public static class CashFlowDirectReportService
                 Description = t.Description ?? "Vendor payment",
                 Reference = t.invoiceNo ?? t.CheckNo ?? "",
                 Category = "Cash paid to vendors",
-                Amount = -amt
+                Amount = -amt,
+                TransactionId = t.TransactionID,
+                IsCustomer = false,
+                SourceType = "payment"
             });
         }
 
@@ -201,7 +212,10 @@ public static class CashFlowDirectReportService
                 Description = $"{account.AccountCode} — {account.AccountName}",
                 Reference = t?.invoiceNo ?? t?.CheckNo ?? "",
                 Category = account.MainGroup ?? account.AccountType ?? "",
-                Amount = signedAmount
+                Amount = signedAmount,
+                TransactionId = t?.TransactionID,
+                AccountId = account.AccountID,
+                SourceType = "coa-cash"
             };
             if (bucket == "investing") investing.Add(line);
             else financing.Add(line);

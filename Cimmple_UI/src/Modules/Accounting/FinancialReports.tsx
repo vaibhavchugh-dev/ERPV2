@@ -14,6 +14,7 @@ import {
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import ReportDrillDrawer, { DrillTarget } from "./ReportDrillDrawer";
 import "./FinancialReports.scss";
 
 interface ReportType {
@@ -141,6 +142,7 @@ const FinancialReports: React.FC = () => {
   const [reportData, setReportData] = useState<any>(null);
   const [loadedReportId, setLoadedReportId] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [drillTarget, setDrillTarget] = useState<DrillTarget | null>(null);
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -186,11 +188,46 @@ const FinancialReports: React.FC = () => {
     }
     setSelectedReport(reportId);
     setErrorMessage("");
+    setDrillTarget(null);
     // Clear stale preview when switching reports
     if (loadedReportId !== reportId) {
       setReportData(null);
       setLoadedReportId("");
     }
+  };
+
+  const resolveDrillRange = (data: any): { startDate: string; endDate: string } => {
+    if (data?.periodStart && data?.periodEnd) {
+      return { startDate: data.periodStart, endDate: data.periodEnd };
+    }
+    if (data?.asOfDate) {
+      const asOf = String(data.asOfDate);
+      const year = asOf.slice(0, 4) || String(new Date().getFullYear());
+      return { startDate: `${year}-01-01`, endDate: asOf };
+    }
+    if (dateRange === "Custom" && customStartDate && customEndDate) {
+      return { startDate: customStartDate, endDate: customEndDate };
+    }
+    const end = ymdLocal(new Date());
+    const start = new Date();
+    start.setMonth(start.getMonth() - 1);
+    start.setDate(1);
+    return { startDate: ymdLocal(start), endDate: end };
+  };
+
+  const openAccountDrill = (ln: any, data: any) => {
+    const accountId = Number(ln?.accountId);
+    if (!accountId) return;
+    const { startDate, endDate } = resolveDrillRange(data);
+    setDrillTarget({
+      kind: "account",
+      accountId,
+      accountCode: ln.accountCode,
+      accountName: ln.accountName,
+      startDate,
+      endDate,
+      locationId: locationIdParam || null,
+    });
   };
 
   /** Explicit reportId avoids React setState race (Quick Action / list click). */
@@ -211,6 +248,7 @@ const FinancialReports: React.FC = () => {
     setErrorMessage("");
     setReportData(null);
     setLoadedReportId("");
+    setDrillTarget(null);
 
     try {
       const data = await AccountingService.GenerateFinancialReport(
@@ -422,6 +460,7 @@ const FinancialReports: React.FC = () => {
                       setDateRange(e.target.value);
                       setReportData(null);
                       setLoadedReportId("");
+                      setDrillTarget(null);
                     }}
                   >
                     <option value="This Month">This Month</option>
@@ -443,6 +482,7 @@ const FinancialReports: React.FC = () => {
                       masterListFilter.onChange(e.target.value);
                       setReportData(null);
                       setLoadedReportId("");
+                      setDrillTarget(null);
                     }}
                   >
                     {masterListFilter.options.map((option) => (
@@ -465,6 +505,7 @@ const FinancialReports: React.FC = () => {
                           setCustomStartDate(e.target.value);
                           setReportData(null);
                           setLoadedReportId("");
+                          setDrillTarget(null);
                         }}
                       />
                     </div>
@@ -478,6 +519,7 @@ const FinancialReports: React.FC = () => {
                           setCustomEndDate(e.target.value);
                           setReportData(null);
                           setLoadedReportId("");
+                          setDrillTarget(null);
                         }}
                       />
                     </div>
@@ -546,10 +588,42 @@ const FinancialReports: React.FC = () => {
                       reportData.periodEnd &&
                       `Period ${reportData.periodStart} to ${reportData.periodEnd}`}
                   </span>
+                  <span className="fr-muted">
+                    Click a row to drill down (accounts, aging, cash flow, statements, vendors).
+                  </span>
                 </div>
-                <ReportBody data={reportData} />
+                <ReportBody
+                  data={reportData}
+                  onAccountClick={(ln) => openAccountDrill(ln, reportData)}
+                  onAgingClick={(bucket) =>
+                    setDrillTarget({
+                      kind: "aging",
+                      bucket: bucket.bucket || "",
+                      invoices: bucket.invoices || [],
+                      isAp: loadedReportId === "ap-aging",
+                    })
+                  }
+                  onCashFlowClick={(line) =>
+                    setDrillTarget({ kind: "cashflow", line })
+                  }
+                  onStatementLineClick={(line, customerName) =>
+                    setDrillTarget({
+                      kind: "statement-line",
+                      customerName,
+                      line,
+                    })
+                  }
+                  onVendorClick={(vendor) =>
+                    setDrillTarget({ kind: "vendor", vendor })
+                  }
+                />
               </div>
             )}
+
+            <ReportDrillDrawer
+              target={drillTarget}
+              onClose={() => setDrillTarget(null)}
+            />
           </div>
         </section>
       </div>
@@ -557,7 +631,21 @@ const FinancialReports: React.FC = () => {
   );
 };
 
-function ReportBody({ data }: { data: any }) {
+function ReportBody({
+  data,
+  onAccountClick,
+  onAgingClick,
+  onCashFlowClick,
+  onStatementLineClick,
+  onVendorClick,
+}: {
+  data: any;
+  onAccountClick: (ln: any) => void;
+  onAgingClick: (bucket: any) => void;
+  onCashFlowClick: (line: any) => void;
+  onStatementLineClick: (line: any, customerName?: string) => void;
+  onVendorClick: (vendor: any) => void;
+}) {
   if (!data) return null;
 
   return (
@@ -583,7 +671,14 @@ function ReportBody({ data }: { data: any }) {
               },
             ] as const
           ).map((sec) => (
-            <SectionTable key={sec.title} title={sec.title} lines={sec.lines} amountKey="balance" subtotal={sec.total} />
+            <SectionTable
+              key={sec.title}
+              title={sec.title}
+              lines={sec.lines}
+              amountKey="balance"
+              subtotal={sec.total}
+              onAccountClick={onAccountClick}
+            />
           ))}
           <TotalsRow label="Total Assets" value={data.assets.totalAssets} strong />
         </div>
@@ -611,7 +706,14 @@ function ReportBody({ data }: { data: any }) {
               },
             ] as const
           ).map((sec) => (
-            <SectionTable key={sec.title} title={sec.title} lines={sec.lines} amountKey="balance" subtotal={sec.total} />
+            <SectionTable
+              key={sec.title}
+              title={sec.title}
+              lines={sec.lines}
+              amountKey="balance"
+              subtotal={sec.total}
+              onAccountClick={onAccountClick}
+            />
           ))}
           <TotalsRow
             label="Total Liabilities and Equity"
@@ -643,6 +745,7 @@ function ReportBody({ data }: { data: any }) {
                 codeKey="accountCode"
                 nameKey="accountName"
                 subtotal={sec.subtotal}
+                onAccountClick={onAccountClick}
               />
             );
           })}
@@ -674,9 +777,18 @@ function ReportBody({ data }: { data: any }) {
                     </thead>
                     <tbody>
                       {sec.lines.map((ln: any, i: number) => (
-                        <tr key={i}>
+                        <tr
+                          key={i}
+                          className="fr-row-click"
+                          onClick={() => onCashFlowClick(ln)}
+                          title="View payment / invoice links"
+                        >
                           <td>{ln.date || ""}</td>
-                          <td>{ln.description || ln.category || ""}</td>
+                          <td>
+                            <span className="fr-drillable">
+                              {ln.description || ln.category || ""}
+                            </span>
+                          </td>
                           <td className="num">{money(ln.amount)}</td>
                         </tr>
                       ))}
@@ -705,10 +817,19 @@ function ReportBody({ data }: { data: any }) {
             <tbody>
               {Array.isArray(data.agingBuckets) &&
                 data.agingBuckets.map((bucket: any, index: number) => (
-                  <tr key={index}>
-                    <td>{bucket.bucket || ""}</td>
+                  <tr
+                    key={index}
+                    className="fr-row-click"
+                    onClick={() => onAgingClick(bucket)}
+                    title="View invoices in this bucket"
+                  >
+                    <td>
+                      <span className="fr-drillable">{bucket.bucket || ""}</span>
+                    </td>
                     <td className="num">{money(bucket.amount)}</td>
-                    <td className="num">{(Number(bucket.percentage) || 0).toFixed(1)}%</td>
+                    <td className="num">
+                      {(Number(bucket.percentage) || 0).toFixed(1)}%
+                    </td>
                   </tr>
                 ))}
             </tbody>
@@ -736,25 +857,41 @@ function ReportBody({ data }: { data: any }) {
             </thead>
             <tbody>
               {Array.isArray(data.accounts) &&
-                data.accounts.map((account: any, index: number) => (
-                  <tr key={index}>
-                    <td className="mono">{account.accountCode || ""}</td>
-                    <td>{account.accountName || ""}</td>
-                    <td>{account.accountType || ""}</td>
-                    <td className="num">
-                      {money(
-                        account.debit ??
-                          (account.balance > 0 ? account.balance : 0)
-                      )}
-                    </td>
-                    <td className="num">
-                      {money(
-                        account.credit ??
-                          (account.balance < 0 ? Math.abs(account.balance) : 0)
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                data.accounts.map((account: any, index: number) => {
+                  const clickable = Number(account.accountId) > 0;
+                  return (
+                    <tr
+                      key={index}
+                      className={clickable ? "fr-row-click" : undefined}
+                      onClick={
+                        clickable ? () => onAccountClick(account) : undefined
+                      }
+                      title={clickable ? "View general ledger activity" : undefined}
+                    >
+                      <td className="mono">
+                        {clickable ? (
+                          <span className="fr-drillable">{account.accountCode || ""}</span>
+                        ) : (
+                          account.accountCode || ""
+                        )}
+                      </td>
+                      <td>{account.accountName || ""}</td>
+                      <td>{account.accountType || ""}</td>
+                      <td className="num">
+                        {money(
+                          account.debit ??
+                            (account.balance > 0 ? account.balance : 0)
+                        )}
+                      </td>
+                      <td className="num">
+                        {money(
+                          account.credit ??
+                            (account.balance < 0 ? Math.abs(account.balance) : 0)
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
           <TotalsRow label="Total Debits" value={data.totalDebits} />
@@ -792,9 +929,18 @@ function ReportBody({ data }: { data: any }) {
                   </thead>
                   <tbody>
                     {st.activity.map((ln: any, i: number) => (
-                      <tr key={i}>
+                      <tr
+                        key={i}
+                        className="fr-row-click"
+                        onClick={() =>
+                          onStatementLineClick(ln, st.customerName)
+                        }
+                        title="View invoice / payment details"
+                      >
                         <td>{ln.date}</td>
-                        <td>{ln.type}</td>
+                        <td>
+                          <span className="fr-drillable">{ln.type}</span>
+                        </td>
                         <td>{ln.reference}</td>
                         <td className="num">{money(ln.charges)}</td>
                         <td className="num">{money(ln.payments)}</td>
@@ -824,10 +970,17 @@ function ReportBody({ data }: { data: any }) {
             </thead>
             <tbody>
               {data.vendors.map((v: any, i: number) => (
-                <tr key={i}>
+                <tr
+                  key={i}
+                  className="fr-row-click"
+                  onClick={() => onVendorClick(v)}
+                  title="View payments and open AP"
+                >
                   <td>
-                    {v.vendorName}
-                    {v.vendorCode ? ` (${v.vendorCode})` : ""}
+                    <span className="fr-drillable">
+                      {v.vendorName}
+                      {v.vendorCode ? ` (${v.vendorCode})` : ""}
+                    </span>
                   </td>
                   <td className="num">{money(v.paymentsInPeriod)}</td>
                   <td className="num">{v.paymentCount || 0}</td>
@@ -851,6 +1004,7 @@ function SectionTable({
   codeKey = "accountCode",
   nameKey = "accountName",
   subtotal,
+  onAccountClick,
 }: {
   title: string;
   lines: any;
@@ -858,6 +1012,7 @@ function SectionTable({
   codeKey?: string;
   nameKey?: string;
   subtotal: unknown;
+  onAccountClick?: (ln: any) => void;
 }) {
   const hasLines = Array.isArray(lines) && lines.length > 0;
   return (
@@ -873,13 +1028,28 @@ function SectionTable({
             </tr>
           </thead>
           <tbody>
-            {lines.map((ln: any, i: number) => (
-              <tr key={i}>
-                <td className="mono">{ln[codeKey] || ""}</td>
-                <td>{ln[nameKey] || ""}</td>
-                <td className="num">{money(ln[amountKey])}</td>
-              </tr>
-            ))}
+            {lines.map((ln: any, i: number) => {
+              const clickable =
+                !!onAccountClick && Number(ln.accountId) > 0;
+              return (
+                <tr
+                  key={i}
+                  className={clickable ? "fr-row-click" : undefined}
+                  onClick={clickable ? () => onAccountClick!(ln) : undefined}
+                  title={clickable ? "View general ledger activity" : undefined}
+                >
+                  <td className="mono">
+                    {clickable ? (
+                      <span className="fr-drillable">{ln[codeKey] || ""}</span>
+                    ) : (
+                      ln[codeKey] || ""
+                    )}
+                  </td>
+                  <td>{ln[nameKey] || ""}</td>
+                  <td className="num">{money(ln[amountKey])}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

@@ -31,9 +31,22 @@ public static class QualityReportsService
                         && n.ReportedDate < endExclusive)
             .Select(n => new
             {
+                n.NcrId,
+                NcrNumber = n.NcrNumber ?? "",
                 n.ReportedDate,
                 Status = n.Status ?? "",
                 Severity = n.Severity ?? "",
+                Title = n.Title ?? ""
+            })
+            .ToList()
+            .Select(n => new NcrTrendRow
+            {
+                NcrId = n.NcrId,
+                NcrNumber = n.NcrNumber,
+                ReportedDate = n.ReportedDate,
+                Status = n.Status,
+                Severity = n.Severity,
+                Title = n.Title
             })
             .ToList();
 
@@ -54,6 +67,7 @@ public static class QualityReportsService
                 Count = g.Count(),
                 Open = g.Count(x => !string.Equals(x.Status, "Closed", StringComparison.OrdinalIgnoreCase)),
                 Closed = g.Count(x => string.Equals(x.Status, "Closed", StringComparison.OrdinalIgnoreCase)),
+                Items = g.OrderByDescending(x => x.ReportedDate).ToList()
             })
             .ToList();
 
@@ -62,7 +76,21 @@ public static class QualityReportsService
                 "Month", "NCRs", "Open", "Closed")
             .WithNumeric(1, 2, 3);
         foreach (var row in byMonth)
-            monthSection.AddRow(row.Month, ReportResultFactory.Num(row.Count), ReportResultFactory.Num(row.Open), ReportResultFactory.Num(row.Closed));
+        {
+            monthSection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "ncr-bucket",
+                    EntityKey = row.Month,
+                    Title = $"NCRs — {row.Month}",
+                    LinkPath = "/quality",
+                    Details = row.Items.Select(ToNcrDrillItem).ToList()
+                },
+                row.Month,
+                ReportResultFactory.Num(row.Count),
+                ReportResultFactory.Num(row.Open),
+                ReportResultFactory.Num(row.Closed));
+        }
         report.Sections.Add(monthSection);
 
         var byStatus = ncrs
@@ -71,7 +99,19 @@ public static class QualityReportsService
             .ThenBy(g => g.Key);
         var statusSection = ReportResultFactory.Section("By Status", "Status", "Count").WithNumeric(1);
         foreach (var g in byStatus)
-            statusSection.AddRow(g.Key, ReportResultFactory.Num(g.Count()));
+        {
+            statusSection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "ncr-bucket",
+                    EntityKey = g.Key,
+                    Title = $"Status: {g.Key}",
+                    LinkPath = "/quality",
+                    Details = g.OrderByDescending(x => x.ReportedDate).Select(ToNcrDrillItem).ToList()
+                },
+                g.Key,
+                ReportResultFactory.Num(g.Count()));
+        }
         report.Sections.Add(statusSection);
 
         var bySeverity = ncrs
@@ -80,11 +120,47 @@ public static class QualityReportsService
             .ThenBy(g => g.Key);
         var severitySection = ReportResultFactory.Section("By Severity", "Severity", "Count").WithNumeric(1);
         foreach (var g in bySeverity)
-            severitySection.AddRow(g.Key, ReportResultFactory.Num(g.Count()));
+        {
+            severitySection.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "ncr-bucket",
+                    EntityKey = g.Key,
+                    Title = $"Severity: {g.Key}",
+                    LinkPath = "/quality",
+                    Details = g.OrderByDescending(x => x.ReportedDate).Select(ToNcrDrillItem).ToList()
+                },
+                g.Key,
+                ReportResultFactory.Num(g.Count()));
+        }
         report.Sections.Add(severitySection);
 
         return report;
     }
+
+    private sealed class NcrTrendRow
+    {
+        public int NcrId { get; set; }
+        public string NcrNumber { get; set; } = "";
+        public DateTime ReportedDate { get; set; }
+        public string Status { get; set; } = "";
+        public string Severity { get; set; } = "";
+        public string Title { get; set; } = "";
+    }
+
+    private static ReportDrillItemDto ToNcrDrillItem(NcrTrendRow n) =>
+        new()
+        {
+            Label = string.IsNullOrWhiteSpace(n.NcrNumber) ? $"NCR #{n.NcrId}" : n.NcrNumber,
+            SubLabel = Truncate(n.Title, 80),
+            Date = n.ReportedDate.ToString("yyyy-MM-dd"),
+            Status = string.IsNullOrWhiteSpace(n.Status) ? "—" : n.Status,
+            EntityId = n.NcrId,
+            LinkPath = "/quality"
+        };
+
+    private static string Truncate(string value, int max) =>
+        string.IsNullOrEmpty(value) ? "" : (value.Length <= max ? value : value[..(max - 1)] + "…");
 
     public static ReportResultDto BuildDefectRate(
         CimmpleDbContext db,

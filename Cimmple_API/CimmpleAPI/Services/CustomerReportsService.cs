@@ -142,10 +142,13 @@ public static class CustomerReportsService
         var orders = ordersQuery
             .Select(o => new
             {
+                o.OrderID,
+                o.PONumber,
                 o.CustomerID,
                 CustomerName = o.CustomerName ?? "",
                 o.OrderDate,
                 o.TotalAmount,
+                Status = o.Status ?? ""
             })
             .ToList();
 
@@ -153,12 +156,14 @@ public static class CustomerReportsService
             .GroupBy(o => new { o.CustomerID, o.CustomerName })
             .Select(g => new
             {
+                g.Key.CustomerID,
                 Customer = string.IsNullOrWhiteSpace(g.Key.CustomerName)
                     ? $"Customer #{g.Key.CustomerID}"
                     : g.Key.CustomerName,
                 Orders = g.Count(),
                 OrderValue = g.Sum(x => x.TotalAmount),
                 LastOrder = g.Max(x => x.OrderDate),
+                Items = g.OrderByDescending(x => x.OrderDate).ToList()
             })
             .OrderByDescending(x => x.OrderValue)
             .ThenBy(x => x.Customer)
@@ -175,6 +180,23 @@ public static class CustomerReportsService
         foreach (var row in byCustomer)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "customer",
+                    EntityId = row.CustomerID > 0 ? row.CustomerID : null,
+                    Title = row.Customer,
+                    LinkPath = "/orders/customer",
+                    Details = row.Items.Select(o => new ReportDrillItemDto
+                    {
+                        Label = FormatCustomerOrderNo(o.PONumber),
+                        SubLabel = string.IsNullOrWhiteSpace(o.Status) ? "—" : o.Status,
+                        Date = o.OrderDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(o.TotalAmount),
+                        Status = o.Status,
+                        EntityId = o.OrderID,
+                        LinkPath = "/orders/customer"
+                    }).ToList()
+                },
                 row.Customer,
                 ReportResultFactory.Num(row.Orders),
                 ReportResultFactory.Money(row.OrderValue),
@@ -225,12 +247,14 @@ public static class CustomerReportsService
                     .Count();
                 return new
                 {
+                    g.Key.CustomerId,
                     Customer = string.IsNullOrWhiteSpace(g.Key.CustomerName)
                         ? $"Customer #{g.Key.CustomerId}"
                         : g.Key.CustomerName,
                     Revenue = g.Sum(x => x.TotalAmount),
                     Invoices = g.Count(),
                     Orders = orderIds,
+                    Items = g.OrderByDescending(x => x.InvoiceDate).ToList()
                 };
             })
             .OrderByDescending(x => x.Revenue)
@@ -248,6 +272,22 @@ public static class CustomerReportsService
         foreach (var row in top)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "customer",
+                    EntityId = row.CustomerId > 0 ? row.CustomerId : null,
+                    Title = row.Customer,
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        EntityId = inv.InvoiceId,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
                 row.Customer,
                 ReportResultFactory.Money(row.Revenue),
                 ReportResultFactory.Num(row.Invoices),
@@ -447,4 +487,7 @@ public static class CustomerReportsService
         var p = (prefix ?? "").Trim();
         return string.IsNullOrEmpty(p) ? invoiceNo.ToString() : $"{p}{invoiceNo}";
     }
+
+    private static string FormatCustomerOrderNo(int poNumber) =>
+        poNumber < 1000 ? $"CO#{poNumber + 999}" : $"CO#{poNumber}";
 }

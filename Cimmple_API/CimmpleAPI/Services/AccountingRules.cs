@@ -166,6 +166,18 @@ namespace CimmpleAPI.Services
             };
         }
 
+        /// <summary>Bucket name for a single due date (matches <see cref="CalculateAgingBuckets"/>).</summary>
+        public static string AgingBucketName(DateTime dueDate, DateTime asOf)
+        {
+            asOf = asOf.Date;
+            dueDate = dueDate.Date;
+            if (dueDate >= asOf) return "Current";
+            if (dueDate >= asOf.AddDays(-30)) return "1-30 Days";
+            if (dueDate >= asOf.AddDays(-60)) return "31-60 Days";
+            if (dueDate >= asOf.AddDays(-90)) return "61-90 Days";
+            return "Over 90 Days";
+        }
+
         /// <summary>
         /// Due date from invoice date + payment term days (when term is selected).
         /// </summary>

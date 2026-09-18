@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useHistory } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
   InventoryService,
@@ -122,6 +122,7 @@ const InventoryRowActions: React.FC<{
 
 const Inventory: React.FC = () => {
   const history = useHistory();
+  const location = useLocation();
   const { locationId: activeLocationId } = useActiveLocation();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [alerts, setAlerts] = useState<LowStockAlert[]>([]);
@@ -139,6 +140,16 @@ const Inventory: React.FC = () => {
   const [reservations, setReservations] = useState<InventoryReservation[]>([]);
   const [itemMovements, setItemMovements] = useState<InventoryTransaction[] | null>(null);
   const [historyBalance, setHistoryBalance] = useState<InventoryBalance | null>(null);
+
+  // Seed search from report drill-down: ?search=
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const search = params.get("search");
+    if (search && search.trim()) {
+      setSearchTerm(search.trim());
+      history.replace(location.pathname);
+    }
+  }, [location.search, history, location.pathname]);
 
   // Keep inventory filter aligned with TopBar working site.
   useEffect(() => {

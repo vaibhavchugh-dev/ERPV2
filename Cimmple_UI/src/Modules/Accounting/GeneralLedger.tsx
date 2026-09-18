@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import {
@@ -15,6 +16,9 @@ const ymdLocal = (d: Date) => {
 };
 
 const GeneralLedger: React.FC = () => {
+  const location = useLocation();
+  const history = useHistory();
+  const seededRef = useRef(false);
   const [accounts, setAccounts] = useState<ChartofAccountMaster[]>([]);
   const [accountId, setAccountId] = useState(0);
   const [startDate, setStartDate] = useState(() => {
@@ -25,6 +29,7 @@ const GeneralLedger: React.FC = () => {
   const [endDate, setEndDate] = useState(() => ymdLocal(new Date()));
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [pendingAutoRun, setPendingAutoRun] = useState(false);
 
   const storageTenant = React.useMemo(() => {
     try {
@@ -49,13 +54,43 @@ const GeneralLedger: React.FC = () => {
     loadAccounts();
   }, [loadAccounts]);
 
+  // Seed from report drill-down: ?accountId=&startDate=&endDate=&run=1
+  useEffect(() => {
+    if (seededRef.current) return;
+    const params = new URLSearchParams(location.search);
+    const aid = parseInt(params.get("accountId") || "", 10);
+    const start = params.get("startDate");
+    const end = params.get("endDate");
+    const run = params.get("run");
+    let touched = false;
+    if (!isNaN(aid) && aid > 0) {
+      setAccountId(aid);
+      touched = true;
+    }
+    if (start) {
+      setStartDate(start);
+      touched = true;
+    }
+    if (end) {
+      setEndDate(end);
+      touched = true;
+    }
+    if (touched) {
+      seededRef.current = true;
+      if (run === "1" && !isNaN(aid) && aid > 0) {
+        setPendingAutoRun(true);
+      }
+      history.replace(location.pathname);
+    }
+  }, [location.search, history, location.pathname]);
+
   useEffect(() => {
     if (accounts.length > 0 && accountId === 0) {
       setAccountId(accounts[0].accountID);
     }
   }, [accounts, accountId]);
 
-  const runQuery = async () => {
+  const runQuery = useCallback(async () => {
     if (!accountId) {
       toast.error("Select an account.");
       return;
@@ -79,7 +114,13 @@ const GeneralLedger: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accountId, startDate, endDate]);
+
+  useEffect(() => {
+    if (!pendingAutoRun || !accountId) return;
+    setPendingAutoRun(false);
+    runQuery();
+  }, [pendingAutoRun, accountId, runQuery]);
 
   return (
     <div className="general-ledger-page">

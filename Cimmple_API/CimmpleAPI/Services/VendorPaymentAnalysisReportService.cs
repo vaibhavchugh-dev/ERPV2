@@ -1,4 +1,5 @@
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace CimmpleAPI.Services;
@@ -10,6 +11,26 @@ public static class VendorPaymentAnalysisReportService
 {
     private const decimal Epsilon = 0.009m;
 
+    public sealed class PaymentLineDto
+    {
+        public string Date { get; set; } = "";
+        public string Reference { get; set; } = "";
+        public string Description { get; set; } = "";
+        public decimal Amount { get; set; }
+        public int? TransactionId { get; set; }
+        public string LinkPath { get; set; } = "/purchasing/vendor-invoices";
+    }
+
+    public sealed class OpenInvoiceDto
+    {
+        public int InvoiceId { get; set; }
+        public string InvoiceNo { get; set; } = "";
+        public string InvoiceDate { get; set; } = "";
+        public string DueDate { get; set; } = "";
+        public decimal OpenBalance { get; set; }
+        public string LinkPath { get; set; } = "/purchasing/vendor-invoices";
+    }
+
     public sealed class VendorRowDto
     {
         public int VendorId { get; set; }
@@ -19,6 +40,8 @@ public static class VendorPaymentAnalysisReportService
         public int PaymentCount { get; set; }
         public decimal OpenApBalance { get; set; }
         public decimal InvoicesPaidAmountInPeriod { get; set; }
+        public List<PaymentLineDto> Payments { get; set; } = new();
+        public List<OpenInvoiceDto> OpenInvoices { get; set; } = new();
     }
 
     public sealed class ResultDto
@@ -67,7 +90,6 @@ public static class VendorPaymentAnalysisReportService
                     Code: g.Select(x => x.VendorCode).FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? ""
                 ));
 
-        // Map payments: prefer vendorid; else match invoiceNo to vendor invoice
         var invoiceToVendor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var vim in vendorInvoices)
         {
@@ -77,7 +99,7 @@ public static class VendorPaymentAnalysisReportService
                 invoiceToVendor[vim.prefixinvoiceno.Trim()] = vim.vid;
         }
 
-        var payByVendor = new Dictionary<int, (decimal Amount, int Count)>();
+        var payByVendor = new Dictionary<int, List<Transactions>>();
         foreach (var t in payments)
         {
             var vid = t.vendorid ?? 0;
@@ -88,22 +110,36 @@ public static class VendorPaymentAnalysisReportService
                     vid = mapped;
             }
             if (vid <= 0)
-            {
-                // Unmatched bucket
                 vid = -1;
-            }
 
-            if (!payByVendor.TryGetValue(vid, out var agg))
-                agg = (0, 0);
-            payByVendor[vid] = (agg.Amount + (t.Amount ?? 0), agg.Count + 1);
+            if (!payByVendor.TryGetValue(vid, out var list))
+            {
+                list = new List<Transactions>();
+                payByVendor[vid] = list;
+            }
+            list.Add(t);
         }
 
-        var openByVendor = vendorInvoices
+        var openInvoicesByVendor = vendorInvoices
             .Where(v => v.PaidAmount < v.TotalAmount - Epsilon)
             .GroupBy(v => v.vid)
             .ToDictionary(
                 g => g.Key,
-                g => g.Sum(v => AccountingRules.OpenBalance(v.TotalAmount, v.PaidAmount)));
+                g => g.Select(v => new OpenInvoiceDto
+                {
+                    InvoiceId = v.Id,
+                    InvoiceNo = !string.IsNullOrWhiteSpace(v.prefixinvoiceno)
+                        ? v.prefixinvoiceno!
+                        : (v.InvoiceNo ?? v.Id.ToString()),
+                    InvoiceDate = v.InvoiceDate.ToString("yyyy-MM-dd"),
+                    DueDate = v.DueDate.ToString("yyyy-MM-dd"),
+                    OpenBalance = AccountingRules.OpenBalance(v.TotalAmount, v.PaidAmount),
+                    LinkPath = "/purchasing/vendor-invoices"
+                }).OrderBy(x => x.DueDate).ToList());
+
+        var openByVendor = openInvoicesByVendor.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Sum(x => x.OpenBalance));
 
         var paidInPeriodByVendor = vendorInvoices
             .Where(v => v.Paydate != null && v.Paydate.Value.Date >= start && v.Paydate.Value.Date <= endDate.Date)
@@ -120,9 +156,11 @@ public static class VendorPaymentAnalysisReportService
         var rows = new List<VendorRowDto>();
         foreach (var vid in vendorIds)
         {
-            payByVendor.TryGetValue(vid, out var pay);
+            payByVendor.TryGetValue(vid, out var payList);
+            payList ??= new List<Transactions>();
             openByVendor.TryGetValue(vid, out var open);
             paidInPeriodByVendor.TryGetValue(vid, out var invPaid);
+            openInvoicesByVendor.TryGetValue(vid, out var openInvs);
 
             string name;
             string code;
@@ -142,18 +180,34 @@ public static class VendorPaymentAnalysisReportService
                 code = "";
             }
 
-            if (pay.Amount < Epsilon && open < Epsilon && invPaid < Epsilon)
+            var payAmount = payList.Sum(p => p.Amount ?? 0);
+            if (payAmount < Epsilon && open < Epsilon && invPaid < Epsilon)
                 continue;
+
+            var paymentLines = payList
+                .OrderBy(p => p.TransactionDate)
+                .Select(p => new PaymentLineDto
+                {
+                    Date = p.TransactionDate?.ToString("yyyy-MM-dd") ?? "",
+                    Reference = p.invoiceNo ?? p.CheckNo ?? "",
+                    Description = p.Description ?? "Vendor payment",
+                    Amount = p.Amount ?? 0,
+                    TransactionId = p.TransactionID,
+                    LinkPath = "/purchasing/vendor-invoices"
+                })
+                .ToList();
 
             rows.Add(new VendorRowDto
             {
                 VendorId = vid,
                 VendorName = name,
                 VendorCode = code,
-                PaymentsInPeriod = pay.Amount,
-                PaymentCount = pay.Count,
+                PaymentsInPeriod = payAmount,
+                PaymentCount = payList.Count,
                 OpenApBalance = open,
-                InvoicesPaidAmountInPeriod = invPaid
+                InvoicesPaidAmountInPeriod = invPaid,
+                Payments = paymentLines,
+                OpenInvoices = openInvs ?? new List<OpenInvoiceDto>()
             });
         }
 

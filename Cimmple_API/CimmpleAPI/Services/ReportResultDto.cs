@@ -9,6 +9,29 @@ public sealed class ReportStatDto
     public bool Warn { get; set; }
 }
 
+/// <summary>Optional drill item under a report row (invoice, PO, NCR, etc.).</summary>
+public sealed class ReportDrillItemDto
+{
+    public string Label { get; set; } = "";
+    public string SubLabel { get; set; } = "";
+    public string Date { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Amount { get; set; } = "";
+    public int? EntityId { get; set; }
+    public string LinkPath { get; set; } = "";
+}
+
+/// <summary>Parallel meta for a section row — enables overlay drill-down in the UI.</summary>
+public sealed class ReportRowMetaDto
+{
+    public string EntityType { get; set; } = "";
+    public int? EntityId { get; set; }
+    public string? EntityKey { get; set; }
+    public string Title { get; set; } = "";
+    public string LinkPath { get; set; } = "";
+    public List<ReportDrillItemDto> Details { get; set; } = new();
+}
+
 public sealed class ReportSectionDto
 {
     public string Title { get; set; } = "";
@@ -16,6 +39,8 @@ public sealed class ReportSectionDto
     /// <summary>True when the column should be right-aligned (numeric).</summary>
     public List<bool> NumericFlags { get; set; } = new();
     public List<List<string>> Rows { get; set; } = new();
+    /// <summary>Aligned with Rows by index; null entry means the row is not drillable.</summary>
+    public List<ReportRowMetaDto?> RowMeta { get; set; } = new();
 }
 
 public sealed class ReportResultDto
@@ -75,6 +100,7 @@ public static class ReportResultFactory
             Columns = columns.ToList(),
             NumericFlags = columns.Select(_ => false).ToList(),
             Rows = new List<List<string>>(),
+            RowMeta = new List<ReportRowMetaDto?>(),
         };
     }
 
@@ -89,7 +115,13 @@ public static class ReportResultFactory
 
     public static void AddRow(this ReportSectionDto section, params string?[] cells)
     {
+        section.AddRow(null, cells);
+    }
+
+    public static void AddRow(this ReportSectionDto section, ReportRowMetaDto? meta, params string?[] cells)
+    {
         section.Rows.Add(cells.Select(c => c ?? "").ToList());
+        section.RowMeta.Add(meta);
     }
 
     public static void AddStat(this ReportResultDto report, string label, string value, bool warn = false)
