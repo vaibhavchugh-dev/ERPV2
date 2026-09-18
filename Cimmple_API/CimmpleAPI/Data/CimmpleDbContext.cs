@@ -152,6 +152,7 @@ namespace CimmpleAPI.Data
         public DbSet<ArReminderLog> ArReminderLogs { get; set; }
         public DbSet<BankReconciliationPeriod> BankReconciliationPeriods { get; set; }
         public DbSet<BankReconciliationPeriodItem> BankReconciliationPeriodItems { get; set; }
+        public DbSet<ReportSchedule> ReportSchedules { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -745,6 +746,26 @@ namespace CimmpleAPI.Data
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => new { e.PeriodId, e.TransactionId }).IsUnique();
                 entity.HasIndex(e => e.TransactionId);
+            });
+
+            modelBuilder.Entity<ReportSchedule>(entity =>
+            {
+                entity.ToTable("ReportSchedule");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ReportCategory).HasMaxLength(32);
+                entity.Property(e => e.ReportType).HasMaxLength(100);
+                entity.Property(e => e.ReportName).HasMaxLength(200);
+                entity.Property(e => e.DateRange).HasMaxLength(50);
+                entity.Property(e => e.Format).HasMaxLength(16);
+                entity.Property(e => e.Frequency).HasMaxLength(16);
+                entity.Property(e => e.TimeZoneId).HasMaxLength(100);
+                entity.Property(e => e.ToEmails).HasMaxLength(1000);
+                entity.Property(e => e.CcEmails).HasMaxLength(1000);
+                entity.Property(e => e.Subject).HasMaxLength(300);
+                entity.Property(e => e.LastRunStatus).HasMaxLength(32);
+                entity.Property(e => e.LastRunError).HasMaxLength(2000);
+                entity.HasIndex(e => new { e.TenantId, e.IsEnabled, e.NextRunUtc });
+                entity.HasIndex(e => new { e.IsEnabled, e.NextRunUtc });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>
