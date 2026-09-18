@@ -440,10 +440,14 @@ const VendorInvoices: React.FC = () => {
   });
   const [showFilters, setShowFilters] = useState(false);
 
-  // Handle URL parameter to open modal (from global search / dashboard)
+  // Handle URL parameter to open modal / seed search (from reports drill-down)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
+    const search = params.get('search');
+    if (search && search.trim()) {
+      setFilters((prev) => ({ ...prev, searchTerm: search.trim(), dateRange: 'All' }));
+    }
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -452,7 +456,11 @@ const VendorInvoices: React.FC = () => {
         setSelectedInvoiceId(id);
         setShowDetailModal(true);
         history.replace(location.pathname, returnTo ? { returnTo } : undefined);
+        return;
       }
+    }
+    if (search && search.trim()) {
+      history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
 

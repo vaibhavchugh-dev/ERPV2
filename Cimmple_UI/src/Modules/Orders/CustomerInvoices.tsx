@@ -393,10 +393,14 @@ const CustomerInvoices: React.FC = () => {
     loadInvoices();
   }, [filters, locationIdParam]);
 
-  // Handle URL parameter to open invoice (from global search / dashboard)
+  // Handle URL parameter to open invoice / seed search (from reports drill-down)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
+    const search = params.get('search');
+    if (search && search.trim()) {
+      setFilters((prev) => ({ ...prev, searchTerm: search.trim(), dateRange: 'All' }));
+    }
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -405,7 +409,11 @@ const CustomerInvoices: React.FC = () => {
         setSelectedInvoiceId(id);
         setShowDetailModal(true);
         history.replace(location.pathname, returnTo ? { returnTo } : undefined);
+        return;
       }
+    }
+    if (search && search.trim()) {
+      history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
 

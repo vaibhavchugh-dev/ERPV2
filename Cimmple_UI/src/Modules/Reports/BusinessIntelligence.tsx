@@ -26,6 +26,9 @@ import {
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { ReportsService } from "../../Common/Services/ReportsService";
+import OperationalReportDrillDrawer, {
+  OperationalDrillMeta,
+} from "./OperationalReportDrillDrawer";
 import "./BusinessIntelligence.scss";
 
 interface ReportType {
@@ -49,6 +52,7 @@ interface ReportSection {
   columns: string[];
   numericFlags?: boolean[];
   rows: string[][];
+  rowMeta?: Array<OperationalDrillMeta | null | undefined>;
 }
 
 const ymdLocal = (d: Date) => {
@@ -355,15 +359,43 @@ const convertReportToCsv = (data: any): string => {
   return lines.join("\n");
 };
 
-const GenericReportBody: React.FC<{ data: any }> = ({ data }) => {
+const DRILLABLE_REPORTS = new Set([
+  "job-status-dashboard",
+  "sales-performance",
+  "top-customers",
+  "vendor-performance",
+  "ncr-trends",
+  "on-time-delivery",
+  "customer-order-history",
+  "purchase-trends",
+  "vendor-delivery",
+  "vendor-cost-analysis",
+  "inventory-valuation",
+  "stock-movement",
+  "quotation-conversion",
+]);
+
+const GenericReportBody: React.FC<{
+  data: any;
+  reportId?: string;
+  onRowDrill?: (meta: OperationalDrillMeta) => void;
+}> = ({ data, reportId, onRowDrill }) => {
   const summary: ReportSummaryItem[] = Array.isArray(data?.summary) ? data.summary : [];
   const sections: ReportSection[] = Array.isArray(data?.sections) ? data.sections : [];
+  const canDrill = !!reportId && DRILLABLE_REPORTS.has(reportId) && !!onRowDrill;
 
   return (
     <div className="rpt-preview-body">
       <div className="rpt-preview-meta">
-        Period: {data?.periodStart} → {data?.periodEnd}
-        {data?.locationId ? ` · Site #${data.locationId}` : " · All sites"}
+        <span>
+          Period: {data?.periodStart} → {data?.periodEnd}
+          {data?.locationId ? ` · Site #${data.locationId}` : " · All sites"}
+        </span>
+        {canDrill && (
+          <span className="rpt-muted">
+            Click a highlighted row to drill down.
+          </span>
+        )}
       </div>
 
       {summary.length > 0 && (
@@ -389,6 +421,7 @@ const GenericReportBody: React.FC<{ data: any }> = ({ data }) => {
         const numericFlags = Array.isArray(section.numericFlags)
           ? section.numericFlags
           : [];
+        const rowMeta = Array.isArray(section.rowMeta) ? section.rowMeta : [];
 
         return (
           <div className="rpt-block" key={`${section.title || "section"}-${sIdx}`}>
@@ -408,18 +441,35 @@ const GenericReportBody: React.FC<{ data: any }> = ({ data }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, rIdx) => (
-                    <tr key={rIdx}>
-                      {(row || []).map((cell, cIdx) => (
-                        <td
-                          key={cIdx}
-                          className={numericFlags[cIdx] ? "num" : undefined}
-                        >
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {rows.map((row, rIdx) => {
+                    const meta = rowMeta[rIdx] || null;
+                    const clickable = canDrill && !!meta;
+                    return (
+                      <tr
+                        key={rIdx}
+                        className={clickable ? "rpt-row-click" : undefined}
+                        onClick={
+                          clickable
+                            ? () => onRowDrill!(meta as OperationalDrillMeta)
+                            : undefined
+                        }
+                        title={clickable ? "View details" : undefined}
+                      >
+                        {(row || []).map((cell, cIdx) => (
+                          <td
+                            key={cIdx}
+                            className={numericFlags[cIdx] ? "num" : undefined}
+                          >
+                            {clickable && cIdx === 0 ? (
+                              <span className="rpt-drillable">{cell}</span>
+                            ) : (
+                              cell
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -452,6 +502,7 @@ const Reports: React.FC = () => {
   const [reportData, setReportData] = useState<any>(null);
   const [loadedReportId, setLoadedReportId] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [drillMeta, setDrillMeta] = useState<OperationalDrillMeta | null>(null);
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -493,6 +544,7 @@ const Reports: React.FC = () => {
     setReportData(null);
     setLoadedReportId("");
     setErrorMessage("");
+    setDrillMeta(null);
   };
 
   const selectReport = (reportId: string) => {
@@ -504,6 +556,7 @@ const Reports: React.FC = () => {
     }
     setSelectedReport(reportId);
     setErrorMessage("");
+    setDrillMeta(null);
     if (loadedReportId !== reportId) {
       setReportData(null);
       setLoadedReportId("");
@@ -521,6 +574,7 @@ const Reports: React.FC = () => {
     setSelectedReport(reportId);
     setLoading(true);
     setErrorMessage("");
+    setDrillMeta(null);
     try {
       const data = await ReportsService.GenerateReport(
         reportId,
@@ -813,8 +867,17 @@ const Reports: React.FC = () => {
             )}
 
             {!loading && !errorMessage && hasPreview && (
-              <GenericReportBody data={reportData} />
+              <GenericReportBody
+                data={reportData}
+                reportId={loadedReportId}
+                onRowDrill={setDrillMeta}
+              />
             )}
+
+            <OperationalReportDrillDrawer
+              meta={drillMeta}
+              onClose={() => setDrillMeta(null)}
+            />
           </div>
         </section>
       </div>

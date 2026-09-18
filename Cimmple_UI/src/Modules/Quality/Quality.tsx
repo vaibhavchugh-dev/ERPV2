@@ -37,10 +37,32 @@ const Quality: React.FC = () => {
   const [selectedNCRId, setSelectedNCRId] = useState<number>(0);
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
 
-  // Handle URL parameter to open slideout (from global search / dashboard)
+  // Handle URL parameter to open slideout / seed filters (from reports drill-down)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get("open");
+    const status = params.get("status");
+    const severity = params.get("severity");
+    let seeded = false;
+
+    if (status && status.trim()) {
+      setFilters((prev) => ({
+        ...prev,
+        status: status.trim(),
+        openOnly: false,
+        dateRange: "All",
+      }));
+      seeded = true;
+    }
+    if (severity && severity.trim()) {
+      setFilters((prev) => ({
+        ...prev,
+        severity: severity.trim(),
+        dateRange: "All",
+      }));
+      seeded = true;
+    }
+
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -49,7 +71,12 @@ const Quality: React.FC = () => {
         setSelectedNCRId(id);
         setShowSlideout(true);
         history.replace(location.pathname, returnTo ? { returnTo } : undefined);
+        return;
       }
+    }
+
+    if (seeded) {
+      history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
 
