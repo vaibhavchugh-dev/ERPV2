@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 namespace CimmpleAPI.Services
 {
     /// <summary>
-    /// Welcome / password-reset / vendor-portal invite emails via tenant SMTP.
+    /// Welcome / password-reset / vendor-portal invite emails via tenant SMTP (queued).
     /// Failures are soft — callers should not roll back account saves when email fails.
     /// </summary>
     public static class IdentityEmailService
@@ -16,7 +16,9 @@ namespace CimmpleAPI.Services
             return string.IsNullOrWhiteSpace(url) ? null : url;
         }
 
-        public static (bool sent, string? error) TrySendEmployeeWelcome(
+        public static async Task<(bool queued, string? error)> TryQueueEmployeeWelcomeAsync(
+            EmailOutboxService outbox,
+            int tenantId,
             SystemSettings settings,
             IConfiguration? configuration,
             string toEmail,
@@ -42,16 +44,18 @@ namespace CimmpleAPI.Services
                 $"<p><a href=\"{safeLogin}\">Sign in</a></p>" +
                 "<p>Please keep this message secure and change your password after signing in if prompted.</p>";
 
-            return EmailService.TrySend(settings, new MailRequest
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
             {
                 To = toEmail.Trim(),
                 Subject = "Your Cimmple account",
                 Body = body,
                 IsHtml = true
-            }, configuration);
+            });
         }
 
-        public static (bool sent, string? error) TrySendPasswordResetNotice(
+        public static async Task<(bool queued, string? error)> TryQueuePasswordResetNoticeAsync(
+            EmailOutboxService outbox,
+            int tenantId,
             SystemSettings settings,
             IConfiguration? configuration,
             string toEmail,
@@ -91,16 +95,18 @@ namespace CimmpleAPI.Services
                     $"<p><strong>Username:</strong> {safeUser}</p>";
             }
 
-            return EmailService.TrySend(settings, new MailRequest
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
             {
                 To = toEmail.Trim(),
                 Subject = "Your Cimmple password was reset",
                 Body = body,
                 IsHtml = true
-            }, configuration);
+            });
         }
 
-        public static (bool sent, string? error) TrySendVendorPortalInvite(
+        public static async Task<(bool queued, string? error)> TryQueueVendorPortalInviteAsync(
+            EmailOutboxService outbox,
+            int tenantId,
             SystemSettings settings,
             IConfiguration? configuration,
             string toEmail,
@@ -129,13 +135,13 @@ namespace CimmpleAPI.Services
                 $"<p><a href=\"{safeLogin}\">Open vendor portal</a></p>" +
                 "<p>Please keep these credentials secure.</p>";
 
-            return EmailService.TrySend(settings, new MailRequest
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
             {
                 To = toEmail.Trim(),
                 Subject = "Your Cimmple vendor portal access",
                 Body = body,
                 IsHtml = true
-            }, configuration);
+            });
         }
     }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { NotificationBell } from "../components/NotificationBell";
 import { AuthService } from "../services/authService";
 import api from "../services/apiClient";
 
@@ -96,8 +97,11 @@ export function ProfilePage() {
           </button>
           <h1 className="text-[1.3rem] font-extrabold tracking-tight text-slate-900 dark:text-white">My Profile</h1>
         </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white dark:bg-white dark:text-slate-900">
-          {initials}
+        <div className="flex items-center gap-2">
+          <NotificationBell />
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white dark:bg-white dark:text-slate-900">
+            {initials}
+          </div>
         </div>
       </header>
 

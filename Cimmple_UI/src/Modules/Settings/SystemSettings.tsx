@@ -1309,7 +1309,7 @@ const SystemSettingsComponent: React.FC = () => {
                     Notification Preferences
                   </h4>
                   <p style={{ margin: '0 0 1rem 0', fontSize: '0.8125rem', color: '#6b7280' }}>
-                    Controls success/info toasts (in-app) and outbound email actions such as payment reminders.
+                    Controls the in-app notification inbox (TopBar bell), success/info toasts, and outbound email actions such as payment reminders.
                     Error messages always show so failures are not hidden.
                   </p>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -1324,7 +1324,7 @@ const SystemSettingsComponent: React.FC = () => {
                         <span style={{ fontSize: '0.875rem' }}>Enable email notifications</span>
                       </label>
                       <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.35rem', marginLeft: '1.5rem' }}>
-                        When off, email actions (e.g. AR payment reminders) are blocked.
+                        When off, email actions (AR reminders, document send, notify-user email) are blocked.
                       </small>
                     </div>
                     <div>
@@ -1338,7 +1338,7 @@ const SystemSettingsComponent: React.FC = () => {
                         <span style={{ fontSize: '0.875rem' }}>Enable in-app notifications</span>
                       </label>
                       <small style={{ color: '#6b7280', fontSize: '0.75rem', display: 'block', marginTop: '0.35rem', marginLeft: '1.5rem' }}>
-                        When off, success/info toasts are suppressed. Errors still appear.
+                        When off, the inbox stops receiving new items and success/info toasts are suppressed. Errors still appear.
                       </small>
                     </div>
                   </div>

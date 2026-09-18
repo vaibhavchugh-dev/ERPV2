@@ -7,6 +7,7 @@ using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -15,10 +16,12 @@ namespace CimmpleAPI.Controllers
     public class VendorInvoiceController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly NotificationService _notificationService;
 
-        public VendorInvoiceController(CimmpleDbContext context)
+        public VendorInvoiceController(CimmpleDbContext context, NotificationService notificationService)
         {
             _context = context;
+            _notificationService = notificationService;
         }
 
         [HttpGet("GetVendorInvoices")]
@@ -600,7 +603,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("ApproveVendorInvoice/{invoiceId}")]
-        public IActionResult ApproveVendorInvoice(int invoiceId)
+        public async Task<IActionResult> ApproveVendorInvoice(int invoiceId)
         {
             try
             {
@@ -633,9 +636,30 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                var wasApproved = invoice.Approved == true;
                 invoice.Approved = true;
 
                 _context.SaveChanges();
+
+                if (!wasApproved)
+                {
+                    var label = !string.IsNullOrWhiteSpace(invoice.prefixinvoiceno)
+                        ? invoice.prefixinvoiceno!
+                        : (!string.IsNullOrWhiteSpace(invoice.InvoiceNo)
+                            ? invoice.InvoiceNo!
+                            : $"Vendor invoice #{invoice.Id}");
+                    await DomainNotificationHelper.NotifyUserAsync(
+                        _notificationService,
+                        tenantId,
+                        invoice.createdby,
+                        userId,
+                        NotificationService.TypeApInvoiceApproved,
+                        $"{label} approved",
+                        $"{label} was approved and is ready for payment.",
+                        "VendorInvoice",
+                        invoice.Id,
+                        $"/purchasing/vendor-invoices?open={invoice.Id}");
+                }
 
                 return Ok(new { result = new { message = "Vendor invoice approved successfully" } });
             }

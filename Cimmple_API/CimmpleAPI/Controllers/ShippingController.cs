@@ -18,11 +18,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
+        private readonly NotificationService _notificationService;
 
-        public ShippingController(CimmpleDbContext context, InventoryService inventoryService)
+        public ShippingController(
+            CimmpleDbContext context,
+            InventoryService inventoryService,
+            NotificationService notificationService)
         {
             _context = context;
             _inventoryService = inventoryService;
+            _notificationService = notificationService;
         }
 
         [HttpGet("GetShippableItems/{orderId}")]
@@ -201,10 +206,26 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Update order status
-                    UpdateOrderShippingStatus(request.OrderId, tenantId);
+                    var previousShipStatus = await UpdateOrderShippingStatusAsync(request.OrderId, tenantId);
 
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
+
+                    if (previousShipStatus != null
+                        && DomainNotificationHelper.StatusBecame(previousShipStatus.Previous, previousShipStatus.Current, "Shipped"))
+                    {
+                        await DomainNotificationHelper.NotifyUserAsync(
+                            _notificationService,
+                            tenantId,
+                            previousShipStatus.OwnerUserId,
+                            GetUserId(),
+                            NotificationService.TypeCustomerOrderShipped,
+                            $"CO-{previousShipStatus.PoNumber} shipped",
+                            $"Customer order CO-{previousShipStatus.PoNumber} was fully shipped.",
+                            "CustomerOrder",
+                            request.OrderId,
+                            $"/orders/customer?open={request.OrderId}");
+                    }
 
                     return Ok(new { result = new { shipmentId = shipment.Id, shipmentNumber = shipmentNumber, message = "Shipment created successfully" } });
                 }
@@ -772,11 +793,12 @@ namespace CimmpleAPI.Controllers
             return null;
         }
 
-        private void UpdateOrderShippingStatus(int orderId, int tenantId)
+        private async Task<OrderShipStatusChange?> UpdateOrderShippingStatusAsync(int orderId, int tenantId)
         {
             var order = _context.CustomerOrder
                 .First(o => o.OrderID == orderId && o.Tenantid == tenantId);
 
+            var previous = order.Status;
             var details = _context.CustomerOrderDetails
                 .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
                 .ToList();
@@ -790,6 +812,27 @@ namespace CimmpleAPI.Controllers
                 order.Status = "Partially Shipped";
             else if (totalShipped == totalOrdered)
                 order.Status = "Shipped";
+
+            return await Task.FromResult(new OrderShipStatusChange
+            {
+                Previous = previous,
+                Current = order.Status,
+                OwnerUserId = order.UserId,
+                PoNumber = order.PONumber
+            });
+        }
+
+        private void UpdateOrderShippingStatus(int orderId, int tenantId)
+        {
+            _ = UpdateOrderShippingStatusAsync(orderId, tenantId).GetAwaiter().GetResult();
+        }
+
+        private sealed class OrderShipStatusChange
+        {
+            public string? Previous { get; set; }
+            public string? Current { get; set; }
+            public int OwnerUserId { get; set; }
+            public int PoNumber { get; set; }
         }
     }
 

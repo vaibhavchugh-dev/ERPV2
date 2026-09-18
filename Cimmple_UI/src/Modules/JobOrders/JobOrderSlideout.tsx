@@ -45,6 +45,7 @@ import {
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import CommentsSection, { EntityComment } from "../../Common/Components/CommentsSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import {
@@ -159,7 +160,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [activeViewerIndex, setActiveViewerIndex] = useState(0);
   /** Session cache for lazily loaded attachment blobs; cleared when slideout closes. */
   const documentCacheRef = useRef(new AttachmentDocumentCache());
-  const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
+  const [comments, setComments] = useState<EntityComment[]>([]);
   const [materialUsage, setMaterialUsage] = useState<JobMaterialUsage[]>([]);
   const [jobReservations, setJobReservations] = useState<InventoryReservation[]>([]);
   const [products, setProducts] = useState<{ id: number; partNo: string; partName: string }[]>([]);
@@ -169,8 +170,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const [materialLedgerPanel, setMaterialLedgerPanel] = useState<"none" | "reserved" | "used">(
     "none"
   );
-  const [newComment, setNewComment] = useState("");
-  const [commentIdCounter, setCommentIdCounter] = useState(1);
   const [customerOrderNumber, setCustomerOrderNumber] = useState<string>(
     formatDisplayCustomerOrderNumber(headerPreview?.customerOrderId || 0)
   );
@@ -1252,27 +1251,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     onClose(false);
   };
 
-  const handleAddComment = () => {
-    if (!newComment.trim()) {
-      toast.error("Please enter a comment");
-      return;
-    }
-
-    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-    const newCommentObj = {
-      id: commentIdCounter,
-      text: newComment,
-      createdAt: new Date().toISOString(),
-      createdBy: storage?.userName || "User",
-    };
-
-    setComments((prev) => [...prev, newCommentObj]);
+  const handleCommentsChange = (next: EntityComment[]) => {
+    setComments(next);
     setFormData((prev) => ({
       ...prev,
-      Comments: [...(prev.Comments || []), newCommentObj],
+      Comments: next,
     }));
-    setNewComment("");
-    setCommentIdCounter((prev) => prev + 1);
   };
 
   const handleApplyJobTemplate = async (pickedTemplate?: JobTemplate) => {
@@ -3922,66 +3906,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
               onViewAttachment={handleOpenDocumentViewer}
             />
 
-            {/* Comments Section */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Comments</h3>
-              
-              {comments.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1rem" }}>
-                  {comments.map((comment) => (
-                    <div
-                      key={comment.id}
-                      style={{
-                        padding: "0.75rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ fontSize: "0.875rem", marginBottom: "0.5rem" }}>{comment.text}</div>
-                      <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                        {comment.createdBy} - {new Date(comment.createdAt).toLocaleString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <textarea
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Add a comment..."
-                  style={{
-                    flex: 1,
-                    padding: "0.75rem",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontFamily: "inherit",
-                    resize: "vertical",
-                    minHeight: "80px",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleAddComment}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#6366f1",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    alignSelf: "flex-start",
-                  }}
-                >
-                  Add Comment
-                </button>
-              </div>
-            </div>
+            <CommentsSection
+              comments={comments}
+              listFirst
+              allowDelete={false}
+              onChange={handleCommentsChange}
+            />
           </div>
 
           <div className="job-order-slideout-footer">

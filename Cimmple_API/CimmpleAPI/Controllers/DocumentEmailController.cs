@@ -14,15 +14,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly DocumentPdfService _documentPdfService;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
         public DocumentEmailController(
             CimmpleDbContext context,
             DocumentPdfService documentPdfService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _documentPdfService = documentPdfService;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         [HttpPost("SendQuotation")]
@@ -183,13 +186,13 @@ namespace CimmpleAPI.Controllers
                 }
             };
 
-            var (ok, error) = EmailService.TrySend(settings, mailRequest, _configuration);
+            var (ok, error) = await _emailOutbox.EnqueueAsync(tenantId, mailRequest);
             if (!ok)
-                return BadRequest(new { message = error ?? "Failed to send email." });
+                return BadRequest(new { message = error ?? "Failed to queue email." });
 
             return Ok(new
             {
-                message = "Email sent successfully.",
+                message = "Email queued for delivery.",
                 toEmail,
                 fileName = pdf.FileName
             });

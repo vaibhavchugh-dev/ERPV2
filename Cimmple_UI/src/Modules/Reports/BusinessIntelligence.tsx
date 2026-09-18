@@ -22,10 +22,12 @@ import {
   faDesktop,
   faCog,
   faMapMarkerAlt,
+  faClock,
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { ReportsService } from "../../Common/Services/ReportsService";
+import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import OperationalReportDrillDrawer, {
   OperationalDrillMeta,
 } from "./OperationalReportDrillDrawer";
@@ -503,6 +505,7 @@ const Reports: React.FC = () => {
   const [loadedReportId, setLoadedReportId] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [drillMeta, setDrillMeta] = useState<OperationalDrillMeta | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -662,6 +665,14 @@ const Reports: React.FC = () => {
           <h1>Reports</h1>
           <p>Select a report, set the period, then run to preview. Export when ready.</p>
         </div>
+        <button
+          type="button"
+          className="rpt-btn rpt-btn-secondary"
+          onClick={() => history.push("/reports/schedules")}
+        >
+          <FontAwesomeIcon icon={faClock} />
+          Scheduled emails
+        </button>
       </header>
 
       <div className="rpt-workspace">
@@ -742,6 +753,19 @@ const Reports: React.FC = () => {
                       title="Export CSV"
                     >
                       CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="rpt-btn rpt-btn-secondary"
+                      disabled={loading || !selectedReport}
+                      onClick={() => {
+                        if (!validateCustomRange()) return;
+                        setScheduleOpen(true);
+                      }}
+                      title="Schedule email"
+                    >
+                      <FontAwesomeIcon icon={faClock} />
+                      Schedule
                     </button>
                   </div>
                 </div>
@@ -881,6 +905,19 @@ const Reports: React.FC = () => {
           </div>
         </section>
       </div>
+
+      <ScheduleReportDialog
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        reportCategory="operational"
+        reportType={selectedReport}
+        reportName={selectedMeta?.name || selectedReport}
+        dateRange={dateRange}
+        customStartDate={customStartDate}
+        customEndDate={customEndDate}
+        locationId={locationIdParam}
+        parameters={buildReportParams("pdf")}
+      />
     </div>
   );
 };

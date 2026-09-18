@@ -23,12 +23,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
         private readonly IConfiguration _configuration;
+        private readonly NotificationService _notificationService;
 
-        public OrderController(CimmpleDbContext context, InventoryService inventoryService, IConfiguration configuration)
+        public OrderController(
+            CimmpleDbContext context,
+            InventoryService inventoryService,
+            IConfiguration configuration,
+            NotificationService notificationService)
         {
             _context = context;
             _inventoryService = inventoryService;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         [HttpGet("GetOrders")]
@@ -612,14 +618,11 @@ namespace CimmpleAPI.Controllers
                 order.locationId = resolvedLocationId;
 
                 // Save comments as JSON
+                List<CommentMentionSource>? coMentions = null;
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
-                    var commentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        WriteIndented = false
-                    };
-                    order.CommentsJson = JsonSerializer.Serialize(request.Comments, commentOptions);
+                    coMentions = CommentMentionHelper.FromDtos(request.Comments);
+                    order.CommentsJson = CommentMentionHelper.SerializeDtosForStorage(request.Comments);
                 }
                 else
                 {
@@ -628,6 +631,22 @@ namespace CimmpleAPI.Controllers
 
                 // Persist order first so new attachments can use OrderID.
                 _context.SaveChanges();
+
+                if (coMentions != null && order.OrderID > 0)
+                {
+                    var label = order.PONumber > 0
+                        ? $"Customer Order CO-{order.PONumber}"
+                        : $"Customer Order #{order.OrderID}";
+                    await CommentMentionHelper.NotifyAsync(
+                        _notificationService,
+                        request.Tenantid,
+                        GetUserId(),
+                        coMentions,
+                        "CustomerOrder",
+                        order.OrderID,
+                        label,
+                        $"/orders/customer?open={order.OrderID}");
+                }
 
                 // If this order was created from a quotation, update the quotation
                 if (request.QuotationId.HasValue && request.QuotationId.Value > 0)
@@ -2278,6 +2297,8 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"SaveVendorOrder: Assigned to order - QuotationId = {order.QuotationId}, QuotationNo = '{order.QuotationNo}', TenantId = {order.Tenantid}");
 
+                int? previousVoOwnerId = null;
+
                 if (order.OrderID == 0 && order.QuotationId.HasValue && order.QuotationId.Value > 0)
                 {
                     var sourceVq = await _context.VendorQuotations
@@ -2373,6 +2394,7 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Update existing order properties
+                    previousVoOwnerId = existingOrder.UserId;
                     existingOrder.VendorID = order.VendorID;
                     existingOrder.VendorCode = order.VendorCode;
                     existingOrder.PONumber = order.PONumber;
@@ -2549,8 +2571,11 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Handle Comments - use safer query approach
+                List<CommentMentionSource>? voMentions = null;
                 if (orderData.TryGetProperty("Comments", out JsonElement commentsElem) && commentsElem.ValueKind == JsonValueKind.Array && commentsElem.GetArrayLength() > 0)
                 {
+                    voMentions = CommentMentionHelper.FromJsonElementArray(commentsElem);
+
                     // Delete existing comments
                     List<VendorOrderComment> existingComments = null;
                     try
@@ -2586,6 +2611,41 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await _context.SaveChangesAsync();
+
+                if (voMentions != null && order.OrderID > 0)
+                {
+                    var label = order.PONumber > 0
+                        ? $"Vendor Order VO-{order.PONumber}"
+                        : $"Vendor Order #{order.OrderID}";
+                    await CommentMentionHelper.NotifyAsync(
+                        _notificationService,
+                        tenantid,
+                        GetUserId(),
+                        voMentions,
+                        "VendorOrder",
+                        order.OrderID,
+                        label,
+                        $"/purchasing/vendor-orders?open={order.OrderID}");
+                }
+
+                if (previousVoOwnerId.HasValue
+                    && previousVoOwnerId.Value > 0
+                    && order.UserId > 0
+                    && previousVoOwnerId.Value != order.UserId
+                    && order.OrderID > 0)
+                {
+                    await DomainNotificationHelper.NotifyUserAsync(
+                        _notificationService,
+                        tenantid,
+                        order.UserId,
+                        GetUserId(),
+                        NotificationService.TypeVendorOrderAssignment,
+                        $"VO-{order.PONumber} assigned to you",
+                        $"Vendor order VO-{order.PONumber} was assigned to you.",
+                        "VendorOrder",
+                        order.OrderID,
+                        $"/purchasing/vendor-orders?open={order.OrderID}");
+                }
 
                 await LinkFinishedProductsOnVendorOrderAsync(order.OrderID, tenantid);
                 await LinkRawMaterialsOnVendorOrderAsync(order.OrderID, tenantid, order.VendorID);
@@ -3779,6 +3839,7 @@ namespace CimmpleAPI.Controllers
 
                 if (order != null)
                 {
+                    var previousReceiveStatus = order.Status;
                     var allDetails = await _context.VendorOrderDetails
                         .Where(d => d.OrderID == order.OrderID && d.Tenantid == tenantId)
                         .ToListAsync();
@@ -3790,9 +3851,28 @@ namespace CimmpleAPI.Controllers
 
                     order.Status = DeriveVendorReceiveStatus(
                         allDetails, allReceivedTotals, order.MaterialType, order.Status ?? "Sent");
-                }
 
-                await _context.SaveChangesAsync();
+                    await _context.SaveChangesAsync();
+
+                    if (DomainNotificationHelper.StatusBecame(previousReceiveStatus, order.Status, "Fully Received"))
+                    {
+                        await DomainNotificationHelper.NotifyUserAsync(
+                            _notificationService,
+                            tenantId,
+                            order.UserId,
+                            GetUserId(),
+                            NotificationService.TypeVendorOrderFullyReceived,
+                            $"VO-{order.PONumber} fully received",
+                            $"Vendor order VO-{order.PONumber} is fully received.",
+                            "VendorOrder",
+                            order.OrderID,
+                            $"/purchasing/vendor-orders?open={order.OrderID}");
+                    }
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
 
                 // Inventory:
                 // - Stock buy (not job-tied): book RawMaterial or FinishedProduct onto the shelf.
@@ -4918,6 +4998,8 @@ namespace CimmpleAPI.Controllers
         public string Text { get; set; } = "";
         public string CreatedAt { get; set; } = "";
         public string CreatedBy { get; set; } = "";
+        /// <summary>Client-only; stripped before CommentsJson persist.</summary>
+        public List<int>? MentionedUserIds { get; set; }
     }
 
     public class OrderDetailReq

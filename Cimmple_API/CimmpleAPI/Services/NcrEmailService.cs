@@ -5,11 +5,13 @@ using Microsoft.Extensions.Configuration;
 namespace CimmpleAPI.Services
 {
     /// <summary>
-    /// Soft-fail NCR workflow emails (investigator / approver assignment).
+    /// Soft-fail NCR workflow emails (investigator / approver assignment) via email outbox.
     /// </summary>
     public static class NcrEmailService
     {
-        public static (bool sent, string? error) TrySendAssignmentNotice(
+        public static async Task<(bool queued, string? error)> TryQueueAssignmentNoticeAsync(
+            EmailOutboxService outbox,
+            int tenantId,
             SystemSettings settings,
             IConfiguration? configuration,
             string toEmail,
@@ -52,13 +54,13 @@ namespace CimmpleAPI.Services
                 linkHtml +
                 $"<p>Thank you,<br/>{company}</p>";
 
-            return EmailService.TrySend(settings, new MailRequest
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
             {
                 To = toEmail.Trim(),
                 Subject = $"{(string.IsNullOrWhiteSpace(ncrNumber) ? "NCR" : ncrNumber.Trim())} — assigned as {roleLabel}",
                 Body = body,
                 IsHtml = true
-            }, configuration);
+            });
         }
     }
 }

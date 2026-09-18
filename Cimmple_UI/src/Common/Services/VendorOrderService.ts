@@ -35,6 +35,7 @@ export interface VendorOrderComment {
   text: string;
   createdAt: string;
   createdBy: string;
+  mentionedUserIds?: number[];
 }
 
 export interface VendorOrderDetail {
@@ -378,7 +379,10 @@ export class VendorOrderService {
         Id: Math.floor(c.id || 0),
         Text: c.text || "",
         CreatedAt: c.createdAt || new Date().toISOString(),
-        CreatedBy: c.createdBy || "User"
+        CreatedBy: c.createdBy || "User",
+        MentionedUserIds: Array.isArray(c.mentionedUserIds)
+          ? c.mentionedUserIds.filter((id) => Number(id) > 0).map((id) => Number(id))
+          : undefined,
       })),
     };
 

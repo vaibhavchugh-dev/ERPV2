@@ -12,15 +12,22 @@ import {
   faCog,
   faKeyboard,
   faInfoCircle,
+  faBell,
+  faEnvelope,
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
 import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
+import { NotificationService, AppNotification } from "../Services/NotificationService";
+import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
+import NotifyUserDialog from "./NotifyUserDialog";
 import "./TopBar.scss";
+
+const NOTIFICATION_POLL_MS = 45000;
 
 /** Working locations for the switcher: sites and warehouses (not bins/shelves/zones). */
 const isWorkingLocation = (loc: { locType?: number | null }) => {
@@ -41,6 +48,11 @@ const TopBar: React.FC = () => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
@@ -50,6 +62,7 @@ const TopBar: React.FC = () => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const locationMenuRef = useRef<HTMLDivElement>(null);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const readStorageProfile = () => {
@@ -285,7 +298,7 @@ const TopBar: React.FC = () => {
     }
   }, [currentLocationId, locations, handleLocationChange]);
 
-  // Close search results when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
@@ -293,6 +306,9 @@ const TopBar: React.FC = () => {
       }
       if (locationMenuRef.current && !locationMenuRef.current.contains(event.target as Node)) {
         setLocationMenuOpen(false);
+      }
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target as Node)) {
+        setNotificationMenuOpen(false);
       }
       if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) {
         setShowSearchResults(false);
@@ -305,10 +321,116 @@ const TopBar: React.FC = () => {
     };
   }, []);
 
+  const refreshUnreadCount = useCallback(async () => {
+    if (!isInAppNotificationsEnabled()) {
+      setUnreadCount(0);
+      return;
+    }
+    try {
+      const count = await NotificationService.GetUnreadCount();
+      setUnreadCount(count);
+    } catch {
+      // soft-fail polling
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    if (!isInAppNotificationsEnabled()) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    setNotificationsLoading(true);
+    try {
+      const items = await NotificationService.GetMine(30, false);
+      setNotifications(items);
+      setUnreadCount(items.filter((n) => !n.isRead).length);
+    } catch {
+      setNotifications([]);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
+  // Poll unread badge; pause when tab is hidden
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void refreshUnreadCount();
+    };
+
+    tick();
+    timer = setInterval(tick, NOTIFICATION_POLL_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refreshUnreadCount]);
+
+  const formatNotificationTime = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  };
+
+  const handleOpenNotifications = async () => {
+    const next = !notificationMenuOpen;
+    setNotificationMenuOpen(next);
+    setUserMenuOpen(false);
+    setLocationMenuOpen(false);
+    if (next) await loadNotifications();
+  };
+
+  const handleNotificationClick = async (item: AppNotification) => {
+    if (!item.isRead) {
+      try {
+        await NotificationService.MarkRead([item.id]);
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+      } catch {
+        // ignore
+      }
+    }
+    setNotificationMenuOpen(false);
+    if (item.linkPath) {
+      history.push(item.linkPath);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await NotificationService.MarkAllRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch {
+      // ignore
+    }
+  };
+
   // Close search when route changes
   useEffect(() => {
     setShowSearchResults(false);
     setSearchQuery('');
+    setNotificationMenuOpen(false);
   }, [location.pathname]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -514,6 +636,82 @@ const TopBar: React.FC = () => {
           </div>
         )}
         
+        {/* Notifications */}
+        <div className="notification-menu" ref={notificationMenuRef}>
+          <button
+            type="button"
+            className="notification-menu-btn"
+            onClick={() => void handleOpenNotifications()}
+            title="Notifications"
+            aria-label="Notifications"
+          >
+            <FontAwesomeIcon icon={faBell} size="sm" />
+            {unreadCount > 0 && (
+              <span className="notification-badge">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+          {notificationMenuOpen && (
+            <div className="notification-dropdown">
+              <div className="notification-dropdown-header">
+                <div className="notification-dropdown-title">Notifications</div>
+                <div className="notification-dropdown-actions">
+                  <button
+                    type="button"
+                    className="notification-link-btn"
+                    onClick={() => {
+                      setNotificationMenuOpen(false);
+                      setNotifyDialogOpen(true);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faEnvelope} size="xs" />
+                    Notify user
+                  </button>
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      className="notification-link-btn"
+                      onClick={() => void handleMarkAllRead()}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="dropdown-divider"></div>
+              <div className="notification-list">
+                {!isInAppNotificationsEnabled() ? (
+                  <div className="notification-empty">
+                    In-app notifications are disabled in System Settings.
+                  </div>
+                ) : notificationsLoading ? (
+                  <div className="notification-empty">Loading…</div>
+                ) : notifications.length === 0 ? (
+                  <div className="notification-empty">No notifications yet</div>
+                ) : (
+                  notifications.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`notification-item ${item.isRead ? "" : "unread"}`}
+                      onClick={() => void handleNotificationClick(item)}
+                    >
+                      <div className="notification-item-title">{item.title}</div>
+                      {item.body && (
+                        <div className="notification-item-body">{item.body}</div>
+                      )}
+                      <div className="notification-item-meta">
+                        {formatNotificationTime(item.createdAt)}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* User Menu */}
         <div className="user-menu" ref={userMenuRef}>
           <button
@@ -598,6 +796,13 @@ const TopBar: React.FC = () => {
         onChangePassword={() => {
           setAccountModal(null);
           history.push("/change-password");
+        }}
+      />
+      <NotifyUserDialog
+        open={notifyDialogOpen}
+        onClose={() => setNotifyDialogOpen(false)}
+        onSent={() => {
+          void refreshUnreadCount();
         }}
       />
     </header>
