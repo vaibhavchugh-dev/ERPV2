@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using CimmpleAPI.Data;
@@ -12,11 +13,24 @@ using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using Serilog;
 
+AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
+{
+    var requested = new AssemblyName(args.Name);
+    if (!string.Equals(requested.Name, "System.Text.Encoding.CodePages", StringComparison.OrdinalIgnoreCase))
+        return null;
+
+    var path = Path.Combine(AppContext.BaseDirectory, "System.Text.Encoding.CodePages.dll");
+    return File.Exists(path) ? Assembly.LoadFrom(path) : null;
+};
+
 var builder = WebApplication.CreateBuilder(args);
 
-// For local development, ensure the API listens on a predictable URL.
-// This overrides launchSettings when running via 'dotnet run'.
-builder.WebHost.UseUrls("http://localhost:5172");
+// For local development only: bind a predictable URL for 'dotnet run'.
+// Do NOT set this in Production — IIS/ANCM must control the listen URL.
+if (builder.Environment.IsDevelopment())
+{
+    builder.WebHost.UseUrls("http://localhost:5172");
+}
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -42,12 +56,21 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 });
 
 // Configure CORS
+// Configure CORS
 builder.Services.AddCors(c =>
 {
     c.AddPolicy("_CorsPolicy", options =>
     {
         options
-            .AllowAnyOrigin()
+            .WithOrigins(
+                "https://erp.cimmple.net",
+                "http://erp.cimmple.net",
+                "https://api.v2.cimmple.net",
+                "http://api.v2.cimmple.net",
+                "http://localhost:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5173")
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
@@ -118,6 +141,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Cimmple API", Version = "v1" });
+    // Duplicate DTO names (e.g. ReportRequest on Reports + Accounting) crash swagger.json with 500.
+    c.CustomSchemaIds(type => type.FullName?.Replace("+", ".") ?? type.Name);
+    c.MapType<object>(() => new OpenApiSchema { Type = "object", AdditionalPropertiesAllowed = true });
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header using the Bearer scheme.",
@@ -198,6 +224,11 @@ if (app.Environment.IsDevelopment())
 }
 else
 {
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Cimmple API V1");
+    });
     // Only redirect HTTP to HTTPS in non-development environments
     app.UseHttpsRedirection();
 }

@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -357,7 +358,14 @@ namespace CimmpleAPI.Services.Auth
 
             if (!PasswordHasher.Verify(password, user.Password, user.PasswordSalt, out var needsUpgrade))
             {
-                await RecordFailedLoginAsync(user, settings);
+                try
+                {
+                    await RecordFailedLoginAsync(user, settings);
+                }
+                catch
+                {
+                    // Lockout counters must not block a 401
+                }
                 await LogLoginAttemptAsync(user.UserName, ipAddress, browser);
                 return (null, "Invalid username or password", 401);
             }
@@ -369,8 +377,9 @@ namespace CimmpleAPI.Services.Auth
 
             // Password expiration
             if (settings.PasswordExpirationDays > 0
-                && user.PwdResetDate != default
-                && user.PwdResetDate.AddDays(settings.PasswordExpirationDays) < DateTime.UtcNow)
+                && user.PwdResetDate.HasValue
+                && user.PwdResetDate.Value != default
+                && user.PwdResetDate.Value.AddDays(settings.PasswordExpirationDays) < DateTime.UtcNow)
             {
                 user.ChangePassword = "Y";
             }
@@ -382,8 +391,20 @@ namespace CimmpleAPI.Services.Auth
             await CreateSessionAsync(user, ipAddress);
             await LogLoginAttemptAsync(user.UserName, ipAddress, browser);
 
-            var response = await BuildLoginResponseAsync(user, portalType, settings);
-            await _db.SaveChangesAsync();
+            LoginResponse response;
+            try
+            {
+                response = await BuildLoginResponseAsync(user, portalType, settings);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception)
+            {
+                // Session/token persist failed (short UserToken column, missing session table, etc.).
+                // Still return a usable JWT so the user can sign in.
+                _db.ChangeTracker.Clear();
+                response = await BuildLoginResponseAsync(user, portalType, settings);
+            }
+
             return (response, null, 200);
         }
 
@@ -491,68 +512,125 @@ namespace CimmpleAPI.Services.Auth
             string? roleTag = null;
             if (user.Role.HasValue)
             {
-                var role = await _db.UserRole.FirstOrDefaultAsync(r => r.RoleID == user.Role.Value);
-                roleName = role?.RoleName;
-                roleTag = role?.RoleTag;
+                try
+                {
+                    var role = await _db.UserRole.AsNoTracking().FirstOrDefaultAsync(r => r.RoleID == user.Role.Value);
+                    roleName = role?.RoleName;
+                    roleTag = role?.RoleTag;
+                }
+                catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+                {
+                    // Login must succeed even if role metadata columns are missing
+                }
             }
 
             var canAccessAll = IsAdminRole(roleName, roleTag) || user.CanAccessAllLocations;
 
-            var mappingIds = await _db.UserMapping
-                .Where(m => m.userId == user.User_UniqueID)
-                .Select(m => m.locationId)
-                .ToListAsync();
-
-            List<Location> locations;
-            if (canAccessAll)
+            var mappingIds = new List<int>();
+            try
             {
-                locations = await _db.Locations
-                    .Where(l => l.TenantId == user.TenantID)
-                    .OrderBy(l => l.Name)
+                mappingIds = await _db.UserMapping
+                    .AsNoTracking()
+                    .Where(m => m.userId == user.User_UniqueID)
+                    .Select(m => m.locationId)
                     .ToListAsync();
             }
-            else
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
             {
-                locations = await _db.Locations
-                    .Where(l => l.TenantId == user.TenantID && mappingIds.Contains(l.LocationId))
+            }
+
+            List<LocationClaimDto> locationClaims = new();
+            try
+            {
+                var locationQuery = _db.Locations.AsNoTracking().Where(l => l.TenantId == user.TenantID);
+                if (!canAccessAll)
+                {
+                    locationQuery = locationQuery.Where(l => mappingIds.Contains(l.LocationId));
+                }
+
+                locationClaims = await locationQuery
                     .OrderBy(l => l.Name)
+                    .Select(l => new LocationClaimDto
+                    {
+                        LocationId = l.LocationId,
+                        Name = l.Name ?? "",
+                        Code = l.Code ?? "",
+                        LocType = l.LocType
+                    })
                     .ToListAsync();
+            }
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+            {
+                try
+                {
+                    var fallbackQuery = _db.Locations.AsNoTracking().Where(l => l.TenantId == user.TenantID);
+                    if (!canAccessAll)
+                    {
+                        fallbackQuery = fallbackQuery.Where(l => mappingIds.Contains(l.LocationId));
+                    }
+
+                    locationClaims = await fallbackQuery
+                        .OrderBy(l => l.Name)
+                        .Select(l => new LocationClaimDto
+                        {
+                            LocationId = l.LocationId,
+                            Name = l.Name ?? "",
+                            Code = l.Code ?? "",
+                            LocType = 0
+                        })
+                        .ToListAsync();
+                }
+                catch
+                {
+                    locationClaims = new List<LocationClaimDto>();
+                }
             }
 
             var defaultLocationId = user.DefaultLocationId;
             if (!defaultLocationId.HasValue || defaultLocationId <= 0
-                || locations.All(l => l.LocationId != defaultLocationId.Value))
+                || locationClaims.All(l => l.LocationId != defaultLocationId.Value))
             {
-                defaultLocationId = locations.FirstOrDefault()?.LocationId
+                defaultLocationId = locationClaims.FirstOrDefault()?.LocationId
                     ?? mappingIds.FirstOrDefault();
                 if (defaultLocationId == 0) defaultLocationId = null;
             }
 
             var permissions = new List<PermissionClaimDto>();
-            // Admins get an empty permission list → UI treats that as "show everything"
-            // (avoids incomplete PermissionMaster seeds hiding menus like Job Templates).
             if (!canAccessAll && user.Role.HasValue)
             {
-                permissions = await (
-                    from pr in _db.PermissionRole
-                    join pm in _db.PermissionMaster on pr.PermissionId equals pm.PermissionId
-                    where pr.RoleId == user.Role.Value && pr.TenantId == user.TenantID
-                    select new PermissionClaimDto
-                    {
-                        PermissionId = pm.PermissionId,
-                        PermissionName = pm.PermissionName ?? "",
-                        Url = pm.Url,
-                        ReportGroup = pm.ReportGroup
-                    }).ToListAsync();
+                try
+                {
+                    permissions = await (
+                        from pr in _db.PermissionRole
+                        join pm in _db.PermissionMaster on pr.PermissionId equals pm.PermissionId
+                        where pr.RoleId == user.Role.Value && pr.TenantId == user.TenantID
+                        select new PermissionClaimDto
+                        {
+                            PermissionId = pm.PermissionId,
+                            PermissionName = pm.PermissionName ?? "",
+                            Url = pm.Url,
+                            ReportGroup = pm.ReportGroup
+                        }).ToListAsync();
+                }
+                catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+                {
+                    permissions = new List<PermissionClaimDto>();
+                }
             }
 
             string? vendorCode = null;
             if (user.VendorId.HasValue && user.VendorId.Value > 0)
             {
-                vendorCode = await _db.VendorMaster
-                    .Where(v => v.vendor_id == user.VendorId.Value && v.Tenantid == user.TenantID)
-                    .Select(v => v.vendorcode)
-                    .FirstOrDefaultAsync();
+                try
+                {
+                    vendorCode = await _db.VendorMaster
+                        .Where(v => v.vendor_id == user.VendorId.Value && v.Tenantid == user.TenantID)
+                        .Select(v => v.vendorcode)
+                        .FirstOrDefaultAsync();
+                }
+                catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+                {
+                }
             }
 
             return new AuthUserDto
@@ -572,13 +650,7 @@ namespace CimmpleAPI.Services.Auth
                 VendorId = user.VendorId,
                 VendorCode = vendorCode,
                 PortalType = portalType,
-                Locations = locations.Select(l => new LocationClaimDto
-                {
-                    LocationId = l.LocationId,
-                    Name = l.Name,
-                    Code = l.Code,
-                    LocType = l.LocType
-                }).ToList(),
+                Locations = locationClaims,
                 Permissions = permissions
             };
         }
@@ -639,8 +711,24 @@ namespace CimmpleAPI.Services.Auth
 
         private async Task<SystemSettings> GetSettingsAsync(int tenantId)
         {
-            var settings = await _db.SystemSettings.FirstOrDefaultAsync(s => s.TenantId == tenantId);
-            return settings ?? new SystemSettings { TenantId = tenantId };
+            try
+            {
+                var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId);
+                return settings ?? new SystemSettings { TenantId = tenantId };
+            }
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+            {
+                try
+                {
+                    await SystemSettingsSchemaService.EnsureTablesAsync(_db);
+                    var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId);
+                    return settings ?? new SystemSettings { TenantId = tenantId };
+                }
+                catch
+                {
+                    return new SystemSettings { TenantId = tenantId };
+                }
+            }
         }
     }
 }

@@ -25,7 +25,7 @@ interface BankStatementImportModalProps {
   bankName: string;
   accountNumber: string;
   onClose: () => void;
-  onApplied: (result: BankStatementImportResult) => void;
+  onApplied: (result: BankStatementImportResult) => void | Promise<void>;
 }
 
 type MatchStatus = "matched" | "ambiguous" | "unmatched" | "invalid";
@@ -404,7 +404,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
   onClose,
   onApplied,
 }) => {
-  const { formatCurrency, formatDate } = useFormatting();
+  const { formatCurrency, formatDateOnlyFromApi } = useFormatting();
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [applying, setApplying] = useState(false);
@@ -781,11 +781,13 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
       );
 
       const meta = extractStatementMeta(previewRows);
-      onApplied({
-        reconciledCount: ids.length,
-        statementDate: meta.statementDate,
-        statementBalance: meta.statementBalance,
-      });
+      await Promise.resolve(
+        onApplied({
+          reconciledCount: ids.length,
+          statementDate: meta.statementDate,
+          statementBalance: meta.statementBalance,
+        })
+      );
 
       const pool = await fetchBookPool();
       setBookPool(pool);
@@ -992,17 +994,60 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                   borderRadius: "0.5rem",
                 }}
               >
-                <table className="customers-table" style={{ margin: 0 }}>
+                <table
+                  className="bank-statement-import-table"
+                  style={{
+                    margin: 0,
+                    width: "100%",
+                    tableLayout: "fixed",
+                    borderCollapse: "collapse",
+                  }}
+                >
                   <thead>
                     <tr>
-                      <th style={{ width: 40 }}>Use</th>
-                      <th>#</th>
-                      <th>Date</th>
-                      <th>Description</th>
-                      <th style={{ textAlign: "right" }}>Amount</th>
-                      <th>Reference</th>
-                      <th>Status</th>
-                      <th>Book match</th>
+                      <th style={{ width: 44, padding: "0.75rem 0.75rem", textAlign: "left" }}>
+                        Use
+                      </th>
+                      <th style={{ width: 44, padding: "0.75rem 0.5rem", textAlign: "left" }}>#</th>
+                      <th
+                        style={{
+                          width: 108,
+                          padding: "0.75rem 0.75rem",
+                          whiteSpace: "nowrap",
+                          textAlign: "left",
+                        }}
+                      >
+                        Date
+                      </th>
+                      <th style={{ width: "20%", padding: "0.75rem 0.75rem", textAlign: "left" }}>
+                        Description
+                      </th>
+                      <th
+                        style={{
+                          width: 120,
+                          padding: "0.75rem 1.25rem 0.75rem 0.75rem",
+                          textAlign: "right",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Amount
+                      </th>
+                      <th
+                        style={{
+                          width: 140,
+                          padding: "0.75rem 0.75rem 0.75rem 1.25rem",
+                          whiteSpace: "nowrap",
+                          textAlign: "left",
+                        }}
+                      >
+                        Reference
+                      </th>
+                      <th style={{ width: 110, padding: "0.75rem 0.75rem", textAlign: "left" }}>
+                        Status
+                      </th>
+                      <th style={{ width: 240, padding: "0.75rem 0.75rem", textAlign: "left" }}>
+                        Book match
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1022,7 +1067,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                                 : undefined
                           }
                         >
-                          <td>
+                          <td style={{ padding: "0.65rem 0.75rem", verticalAlign: "middle" }}>
                             <input
                               type="checkbox"
                               checked={row.include && row.matchedTxnId != null}
@@ -1031,16 +1076,55 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                               aria-label={`Include row ${row.rowNumber}`}
                             />
                           </td>
-                          <td>{row.rowNumber}</td>
-                          <td>{row.date ? formatDate(row.date) : "—"}</td>
-                          <td>{row.description || "—"}</td>
-                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "0.65rem 0.5rem", verticalAlign: "middle" }}>
+                            {row.rowNumber}
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.65rem 0.75rem",
+                              whiteSpace: "nowrap",
+                              verticalAlign: "middle",
+                            }}
+                          >
+                            {row.date ? formatDateOnlyFromApi(row.date) : "—"}
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.65rem 0.75rem",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              verticalAlign: "middle",
+                            }}
+                            title={row.description || undefined}
+                          >
+                            {row.description || "—"}
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.65rem 1.25rem 0.65rem 0.75rem",
+                              textAlign: "right",
+                              whiteSpace: "nowrap",
+                              verticalAlign: "middle",
+                            }}
+                          >
                             {row.errors.some((e) => e.includes("Amount"))
                               ? "—"
                               : `${row.amount >= 0 ? "+" : ""}${formatCurrency(row.amount)}`}
                           </td>
-                          <td>{row.reference || "—"}</td>
-                          <td>
+                          <td
+                            style={{
+                              padding: "0.65rem 0.75rem 0.65rem 1.25rem",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              verticalAlign: "middle",
+                            }}
+                            title={row.reference || undefined}
+                          >
+                            {row.reference || "—"}
+                          </td>
+                          <td style={{ padding: "0.65rem 0.75rem", verticalAlign: "middle" }}>
                             <span
                               style={{
                                 display: "inline-block",
@@ -1060,7 +1144,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                               </div>
                             )}
                           </td>
-                          <td style={{ minWidth: 280 }}>
+                          <td style={{ padding: "0.65rem 0.75rem", verticalAlign: "middle" }}>
                             {row.status === "invalid" ? (
                               <span style={{ fontSize: "0.8125rem", color: "#9ca3af" }}>
                                 Fix CSV row to match
@@ -1089,7 +1173,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                                   <optgroup label="Suggested">
                                     {suggested.map((c) => (
                                       <option key={`s-${c.id}`} value={c.id}>
-                                        {formatTxnOption(c, formatDate, formatCurrency)}
+                                        {formatTxnOption(c, formatDateOnlyFromApi, formatCurrency)}
                                       </option>
                                     ))}
                                   </optgroup>
@@ -1098,7 +1182,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
                                   <optgroup label="All unreconciled">
                                     {rest.map((c) => (
                                       <option key={`a-${c.id}`} value={c.id}>
-                                        {formatTxnOption(c, formatDate, formatCurrency)}
+                                        {formatTxnOption(c, formatDateOnlyFromApi, formatCurrency)}
                                       </option>
                                     ))}
                                   </optgroup>

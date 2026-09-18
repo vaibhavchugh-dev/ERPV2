@@ -1,5 +1,6 @@
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,29 +24,47 @@ namespace CimmpleAPI.Controllers
         [HttpPost("Login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
-            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-            var browser = Request.Headers.UserAgent.ToString();
-            var (response, error, status) = await _authService.LoginAsync(request, ip, browser);
-            if (response == null)
+            try
             {
-                return StatusCode(status, new { message = error, session = status == 401 ? false : (bool?)null });
-            }
+                await SystemSettingsSchemaService.EnsureLoginSchemaAsync(_db);
+                var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+                var browser = Request.Headers.UserAgent.ToString();
+                var (response, error, status) = await _authService.LoginAsync(request, ip, browser);
+                if (response == null)
+                {
+                    return StatusCode(status, new { message = error, session = status == 401 ? false : (bool?)null });
+                }
 
-            return Ok(response);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                var detail = ex.GetBaseException().Message;
+                return StatusCode(500, new { message = "Login failed.", detail });
+            }
         }
         [AllowAnonymous]
         [HttpPost("VendorLogin")]
         public async Task<IActionResult> VendorLogin([FromBody] VendorLoginRequest request)
         {
-            var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-            var browser = Request.Headers.UserAgent.ToString();
-            var (response, error, status) = await _authService.VendorLoginAsync(request, ip, browser);
-            if (response == null)
+            try
             {
-                return StatusCode(status, new { message = error, session = status == 401 ? false : (bool?)null });
-            }
+                await SystemSettingsSchemaService.EnsureLoginSchemaAsync(_db);
+                var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+                var browser = Request.Headers.UserAgent.ToString();
+                var (response, error, status) = await _authService.VendorLoginAsync(request, ip, browser);
+                if (response == null)
+                {
+                    return StatusCode(status, new { message = error, session = status == 401 ? false : (bool?)null });
+                }
 
-            return Ok(response);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                var detail = ex.GetBaseException().Message;
+                return StatusCode(500, new { message = "Login failed.", detail });
+            }
         }
         [AllowAnonymous]
         [HttpPost("Refresh")]

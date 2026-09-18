@@ -51,8 +51,20 @@ namespace CimmpleAPI.Services.Auth
                 return false;
             }
 
-            var saltBytes = Convert.FromBase64String(parts[1]);
-            var expected = Convert.FromBase64String(parts[2]);
+            byte[] saltBytes;
+            byte[] expected;
+            try
+            {
+                saltBytes = Convert.FromBase64String(parts[1]);
+                expected = Convert.FromBase64String(parts[2]);
+            }
+            catch (FormatException)
+            {
+                var match = string.Equals(storedHash, password, StringComparison.Ordinal);
+                needsUpgrade = match;
+                return match;
+            }
+
             var actual = Rfc2898DeriveBytes.Pbkdf2(
                 Encoding.UTF8.GetBytes(password),
                 saltBytes,

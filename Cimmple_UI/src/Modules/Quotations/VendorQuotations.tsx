@@ -349,6 +349,7 @@ const VendorQuotations: React.FC = () => {
         <VendorQuotationSlideout
           quotationId={selectedQuotationId}
           onClose={handleCloseSlideout}
+          onSaved={(id) => setSelectedQuotationId(id)}
         />
       )}
 

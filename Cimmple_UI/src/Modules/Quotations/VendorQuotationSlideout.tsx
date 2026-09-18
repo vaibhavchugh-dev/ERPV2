@@ -48,15 +48,18 @@ import {
 } from "../../Common/Components/CustomerPartCombobox";
 import "./VendorQuotationSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 
 interface VendorQuotationSlideoutProps {
   quotationId: number;
   onClose: (refreshList?: boolean) => void;
+  onSaved?: (quotationId: number) => void;
 }
 
 const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   quotationId,
   onClose,
+  onSaved,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
 
@@ -79,13 +82,37 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     BuyerName: "",
     VendorRefNo: "",
     QuotationType: "Material",
-    Details: [],
+    Details: [
+      {
+        ID: 0,
+        ItemNo: 1,
+        PartName: "",
+        PartNo: "",
+        LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+        DueDate: "",
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: 1,
+        Unit: "EA",
+        UnitPrice: 0,
+        JobPriority: 0,
+        Discount: 0,
+        DiscountType: "Percent",
+        ProductId: undefined,
+        RawMaterialId: undefined,
+        LeadTime: "",
+        Notes: "",
+        glcode: "",
+      },
+    ],
   });
 
   const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(quotationId > 0);
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
   const [isStateChanged, setIsStateChanged] = useState(false);
+  const listNeedsRefreshRef = useRef(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -237,8 +264,38 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     loadJobOrders();
     loadCoaDefaults();
     if (quotationId > 0) {
+      setIsHydrating(true);
+      // Show Line Items table immediately with a blank row while the API loads.
+      const today = new Date().toISOString().split("T")[0];
+      setFormData((prev) => ({
+        ...prev,
+        Details: [
+          {
+            ID: 0,
+            ItemNo: 1,
+            PartName: "",
+            PartNo: "",
+            LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+            DueDate: today,
+            JobNumber: "",
+            JobDesc: "",
+            QtyOrdered: 1,
+            Unit: "EA",
+            UnitPrice: 0,
+            JobPriority: 0,
+            Discount: 0,
+            DiscountType: "Percent",
+            ProductId: undefined,
+            RawMaterialId: undefined,
+            LeadTime: today,
+            Notes: "",
+            glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+          },
+        ],
+      }));
       loadQuotation();
     } else {
+      setIsHydrating(false);
       initializeNewQuotation();
     }
   }, [quotationId]);
@@ -304,6 +361,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
   const loadQuotation = async () => {
     setLoading(true);
+    setIsHydrating(true);
     try {
       // Load job orders first to ensure we have them for matching
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -338,7 +396,32 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         const formDataWithDetails = {
           ...result,
           ExternalOrderDate: rawExtDate || "",
-          Details: normalizedDetails,
+          Details:
+            normalizedDetails.length > 0
+              ? normalizedDetails
+              : [
+                  {
+                    ID: 0,
+                    ItemNo: 1,
+                    PartName: "",
+                    PartNo: "",
+                    LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+                    DueDate: new Date().toISOString().split("T")[0],
+                    JobNumber: "",
+                    JobDesc: "",
+                    QtyOrdered: 1,
+                    Unit: "EA",
+                    UnitPrice: 0,
+                    JobPriority: 0,
+                    Discount: 0,
+                    DiscountType: "Percent" as const,
+                    ProductId: undefined,
+                    RawMaterialId: undefined,
+                    LeadTime: new Date().toISOString().split("T")[0],
+                    Notes: "",
+                    glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+                  },
+                ],
           QuotationType: result.QuotationType || "Material",
         };
         setFormData(formDataWithDetails);
@@ -424,6 +507,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       console.error(error);
     } finally {
       setLoading(false);
+      setIsHydrating(false);
     }
   };
 
@@ -1310,12 +1394,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       if (window.confirm("You have unsaved changes. Are you sure you want to close?")) {
         closeDocumentViewer();
         documentCacheRef.current.clear();
-        onClose();
+        onClose(listNeedsRefreshRef.current);
       }
     } else {
       closeDocumentViewer();
       documentCacheRef.current.clear();
-      onClose();
+      onClose(listNeedsRefreshRef.current);
     }
   };
 
@@ -1413,15 +1497,20 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       }
       setIsStateChanged(false);
 
-      if (formData.OrderID === 0 && savedId > 0) {
+      if (savedId > 0) {
+        listNeedsRefreshRef.current = true;
+        const wasNew = quotationId === 0;
         setFormData((prev) => ({
           ...prev,
           OrderID: savedId,
           Status: status,
         }));
+        if (wasNew) {
+          onSaved?.(savedId);
+        }
       }
 
-      onClose(true);
+      // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
       toast.error(`Error saving quotation: ${getApiErrorMessage(error, "Unknown error")}`);
       console.error("Error saving quotation:", error);
@@ -1483,6 +1572,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           document.body
         )}
       <div className="vendor-quotation-slideout-card" onClick={(e) => e.stopPropagation()}>
+        <SlideoutHydratingOverlay show={isHydrating} label="Loading quotation…" />
         <div className="vendor-quotation-slideout-header">
           <div>
             <h2>{quotationId > 0 ? "Edit Quotation" : "New Quotation"}</h2>
@@ -1759,7 +1849,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                 </button>
               </div>
               
-              {formData.Details && formData.Details.length > 0 && (
+              {formData.Details && (
                 <div className="line-items-table-container" style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>

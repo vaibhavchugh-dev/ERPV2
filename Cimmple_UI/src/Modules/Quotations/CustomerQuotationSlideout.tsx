@@ -33,6 +33,7 @@ import {
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./CustomerQuotationSlideout.scss";
 
 interface CustomerQuotationSlideoutProps {
@@ -67,11 +68,31 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     ExternalOrderDate: undefined,
     BuyerName: "",
     CustomerRefNo: "",
-    Details: [],
+    Details: [
+      {
+        ID: 0,
+        ItemNo: 1,
+        PartName: "",
+        PartNo: "",
+        DueDate: "",
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: 1,
+        Unit: "EA",
+        UnitPrice: 0,
+        JobPriority: 0,
+        Discount: 0,
+        DiscountType: "Percent",
+        ProductId: undefined,
+        LeadTime: "",
+        Notes: "",
+      },
+    ],
   });
 
   const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(quotationId > 0);
   const [printing, setPrinting] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
@@ -200,7 +221,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     const today = todayDateOnlyDisplay();
     
     setFormData((prev) => {
-      // If it's a new quotation (quotationId === 0) and no details exist, add one default line item
+      // Always keep at least one blank line so the Line Items table is visible while loading.
       const defaultDetail: QuotationDetailReq = {
         ID: 0,
         ItemNo: 1,
@@ -228,16 +249,26 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         ...(quotationId === 0
           ? {
               OrderDate: prev.OrderDate || today,
-              Details: prev.Details.length === 0 ? [defaultDetail] : prev.Details,
+              Details:
+                prev.Details.length === 0 ||
+                (prev.Details.length === 1 && isBlankQuoteOrOrderLine(prev.Details[0]))
+                  ? [defaultDetail]
+                  : prev.Details,
             }
-          : {}),
+          : {
+              // Edit/open: show blank row immediately; API replaces with real lines.
+              Details: [defaultDetail],
+            }),
       };
     });
 
     loadCustomers();
 
     if (quotationId > 0) {
+      setIsHydrating(true);
       loadQuotation(quotationId);
+    } else {
+      setIsHydrating(false);
     }
   }, [quotationId]);
 
@@ -270,6 +301,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     const idToLoad = targetQuotationId ?? quotationId;
     if (!idToLoad || idToLoad <= 0) return;
     setLoading(true);
+    setIsHydrating(true);
     if (options?.resetViewer !== false) {
       setDocumentViewerOpen(false);
       setViewerDocuments([]);
@@ -284,11 +316,36 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           status: quotation.Status,
           convertedOrderId: quotation.convertedOrderId
         });
-        setFormData(quotation);
+        setFormData({
+          ...quotation,
+          Details:
+            quotation.Details && quotation.Details.length > 0
+              ? quotation.Details
+              : [
+                  {
+                    ID: 0,
+                    ItemNo: 1,
+                    PartName: "",
+                    PartNo: "",
+                    DueDate: todayDateOnlyDisplay(),
+                    JobNumber: "",
+                    JobDesc: "",
+                    QtyOrdered: 1,
+                    Unit: "EA",
+                    UnitPrice: 0,
+                    JobPriority: 0,
+                    Discount: 0,
+                    DiscountType: "Percent" as const,
+                    ProductId: undefined,
+                    LeadTime: todayDateOnlyDisplay(),
+                    Notes: "",
+                  },
+                ],
+        });
         
         // Load price breakdown matrix for each detail
         const matrixMap = new Map<number, PriceBreakdownMatrix>();
-        quotation.Details.forEach((detail) => {
+        (quotation.Details || []).forEach((detail) => {
           if (detail.PriceBreakdownMatrix) {
             matrixMap.set(detail.ItemNo, detail.PriceBreakdownMatrix);
           }
@@ -359,6 +416,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       toast.error(`Error loading quotation: ${error.message || "Unknown error"}`);
     } finally {
       setLoading(false);
+      setIsHydrating(false);
     }
   };
 
@@ -1575,6 +1633,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         className="customer-quotation-slideout-card"
         onClick={(e) => e.stopPropagation()}
       >
+        <SlideoutHydratingOverlay show={isHydrating} label="Loading quotation…" />
         <div className="customer-quotation-slideout-header">
           <div>
             <h2>{effectiveQuotationId > 0 ? "Edit Quotation" : "New Quotation"}</h2>
@@ -1857,8 +1916,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
               </div>
               {errors.Details && <span className="error-message">{errors.Details}</span>}
               
-              {formData.Details.length > 0 && (
-                <div className="line-items-table-container" style={{ overflowX: "auto" }}>
+              <div className="line-items-table-container" style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
@@ -2461,7 +2519,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     </tfoot>
                   </table>
                 </div>
-              )}
             </div>
 
             {/* Attachments Section */}

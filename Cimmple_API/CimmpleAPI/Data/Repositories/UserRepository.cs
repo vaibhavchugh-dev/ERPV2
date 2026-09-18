@@ -72,7 +72,8 @@ namespace CimmpleAPI.Data.Repositories
                     if (userRole != null)
                     {
                         if (userRole.ResetPwd == "Yes" &&
-                            user.PwdResetDate.AddDays(90) < DateTime.UtcNow)
+                            user.PwdResetDate.HasValue &&
+                            user.PwdResetDate.Value.AddDays(90) < DateTime.UtcNow)
                         {
                             userDto.Message = "Password expired.";
                             userDto.FailMessage = userDto.Message;
