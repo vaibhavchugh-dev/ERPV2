@@ -21,11 +21,19 @@ export class NotificationService {
     return typeof response.data?.result === "number" ? response.data.result : 0;
   }
 
-  public static async GetMine(take = 30, unreadOnly = false): Promise<AppNotification[]> {
+  public static async GetMine(
+    take = 20,
+    unreadOnly = false
+  ): Promise<{ items: AppNotification[]; unreadCount: number }> {
     const response = await api.get("/Notifications/GetMine", {
       params: { take, unreadOnly },
     });
-    return Array.isArray(response.data?.result) ? response.data.result : [];
+    const items = Array.isArray(response.data?.result) ? response.data.result : [];
+    const unreadCount =
+      typeof response.data?.unreadCount === "number"
+        ? response.data.unreadCount
+        : items.filter((n: AppNotification) => !n.isRead).length;
+    return { items, unreadCount };
   }
 
   public static async MarkRead(ids: number[]): Promise<number> {
@@ -46,6 +54,7 @@ export class NotificationService {
 export function mapNotificationLinkToPwa(linkPath?: string | null, entityType?: string | null, entityId?: number | null): string | null {
   if (entityType && entityId && entityId > 0) {
     const et = entityType.toLowerCase();
+    if (et === "conversation") return null; // handled by chat sheet
     if (et === "ncr" || et === "nonconformancereport") return `/quality/${entityId}`;
     if (et === "joborder" || et === "job") return `/jobs/${entityId}`;
   }
@@ -53,6 +62,8 @@ export function mapNotificationLinkToPwa(linkPath?: string | null, entityType?: 
   if (!linkPath) return null;
   const path = linkPath.trim();
   if (!path) return null;
+
+  if (/^\/messages\?/i.test(path)) return null;
 
   const qualityOpen = path.match(/^\/quality\?open=(\d+)/i);
   if (qualityOpen) return `/quality/${qualityOpen[1]}`;
