@@ -25,15 +25,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
         private readonly IConfiguration _configuration;
+        private readonly NotificationService _notificationService;
 
         public JobOrderController(
             CimmpleDbContext context,
             InventoryService inventoryService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            NotificationService notificationService)
         {
             _context = context;
             _inventoryService = inventoryService;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         [HttpGet("GetJobOrders")]
@@ -428,14 +431,11 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Save comments as JSON
+                List<CommentMentionSource>? joMentions = null;
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
-                    var commentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        WriteIndented = false
-                    };
-                    jobOrder.CommentsJson = JsonSerializer.Serialize(request.Comments, commentOptions);
+                    joMentions = CommentMentionHelper.FromDtos(request.Comments);
+                    jobOrder.CommentsJson = CommentMentionHelper.SerializeDtosForStorage(request.Comments);
                 }
                 else
                 {
@@ -469,6 +469,22 @@ namespace CimmpleAPI.Controllers
 
                 _context.SaveChanges();
 
+                if (joMentions != null && jobOrder.JobOrderID > 0)
+                {
+                    var label = !string.IsNullOrWhiteSpace(jobOrder.JobNumber)
+                        ? $"Job Order {jobOrder.JobNumber}"
+                        : $"Job Order #{jobOrder.JobOrderID}";
+                    await CommentMentionHelper.NotifyAsync(
+                        _notificationService,
+                        jobOrder.Tenantid,
+                        GetUserId(),
+                        joMentions,
+                        "JobOrder",
+                        jobOrder.JobOrderID,
+                        label,
+                        $"/job-orders?open={jobOrder.JobOrderID}");
+                }
+
                 if (request.MaterialRequirements != null)
                 {
                     await ReplaceJobMaterialRequirementsAsync(jobOrder, request.MaterialRequirements);
@@ -493,6 +509,26 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await transaction.CommitAsync();
+
+                if (DomainNotificationHelper.StatusBecame(previousStatus, jobOrder.Status, "Completed")
+                    && jobOrder.JobOrderID > 0)
+                {
+                    var label = !string.IsNullOrWhiteSpace(jobOrder.JobNumber)
+                        ? jobOrder.JobNumber!
+                        : $"Job #{jobOrder.JobOrderID}";
+                    await DomainNotificationHelper.NotifyUserAsync(
+                        _notificationService,
+                        jobOrder.Tenantid,
+                        jobOrder.UserId,
+                        GetUserId(),
+                        NotificationService.TypeJobOrderCompleted,
+                        $"Job {label} completed",
+                        $"Job order {label} was marked Completed.",
+                        "JobOrder",
+                        jobOrder.JobOrderID,
+                        $"/job-orders?open={jobOrder.JobOrderID}");
+                }
+
                 return Ok(new { result = new { id = jobOrder.JobOrderID, message = "Job order saved successfully" } });
             }
             catch (Exception ex)
@@ -1683,6 +1719,8 @@ namespace CimmpleAPI.Controllers
         public string text { get; set; }
         public string createdAt { get; set; }
         public string createdBy { get; set; }
+        /// <summary>Client-only; stripped before CommentsJson persist.</summary>
+        public List<int>? mentionedUserIds { get; set; }
     }
 
     public class JobOrderRoutingProgressDto

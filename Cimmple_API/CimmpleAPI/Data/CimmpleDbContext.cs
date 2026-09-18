@@ -153,6 +153,7 @@ namespace CimmpleAPI.Data
         public DbSet<BankReconciliationPeriod> BankReconciliationPeriods { get; set; }
         public DbSet<BankReconciliationPeriodItem> BankReconciliationPeriodItems { get; set; }
         public DbSet<ReportSchedule> ReportSchedules { get; set; }
+        public DbSet<Notification> Notifications { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -766,6 +767,18 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.LastRunError).HasMaxLength(2000);
                 entity.HasIndex(e => new { e.TenantId, e.IsEnabled, e.NextRunUtc });
                 entity.HasIndex(e => new { e.IsEnabled, e.NextRunUtc });
+            });
+
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.ToTable("Notifications");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Type).HasMaxLength(64);
+                entity.Property(e => e.Title).HasMaxLength(200);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.Property(e => e.EntityType).HasMaxLength(64);
+                entity.Property(e => e.LinkPath).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.RecipientUserId, e.IsRead, e.CreatedAt });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>

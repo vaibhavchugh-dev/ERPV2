@@ -35,6 +35,7 @@ export interface QuotationComment {
   text: string;
   createdAt: string;
   createdBy: string;
+  mentionedUserIds?: number[];
 }
 
 export interface QuotationMaster {
@@ -440,7 +441,10 @@ export class QuotationService {
         Id: mapAttachmentId(c.id),
         Text: c.text || "",
         CreatedAt: c.createdAt || new Date().toISOString(),
-        CreatedBy: c.createdBy || "User"
+        CreatedBy: c.createdBy || "User",
+        MentionedUserIds: Array.isArray(c.mentionedUserIds)
+          ? c.mentionedUserIds.filter((id) => Number(id) > 0).map((id) => Number(id))
+          : undefined,
       }))
     };
 

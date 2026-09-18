@@ -30,15 +30,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
+        private readonly NotificationService _notificationService;
 
         public QualityController(
             CimmpleDbContext context,
             IWebHostEnvironment environment,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            NotificationService notificationService)
         {
             _context = context;
             _environment = environment;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         private static int _ncrExternalColumnsReady;
@@ -1167,6 +1170,7 @@ END");
 
                 var assignmentEmails = await TryNotifyNcrAssigneesAsync(
                     ncr.TenantId,
+                    ncr.NcrId,
                     actualResponseNcrNumber,
                     ncr.Title,
                     ncr.Severity,
@@ -1204,12 +1208,15 @@ END");
                 int? previousInvestigatedBy = null;
                 int? previousApprovedBy = null;
                 string? existingNcrNumber = null;
+                string? previousStatus = null;
+                int? previousReportedBy = null;
+                int? previousCreatedBy = null;
                 int existingTenantId = ncrUpdate.TenantId;
 
                 using (var preload = _context.Database.GetDbConnection().CreateCommand())
                 {
                     preload.CommandText = @"
-                        SELECT InvestigatedBy, ApprovedBy, NcrNumber, TenantId
+                        SELECT InvestigatedBy, ApprovedBy, NcrNumber, TenantId, Status, ReportedBy, CreatedBy
                         FROM CimmpleFlow.NonConformanceReports
                         WHERE NcrId = @Id";
                     AddParameter(preload, "@Id", id);
@@ -1222,6 +1229,9 @@ END");
                         existingNcrNumber = reader.IsDBNull(2) ? null : reader.GetString(2);
                         if (!reader.IsDBNull(3))
                             existingTenantId = reader.GetInt32(3);
+                        previousStatus = reader.IsDBNull(4) ? null : reader.GetString(4);
+                        previousReportedBy = reader.IsDBNull(5) ? null : reader.GetInt32(5);
+                        previousCreatedBy = reader.IsDBNull(6) ? null : reader.GetInt32(6);
                     }
                     else
                     {
@@ -1348,6 +1358,7 @@ END");
 
                     var assignmentEmails = await TryNotifyNcrAssigneesAsync(
                         existingTenantId,
+                        id,
                         existingNcrNumber ?? $"NCR-{id}",
                         ncrUpdate.Title,
                         ncrUpdate.Severity,
@@ -1358,6 +1369,53 @@ END");
                         previousApprovedBy,
                         ncrUpdate.ApprovedBy,
                         ncrUpdate.ApprovedByName);
+
+                    var ncrLabel = existingNcrNumber ?? $"NCR-{id}";
+                    var linkPath = $"/quality?open={id}";
+                    var actorId = GetUserId();
+
+                    if (DomainNotificationHelper.StatusBecame(previousStatus, ncrUpdate.Status, "Pending_Approval"))
+                    {
+                        var approverId = ncrUpdate.ApprovedBy.GetValueOrDefault() > 0
+                            ? ncrUpdate.ApprovedBy
+                            : previousApprovedBy;
+                        await DomainNotificationHelper.NotifyUserAsync(
+                            _notificationService,
+                            existingTenantId,
+                            approverId,
+                            actorId,
+                            NotificationService.TypeNcrPendingApproval,
+                            $"{ncrLabel} ready for approval",
+                            string.IsNullOrWhiteSpace(ncrUpdate.Title)
+                                ? $"{ncrLabel} is pending your approval."
+                                : $"{ncrLabel}: {ncrUpdate.Title} is pending your approval.",
+                            "NCR",
+                            id,
+                            linkPath);
+                    }
+
+                    if (DomainNotificationHelper.StatusBecame(previousStatus, ncrUpdate.Status, "Closed")
+                        || DomainNotificationHelper.StatusBecame(previousStatus, ncrUpdate.Status, "Approved"))
+                    {
+                        var reporterId = ncrUpdate.ReportedBy > 0
+                            ? ncrUpdate.ReportedBy
+                            : (previousReportedBy.GetValueOrDefault() > 0
+                                ? previousReportedBy
+                                : previousCreatedBy);
+                        await DomainNotificationHelper.NotifyUserAsync(
+                            _notificationService,
+                            existingTenantId,
+                            reporterId,
+                            actorId,
+                            NotificationService.TypeNcrClosed,
+                            $"{ncrLabel} {ncrUpdate.Status}",
+                            string.IsNullOrWhiteSpace(ncrUpdate.Title)
+                                ? $"{ncrLabel} was marked {ncrUpdate.Status}."
+                                : $"{ncrLabel}: {ncrUpdate.Title} was marked {ncrUpdate.Status}.",
+                            "NCR",
+                            id,
+                            linkPath);
+                    }
 
                     return Ok(new { success = true, assignmentEmails });
                 }
@@ -1370,6 +1428,7 @@ END");
 
         private async Task<List<string>> TryNotifyNcrAssigneesAsync(
             int tenantId,
+            int ncrId,
             string ncrNumber,
             string? title,
             string? severity,
@@ -1386,12 +1445,12 @@ END");
             {
                 var settings = await _context.SystemSettings.AsNoTracking()
                     .FirstOrDefaultAsync(s => s.TenantId == tenantId);
-                if (settings == null || !settings.EnableEmailNotifications)
-                    return messages;
 
-                var companyName = !string.IsNullOrWhiteSpace(settings.SmtpFromName)
-                    ? settings.SmtpFromName
+                var emailEnabled = settings?.EnableEmailNotifications ?? true;
+                var companyName = !string.IsNullOrWhiteSpace(settings?.SmtpFromName)
+                    ? settings!.SmtpFromName!
                     : "Cimmple";
+                var linkPath = ncrId > 0 ? $"/quality?open={ncrId}" : "/quality";
 
                 async Task NotifyRoleAsync(int? previousId, int? newId, string? nameHint, string roleLabel)
                 {
@@ -1402,9 +1461,9 @@ END");
 
                     var user = await _context.UserDetails.AsNoTracking()
                         .FirstOrDefaultAsync(u => u.User_UniqueID == next && u.TenantID == tenantId);
-                    if (user == null || string.IsNullOrWhiteSpace(user.Email))
+                    if (user == null)
                     {
-                        messages.Add($"{roleLabel} assigned, but no email is on file for that user.");
+                        messages.Add($"{roleLabel} assigned, but user was not found.");
                         return;
                     }
 
@@ -1413,6 +1472,44 @@ END");
                         : $"{user.FirstName} {user.LastName}".Trim();
                     if (string.IsNullOrWhiteSpace(displayName))
                         displayName = user.UserName ?? roleLabel;
+
+                    var body =
+                        $"You have been assigned as {roleLabel} on {ncrNumber}" +
+                        (string.IsNullOrWhiteSpace(title) ? "." : $": {title}.");
+
+                    var inbox = await _notificationService.CreateAsync(new NotificationCreateRequest
+                    {
+                        TenantId = tenantId,
+                        RecipientUserId = next,
+                        ActorUserId = GetUserId(),
+                        Type = NotificationService.TypeNcrAssignment,
+                        Title = $"{ncrNumber} — assigned as {roleLabel}",
+                        Body = body,
+                        EntityType = "NCR",
+                        EntityId = ncrId > 0 ? ncrId : null,
+                        LinkPath = linkPath,
+                        SendEmail = false
+                    });
+
+                    if (inbox.InboxCreated)
+                        messages.Add($"{roleLabel} notified in-app.");
+                    else if (!string.IsNullOrEmpty(inbox.Error))
+                        messages.Add($"{roleLabel} in-app notification skipped: {inbox.Error}");
+
+                    if (!emailEnabled)
+                        return;
+
+                    if (string.IsNullOrWhiteSpace(user.Email))
+                    {
+                        messages.Add($"{roleLabel} assigned, but no email is on file for that user.");
+                        return;
+                    }
+
+                    if (settings == null)
+                    {
+                        messages.Add($"{roleLabel} email skipped: email settings are not configured.");
+                        return;
+                    }
 
                     var (ok, error) = NcrEmailService.TrySendAssignmentNotice(
                         settings,
@@ -1429,6 +1526,13 @@ END");
                     messages.Add(ok
                         ? $"{roleLabel} notified at {user.Email}."
                         : $"{roleLabel} notification failed: {error}");
+
+                    if (ok && inbox.Notification != null)
+                    {
+                        inbox.Notification.EmailSent = true;
+                        inbox.Notification.EmailSentAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync();
+                    }
                 }
 
                 await NotifyRoleAsync(previousInvestigatedBy, newInvestigatedBy, investigatedByName, "Investigator");
@@ -1436,7 +1540,7 @@ END");
             }
             catch (Exception ex)
             {
-                messages.Add($"Assignment email skipped: {ex.Message}");
+                messages.Add($"Assignment notification skipped: {ex.Message}");
             }
 
             return messages;

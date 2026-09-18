@@ -30,6 +30,7 @@ import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Servi
 import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
+import CommentsSection, { EntityComment } from "../../Common/Components/CommentsSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import {
@@ -127,9 +128,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<number>>(new Set());
   const [alreadySentVendorIds, setAlreadySentVendorIds] = useState<Set<number>>(new Set());
   const [includeAttachments, setIncludeAttachments] = useState(true);
-  const [comments, setComments] = useState<Array<{ id: number; text: string; createdAt: string; createdBy: string }>>([]);
-  const [newComment, setNewComment] = useState("");
-  const [commentIdCounter, setCommentIdCounter] = useState(1);
+  const [comments, setComments] = useState<EntityComment[]>([]);
   const [showTextEditorPopup, setShowTextEditorPopup] = useState(false);
   const [editingField, setEditingField] = useState<{ index: number; field: "PartName" | "Notes"; value: string } | null>(null);
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
@@ -470,11 +469,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             createdBy: c.createdBy || "User"
           }));
           setComments(cleanedComments);
-          const maxId = Math.max(...cleanedComments.map(c => c.id), 0);
-          setCommentIdCounter(maxId + 1);
         } else {
           setComments([]);
-          setCommentIdCounter(1);
         }
 
         // Initialize selectedJobOrders from JobNumber (or legacy PartNo JO refs)
@@ -2547,110 +2543,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               onViewAttachment={handleOpenDocumentViewer}
             />
 
-            {/* Comments Section */}
-            <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
-              <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>Comments</h3>
-              
-              <div style={{ marginBottom: "1.5rem" }}>
-                <textarea
-                  className="form-input"
-                  style={{
-                    width: "100%",
-                    minHeight: "100px",
-                    padding: "0.75rem",
-                    fontSize: "0.875rem",
-                    resize: "vertical",
-                    marginBottom: "0.75rem",
-                  }}
-                  placeholder="Add a comment..."
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (newComment.trim()) {
-                      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-                      setCommentIdCounter((prev) => {
-                        const newId = prev;
-                        const newCommentObj = {
-                          id: newId,
-                          text: newComment.trim(),
-                          createdAt: new Date().toISOString(),
-                          createdBy: storage?.userName || "User",
-                        };
-                        setComments((prevComments) => [...prevComments, newCommentObj]);
-                        setNewComment("");
-                        setIsStateChanged(true);
-                        return newId + 1;
-                      });
-                    }
-                  }}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    backgroundColor: "#6366f1",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                  }}
-                >
-                  Add Comment
-                </button>
-              </div>
-
-              {comments.length === 0 ? (
-                <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>No comments added</p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                  {comments.map((comment) => (
-                    <div
-                      key={comment.id}
-                      style={{
-                        padding: "1rem",
-                        backgroundColor: "#ffffff",
-                        borderRadius: "0.375rem",
-                        border: "1px solid #e5e7eb",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: "0.875rem", marginBottom: "0.25rem" }}>
-                            {comment.createdBy}
-                          </div>
-                          <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {new Date(comment.createdAt).toLocaleString()}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setComments((prev) => prev.filter((c) => c.id !== comment.id));
-                            setIsStateChanged(true);
-                          }}
-                          style={{
-                            padding: "0.25rem 0.5rem",
-                            backgroundColor: "#ef4444",
-                            color: "white",
-                            border: "none",
-                            borderRadius: "0.25rem",
-                            cursor: "pointer",
-                            fontSize: "0.75rem",
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      <div style={{ fontSize: "0.875rem", color: "#374151", whiteSpace: "pre-wrap" }}>
-                        {comment.text}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <CommentsSection
+              comments={comments}
+              onChange={(next) => {
+                setComments(next);
+                setIsStateChanged(true);
+              }}
+            />
           </div>
 
           <div className="form-actions">

@@ -94,6 +94,7 @@ builder.Services.AddScoped<CimmpleAPI.Services.FaceRecognitionService>();
 // Scheduled report email runner
 builder.Services.AddScoped<CimmpleAPI.Services.ReportScheduleExecutionService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.ReportScheduleHostedService>();
+builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
 
 // Legacy user repository (UserController login / maintenance helpers)
 builder.Services.AddHttpContextAccessor();

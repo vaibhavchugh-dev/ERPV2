@@ -23,11 +23,16 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly NotificationService _notificationService;
 
-        public QuotationController(CimmpleDbContext context, IConfiguration configuration)
+        public QuotationController(
+            CimmpleDbContext context,
+            IConfiguration configuration,
+            NotificationService notificationService)
         {
             _context = context;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         [HttpGet("GetQuotations")]
@@ -385,6 +390,7 @@ namespace CimmpleAPI.Controllers
                 quotation.address = request.Address ?? "";
                 quotation.CustomerPoNumber = request.CustomerPoNumber ?? "";
                 quotation.TotalAmount = request.TotalAmount;
+                var previousCqStatus = quotation.Status;
                 quotation.Status = request.Status ?? "Draft";
                 quotation.shippingInstructions = request.ShippingInstructions ?? "";
                 quotation.ExternalCustomerPO = request.ExternalCustomerPO ?? "";
@@ -395,14 +401,11 @@ namespace CimmpleAPI.Controllers
                     return forbidLoc!;
                 quotation.Locationid = resolvedLocationId > 0 ? resolvedLocationId : request.LocationId;
 
+                List<CommentMentionSource>? cqMentions = null;
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
-                    var commentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        WriteIndented = false
-                    };
-                    quotation.CommentsJson = JsonSerializer.Serialize(request.Comments, commentOptions);
+                    cqMentions = CommentMentionHelper.FromDtos(request.Comments);
+                    quotation.CommentsJson = CommentMentionHelper.SerializeDtosForStorage(request.Comments);
                 }
                 else
                 {
@@ -411,6 +414,38 @@ namespace CimmpleAPI.Controllers
 
                 // Persist quotation first so new attachments can use OrderID.
                 _context.SaveChanges();
+
+                if (cqMentions != null && quotation.OrderID > 0)
+                {
+                    var label = quotation.PONumber > 0
+                        ? $"Customer Quotation CQ-{quotation.PONumber}"
+                        : $"Customer Quotation #{quotation.OrderID}";
+                    await CommentMentionHelper.NotifyAsync(
+                        _notificationService,
+                        request.Tenantid,
+                        GetUserId(),
+                        cqMentions,
+                        "CustomerQuotation",
+                        quotation.OrderID,
+                        label,
+                        $"/quotations/customer?open={quotation.OrderID}");
+                }
+
+                if (DomainNotificationHelper.StatusBecame(previousCqStatus, quotation.Status, "Accepted")
+                    && quotation.OrderID > 0)
+                {
+                    await DomainNotificationHelper.NotifyUserAsync(
+                        _notificationService,
+                        request.Tenantid,
+                        quotation.UserId,
+                        GetUserId(),
+                        NotificationService.TypeQuotationAccepted,
+                        $"CQ-{quotation.PONumber} accepted",
+                        $"Customer quotation CQ-{quotation.PONumber} was accepted.",
+                        "CustomerQuotation",
+                        quotation.OrderID,
+                        $"/quotations/customer?open={quotation.OrderID}");
+                }
 
                 // Handle quotation details — empty list clears existing lines on update
                 if (request.Details != null)
@@ -1656,6 +1691,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 quotation.TotalAmount = request.TryGetProperty("TotalAmount", out JsonElement totalAmountElem) ? totalAmountElem.GetDecimal() : 0;
+                var previousVqStatus = quotation.Status;
                 quotation.Status = request.TryGetProperty("Status", out JsonElement statusElem) ? statusElem.GetString() ?? "Draft" : "Draft";
                 quotation.shippingInstructions = request.TryGetProperty("ShippingInstructions", out JsonElement shippingInstructionsElem) ? shippingInstructionsElem.GetString() ?? "" : "";
                 quotation.contactName = request.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "";
@@ -1757,14 +1793,11 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Save comments as JSON
+                List<CommentMentionSource>? vqMentions = null;
                 if (request.TryGetProperty("Comments", out JsonElement commentsElem) && commentsElem.ValueKind == JsonValueKind.Array && commentsElem.GetArrayLength() > 0)
                 {
-                    var commentOptions = new JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                        WriteIndented = false
-                    };
-                    quotation.CommentsJson = JsonSerializer.Serialize(commentsElem, commentOptions);
+                    vqMentions = CommentMentionHelper.FromJsonElementArray(commentsElem);
+                    quotation.CommentsJson = CommentMentionHelper.SerializeJsonElementStrippingMentions(commentsElem);
                 }
                 else
                 {
@@ -1772,6 +1805,39 @@ namespace CimmpleAPI.Controllers
                 }
 
                 _context.SaveChanges();
+
+                if (vqMentions != null && quotation.OrderID > 0)
+                {
+                    var label = quotation.PONumber > 0
+                        ? $"Vendor Quotation VQ-{quotation.PONumber}"
+                        : $"Vendor Quotation #{quotation.OrderID}";
+                    var tenantId = quotation.Tenantid;
+                    await CommentMentionHelper.NotifyAsync(
+                        _notificationService,
+                        tenantId,
+                        GetUserId(),
+                        vqMentions,
+                        "VendorQuotation",
+                        quotation.OrderID,
+                        label,
+                        $"/quotations/vendor?open={quotation.OrderID}");
+                }
+
+                if (DomainNotificationHelper.StatusBecame(previousVqStatus, quotation.Status, "Accepted")
+                    && quotation.OrderID > 0)
+                {
+                    await DomainNotificationHelper.NotifyUserAsync(
+                        _notificationService,
+                        quotation.Tenantid,
+                        quotation.UserId,
+                        GetUserId(),
+                        NotificationService.TypeQuotationAccepted,
+                        $"VQ-{quotation.PONumber} accepted",
+                        $"Vendor quotation VQ-{quotation.PONumber} was accepted.",
+                        "VendorQuotation",
+                        quotation.OrderID,
+                        $"/quotations/vendor?open={quotation.OrderID}");
+                }
 
                 // Handle details
                 var detailsArray = request.GetProperty("Details").EnumerateArray().ToList();
@@ -4326,6 +4392,8 @@ namespace CimmpleAPI.Controllers
         public string Text { get; set; } = "";
         public string CreatedAt { get; set; } = "";
         public string CreatedBy { get; set; } = "";
+        /// <summary>Client-only; stripped before CommentsJson persist.</summary>
+        public List<int>? MentionedUserIds { get; set; }
     }
 
     public class QuotationDetailReq
