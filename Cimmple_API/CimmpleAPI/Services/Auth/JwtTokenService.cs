@@ -54,7 +54,7 @@ namespace CimmpleAPI.Services.Auth
 
         public string CreateRefreshToken()
         {
-            return Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+            return Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         }
 
         public ClaimsPrincipal? ValidateToken(string token, bool validateLifetime = true)
