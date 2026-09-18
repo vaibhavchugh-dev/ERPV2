@@ -48,15 +48,18 @@ import { RawMaterial } from "../../Common/Services/InventoryService";
 import { toHtmlDateInputValue } from "../../Common/Utils/Formatting";
 import "./VendorOrderSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 
 interface VendorOrderSlideoutProps {
   orderId: number;
   onClose: (refreshList?: boolean) => void;
+  onSaved?: (orderId: number) => void;
 }
 
 const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   orderId,
   onClose,
+  onSaved,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel, settings } = useFormatting();
 
@@ -82,13 +85,41 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     MaterialType: "Material", // Material/Service type for the order
     QuotationId: 0,
     QuotationNo: "",
-    Details: [],
+    Details: [
+      {
+        ID: 0,
+        ItemNo: 1,
+        PartName: "",
+        PartNo: "",
+        LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+        DueDate: "",
+        JobNumber: "",
+        JobDesc: "",
+        QtyOrdered: 1,
+        Unit: "EA",
+        UnitPrice: 0,
+        JobPriority: 0,
+        Discount: 0,
+        DiscountType: "Percent",
+        ProductId: undefined,
+        RawMaterialId: undefined,
+        LeadTime: "",
+        Notes: "",
+        ShippedQty: 0,
+        ShippingStatus: "",
+        InvoicedQty: 0,
+        InvoiceStatus: "",
+        glcode: "",
+      },
+    ],
   });
 
   const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(orderId > 0);
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
   const [isStateChanged, setIsStateChanged] = useState(false);
+  const listNeedsRefreshRef = useRef(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
@@ -234,9 +265,43 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     loadJobOrders();
     loadCoaDefaults();
     if (orderId > 0) {
+      setIsHydrating(true);
+      // Show Line Items table immediately with a blank row while the API loads.
+      const today = new Date().toISOString().split("T")[0];
+      setFormData((prev) => ({
+        ...prev,
+        Details: [
+          {
+            ID: 0,
+            ItemNo: 1,
+            PartName: "",
+            PartNo: "",
+            LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+            DueDate: today,
+            JobNumber: "",
+            JobDesc: "",
+            QtyOrdered: 1,
+            Unit: "EA",
+            UnitPrice: 0,
+            JobPriority: 0,
+            Discount: 0,
+            DiscountType: "Percent",
+            ProductId: undefined,
+            RawMaterialId: undefined,
+            LeadTime: today,
+            Notes: "",
+            ShippedQty: 0,
+            ShippingStatus: "",
+            InvoicedQty: 0,
+            InvoiceStatus: "",
+            glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+          },
+        ],
+      }));
       loadOrder();
       loadInvoiceData();
     } else {
+      setIsHydrating(false);
       initializeNewOrder();
     }
   }, [orderId]);
@@ -324,6 +389,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
   const loadOrder = async () => {
     setLoading(true);
+    setIsHydrating(true);
     try {
       const result = await VendorOrderService.GetVendorOrderById(orderId);
       if (result) {
@@ -346,7 +412,36 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           ...result,
           OrderDate: toHtmlDateInputValue(result.OrderDate || resAny.orderDate || ""),
           ExternalOrderDate: toHtmlDateInputValue(rawExtDate || ""),
-          Details: normalizedDetails,
+          Details:
+            normalizedDetails.length > 0
+              ? normalizedDetails
+              : [
+                  {
+                    ID: 0,
+                    ItemNo: 1,
+                    PartName: "",
+                    PartNo: "",
+                    LineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+                    DueDate: new Date().toISOString().split("T")[0],
+                    JobNumber: "",
+                    JobDesc: "",
+                    QtyOrdered: 1,
+                    Unit: "EA",
+                    UnitPrice: 0,
+                    JobPriority: 0,
+                    Discount: 0,
+                    DiscountType: "Percent" as const,
+                    ProductId: undefined,
+                    RawMaterialId: undefined,
+                    LeadTime: new Date().toISOString().split("T")[0],
+                    Notes: "",
+                    ShippedQty: 0,
+                    ShippingStatus: "",
+                    InvoicedQty: 0,
+                    InvoiceStatus: "",
+                    glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+                  },
+                ],
           OrderType: "Vendor", // Always "Vendor" for vendor orders
           MaterialType:
             result.MaterialType === "Service" || result.MaterialType === "Mixed"
@@ -426,6 +521,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       console.error(error);
     } finally {
       setLoading(false);
+      setIsHydrating(false);
     }
   };
 
@@ -1185,10 +1281,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to close?")) {
-        onClose();
+        onClose(listNeedsRefreshRef.current);
       }
     } else {
-      onClose();
+      onClose(listNeedsRefreshRef.current);
     }
   };
 
@@ -1296,12 +1392,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       }
       setIsStateChanged(false);
 
-      if (formData.OrderID === 0 && savedId > 0) {
+      if (savedId > 0) {
+        listNeedsRefreshRef.current = true;
+        const wasNew = orderId === 0;
         setFormData((prev) => ({
           ...prev,
           OrderID: savedId,
           Status: status,
         }));
+        if (wasNew) {
+          onSaved?.(savedId);
+        }
       }
 
       if (savedId > 0 && (pendingFiles.length > 0 || hadDeletes)) {
@@ -1325,7 +1426,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         }
       }
 
-      onClose(true);
+      // Don't close the slideout - keep it open for further editing
     } catch (error: any) {
       toast.error(`Error saving order: ${getApiErrorMessage(error, "Unknown error")}`);
       console.error("Error saving order:", error);
@@ -1387,6 +1488,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           document.body
         )}
       <div className="vendor-order-slideout-card" onClick={(e) => e.stopPropagation()}>
+        <SlideoutHydratingOverlay show={isHydrating} label="Loading order…" />
         <div className="vendor-order-slideout-header">
           <div>
             <h2>{orderId > 0 ? "Edit Order" : "New Order"}</h2>
@@ -1628,7 +1730,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                 </button>
               </div>
 
-              {formData.Details && formData.Details.length > 0 && (
+              {formData.Details && (
                 <div className="line-items-table-container" style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>

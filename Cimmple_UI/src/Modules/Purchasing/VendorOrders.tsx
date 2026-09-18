@@ -296,6 +296,7 @@ const VendorOrders: React.FC = () => {
         <VendorOrderSlideout
           orderId={selectedOrderId}
           onClose={handleCloseSlideout}
+          onSaved={(id) => setSelectedOrderId(id)}
         />
       )}
     </div>
