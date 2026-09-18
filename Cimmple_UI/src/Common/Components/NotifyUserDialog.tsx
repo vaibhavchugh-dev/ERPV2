@@ -4,12 +4,12 @@ import { faPaperPlane, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { toast } from "react-toastify";
 import { UserManagementService, UserManagement } from "../Services/UserManagementService";
 import { NotificationService } from "../Services/NotificationService";
-import { isEmailNotificationsEnabled, isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
+import { isEmailNotificationsEnabled } from "../Utils/settingsRuntime";
 
 interface NotifyUserDialogProps {
   open: boolean;
   onClose: () => void;
-  onSent?: () => void;
+  onSent?: (conversationId?: number) => void;
 }
 
 const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSent }) => {
@@ -23,7 +23,6 @@ const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSe
   const [search, setSearch] = useState("");
 
   const emailEnabled = isEmailNotificationsEnabled();
-  const inAppEnabled = isInAppNotificationsEnabled();
 
   useEffect(() => {
     if (!open) return;
@@ -89,8 +88,8 @@ const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSe
       toast.error("Enter a message.");
       return;
     }
-    if (!inAppEnabled && !(sendEmail && emailEnabled)) {
-      toast.error("In-app and email notifications are disabled in System Settings.");
+    if (sendEmail && !emailEnabled) {
+      toast.error("Email notifications are disabled in System Settings.");
       return;
     }
 
@@ -102,18 +101,23 @@ const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSe
         body: body.trim(),
         sendEmail: sendEmail && emailEnabled,
       });
-      if (!result?.inboxCreated && !result?.emailSent) {
-        toast.error(result?.emailError || "Notification was not delivered.");
+      if (result?.conversationId || result?.messageId) {
+        if (result.emailError && result.inboxCreated) {
+          toast.warning(`Sent in-app. Email: ${result.emailError}`);
+        } else {
+          toast.success(
+            result.emailSent ? "Message sent (in-app + email)." : "Message sent."
+          );
+        }
+        onSent?.(result.conversationId ?? undefined);
+        onClose();
         return;
       }
-      if (result.emailError && result.inboxCreated) {
-        toast.warning(`Sent in-app. Email: ${result.emailError}`);
-      } else {
-        toast.success(
-          result.emailSent ? "Notification sent (in-app + email)." : "Notification sent."
-        );
+      if (!result?.inboxCreated && !result?.emailSent) {
+        toast.error(result?.emailError || "Message was not delivered.");
+        return;
       }
-      onSent?.();
+      onSent?.(result.conversationId ?? undefined);
       onClose();
     } catch (err: any) {
       const msg =
@@ -160,7 +164,7 @@ const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSe
             borderBottom: "1px solid #e5e7eb",
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: "1rem" }}>Notify user</div>
+          <div style={{ fontWeight: 600, fontSize: "1rem" }}>New message</div>
           <button
             type="button"
             onClick={onClose}

@@ -95,6 +95,171 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Fast document-only search for chat @ mentions (CO/CQ/JO/VO/VQ/NCR).
+        /// Avoids the full GlobalSearch fan-out across masters.
+        /// </summary>
+        [HttpGet("SearchDocuments")]
+        public async Task<IActionResult> SearchDocumentsForMentions(
+            [FromQuery] string query,
+            [FromQuery] int tenantId,
+            [FromQuery] int limit = 6)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(query) || tenantId <= 0)
+                {
+                    return Ok(new
+                    {
+                        orders = new List<object>(),
+                        quotations = new List<object>(),
+                        jobOrders = new List<object>(),
+                        vendorOrders = new List<object>(),
+                        vendorQuotations = new List<object>(),
+                        ncrReports = new List<object>()
+                    });
+                }
+
+                if (limit <= 0) limit = 6;
+                if (limit > 15) limit = 15;
+
+                var searchTerm = query.Trim().ToLowerInvariant();
+                var empty = new List<object>();
+
+                // "@VO" / "@CO" / etc. → recent docs of that type only (not a vendor-name search).
+                if (IsBareDocPrefix(searchTerm, "vo"))
+                {
+                    return Ok(new
+                    {
+                        orders = empty,
+                        quotations = empty,
+                        jobOrders = empty,
+                        vendorOrders = await SearchVendorOrders(searchTerm, tenantId, limit),
+                        vendorQuotations = empty,
+                        ncrReports = empty
+                    });
+                }
+                if (IsBareDocPrefix(searchTerm, "vq"))
+                {
+                    return Ok(new
+                    {
+                        orders = empty,
+                        quotations = empty,
+                        jobOrders = empty,
+                        vendorOrders = empty,
+                        vendorQuotations = await SearchVendorQuotations(searchTerm, tenantId, limit),
+                        ncrReports = empty
+                    });
+                }
+                if (IsBareDocPrefix(searchTerm, "co"))
+                {
+                    return Ok(new
+                    {
+                        orders = await SearchOrders(searchTerm, tenantId, limit),
+                        quotations = empty,
+                        jobOrders = empty,
+                        vendorOrders = empty,
+                        vendorQuotations = empty,
+                        ncrReports = empty
+                    });
+                }
+                if (IsBareDocPrefix(searchTerm, "cq"))
+                {
+                    return Ok(new
+                    {
+                        orders = empty,
+                        quotations = await SearchQuotations(searchTerm, tenantId, limit),
+                        jobOrders = empty,
+                        vendorOrders = empty,
+                        vendorQuotations = empty,
+                        ncrReports = empty
+                    });
+                }
+                if (IsBareDocPrefix(searchTerm, "jo"))
+                {
+                    return Ok(new
+                    {
+                        orders = empty,
+                        quotations = empty,
+                        jobOrders = await SearchJobOrders(searchTerm, tenantId, limit),
+                        vendorOrders = empty,
+                        vendorQuotations = empty,
+                        ncrReports = empty
+                    });
+                }
+                if (IsBareDocPrefix(searchTerm, "ncr"))
+                {
+                    return Ok(new
+                    {
+                        orders = empty,
+                        quotations = empty,
+                        jobOrders = empty,
+                        vendorOrders = empty,
+                        vendorQuotations = empty,
+                        ncrReports = await SearchNCRReports(searchTerm, tenantId, limit)
+                    });
+                }
+
+                // Sequential on one DbContext (not thread-safe); still far fewer queries than full Search.
+                var orders = await SearchOrders(searchTerm, tenantId, limit);
+                var quotations = await SearchQuotations(searchTerm, tenantId, limit);
+                var jobOrders = await SearchJobOrders(searchTerm, tenantId, limit);
+                var vendorOrders = await SearchVendorOrders(searchTerm, tenantId, limit);
+                var vendorQuotations = await SearchVendorQuotations(searchTerm, tenantId, limit);
+                var ncrReports = await SearchNCRReports(searchTerm, tenantId, limit);
+
+                return Ok(new
+                {
+                    orders,
+                    quotations,
+                    jobOrders,
+                    vendorOrders,
+                    vendorQuotations,
+                    ncrReports
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GlobalSearch] SearchDocuments error: {ex.Message}");
+                return StatusCode(500, new { message = "Error performing document search", error = ex.Message });
+            }
+        }
+
+        private static bool IsBareDocPrefix(string searchTerm, params string[] prefixes)
+        {
+            var t = (searchTerm ?? "").Trim().ToLowerInvariant().TrimEnd('#', '-', ' ', '_');
+            return prefixes.Any(p => t == p.TrimEnd('#').ToLowerInvariant());
+        }
+
+        /// <summary>
+        /// Strip doc prefixes (co#, cq, jo-, etc.) and resolve display-number offset
+        /// (UI shows CO#(PO+999) when PO &lt; 1000).
+        /// </summary>
+        private static (bool isNumeric, int rawNumber, int poCandidate, string cleaned) ParseDocNumber(
+            string searchTerm,
+            params string[] prefixes)
+        {
+            var original = (searchTerm ?? "").Trim().ToLowerInvariant();
+            var t = original;
+            foreach (var prefix in prefixes.OrderByDescending(p => p.Length))
+            {
+                var p = prefix.ToLowerInvariant();
+                if (t.StartsWith(p))
+                {
+                    t = t.Substring(p.Length).TrimStart(' ', '#', '-', '_');
+                    break;
+                }
+            }
+            t = t.Replace("#", "").Trim();
+            // Typing only a prefix (e.g. "co") — keep original for text match, not empty Contains.
+            if (string.IsNullOrEmpty(t))
+                return (false, 0, 0, original);
+            if (!int.TryParse(t, out var n))
+                return (false, 0, 0, t);
+            var poCandidate = n >= 1000 ? n - 999 : n;
+            return (true, n, poCandidate, t);
+        }
+
         private async Task<List<object>> SearchCustomers(string searchTerm, int tenantId, int limit)
         {
             var customers = await _context.CustomerMaster
@@ -145,25 +310,29 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchOrders(string searchTerm, int tenantId, int limit)
         {
-            // Check if search term is a number (order ID)
-            bool isNumeric = int.TryParse(searchTerm.Replace("CO#", "").Replace("co#", ""), out int orderNumber);
-
             var ordersQuery = _context.CustomerOrder
                 .Where(o => o.Tenantid == tenantId);
 
-            if (isNumeric)
+            // "@CO" → recent customer orders
+            if (!IsBareDocPrefix(searchTerm, "co"))
             {
-                ordersQuery = ordersQuery.Where(o => 
-                    o.PONumber == orderNumber ||
-                    o.PONumber.ToString().Contains(searchTerm) ||
-                    o.CustomerName != null && o.CustomerName.ToLower().Contains(searchTerm) ||
-                    o.CustomerPoNumber != null && o.CustomerPoNumber.ToLower().Contains(searchTerm));
-            }
-            else
-            {
-                ordersQuery = ordersQuery.Where(o =>
-                    o.CustomerName != null && o.CustomerName.ToLower().Contains(searchTerm) ||
-                    o.CustomerPoNumber != null && o.CustomerPoNumber.ToLower().Contains(searchTerm));
+                var (isNumeric, rawNumber, poCandidate, cleaned) = ParseDocNumber(searchTerm, "co#", "co");
+
+                if (isNumeric)
+                {
+                    ordersQuery = ordersQuery.Where(o =>
+                        o.PONumber == rawNumber ||
+                        o.PONumber == poCandidate ||
+                        o.PONumber.ToString().Contains(cleaned) ||
+                        (o.CustomerName != null && o.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (o.CustomerPoNumber != null && o.CustomerPoNumber.ToLower().Contains(searchTerm)));
+                }
+                else
+                {
+                    ordersQuery = ordersQuery.Where(o =>
+                        (o.CustomerName != null && o.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (o.CustomerPoNumber != null && o.CustomerPoNumber.ToLower().Contains(searchTerm)));
+                }
             }
 
             var orders = await ordersQuery
@@ -235,26 +404,31 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchJobOrders(string searchTerm, int tenantId, int limit)
         {
-            bool isNumeric = int.TryParse(searchTerm.Replace("JO#", "").Replace("jo#", ""), out int jobOrderNumber);
-
             var jobOrdersQuery = _context.JobOrderMaster
                 .Where(j => j.Tenantid == tenantId);
 
-            if (isNumeric)
+            if (!IsBareDocPrefix(searchTerm, "jo"))
             {
-                jobOrdersQuery = jobOrdersQuery.Where(j =>
-                    j.JobOrderNumber == jobOrderNumber ||
-                    j.JobOrderNumber.ToString().Contains(searchTerm) ||
-                    j.PartNo != null && j.PartNo.ToLower().Contains(searchTerm) ||
-                    j.CustomerName != null && j.CustomerName.ToLower().Contains(searchTerm));
-            }
-            else
-            {
-                jobOrdersQuery = jobOrdersQuery.Where(j =>
-                    j.PartNo != null && j.PartNo.ToLower().Contains(searchTerm) ||
-                    j.PartName != null && j.PartName.ToLower().Contains(searchTerm) ||
-                    j.CustomerName != null && j.CustomerName.ToLower().Contains(searchTerm) ||
-                    j.JobNumber != null && j.JobNumber.ToLower().Contains(searchTerm));
+                var (isNumeric, rawNumber, poCandidate, cleaned) = ParseDocNumber(searchTerm, "jo#", "jo");
+
+                if (isNumeric)
+                {
+                    jobOrdersQuery = jobOrdersQuery.Where(j =>
+                        j.JobOrderNumber == rawNumber ||
+                        j.JobOrderNumber == poCandidate ||
+                        j.JobOrderNumber.ToString().Contains(cleaned) ||
+                        (j.PartNo != null && j.PartNo.ToLower().Contains(searchTerm)) ||
+                        (j.CustomerName != null && j.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (j.JobNumber != null && j.JobNumber.ToLower().Contains(searchTerm)));
+                }
+                else
+                {
+                    jobOrdersQuery = jobOrdersQuery.Where(j =>
+                        (j.PartNo != null && j.PartNo.ToLower().Contains(searchTerm)) ||
+                        (j.PartName != null && j.PartName.ToLower().Contains(searchTerm)) ||
+                        (j.CustomerName != null && j.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (j.JobNumber != null && j.JobNumber.ToLower().Contains(searchTerm)));
+                }
             }
 
             var jobOrders = await jobOrdersQuery
@@ -280,22 +454,26 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchQuotations(string searchTerm, int tenantId, int limit)
         {
-            bool isNumeric = int.TryParse(searchTerm.Replace("CQ#", "").Replace("cq#", ""), out int quotationNumber);
-
             var quotationsQuery = _context.QuotationOrder
                 .Where(q => q.Tenantid == tenantId);
 
-            if (isNumeric)
+            if (!IsBareDocPrefix(searchTerm, "cq"))
             {
-                quotationsQuery = quotationsQuery.Where(q =>
-                    q.PONumber == quotationNumber ||
-                    q.PONumber.ToString().Contains(searchTerm) ||
-                    q.CustomerName != null && q.CustomerName.ToLower().Contains(searchTerm));
-            }
-            else
-            {
-                quotationsQuery = quotationsQuery.Where(q =>
-                    q.CustomerName != null && q.CustomerName.ToLower().Contains(searchTerm));
+                var (isNumeric, rawNumber, poCandidate, cleaned) = ParseDocNumber(searchTerm, "cq#", "cq");
+
+                if (isNumeric)
+                {
+                    quotationsQuery = quotationsQuery.Where(q =>
+                        q.PONumber == rawNumber ||
+                        q.PONumber == poCandidate ||
+                        q.PONumber.ToString().Contains(cleaned) ||
+                        (q.CustomerName != null && q.CustomerName.ToLower().Contains(searchTerm)));
+                }
+                else
+                {
+                    quotationsQuery = quotationsQuery.Where(q =>
+                        q.CustomerName != null && q.CustomerName.ToLower().Contains(searchTerm));
+                }
             }
 
             var quotations = await quotationsQuery
@@ -545,28 +723,28 @@ namespace CimmpleAPI.Controllers
         // Purchasing Search Methods
         private async Task<List<object>> SearchVendorOrders(string searchTerm, int tenantId, int limit)
         {
-            var cleaned = searchTerm.Replace("vo#", "").Replace("vo", "").Replace("#", "").Trim();
-            bool isNumeric = int.TryParse(cleaned, out int displayOrPoNumber);
-
             var vendorOrdersQuery = _context.VendorOrders
                 .Where(v => v.Tenantid == tenantId);
 
-            if (isNumeric)
+            if (!IsBareDocPrefix(searchTerm, "vo"))
             {
-                // UI display is VO#(PONumber+999) when PONumber < 1000 (e.g. VO#1013 => PONumber 14)
-                var poFromDisplay = displayOrPoNumber >= 1000 ? displayOrPoNumber - 999 : displayOrPoNumber;
-                vendorOrdersQuery = vendorOrdersQuery.Where(v =>
-                    v.PONumber == displayOrPoNumber ||
-                    v.PONumber == poFromDisplay ||
-                    v.PONumber.ToString().Contains(cleaned) ||
-                    (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
-                    (v.VendorPoNumber != null && v.VendorPoNumber.ToLower().Contains(searchTerm)));
-            }
-            else
-            {
-                vendorOrdersQuery = vendorOrdersQuery.Where(v =>
-                    (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
-                    (v.VendorPoNumber != null && v.VendorPoNumber.ToLower().Contains(searchTerm)));
+                var (isNumeric, rawNumber, poCandidate, cleaned) = ParseDocNumber(searchTerm, "vo#", "vo");
+
+                if (isNumeric)
+                {
+                    vendorOrdersQuery = vendorOrdersQuery.Where(v =>
+                        v.PONumber == rawNumber ||
+                        v.PONumber == poCandidate ||
+                        v.PONumber.ToString().Contains(cleaned) ||
+                        (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
+                        (v.VendorPoNumber != null && v.VendorPoNumber.ToLower().Contains(searchTerm)));
+                }
+                else
+                {
+                    vendorOrdersQuery = vendorOrdersQuery.Where(v =>
+                        (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
+                        (v.VendorPoNumber != null && v.VendorPoNumber.ToLower().Contains(searchTerm)));
+                }
             }
 
             var vendorOrders = await vendorOrdersQuery
@@ -663,25 +841,26 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchVendorQuotations(string searchTerm, int tenantId, int limit)
         {
-            var cleanStr = searchTerm.Replace("vq#", "").Replace("vq", "").Replace("#", "").Trim();
-            bool isNumeric = int.TryParse(cleanStr, out int quotationNumber);
-            int offsetNumber = quotationNumber > 999 ? quotationNumber - 999 : quotationNumber;
-
             var vendorQuotationsQuery = _context.VendorQuotations
                 .Where(v => v.Tenantid == tenantId);
 
-            if (isNumeric)
+            if (!IsBareDocPrefix(searchTerm, "vq"))
             {
-                vendorQuotationsQuery = vendorQuotationsQuery.Where(v =>
-                    v.PONumber == quotationNumber ||
-                    v.PONumber == offsetNumber ||
-                    v.PONumber.ToString().Contains(cleanStr) ||
-                    (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)));
-            }
-            else
-            {
-                vendorQuotationsQuery = vendorQuotationsQuery.Where(v =>
-                    v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm));
+                var (isNumeric, rawNumber, poCandidate, cleaned) = ParseDocNumber(searchTerm, "vq#", "vq");
+
+                if (isNumeric)
+                {
+                    vendorQuotationsQuery = vendorQuotationsQuery.Where(v =>
+                        v.PONumber == rawNumber ||
+                        v.PONumber == poCandidate ||
+                        v.PONumber.ToString().Contains(cleaned) ||
+                        (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)));
+                }
+                else
+                {
+                    vendorQuotationsQuery = vendorQuotationsQuery.Where(v =>
+                        v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm));
+                }
             }
 
             var vendorQuotations = await vendorQuotationsQuery
@@ -739,27 +918,32 @@ namespace CimmpleAPI.Controllers
         // Quality Search Method
         private async Task<List<object>> SearchNCRReports(string searchTerm, int tenantId, int limit)
         {
-            bool isNumeric = int.TryParse(searchTerm.Replace("NCR#", "").Replace("ncr#", ""), out int ncrNumber);
-
             var ncrQuery = _context.NonConformanceReports
                 .Where(n => n.TenantId == tenantId);
 
-            if (isNumeric)
+            if (!IsBareDocPrefix(searchTerm, "ncr"))
             {
-                ncrQuery = ncrQuery.Where(n =>
-                    n.NcrNumber != null && n.NcrNumber.Contains(searchTerm) ||
-                    n.PartNo != null && n.PartNo.ToLower().Contains(searchTerm) ||
-                    n.CustomerName != null && n.CustomerName.ToLower().Contains(searchTerm) ||
-                    n.JobOrderNumber != null && n.JobOrderNumber.Contains(searchTerm));
-            }
-            else
-            {
-                ncrQuery = ncrQuery.Where(n =>
-                    n.Title != null && n.Title.ToLower().Contains(searchTerm) ||
-                    n.PartNo != null && n.PartNo.ToLower().Contains(searchTerm) ||
-                    n.PartName != null && n.PartName.ToLower().Contains(searchTerm) ||
-                    n.CustomerName != null && n.CustomerName.ToLower().Contains(searchTerm) ||
-                    n.JobOrderNumber != null && n.JobOrderNumber.ToLower().Contains(searchTerm));
+                var (isNumeric, _, _, cleaned) = ParseDocNumber(searchTerm, "ncr#", "ncr");
+
+                if (isNumeric)
+                {
+                    ncrQuery = ncrQuery.Where(n =>
+                        (n.NcrNumber != null && n.NcrNumber.ToLower().Contains(cleaned)) ||
+                        (n.NcrNumber != null && n.NcrNumber.ToLower().Contains(searchTerm)) ||
+                        (n.PartNo != null && n.PartNo.ToLower().Contains(searchTerm)) ||
+                        (n.CustomerName != null && n.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (n.JobOrderNumber != null && n.JobOrderNumber.Contains(cleaned)));
+                }
+                else
+                {
+                    ncrQuery = ncrQuery.Where(n =>
+                        (n.NcrNumber != null && n.NcrNumber.ToLower().Contains(searchTerm)) ||
+                        (n.Title != null && n.Title.ToLower().Contains(searchTerm)) ||
+                        (n.PartNo != null && n.PartNo.ToLower().Contains(searchTerm)) ||
+                        (n.PartName != null && n.PartName.ToLower().Contains(searchTerm)) ||
+                        (n.CustomerName != null && n.CustomerName.ToLower().Contains(searchTerm)) ||
+                        (n.JobOrderNumber != null && n.JobOrderNumber.ToLower().Contains(searchTerm)));
+                }
             }
 
             var ncrReports = await ncrQuery

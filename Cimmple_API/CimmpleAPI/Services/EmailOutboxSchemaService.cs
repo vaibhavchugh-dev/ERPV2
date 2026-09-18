@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 
@@ -5,12 +6,25 @@ namespace CimmpleAPI.Services
 {
     /// <summary>
     /// Ensures EmailOutbox table exists for DBs that lag EF migrations.
+    /// Runs at most once per process.
     /// </summary>
     public static class EmailOutboxSchemaService
     {
+        private static readonly SemaphoreSlim Gate = new(1, 1);
+        private static int _ensured;
+
         public static async Task EnsureTablesAsync(CimmpleDbContext context)
         {
-            await context.Database.ExecuteSqlRawAsync(@"
+            if (Volatile.Read(ref _ensured) == 1)
+                return;
+
+            await Gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (Volatile.Read(ref _ensured) == 1)
+                    return;
+
+                await context.Database.ExecuteSqlRawAsync(@"
 IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'CimmpleFlow')
 BEGIN
     EXEC('CREATE SCHEMA CimmpleFlow');
@@ -45,6 +59,12 @@ BEGIN
         ON CimmpleFlow.EmailOutbox ([Status], [LockedUntilUtc]);
 END
 ");
+                Volatile.Write(ref _ensured, 1);
+            }
+            finally
+            {
+                Gate.Release();
+            }
         }
     }
 }

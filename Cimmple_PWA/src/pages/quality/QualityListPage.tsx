@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { MessagesButton } from "../../components/MessagesButton";
 import { NotificationBell } from "../../components/NotificationBell";
 import { AuthService } from "../../services/authService";
 import {
@@ -267,6 +268,7 @@ export function QualityListPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <MessagesButton />
           <NotificationBell />
           <button
             type="button"

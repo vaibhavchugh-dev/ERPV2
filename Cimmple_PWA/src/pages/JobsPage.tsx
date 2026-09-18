@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
 import {
   JobOrderListItem,
@@ -305,7 +306,10 @@ export function JobsPage() {
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">Cimmple Shop Floor</p>
           </div>
         </div>
-        <NotificationBell />
+        <div className="flex items-center gap-2">
+          <MessagesButton />
+          <NotificationBell />
+        </div>
       </header>
 
       {/* Search */}

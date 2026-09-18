@@ -14,17 +14,21 @@ import {
   faInfoCircle,
   faBell,
   faEnvelope,
+  faComments,
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
 import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
 import { NotificationService, AppNotification } from "../Services/NotificationService";
+import { ConversationService, ConversationListItem } from "../Services/ConversationService";
 import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
+import ConversationPanel from "./ConversationPanel";
+import { stripMentionTokensForPreview } from "../Utils/chatMentions";
 import "./TopBar.scss";
 
 const NOTIFICATION_POLL_MS = 45000;
@@ -49,10 +53,15 @@ const TopBar: React.FC = () => {
   const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
+  const [messagesMenuOpen, setMessagesMenuOpen] = useState(false);
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [openConversationId, setOpenConversationId] = useState<number | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
+  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
@@ -63,6 +72,7 @@ const TopBar: React.FC = () => {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const locationMenuRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
+  const messagesMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const readStorageProfile = () => {
@@ -310,6 +320,9 @@ const TopBar: React.FC = () => {
       if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target as Node)) {
         setNotificationMenuOpen(false);
       }
+      if (messagesMenuRef.current && !messagesMenuRef.current.contains(event.target as Node)) {
+        setMessagesMenuOpen(false);
+      }
       if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) {
         setShowSearchResults(false);
       }
@@ -321,44 +334,62 @@ const TopBar: React.FC = () => {
     };
   }, []);
 
-  const refreshUnreadCount = useCallback(async () => {
+  const notificationsRefHasItems = useRef(false);
+  useEffect(() => {
+    notificationsRefHasItems.current = notifications.length > 0;
+  }, [notifications.length]);
+
+  const conversationsRefHasItems = useRef(false);
+  useEffect(() => {
+    conversationsRefHasItems.current = conversations.length > 0;
+  }, [conversations.length]);
+
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     if (!isInAppNotificationsEnabled()) {
+      setNotifications([]);
       setUnreadCount(0);
       return;
     }
+    const silent = opts?.silent === true;
+    // Keep showing previous items while refreshing (avoid full "Loading…" flash).
+    if (!silent && !notificationsRefHasItems.current) {
+      setNotificationsLoading(true);
+    }
     try {
-      const count = await NotificationService.GetUnreadCount();
+      const { items, unreadCount: count } = await NotificationService.GetMine(20, false);
+      setNotifications(items);
       setUnreadCount(count);
     } catch {
-      // soft-fail polling
-    }
-  }, []);
-
-  const loadNotifications = useCallback(async () => {
-    if (!isInAppNotificationsEnabled()) {
-      setNotifications([]);
-      setUnreadCount(0);
-      return;
-    }
-    setNotificationsLoading(true);
-    try {
-      const items = await NotificationService.GetMine(30, false);
-      setNotifications(items);
-      setUnreadCount(items.filter((n) => !n.isRead).length);
-    } catch {
-      setNotifications([]);
+      if (!silent && !notificationsRefHasItems.current) setNotifications([]);
     } finally {
       setNotificationsLoading(false);
     }
   }, []);
 
-  // Poll unread badge; pause when tab is hidden
+  const loadConversations = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent && !conversationsRefHasItems.current) {
+      setMessagesLoading(true);
+    }
+    try {
+      const { items, unreadCount: count } = await ConversationService.ListMine(30);
+      setConversations(items);
+      setMessagesUnreadCount(count);
+    } catch {
+      if (!silent && !conversationsRefHasItems.current) setConversations([]);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, []);
+
+  // Prefetch lists (includes unread counts) so opening menus is usually instant
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
 
     const tick = () => {
       if (document.visibilityState === "hidden") return;
-      void refreshUnreadCount();
+      void loadNotifications({ silent: true });
+      void loadConversations({ silent: true });
     };
 
     tick();
@@ -373,7 +404,7 @@ const TopBar: React.FC = () => {
       if (timer) clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [refreshUnreadCount]);
+  }, [loadNotifications, loadConversations]);
 
   const formatNotificationTime = (iso: string) => {
     try {
@@ -390,12 +421,27 @@ const TopBar: React.FC = () => {
     }
   };
 
-  const handleOpenNotifications = async () => {
+  const handleOpenNotifications = () => {
     const next = !notificationMenuOpen;
     setNotificationMenuOpen(next);
+    setMessagesMenuOpen(false);
     setUserMenuOpen(false);
     setLocationMenuOpen(false);
-    if (next) await loadNotifications();
+    if (next) {
+      // Refresh in background; show cached list immediately if we have it.
+      void loadNotifications({ silent: notificationsRefHasItems.current });
+    }
+  };
+
+  const handleOpenMessages = () => {
+    const next = !messagesMenuOpen;
+    setMessagesMenuOpen(next);
+    setNotificationMenuOpen(false);
+    setUserMenuOpen(false);
+    setLocationMenuOpen(false);
+    if (next) {
+      void loadConversations({ silent: conversationsRefHasItems.current });
+    }
   };
 
   const handleNotificationClick = async (item: AppNotification) => {
@@ -411,9 +457,15 @@ const TopBar: React.FC = () => {
       }
     }
     setNotificationMenuOpen(false);
+
     if (item.linkPath) {
       history.push(item.linkPath);
     }
+  };
+
+  const handleConversationClick = (item: ConversationListItem) => {
+    setMessagesMenuOpen(false);
+    setOpenConversationId(item.id);
   };
 
   const handleMarkAllRead = async () => {
@@ -431,6 +483,7 @@ const TopBar: React.FC = () => {
     setShowSearchResults(false);
     setSearchQuery('');
     setNotificationMenuOpen(false);
+    setMessagesMenuOpen(false);
   }, [location.pathname]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -636,6 +689,80 @@ const TopBar: React.FC = () => {
           </div>
         )}
         
+        {/* Messages */}
+        <div className="notification-menu" ref={messagesMenuRef}>
+          <button
+            type="button"
+            className="notification-menu-btn"
+            onClick={() => void handleOpenMessages()}
+            title="Messages"
+            aria-label="Messages"
+          >
+            <FontAwesomeIcon icon={faComments} size="sm" />
+            {messagesUnreadCount > 0 && (
+              <span className="notification-badge">
+                {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
+              </span>
+            )}
+          </button>
+          {messagesMenuOpen && (
+            <div className="notification-dropdown">
+              <div className="notification-dropdown-header">
+                <div className="notification-dropdown-title">Messages</div>
+                <div className="notification-dropdown-actions">
+                  <button
+                    type="button"
+                    className="notification-link-btn"
+                    onClick={() => {
+                      setMessagesMenuOpen(false);
+                      setNotifyDialogOpen(true);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faEnvelope} size="xs" />
+                    New message
+                  </button>
+                </div>
+              </div>
+              <div className="dropdown-divider"></div>
+              <div className="notification-list">
+                {messagesLoading && conversations.length === 0 ? (
+                  <div className="notification-empty">Loading…</div>
+                ) : conversations.length === 0 ? (
+                  <div className="notification-empty">No conversations yet</div>
+                ) : (
+                  conversations.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`notification-item ${item.unreadCount > 0 ? "unread" : ""}`}
+                      onClick={() => handleConversationClick(item)}
+                    >
+                      <div className="notification-item-title">
+                        {item.otherUserName || "Conversation"}
+                        {item.unreadCount > 0 && (
+                          <span className="messages-unread-pill">
+                            {item.unreadCount > 99 ? "99+" : item.unreadCount}
+                          </span>
+                        )}
+                      </div>
+                      {(item.subject || item.lastMessagePreview) && (
+                        <div className="notification-item-body">
+                          {item.subject
+                            ? `${item.subject}${item.lastMessagePreview ? ` — ${stripMentionTokensForPreview(item.lastMessagePreview)}` : ""}`
+                            : stripMentionTokensForPreview(item.lastMessagePreview || "")}
+                        </div>
+                      )}
+                      <div className="notification-item-meta">
+                        {item.lastMessageAt ? formatNotificationTime(item.lastMessageAt) : ""}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Notifications */}
         <div className="notification-menu" ref={notificationMenuRef}>
           <button
@@ -657,17 +784,6 @@ const TopBar: React.FC = () => {
               <div className="notification-dropdown-header">
                 <div className="notification-dropdown-title">Notifications</div>
                 <div className="notification-dropdown-actions">
-                  <button
-                    type="button"
-                    className="notification-link-btn"
-                    onClick={() => {
-                      setNotificationMenuOpen(false);
-                      setNotifyDialogOpen(true);
-                    }}
-                  >
-                    <FontAwesomeIcon icon={faEnvelope} size="xs" />
-                    Notify user
-                  </button>
                   {unreadCount > 0 && (
                     <button
                       type="button"
@@ -685,7 +801,7 @@ const TopBar: React.FC = () => {
                   <div className="notification-empty">
                     In-app notifications are disabled in System Settings.
                   </div>
-                ) : notificationsLoading ? (
+                ) : notificationsLoading && notifications.length === 0 ? (
                   <div className="notification-empty">Loading…</div>
                 ) : notifications.length === 0 ? (
                   <div className="notification-empty">No notifications yet</div>
@@ -716,7 +832,11 @@ const TopBar: React.FC = () => {
         <div className="user-menu" ref={userMenuRef}>
           <button
             className="user-menu-btn"
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            onClick={() => {
+              setUserMenuOpen(!userMenuOpen);
+              setMessagesMenuOpen(false);
+              setNotificationMenuOpen(false);
+            }}
           >
             <div className="user-avatar-small">
               <FontAwesomeIcon icon={faUser} size="sm" />
@@ -801,8 +921,21 @@ const TopBar: React.FC = () => {
       <NotifyUserDialog
         open={notifyDialogOpen}
         onClose={() => setNotifyDialogOpen(false)}
-        onSent={() => {
-          void refreshUnreadCount();
+        onSent={(conversationId) => {
+          void loadConversations({ silent: true });
+          if (conversationId && conversationId > 0) {
+            setOpenConversationId(conversationId);
+          }
+        }}
+      />
+      <ConversationPanel
+        conversationId={openConversationId}
+        onClose={() => {
+          setOpenConversationId(null);
+          void loadConversations({ silent: true });
+        }}
+        onChanged={() => {
+          void loadConversations({ silent: true });
         }}
       />
     </header>
