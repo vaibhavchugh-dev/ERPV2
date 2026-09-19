@@ -73,6 +73,7 @@ public static class SalesReportsService
                         SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
                         Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
                         Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolveInvoicePaymentStatus(inv),
                         EntityId = inv.Id,
                         LinkPath = "/orders/customer-invoices"
                     }).ToList()
@@ -427,6 +428,9 @@ public static class SalesReportsService
         report.Sections.Add(section);
         if (byLocation.Count == 0)
             report.SummaryNote = "No billed invoices found for this period and site.";
+        else if (locationId.HasValue && locationId.Value > 0)
+            report.SummaryNote =
+                "Results are limited to the selected site. Choose All sites to compare revenue across locations.";
 
         return report;
     }
@@ -461,7 +465,9 @@ public static class SalesReportsService
                 inv.InvoiceNo,
                 PrefixInvoiceNo = inv.PrefixInvoiceNo ?? "",
                 inv.InvoiceDate,
+                inv.DueDate,
                 inv.TotalAmount,
+                inv.PaidAmount,
                 CustomerName = o != null ? o.CustomerName : null,
                 CustomerId = o != null ? o.CustomerID : 0,
                 LocationId = o != null ? o.locationId : 0,
@@ -485,7 +491,9 @@ public static class SalesReportsService
                     InvoiceNo = first.InvoiceNo,
                     PrefixInvoiceNo = first.PrefixInvoiceNo ?? "",
                     InvoiceDate = first.InvoiceDate,
+                    DueDate = first.DueDate,
                     TotalAmount = first.TotalAmount,
+                    PaidAmount = first.PaidAmount,
                     CustomerName = first.CustomerName ?? "",
                     CustomerId = first.CustomerId,
                     LocationId = first.LocationId,
@@ -500,13 +508,26 @@ public static class SalesReportsService
     private static string FormatQuoteNumber(int poNumber) =>
         poNumber < 1000 ? $"CQ#{poNumber + 999}" : $"CQ#{poNumber}";
 
+    private static string ResolveInvoicePaymentStatus(BilledInvoiceRow inv)
+    {
+        if (inv.PaidAmount >= inv.TotalAmount - 0.009m && inv.TotalAmount > 0)
+            return "Paid";
+        if (inv.PaidAmount > 0.009m)
+            return "Partial";
+        if (inv.DueDate != default && inv.DueDate.Date < DateTime.Now.Date)
+            return "Overdue";
+        return "Unpaid";
+    }
+
     private sealed class BilledInvoiceRow
     {
         public int Id { get; set; }
         public int InvoiceNo { get; set; }
         public string PrefixInvoiceNo { get; set; } = "";
         public DateTime InvoiceDate { get; set; }
+        public DateTime DueDate { get; set; }
         public decimal TotalAmount { get; set; }
+        public decimal PaidAmount { get; set; }
         public string CustomerName { get; set; } = "";
         public int CustomerId { get; set; }
         public int LocationId { get; set; }

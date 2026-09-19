@@ -31,7 +31,10 @@ public static class PurchasingReportsService
             {
                 o.OrderID,
                 o.VendorID,
+                o.PONumber,
+                VendorPoNumber = o.VendorPoNumber ?? "",
                 VendorName = o.VendorName ?? "",
+                o.OrderDate,
                 o.TotalAmount,
                 Status = o.Status ?? "",
             })
@@ -86,7 +89,7 @@ public static class PurchasingReportsService
             totalPos += poCount;
 
             var statusMix = string.Join(", ",
-                g.GroupBy(x => string.IsNullOrWhiteSpace(x.Status) ? "Unknown" : x.Status)
+                g.GroupBy(x => NormalizeVendorStatus(x.Status))
                     .OrderByDescending(s => s.Count())
                     .Select(s => $"{s.Key}:{s.Count()}"));
 
@@ -123,10 +126,11 @@ public static class PurchasingReportsService
                     LinkPath = "/purchasing/vendor-orders",
                     Details = g.OrderByDescending(o => o.TotalAmount).Select(o => new ReportDrillItemDto
                     {
-                        Label = $"PO #{o.OrderID}",
-                        SubLabel = string.IsNullOrWhiteSpace(o.Status) ? "—" : o.Status,
+                        Label = FormatVendorOrderLabel(o.PONumber, o.VendorPoNumber),
+                        SubLabel = string.IsNullOrWhiteSpace(o.Status) ? "—" : NormalizeVendorStatus(o.Status),
+                        Date = o.OrderDate.ToString("yyyy-MM-dd"),
                         Amount = ReportResultFactory.Money(o.TotalAmount),
-                        Status = o.Status ?? "",
+                        Status = NormalizeVendorStatus(o.Status),
                         EntityId = o.OrderID,
                         LinkPath = "/purchasing/vendor-orders"
                     }).ToList()
@@ -168,6 +172,7 @@ public static class PurchasingReportsService
             {
                 o.OrderID,
                 o.PONumber,
+                VendorPoNumber = o.VendorPoNumber ?? "",
                 o.OrderDate,
                 o.TotalAmount,
                 VendorName = o.VendorName ?? "",
@@ -196,11 +201,11 @@ public static class PurchasingReportsService
                     LinkPath = "/purchasing/vendor-orders",
                     Details = g.OrderByDescending(o => o.OrderDate).Select(o => new ReportDrillItemDto
                     {
-                        Label = $"PO {o.PONumber}",
+                        Label = FormatVendorOrderLabel(o.PONumber, o.VendorPoNumber),
                         SubLabel = string.IsNullOrWhiteSpace(o.VendorName) ? "—" : o.VendorName.Trim(),
                         Date = o.OrderDate.ToString("yyyy-MM-dd"),
                         Amount = ReportResultFactory.Money(o.TotalAmount),
-                        Status = o.Status,
+                        Status = NormalizeVendorStatus(o.Status),
                         EntityId = o.OrderID,
                         LinkPath = "/purchasing/vendor-orders"
                     }).ToList()
@@ -246,8 +251,13 @@ public static class PurchasingReportsService
                 o.OrderID,
                 o.VendorID,
                 o.PONumber,
+                VendorPoNumber = o.VendorPoNumber ?? "",
+                o.OrderDate,
+                Status = o.Status ?? "",
                 VendorName = o.VendorName ?? "",
                 PartNo = d.PartNo ?? "",
+                PartName = d.PartName ?? "",
+                JobNumber = d.JobNumber ?? "",
                 d.UnitPrice,
                 d.QtyOrdered,
                 d.Discount,
@@ -258,7 +268,7 @@ public static class PurchasingReportsService
             .GroupBy(l => (
                 VendorId: l.VendorID,
                 Vendor: string.IsNullOrWhiteSpace(l.VendorName) ? "(unknown)" : l.VendorName.Trim(),
-                Part: string.IsNullOrWhiteSpace(l.PartNo) ? "(no part)" : l.PartNo.Trim()))
+                Part: ResolveVendorLinePart(l.PartNo, l.PartName, l.JobNumber)))
             .OrderBy(g => g.Key.Vendor)
             .ThenBy(g => g.Key.Part);
 
@@ -278,14 +288,25 @@ public static class PurchasingReportsService
                 {
                     var first = og.First();
                     var lineSpend = og.Sum(x => LineNetSpend(x.UnitPrice, x.QtyOrdered, x.Discount, x.DiscountType));
-                    return new { first.PONumber, OrderId = og.Key, Part = g.Key.Part, Spend = lineSpend };
+                    return new
+                    {
+                        first.PONumber,
+                        first.VendorPoNumber,
+                        first.OrderDate,
+                        first.Status,
+                        OrderId = og.Key,
+                        Part = g.Key.Part,
+                        Spend = lineSpend
+                    };
                 })
                 .OrderByDescending(x => x.Spend)
                 .Select(x => new ReportDrillItemDto
                 {
-                    Label = $"PO {x.PONumber}",
+                    Label = FormatVendorOrderLabel(x.PONumber, x.VendorPoNumber),
                     SubLabel = x.Part,
+                    Date = x.OrderDate.ToString("yyyy-MM-dd"),
                     Amount = ReportResultFactory.Money(x.Spend),
+                    Status = NormalizeVendorStatus(x.Status),
                     EntityId = x.OrderId,
                     LinkPath = "/purchasing/vendor-orders"
                 })
@@ -345,6 +366,8 @@ public static class PurchasingReportsService
             {
                 o.OrderDate,
                 PartNo = d.PartNo ?? "",
+                PartName = d.PartName ?? "",
+                JobNumber = d.JobNumber ?? "",
                 d.RawMaterialId,
                 d.UnitPrice,
                 d.QtyOrdered,
@@ -356,9 +379,9 @@ public static class PurchasingReportsService
             .GroupBy(l =>
             {
                 var month = new DateTime(l.OrderDate.Year, l.OrderDate.Month, 1);
-                var partKey = !string.IsNullOrWhiteSpace(l.PartNo)
-                    ? l.PartNo.Trim()
-                    : (l.RawMaterialId.HasValue ? $"RM#{l.RawMaterialId}" : "(no part)");
+                var partKey = ResolveVendorLinePart(l.PartNo, l.PartName, l.JobNumber);
+                if (partKey == "(no part)" && l.RawMaterialId.HasValue)
+                    partKey = $"RM#{l.RawMaterialId}";
                 return (Month: month, Part: partKey);
             })
             .OrderBy(g => g.Key.Month)
@@ -418,7 +441,10 @@ public static class PurchasingReportsService
                 o.OrderID,
                 VendorName = o.VendorName ?? "",
                 o.PONumber,
+                VendorPoNumber = o.VendorPoNumber ?? "",
                 PartNo = d.PartNo ?? "",
+                PartName = d.PartName ?? "",
+                JobNumber = d.JobNumber ?? "",
                 d.ID,
                 HeaderDue = o.ExternalOrderDate,
                 LineDue = d.DueDateDateTime,
@@ -428,7 +454,8 @@ public static class PurchasingReportsService
                 l.OrderID,
                 l.VendorName,
                 l.PONumber,
-                l.PartNo,
+                l.VendorPoNumber,
+                Part = ResolveVendorLinePart(l.PartNo, l.PartName, l.JobNumber),
                 l.ID,
                 DueDate = ResolveVendorDueDate(l.HeaderDue, l.LineDue),
             })
@@ -465,20 +492,20 @@ public static class PurchasingReportsService
             }
 
             var vendor = string.IsNullOrWhiteSpace(line.VendorName) ? "(unknown)" : line.VendorName.Trim();
-            var part = string.IsNullOrWhiteSpace(line.PartNo) ? "(no part)" : line.PartNo.Trim();
+            var voLabel = FormatVendorOrderLabel(line.PONumber, line.VendorPoNumber);
             table.AddRow(
                 new ReportRowMetaDto
                 {
                     EntityType = "vendor-po",
                     EntityId = line.OrderID,
-                    Title = $"PO {line.PONumber} — {part}",
+                    Title = $"{voLabel} — {line.Part}",
                     LinkPath = "/purchasing/vendor-orders",
                     Details = new List<ReportDrillItemDto>
                     {
                         new()
                         {
-                            Label = $"PO {line.PONumber}",
-                            SubLabel = $"{vendor} · {part}",
+                            Label = voLabel,
+                            SubLabel = $"{vendor} · {line.Part}",
                             Date = due.ToString("yyyy-MM-dd"),
                             Status = !hasRecv ? "Not received" : (isOnTime ? "On time" : "Late"),
                             EntityId = line.OrderID,
@@ -487,8 +514,8 @@ public static class PurchasingReportsService
                     }
                 },
                 vendor,
-                line.PONumber.ToString(),
-                part,
+                voLabel,
+                line.Part,
                 due.ToString("yyyy-MM-dd"),
                 hasRecv ? received.ToString("yyyy-MM-dd") : "—",
                 !hasRecv ? "—" : (isOnTime ? "Yes" : "No"));
@@ -514,6 +541,61 @@ public static class PurchasingReportsService
         if (lineDue != default)
             return lineDue.Date;
         return null;
+    }
+
+    /// <summary>
+    /// Prefer Vendor PO Number when set; otherwise display sequential number as VO# (same as Vendor Orders UI).
+    /// </summary>
+    private static string FormatVendorOrderLabel(int poNumber, string? vendorPoNumber)
+    {
+        if (!string.IsNullOrWhiteSpace(vendorPoNumber))
+            return vendorPoNumber.Trim();
+        var display = poNumber < 1000 ? poNumber + 999 : poNumber;
+        return $"VO#{display}";
+    }
+
+    /// <summary>Collapse receiving aliases so status mix counts are consistent.</summary>
+    private static string NormalizeVendorStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return "Unknown";
+        var s = status.Trim();
+        if (s.Equals("Receiving", StringComparison.OrdinalIgnoreCase) ||
+            s.Equals("Partially Received", StringComparison.OrdinalIgnoreCase))
+            return "Partially Received";
+        if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase) ||
+            s.Equals("Fully Received", StringComparison.OrdinalIgnoreCase))
+            return "Fully Received";
+        return s;
+    }
+
+    /// <summary>
+    /// Prefer part name/number; ignore PartNo when it duplicates JobNumber (common data issue).
+    /// </summary>
+    private static string ResolveVendorLinePart(string? partNo, string? partName, string? jobNumber)
+    {
+        var no = (partNo ?? "").Trim();
+        var name = (partName ?? "").Trim();
+        var job = (jobNumber ?? "").Trim();
+
+        if (!string.IsNullOrEmpty(job) && !string.IsNullOrEmpty(no))
+        {
+            var jobNorm = job.StartsWith("JO#", StringComparison.OrdinalIgnoreCase) ? job.Substring(3) : job;
+            var noNorm = no.StartsWith("JO#", StringComparison.OrdinalIgnoreCase) ? no.Substring(3) : no;
+            if (no.Equals(job, StringComparison.OrdinalIgnoreCase) ||
+                noNorm.Equals(jobNorm, StringComparison.OrdinalIgnoreCase))
+            {
+                no = "";
+            }
+        }
+
+        if (string.IsNullOrEmpty(no) && string.IsNullOrEmpty(name))
+            return "(no part)";
+        if (string.IsNullOrEmpty(no))
+            return name;
+        if (string.IsNullOrEmpty(name) || no.Equals(name, StringComparison.OrdinalIgnoreCase))
+            return no;
+        return $"{no} — {name}";
     }
 
     /// <summary>Net line spend after Percent or Amount discount (matches Vendor Order UI / PDF).</summary>

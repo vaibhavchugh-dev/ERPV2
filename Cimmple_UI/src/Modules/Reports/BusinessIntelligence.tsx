@@ -380,18 +380,22 @@ const DRILLABLE_REPORTS = new Set([
 const GenericReportBody: React.FC<{
   data: any;
   reportId?: string;
+  siteScopeLabel?: string;
   onRowDrill?: (meta: OperationalDrillMeta) => void;
-}> = ({ data, reportId, onRowDrill }) => {
+}> = ({ data, reportId, siteScopeLabel, onRowDrill }) => {
   const summary: ReportSummaryItem[] = Array.isArray(data?.summary) ? data.summary : [];
   const sections: ReportSection[] = Array.isArray(data?.sections) ? data.sections : [];
   const canDrill = !!reportId && DRILLABLE_REPORTS.has(reportId) && !!onRowDrill;
+  const siteLabel =
+    siteScopeLabel ||
+    (data?.locationId ? `Site #${data.locationId}` : "All sites");
 
   return (
     <div className="rpt-preview-body">
       <div className="rpt-preview-meta">
         <span>
           Period: {data?.periodStart} → {data?.periodEnd}
-          {data?.locationId ? ` · Site #${data.locationId}` : " · All sites"}
+          {` · ${siteLabel}`}
         </span>
         {canDrill && (
           <span className="rpt-muted">
@@ -484,14 +488,25 @@ const GenericReportBody: React.FC<{
 
 const Reports: React.FC = () => {
   const history = useHistory();
-  const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { locationIdParam, masterListFilter, siteScopeLabel } =
+    useSiteListFilter();
 
   const defaultReportId =
     REPORT_CATALOG.find((r) => r.id === "job-status-dashboard")?.id ||
     REPORT_CATALOG.find((r) => r.kind === "report")?.id ||
     "";
 
-  const [selectedReport, setSelectedReport] = useState<string>(defaultReportId);
+  const [selectedReport, setSelectedReport] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("reports.selectedReportId");
+      if (saved && REPORT_CATALOG.some((r) => r.id === saved && r.kind === "report")) {
+        return saved;
+      }
+    } catch {
+      /* ignore */
+    }
+    return defaultReportId;
+  });
   const [dateRange, setDateRange] = useState("This Month");
   const [customStartDate, setCustomStartDate] = useState(() => {
     const d = new Date();
@@ -558,6 +573,11 @@ const Reports: React.FC = () => {
       return;
     }
     setSelectedReport(reportId);
+    try {
+      localStorage.setItem("reports.selectedReportId", reportId);
+    } catch {
+      /* ignore */
+    }
     setErrorMessage("");
     setDrillMeta(null);
     if (loadedReportId !== reportId) {
@@ -575,6 +595,11 @@ const Reports: React.FC = () => {
     if (!validateCustomRange()) return;
 
     setSelectedReport(reportId);
+    try {
+      localStorage.setItem("reports.selectedReportId", reportId);
+    } catch {
+      /* ignore */
+    }
     setLoading(true);
     setErrorMessage("");
     setDrillMeta(null);
@@ -807,7 +832,7 @@ const Reports: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="rpt-field">
+                <div className="rpt-field rpt-field-site">
                   <label htmlFor="rpt-site">{masterListFilter.label}</label>
                   <select
                     id="rpt-site"
@@ -823,6 +848,11 @@ const Reports: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                  <p className="rpt-field-hint">
+                    Defaults to your working site. Choose <strong>All sites</strong> for
+                    tenant-wide results. Records with no site (or NCR without a job at this
+                    site) appear only under All sites.
+                  </p>
                 </div>
 
                 {dateRange === "Custom" && (
@@ -884,8 +914,9 @@ const Reports: React.FC = () => {
               <div className="rpt-state">
                 <h3>Ready to run</h3>
                 <p>
-                  Set the period and site, then click <strong>Run report</strong> to preview
-                  results here.
+                  Period defaults to This Month; Site defaults to your working site.
+                  Use <strong>All sites</strong> for a tenant-wide view, then click{" "}
+                  <strong>Run report</strong>.
                 </p>
               </div>
             )}
@@ -894,6 +925,7 @@ const Reports: React.FC = () => {
               <GenericReportBody
                 data={reportData}
                 reportId={loadedReportId}
+                siteScopeLabel={siteScopeLabel}
                 onRowDrill={setDrillMeta}
               />
             )}

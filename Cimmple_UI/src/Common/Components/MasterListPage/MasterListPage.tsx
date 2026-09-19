@@ -43,6 +43,8 @@ export interface MasterListPageProps<T = any> {
   onLoadData?: () => Promise<void>;
   searchPlaceholder?: string;
   searchFields?: (keyof T | string)[]; // Fields to search in
+  /** Seed the search box (e.g. from report deep-link ?search=). */
+  initialSearchTerm?: string;
   /** Custom row matcher (e.g. JO# / CO# display formats). Overrides default field search when provided. */
   matchRowSearch?: (row: T, searchLower: string) => boolean;
   filters?: {
@@ -78,6 +80,7 @@ const MasterListPage = <T extends Record<string, any>>({
   onLoadData,
   searchPlaceholder = "Search...",
   searchFields = [],
+  initialSearchTerm = "",
   matchRowSearch,
   filters = [],
   extraFilters,
@@ -90,10 +93,17 @@ const MasterListPage = <T extends Record<string, any>>({
   defaultHiddenColumns = [],
 }: MasterListPageProps<T>) => {
   const settings = useSettingsSafe();
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() =>
+    (initialSearchTerm || "").trim()
+  );
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    const next = (initialSearchTerm || "").trim();
+    if (next) setSearchTerm(next);
+  }, [initialSearchTerm]);
 
   const chooserColumns = useMemo(() => {
     const mapped = columns.map((column) => ({

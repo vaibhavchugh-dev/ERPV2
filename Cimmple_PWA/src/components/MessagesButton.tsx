@@ -64,16 +64,28 @@ export function MessagesButton() {
     }
   }, []);
 
-  const loadChat = useCallback(async (id: number) => {
-    setChatLoading(true);
+  const loadChat = useCallback(async (id: number, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setChatLoading(true);
     try {
       const data = await ConversationService.Get(id);
-      setThread(data);
+      if (!data) {
+        if (!opts?.silent) setThread(null);
+        return;
+      }
+      setThread((prev) => {
+        if (!opts?.silent || !prev || prev.id !== data.id) return data;
+        const prevIds = new Set((prev.messages || []).map((m) => m.id));
+        const nextMsgs = data.messages || [];
+        const hasNew =
+          nextMsgs.length !== (prev.messages || []).length ||
+          nextMsgs.some((m) => !prevIds.has(m.id));
+        return hasNew ? data : prev;
+      });
       void refresh();
     } catch {
-      setThread(null);
+      if (!opts?.silent) setThread(null);
     } finally {
-      setChatLoading(false);
+      if (!opts?.silent) setChatLoading(false);
     }
   }, [refresh]);
 
@@ -116,6 +128,26 @@ export function MessagesButton() {
       setThread(null);
       setDraft("");
     }
+  }, [chatId, loadChat]);
+
+  // Poll open chat so new replies appear without closing
+  useEffect(() => {
+    if (chatId == null) return;
+    const CHAT_POLL_MS = 5000;
+    const tick = () => {
+      if (document.visibilityState === "visible") {
+        void loadChat(chatId, { silent: true });
+      }
+    };
+    const id = window.setInterval(tick, CHAT_POLL_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [chatId, loadChat]);
 
   useEffect(() => {
