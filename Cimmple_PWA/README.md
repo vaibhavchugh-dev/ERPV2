@@ -26,7 +26,7 @@ cp .env.example .env
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `VITE_API_ROOT` | API base URL including `/api` | `http://localhost:5172/api` |
+| `VITE_API_ROOT` | API base URL including `/api`. Local: `/api` or `http://localhost:5172/api`. Production: `https://api.v2.cimmple.net/api`. If omitted on a hosted hostname, production API is used (never localhost). | `/api` |
 
 Do not commit `.env` or secrets.
 
