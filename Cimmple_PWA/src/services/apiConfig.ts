@@ -5,8 +5,9 @@ function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
-function isLocalApiUrl(url: string): boolean {
-  return /localhost|127\.0\.0\.1/i.test(url);
+/** Localhost loopback or same-origin relative /api (Vite proxy only). */
+function isDevOnlyApiUrl(url: string): boolean {
+  return /localhost|127\.0\.0\.1/i.test(url) || url.startsWith("/");
 }
 
 function resolveApiRoot(): string {
@@ -17,8 +18,8 @@ function resolveApiRoot(): string {
     return envRoot || LOCAL_API;
   }
 
-  // Hosted erp.cimmple.net/shop must never call the developer's machine.
-  if (envRoot && !isLocalApiUrl(envRoot)) {
+  // Hosted erp.cimmple.net must call the public API host — never /api or localhost.
+  if (envRoot && !isDevOnlyApiUrl(envRoot)) {
     return envRoot;
   }
 
