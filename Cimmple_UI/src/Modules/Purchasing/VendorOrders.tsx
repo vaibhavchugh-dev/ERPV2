@@ -18,25 +18,32 @@ const VendorOrders: React.FC = () => {
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [seedSearch, setSeedSearch] = useState("");
 
   useEffect(() => {
     loadOrders();
   }, [locationIdParam]);
 
-  // Check for orderId or open in URL parameters and open slideout
+  // Check for orderId/open or search in URL parameters (report drill-down)
   useEffect(() => {
     const urlParams = new URLSearchParams(location.search);
     const orderIdParam = urlParams.get('orderId') || urlParams.get('open');
+    const search = urlParams.get('search');
 
     if (orderIdParam && orderIdParam !== processedOrderIdRef.current) {
       const orderId = parseInt(orderIdParam, 10);
       if (orderId > 0) {
-        console.log(`[VendorOrders] Opening order ${orderId} from URL parameter`);
         processedOrderIdRef.current = orderIdParam;
         setSelectedOrderId(orderId);
         setShowSlideout(true);
         history.replace(location.pathname);
+        return;
       }
+    }
+
+    if (search && search.trim()) {
+      setSeedSearch(search.trim());
+      history.replace(location.pathname);
     }
   }, [location.search, location.pathname, history]);
 
@@ -289,6 +296,7 @@ const VendorOrders: React.FC = () => {
           },
         ]}
         searchPlaceholder="Search orders..."
+        initialSearchTerm={seedSearch}
         getRowId={(row) => (row as VendorOrderMaster).orderID}
       />
 

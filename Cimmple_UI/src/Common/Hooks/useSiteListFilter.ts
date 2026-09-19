@@ -36,9 +36,12 @@ const mapCachedToMaster = (l: {
 });
 
 /**
- * Site filter for shared multi-site list pages.
- * Defaults to the TopBar working site so switching location reloads that site's data.
- * Users can still choose "All sites" for a tenant-wide view.
+ * Site filter for shared multi-site list pages and Reports.
+ *
+ * Behaviour:
+ * - Defaults to the TopBar **working site** so switching location reloads that site's data.
+ * - Users can choose **All sites** for a tenant-wide view (no locationId sent to APIs).
+ * - Documents / jobs / invoices / POs / NCRs without a resolvable site only appear under All sites.
  */
 export function useSiteListFilter() {
   const { locationId: workingSiteId } = useActiveLocation();
@@ -157,11 +160,22 @@ export function useSiteListFilter() {
     [filterOptions, locationFilter, onFilterChange]
   );
 
+  /** Short label for the active site selection (UI hints / report preview). */
+  const siteScopeLabel = useMemo(() => {
+    if (locationFilter === "" || locationFilter <= 0) return "All sites";
+    const site = sites.find((s) => s.locationId === Number(locationFilter));
+    const name = site?.name || site?.code || `Site #${locationFilter}`;
+    return workingSiteId === Number(locationFilter)
+      ? `${name} (working site)`
+      : name;
+  }, [locationFilter, sites, workingSiteId]);
+
   return {
     locationFilter,
     setLocationFilter,
     locationIdParam,
     masterListFilter,
+    siteScopeLabel,
     sites,
   };
 }
