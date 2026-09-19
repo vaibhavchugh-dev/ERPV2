@@ -36,7 +36,7 @@ Do not commit `.env` or secrets.
 npm run dev
 ```
 
-Opens at [http://localhost:5174](http://localhost:5174) by default.
+Opens at [http://localhost:5174/shop/](http://localhost:5174/shop/) (`base` is `/shop/` to match production). Do not use the site root; that path will serve HTML for JS/manifest requests.
 
 ## Build
 
