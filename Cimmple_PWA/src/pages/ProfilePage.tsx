@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
@@ -35,6 +36,7 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
 
 export function ProfilePage() {
   const { userName, logout } = useAuth();
+  const navigate = useNavigate();
   const [employee, setEmployee] = useState<EmployeeDetail | null>(null);
   const [empLoading, setEmpLoading] = useState(true);
 
@@ -161,6 +163,22 @@ export function ProfilePage() {
           Account Operations
         </h3>
         <div className="card divide-y divide-slate-100 overflow-hidden dark:divide-slate-700">
+          <button
+            type="button"
+            onClick={() => navigate("/support")}
+            className="flex w-full items-center gap-4 bg-white p-4 text-left hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700/60"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 18v-6a9 9 0 0118 0v6" />
+                <path d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z" />
+              </svg>
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 dark:text-white">Contact support</div>
+              <div className="text-sm text-slate-500 dark:text-slate-300">Report a problem to Cimmple</div>
+            </div>
+          </button>
           <button
             type="button"
             onClick={() => void logout()}

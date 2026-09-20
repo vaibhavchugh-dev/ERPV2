@@ -97,6 +97,7 @@ builder.Services.AddHostedService<CimmpleAPI.Services.ReportScheduleHostedServic
 builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.ConversationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
+builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 
 // Legacy user repository (UserController login / maintenance helpers)

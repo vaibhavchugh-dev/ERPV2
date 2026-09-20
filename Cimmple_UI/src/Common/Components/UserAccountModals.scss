@@ -254,3 +254,18 @@ kbd {
 .about-copy {
   margin-bottom: 0;
 }
+
+.help-support-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #4f46e5;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+
+  &:hover {
+    color: #4338ca;
+  }
+}

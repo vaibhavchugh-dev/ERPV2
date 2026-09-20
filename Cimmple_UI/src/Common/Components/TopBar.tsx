@@ -15,6 +15,7 @@ import {
   faBell,
   faEnvelope,
   faComments,
+  faHeadset,
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
@@ -22,11 +23,13 @@ import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/Loca
 import { AuthService } from "../Services/AuthService";
 import { NotificationService, AppNotification } from "../Services/NotificationService";
 import { ConversationService, ConversationListItem } from "../Services/ConversationService";
+import { SupportTicketService } from "../Services/SupportTicketService";
 import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
+import ContactSupportDialog from "./ContactSupportDialog";
 import ConversationPanel from "./ConversationPanel";
 import { stripMentionTokensForPreview } from "../Utils/chatMentions";
 import "./TopBar.scss";
@@ -55,6 +58,9 @@ const TopBar: React.FC = () => {
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const [messagesMenuOpen, setMessagesMenuOpen] = useState(false);
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [supportDialogOpen, setSupportDialogOpen] = useState(false);
+  const [supportInitialTicketId, setSupportInitialTicketId] = useState<number | null>(null);
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [openConversationId, setOpenConversationId] = useState<number | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -344,6 +350,15 @@ const TopBar: React.FC = () => {
     conversationsRefHasItems.current = conversations.length > 0;
   }, [conversations.length]);
 
+  const loadSupportUnread = useCallback(async () => {
+    try {
+      const count = await SupportTicketService.GetUnreadCount();
+      setSupportUnreadCount(count);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     if (!isInAppNotificationsEnabled()) {
       setNotifications([]);
@@ -390,6 +405,7 @@ const TopBar: React.FC = () => {
       if (document.visibilityState === "hidden") return;
       void loadNotifications({ silent: true });
       void loadConversations({ silent: true });
+      void loadSupportUnread();
     };
 
     tick();
@@ -404,7 +420,27 @@ const TopBar: React.FC = () => {
       if (timer) clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [loadNotifications, loadConversations]);
+  }, [loadNotifications, loadConversations, loadSupportUnread]);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search || "");
+      const raw = params.get("supportTicket");
+      const id = raw ? Number(raw) : 0;
+      if (id > 0) {
+        setSupportInitialTicketId(id);
+        setSupportDialogOpen(true);
+        params.delete("supportTicket");
+        const next = params.toString();
+        history.replace({
+          pathname: location.pathname,
+          search: next ? `?${next}` : "",
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, [location.search, location.pathname, history]);
 
   const formatNotificationTime = (iso: string) => {
     try {
@@ -457,6 +493,16 @@ const TopBar: React.FC = () => {
       }
     }
     setNotificationMenuOpen(false);
+
+    if (
+      item.type === "SupportReply" ||
+      item.entityType === "SupportTicket"
+    ) {
+      const ticketId = item.entityId && item.entityId > 0 ? item.entityId : null;
+      setSupportInitialTicketId(ticketId);
+      setSupportDialogOpen(true);
+      return;
+    }
 
     if (item.linkPath) {
       history.push(item.linkPath);
@@ -895,6 +941,23 @@ const TopBar: React.FC = () => {
               <button
                 type="button"
                 className="dropdown-item"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setSupportInitialTicketId(null);
+                  setSupportDialogOpen(true);
+                }}
+              >
+                <FontAwesomeIcon icon={faHeadset} size="sm" />
+                <span>Contact Support</span>
+                {supportUnreadCount > 0 && (
+                  <span className="messages-unread-pill" style={{ marginLeft: "auto" }}>
+                    {supportUnreadCount > 99 ? "99+" : supportUnreadCount}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
                 onClick={() => openAccountModal("about")}
               >
                 <FontAwesomeIcon icon={faInfoCircle} size="sm" />
@@ -917,6 +980,21 @@ const TopBar: React.FC = () => {
           setAccountModal(null);
           history.push("/change-password");
         }}
+        onContactSupport={() => {
+          setAccountModal(null);
+          setSupportDialogOpen(true);
+        }}
+      />
+      <ContactSupportDialog
+        open={supportDialogOpen}
+        initialTicketId={supportInitialTicketId}
+        initialTab={supportInitialTicketId ? "mine" : "new"}
+        onClose={() => {
+          setSupportDialogOpen(false);
+          setSupportInitialTicketId(null);
+          void loadSupportUnread();
+        }}
+        onUnreadChanged={() => void loadSupportUnread()}
       />
       <NotifyUserDialog
         open={notifyDialogOpen}
