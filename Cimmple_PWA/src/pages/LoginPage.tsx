@@ -218,7 +218,7 @@ export function LoginPage() {
         <div className="pwa-login__footer">
           <p className="mt-1 font-medium">
             Need help?{" "}
-            <a href="https://www.cimmple.com/" target="_blank" rel="noopener noreferrer">
+            <a href="mailto:contact@cimmple.com" rel="noopener noreferrer">
               Contact support
             </a>
           </p>

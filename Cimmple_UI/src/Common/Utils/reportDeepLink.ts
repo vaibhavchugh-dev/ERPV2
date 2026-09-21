@@ -1,6 +1,7 @@
 /**
  * Build deep-link paths for report drill-down Open actions.
  * Prefer ?open=<id> where list screens already support it.
+ * Aggregate rows (customer/vendor) use ?search= so we never open the wrong document.
  */
 
 const OPEN_PATH_PREFIXES = [
@@ -12,6 +13,13 @@ const OPEN_PATH_PREFIXES = [
   "/quotations/customer",
   "/quality",
 ];
+
+/** Entity types whose EntityId is an aggregate (customer/vendor), not a document PK. */
+const AGGREGATE_ENTITY_TYPES = new Set([
+  "customer",
+  "vendor",
+  "vendor-part",
+]);
 
 function splitPathQuery(path: string): { base: string; params: URLSearchParams } {
   const qIndex = path.indexOf("?");
@@ -30,6 +38,18 @@ function supportsOpen(basePath: string): boolean {
   );
 }
 
+/** Strip "partNo — partName" down to a search needle Inventory can match. */
+export function inventorySearchNeedle(value?: string | null): string | null {
+  if (!value || !value.trim()) return null;
+  const raw = value.trim();
+  const sep = raw.indexOf(" — ");
+  if (sep > 0) {
+    const partNo = raw.slice(0, sep).trim();
+    if (partNo) return partNo;
+  }
+  return raw;
+}
+
 export type DrillLinkOptions = {
   path?: string | null;
   entityId?: number | null;
@@ -37,6 +57,8 @@ export type DrillLinkOptions = {
   entityKey?: string | null;
   entityType?: string | null;
   search?: string | null;
+  /** Display title used as search fallback for aggregate rows */
+  title?: string | null;
   accountId?: number | null;
   startDate?: string | null;
   endDate?: string | null;
@@ -57,13 +79,15 @@ export function withQuery(
 }
 
 /**
- * Resolve the best navigation URL for a drill row / primary action.
+ * Resolve the best navigation URL for a report row / primary action.
  */
 export function buildDrillLink(opts: DrillLinkOptions): string {
   const rawPath = (opts.path || "").trim() || "/reports";
   const { base } = splitPathQuery(rawPath);
+  const entityType = (opts.entityType || "").trim().toLowerCase();
+  const isAggregate = AGGREGATE_ENTITY_TYPES.has(entityType);
   const id =
-    opts.entityId != null && Number(opts.entityId) > 0
+    !isAggregate && opts.entityId != null && Number(opts.entityId) > 0
       ? Number(opts.entityId)
       : null;
 
@@ -82,20 +106,24 @@ export function buildDrillLink(opts: DrillLinkOptions): string {
     return withQuery(rawPath, { open: id });
   }
 
-  // Inventory: seed search from item name / key
+  // Inventory: seed search from part number (never the combined "no — name" label)
   if (base.startsWith("/inventory")) {
     const search =
-      opts.search ||
-      (opts.entityType === "inventory-item" ? opts.entityKey : null) ||
-      opts.entityKey;
+      inventorySearchNeedle(opts.search) ||
+      inventorySearchNeedle(
+        opts.entityType === "inventory-item" ? opts.entityKey : null
+      ) ||
+      inventorySearchNeedle(opts.entityKey) ||
+      inventorySearchNeedle(opts.title);
     return withQuery(rawPath, { search: search || undefined });
   }
 
-  // Job status bucket → filter by status name
+  // Job status bucket → filter by status name (only when not opening a specific JO)
   if (
     base.startsWith("/job-orders") &&
     opts.entityType === "job-status" &&
-    opts.entityKey
+    opts.entityKey &&
+    !id
   ) {
     return withQuery(rawPath, { status: opts.entityKey });
   }
@@ -111,6 +139,24 @@ export function buildDrillLink(opts: DrillLinkOptions): string {
       }
       return withQuery(rawPath, { status: key });
     }
+  }
+
+  // Aggregate customer/vendor rows → list filtered by name, never ?open=<customerId>
+  if (isAggregate) {
+    const search =
+      (opts.search && opts.search.trim()) ||
+      (opts.title && opts.title.trim()) ||
+      (opts.entityKey && opts.entityKey.trim()) ||
+      null;
+    if (search) {
+      // vendor-part title is "Vendor — Part"; search by vendor portion for VO list
+      const needle =
+        entityType === "vendor-part" && search.includes(" — ")
+          ? search.split(" — ")[0].trim()
+          : search;
+      return withQuery(rawPath, { search: needle || undefined });
+    }
+    return rawPath;
   }
 
   if (supportsOpen(base) && id) {

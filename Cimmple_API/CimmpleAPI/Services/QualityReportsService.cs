@@ -5,7 +5,8 @@ namespace CimmpleAPI.Services;
 
 /// <summary>
 /// Quality metrics operational reports (NCR trends, defect rate, cost, root cause).
-/// NCR has no locationId — location filter is accepted but ignored with a SummaryNote.
+/// Location is applied via NCR.JobOrderId → JobOrder → CustomerOrder.locationId.
+/// NCRs without a resolvable job/site are included only when Site = All sites.
 /// </summary>
 public static class QualityReportsService
 {
@@ -25,10 +26,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = db.NonConformanceReports.AsNoTracking()
-            .Where(n => n.TenantId == tenantId
-                        && n.ReportedDate >= start
-                        && n.ReportedDate < endExclusive)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
             .Select(n => new
             {
                 n.NcrId,
@@ -56,7 +54,7 @@ public static class QualityReportsService
         report.AddStat("Total NCRs", ReportResultFactory.Num(ncrs.Count));
         report.AddStat("Open", ReportResultFactory.Num(open));
         report.AddStat("Closed", ReportResultFactory.Num(closed));
-        NoteLocationIgnored(report, locationId);
+        NoteLocationScope(report, locationId);
 
         var byMonth = ncrs
             .GroupBy(n => new { n.ReportedDate.Year, n.ReportedDate.Month })
@@ -160,7 +158,9 @@ public static class QualityReportsService
         };
 
     private static string Truncate(string value, int max) =>
-        string.IsNullOrEmpty(value) ? "" : (value.Length <= max ? value : value[..(max - 1)] + "…");
+        string.IsNullOrEmpty(value)
+            ? ""
+            : (value.Length <= max ? value : value.Substring(0, max - 1) + "…");
 
     public static ReportResultDto BuildDefectRate(
         CimmpleDbContext db,
@@ -178,10 +178,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = db.NonConformanceReports.AsNoTracking()
-            .Where(n => n.TenantId == tenantId
-                        && n.ReportedDate >= start
-                        && n.ReportedDate < endExclusive)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
             .Select(n => new
             {
                 n.NcrNumber,
@@ -200,7 +197,7 @@ public static class QualityReportsService
         report.AddStat("Defect Qty", ReportResultFactory.Num(defectSum));
         report.AddStat("Total Qty", ReportResultFactory.Num(totalSum));
         report.AddStat("Defect Rate", ReportResultFactory.Pct(overallRate));
-        NoteLocationIgnored(report, locationId,
+        NoteLocationScope(report, locationId,
             "Defect rate = sum(DefectQuantity) / sum(TotalQuantity) for NCRs with TotalQuantity > 0.");
 
         var section = ReportResultFactory.Section(
@@ -240,10 +237,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = db.NonConformanceReports.AsNoTracking()
-            .Where(n => n.TenantId == tenantId
-                        && n.ReportedDate >= start
-                        && n.ReportedDate < endExclusive)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
             .Select(n => new
             {
                 Category = n.Category ?? "Unknown",
@@ -261,7 +255,7 @@ public static class QualityReportsService
         var totalCost = byCategory.Sum(x => x.Cost);
         report.AddStat("Total Cost Impact", ReportResultFactory.Money(totalCost));
         report.AddStat("NCRs", ReportResultFactory.Num(ncrs.Count));
-        NoteLocationIgnored(report, locationId,
+        NoteLocationScope(report, locationId,
             "CostImpact summed by Category. Prevention and appraisal costs are not modeled.");
 
         var section = ReportResultFactory.Section(
@@ -291,10 +285,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = db.NonConformanceReports.AsNoTracking()
-            .Where(n => n.TenantId == tenantId
-                        && n.ReportedDate >= start
-                        && n.ReportedDate < endExclusive)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
             .Select(n => new
             {
                 Category = n.RootCauseCategory ?? "",
@@ -303,7 +294,7 @@ public static class QualityReportsService
             .ToList();
 
         report.AddStat("NCRs Analyzed", ReportResultFactory.Num(ncrs.Count));
-        NoteLocationIgnored(report, locationId);
+        NoteLocationScope(report, locationId);
 
         var byCategory = ncrs
             .GroupBy(n => string.IsNullOrWhiteSpace(n.Category) ? "Unspecified" : n.Category)
@@ -340,11 +331,45 @@ public static class QualityReportsService
         return report;
     }
 
-    private static void NoteLocationIgnored(ReportResultDto report, int? locationId, string? extra = null)
+    /// <summary>
+    /// Period NCRs, optionally scoped to a site via linked job → customer order location.
+    /// </summary>
+    private static IQueryable<Data.Models.NonConformanceReport> QueryNcrs(
+        CimmpleDbContext db,
+        int tenantId,
+        DateTime start,
+        DateTime endExclusive,
+        int? locationId)
+    {
+        var query = db.NonConformanceReports.AsNoTracking()
+            .Where(n => n.TenantId == tenantId
+                        && n.ReportedDate >= start
+                        && n.ReportedDate < endExclusive);
+
+        if (!locationId.HasValue || locationId.Value <= 0)
+            return query;
+
+        var locId = locationId.Value;
+        var jobIdsAtSite =
+            from j in db.JobOrderMaster.AsNoTracking()
+            where j.Tenantid == tenantId
+            join o in db.CustomerOrder.AsNoTracking().Where(x => x.Tenantid == tenantId)
+                on j.CustomerOrderID equals o.OrderID
+            where o.locationId == locId
+            select j.JobOrderID;
+
+        return query.Where(n => n.JobOrderId.HasValue && jobIdsAtSite.Contains(n.JobOrderId.Value));
+    }
+
+    private static void NoteLocationScope(ReportResultDto report, int? locationId, string? extra = null)
     {
         var parts = new List<string>();
         if (locationId.HasValue && locationId.Value > 0)
-            parts.Add("NCR data is tenant-wide (no locationId); location filter was ignored.");
+        {
+            parts.Add(
+                "Site filter uses NCR → Job Order → Customer Order location. " +
+                "NCRs without a job at this site are excluded; use All sites for tenant-wide quality data.");
+        }
         if (!string.IsNullOrWhiteSpace(extra))
             parts.Add(extra);
         if (parts.Count > 0)

@@ -12,6 +12,7 @@ const ProtectedLayout = React.lazy(() =>
   import("./Common/Components/ProtectedLayout").then((m) => ({ default: m.ProtectedLayout }))
 );
 const VendorProtectedLayout = React.lazy(() => import("./VendorPortal/VendorProtectedLayout"));
+const SupportProtectedLayout = React.lazy(() => import("./SupportStaff/SupportProtectedLayout"));
 
 const RouteFallback: React.FC = () => (
   <div className="route-loading" style={{ padding: "2rem", textAlign: "center" }}>
@@ -47,6 +48,7 @@ const AppContent: React.FC = () => {
             <Route exact path="/logout" component={Logout} />
             <Route exact path="/change-password" component={ChangePassword} />
             <Route path="/vendor" component={VendorProtectedLayout} />
+            <Route path="/support" component={SupportProtectedLayout} />
             <Route path="/" component={ProtectedLayout} />
           </Switch>
         </React.Suspense>

@@ -63,6 +63,8 @@ public static class InventoryReportsService
                     : $"Location #{r.LocationId}",
                 ItemName = ResolveItemName(r.ProductPartNo, r.ProductPartName, r.RawPartNo, r.RawPartName,
                     r.ProductId, r.RawMaterialId),
+                SearchKey = ResolveSearchKey(r.ProductPartNo, r.ProductPartName, r.RawPartNo, r.RawPartName,
+                    r.ProductId, r.RawMaterialId),
                 r.ProductId,
                 r.RawMaterialId,
                 r.QuantityOnHand,
@@ -71,7 +73,7 @@ public static class InventoryReportsService
         }).ToList();
 
         var grouped = rows
-            .GroupBy(r => new { r.LocationId, r.LocationName, r.ItemName, r.ProductId, r.RawMaterialId })
+            .GroupBy(r => new { r.LocationId, r.LocationName, r.ItemName, r.SearchKey, r.ProductId, r.RawMaterialId })
             .Select(g =>
             {
                 var qty = g.Sum(x => x.QuantityOnHand);
@@ -86,6 +88,7 @@ public static class InventoryReportsService
                     g.Key.LocationId,
                     g.Key.LocationName,
                     g.Key.ItemName,
+                    g.Key.SearchKey,
                     g.Key.ProductId,
                     g.Key.RawMaterialId,
                     Qty = qty,
@@ -120,7 +123,7 @@ public static class InventoryReportsService
                 {
                     EntityType = "inventory-item",
                     EntityId = row.ProductId ?? row.RawMaterialId,
-                    EntityKey = row.ItemName,
+                    EntityKey = row.SearchKey,
                     Title = $"{row.ItemName} @ {row.LocationName}",
                     LinkPath = "/inventory",
                     Details = new List<ReportDrillItemDto>
@@ -206,6 +209,8 @@ public static class InventoryReportsService
                 : $"Type #{t.TransactionTypeId}",
             t.Quantity,
             ItemName = ResolveItemName(t.ProductPartNo, t.ProductPartName, t.RawPartNo, t.RawPartName,
+                t.ProductId, t.RawMaterialId),
+            SearchKey = ResolveSearchKey(t.ProductPartNo, t.ProductPartName, t.RawPartNo, t.RawPartName,
                 t.ProductId, t.RawMaterialId),
             Ref = string.IsNullOrWhiteSpace(t.ReferenceType)
                 ? ""
@@ -562,6 +567,34 @@ public static class InventoryReportsService
         {
             var label = FormatPart(rawPartNo, rawPartName);
             return !string.IsNullOrWhiteSpace(label) ? label : $"Material #{rawMaterialId.Value}";
+        }
+
+        return "Unknown";
+    }
+
+    /// <summary>Part number (or name) suitable for Inventory list ?search= matching.</summary>
+    private static string ResolveSearchKey(
+        string? productPartNo,
+        string? productPartName,
+        string? rawPartNo,
+        string? rawPartName,
+        int? productId,
+        int? rawMaterialId)
+    {
+        if (productId.HasValue)
+        {
+            var no = (productPartNo ?? "").Trim();
+            if (!string.IsNullOrEmpty(no)) return no;
+            var name = (productPartName ?? "").Trim();
+            return !string.IsNullOrEmpty(name) ? name : $"Product #{productId.Value}";
+        }
+
+        if (rawMaterialId.HasValue)
+        {
+            var no = (rawPartNo ?? "").Trim();
+            if (!string.IsNullOrEmpty(no)) return no;
+            var name = (rawPartName ?? "").Trim();
+            return !string.IsNullOrEmpty(name) ? name : $"Material #{rawMaterialId.Value}";
         }
 
         return "Unknown";

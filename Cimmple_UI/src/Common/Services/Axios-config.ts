@@ -17,6 +17,21 @@ const forceRedirectToLogin = () => {
   } catch {
     // ignore
   }
+
+  const path = window.location.pathname || "";
+  if (path.startsWith("/support")) {
+    try {
+      localStorage.removeItem("supportToken");
+      localStorage.removeItem("supportStorage");
+    } catch {
+      // ignore
+    }
+    if (path !== "/support/login") {
+      window.location.href = "/support/login";
+    }
+    return;
+  }
+
   try {
     getAuthService().clearSession("all");
   } catch {
@@ -27,7 +42,6 @@ const forceRedirectToLogin = () => {
   } catch {
     // ignore
   }
-  const path = window.location.pathname || "";
   if (path.startsWith("/vendor")) {
     if (path !== "/vendor/login") {
       window.location.href = "/vendor/login";
@@ -41,6 +55,9 @@ const getBearerToken = () => {
   const path = window.location.pathname || "";
   if (path.startsWith("/vendor")) {
     return localStorage.getItem("vendorToken");
+  }
+  if (path.startsWith("/support")) {
+    return localStorage.getItem("supportToken");
   }
   return localStorage.getItem("token");
 };
@@ -58,16 +75,20 @@ Instense.interceptors.request.use((config) => {
 
   const path = window.location.pathname || "";
   const isVendor = path.startsWith("/vendor");
+  const isSupport = path.startsWith("/support");
   const storageRaw = isVendor
     ? localStorage.getItem("vendorStorage")
-    : localStorage.getItem("storage");
+    : isSupport
+      ? localStorage.getItem("supportStorage")
+      : localStorage.getItem("storage");
 
   const requestUrl = typeof config.url === "string" ? config.url : "";
   const isAuthEndpoint =
     requestUrl.includes("/Auth/Login") ||
     requestUrl.includes("/Auth/VendorLogin") ||
     requestUrl.includes("/Auth/Refresh") ||
-    requestUrl.includes("/Auth/BootstrapPassword");
+    requestUrl.includes("/Auth/BootstrapPassword") ||
+    requestUrl.includes("/SupportStaff/Login");
 
   const token = getBearerToken();
   if (token && !isAuthEndpoint) {
@@ -88,7 +109,7 @@ Instense.interceptors.request.use((config) => {
   }
 
   const locationId = localStorage.getItem("locationId");
-  if (!isAuthEndpoint && !isVendor && locationId && locationId !== "0") {
+  if (!isAuthEndpoint && !isVendor && !isSupport && locationId && locationId !== "0") {
     config.headers["X-Location-Id"] = locationId;
   }
 
@@ -114,9 +135,18 @@ Instense.interceptors.response.use(
       (original.url.includes("/Auth/Login") ||
         original.url.includes("/Auth/VendorLogin") ||
         original.url.includes("/Auth/Refresh") ||
-        original.url.includes("/Auth/BootstrapPassword"));
+        original.url.includes("/Auth/BootstrapPassword") ||
+        original.url.includes("/SupportStaff/Login"));
 
-    if (status === 401 && original && !original._retry && !isAuthEndpoint) {
+    const isSupportPath = (window.location.pathname || "").startsWith("/support");
+
+    if (
+      status === 401 &&
+      original &&
+      !original._retry &&
+      !isAuthEndpoint &&
+      !isSupportPath
+    ) {
       original._retry = true;
       const newToken = await tryRefreshToken();
       if (newToken) {

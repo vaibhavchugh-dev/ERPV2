@@ -37,6 +37,11 @@ export const DRAWER_LINKS: NavItem[] = [
     match: (pathname) => pathname === "/",
   },
   ...BOTTOM_TABS.filter((t) => t.to !== "/"),
+  {
+    to: "/support",
+    label: "Support",
+    match: (pathname) => pathname === "/support",
+  },
 ];
 
 /** @deprecated Use BOTTOM_TABS — kept for any leftover imports */

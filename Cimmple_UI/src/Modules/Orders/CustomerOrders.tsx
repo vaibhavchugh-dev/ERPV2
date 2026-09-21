@@ -20,15 +20,17 @@ const CustomerOrders: React.FC = () => {
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [seedSearch, setSeedSearch] = useState("");
 
   useEffect(() => {
     loadOrders();
   }, [locationIdParam]);
 
-  // Handle URL parameter to open slideout (from global search or Job Orders link)
+  // Handle URL parameter to open slideout / seed search (from reports drill-down)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open') || params.get('orderId');
+    const search = params.get('search');
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -37,7 +39,12 @@ const CustomerOrders: React.FC = () => {
         setSelectedOrderId(id);
         setShowSlideout(true);
         history.replace(location.pathname, returnTo ? { returnTo } : undefined);
+        return;
       }
+    }
+    if (search && search.trim()) {
+      setSeedSearch(search.trim());
+      history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
 
@@ -216,6 +223,7 @@ const CustomerOrders: React.FC = () => {
           },
         ]}
         searchPlaceholder="Search orders..."
+        initialSearchTerm={seedSearch}
         getRowId={(row) => (row as OrderMaster).orderID}
       />
 

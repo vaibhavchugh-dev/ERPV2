@@ -284,6 +284,7 @@ public static class CustomerReportsService
                         SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
                         Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
                         Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolvePaymentStatus(inv, EffectivePaidAmount(inv)),
                         EntityId = inv.InvoiceId,
                         LinkPath = "/orders/customer-invoices"
                     }).ToList()

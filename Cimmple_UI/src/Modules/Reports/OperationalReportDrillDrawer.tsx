@@ -93,11 +93,16 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
     entityId: meta.entityId,
     entityKey: meta.entityKey,
     entityType: meta.entityType,
+    title: meta.title,
     search: meta.entityType === "inventory-item" ? meta.entityKey : null,
   });
 
-  const go = (path: string) => {
+  const go = (path: string, opts?: { newTab?: boolean }) => {
     onClose();
+    if (opts?.newTab) {
+      window.open(path, "_blank", "noopener,noreferrer");
+      return;
+    }
     history.push(path);
   };
 
@@ -163,12 +168,24 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
                   </thead>
                   <tbody>
                     {visibleDetails.map((d, i) => {
+                      // Detail rows open a document by id — do not inherit parent
+                      // aggregate/bucket entityType (avoids wrong ?status= / ?open=).
                       const href = buildDrillLink({
                         path: d.linkPath || meta.linkPath || "/reports",
                         entityId: d.entityId,
-                        entityKey: meta.entityKey,
-                        entityType: meta.entityType,
-                        search: d.label,
+                        entityKey:
+                          meta.entityType === "inventory-item"
+                            ? meta.entityKey
+                            : null,
+                        entityType:
+                          meta.entityType === "inventory-item"
+                            ? "inventory-item"
+                            : null,
+                        search:
+                          meta.linkPath?.startsWith("/inventory") ||
+                          d.linkPath?.startsWith("/inventory")
+                            ? d.label
+                            : null,
                       });
                       return (
                         <tr key={i}>
@@ -189,7 +206,7 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
                             <button
                               type="button"
                               className="rpt-link-btn"
-                              onClick={() => go(href)}
+                              onClick={() => go(href, { newTab: true })}
                             >
                               Open
                             </button>
@@ -222,7 +239,7 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
             <button
               type="button"
               className="rpt-btn rpt-btn-secondary"
-              onClick={() => go(primaryPath)}
+              onClick={() => go(primaryPath, { newTab: true })}
             >
               <FontAwesomeIcon icon={faExternalLinkAlt} />
               Open related screen

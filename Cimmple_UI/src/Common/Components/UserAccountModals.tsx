@@ -3,10 +3,10 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTimes, faUser, faKeyboard, faInfoCircle } from "@fortawesome/free-solid-svg-icons";
 import { EmployeeService } from "../Services/EmployeeService";
 import { AuthService } from "../Services/AuthService";
+import { APP_VERSION } from "../Constants/AppVersion";
 import "./UserAccountModals.scss";
 
-// Keep in sync with package.json; CRA does not expose version at runtime by default.
-export const APP_VERSION = "1.0.0";
+export { APP_VERSION } from "../Constants/AppVersion";
 
 export type UserAccountModalKind = "profile" | "help" | "about" | null;
 
@@ -14,6 +14,7 @@ interface UserAccountModalsProps {
   kind: UserAccountModalKind;
   onClose: () => void;
   onChangePassword?: () => void;
+  onContactSupport?: () => void;
 }
 
 interface ProfileInfo {
@@ -45,6 +46,7 @@ const UserAccountModals: React.FC<UserAccountModalsProps> = ({
   kind,
   onClose,
   onChangePassword,
+  onContactSupport,
 }) => {
   const [profile, setProfile] = useState<ProfileInfo>(readProfileFromStorage);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -226,7 +228,25 @@ const UserAccountModals: React.FC<UserAccountModalsProps> = ({
                 </li>
               </ul>
               <p className="help-footer">
-                Need more help? Visit{" "}
+                Need more help?{" "}
+                {onContactSupport ? (
+                  <button
+                    type="button"
+                    className="help-support-link"
+                    onClick={onContactSupport}
+                  >
+                    Contact support
+                  </button>
+                ) : (
+                  <a
+                    href="https://www.cimmple.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Contact support
+                  </a>
+                )}{" "}
+                or visit{" "}
                 <a
                   href="https://www.cimmple.com/"
                   target="_blank"

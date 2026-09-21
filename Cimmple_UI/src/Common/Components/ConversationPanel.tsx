@@ -48,17 +48,31 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
 
-  const load = useCallback(async (id: number) => {
-    setLoading(true);
+  const load = useCallback(async (id: number, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const data = await ConversationService.Get(id);
-      setThread(data);
+      if (!data) {
+        if (!opts?.silent) setThread(null);
+        return;
+      }
+      setThread((prev) => {
+        if (!opts?.silent || !prev || prev.id !== data.id) return data;
+        const prevIds = new Set((prev.messages || []).map((m) => m.id));
+        const nextMsgs = data.messages || [];
+        const hasNew =
+          nextMsgs.length !== (prev.messages || []).length ||
+          nextMsgs.some((m) => !prevIds.has(m.id));
+        return hasNew ? data : prev;
+      });
       onChangedRef.current?.();
     } catch {
-      toast.error("Failed to load conversation.");
-      setThread(null);
+      if (!opts?.silent) {
+        toast.error("Failed to load conversation.");
+        setThread(null);
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -70,6 +84,26 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
       return;
     }
     void load(conversationId);
+  }, [conversationId, load]);
+
+  // Poll open thread so replies appear without closing the slideout
+  useEffect(() => {
+    if (!conversationId) return;
+    const POLL_MS = 5000;
+    const tick = () => {
+      if (document.visibilityState === "visible") {
+        void load(conversationId, { silent: true });
+      }
+    };
+    const id = window.setInterval(tick, POLL_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [conversationId, load]);
 
   useEffect(() => {

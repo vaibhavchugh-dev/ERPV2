@@ -239,6 +239,23 @@
     }
   }
 
+  .rpt-field-site {
+    width: min(22rem, 100%);
+    flex: 1 1 16rem;
+  }
+
+  .rpt-field-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.7rem;
+    line-height: 1.35;
+    color: #6b7280;
+
+    strong {
+      font-weight: 600;
+      color: #4b5563;
+    }
+  }
+
   .rpt-actions {
     display: flex;
     flex-shrink: 0;
