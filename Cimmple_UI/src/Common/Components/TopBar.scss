@@ -296,6 +296,173 @@
   height: 16px;
 }
 
+.notification-menu {
+  position: relative !important;
+}
+
+.notification-menu-btn {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 2.25rem !important;
+  height: 2.25rem !important;
+  border-radius: 0.5rem !important;
+  border: none !important;
+  background: none !important;
+  cursor: pointer !important;
+  color: #374151 !important;
+  transition: background-color 0.2s !important;
+}
+
+.notification-menu-btn:hover {
+  background-color: #f3f4f6 !important;
+}
+
+.notification-badge {
+  position: absolute !important;
+  top: 0.15rem !important;
+  right: 0.1rem !important;
+  min-width: 1.1rem !important;
+  height: 1.1rem !important;
+  padding: 0 0.25rem !important;
+  border-radius: 9999px !important;
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  font-size: 0.65rem !important;
+  font-weight: 600 !important;
+  line-height: 1.1rem !important;
+  text-align: center !important;
+}
+
+.notification-dropdown {
+  position: absolute !important;
+  right: 0 !important;
+  margin-top: 0.5rem !important;
+  width: 22rem !important;
+  max-height: 28rem !important;
+  background-color: #ffffff !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid #e5e7eb !important;
+  padding: 0.5rem 0 !important;
+  z-index: 50 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.notification-dropdown-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.5rem !important;
+  padding: 0.65rem 1rem !important;
+}
+
+.notification-dropdown-title {
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  color: #111827 !important;
+}
+
+.notification-dropdown-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+}
+
+.notification-link-btn {
+  border: none !important;
+  background: none !important;
+  color: #4f46e5 !important;
+  font-size: 0.75rem !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.25rem !important;
+  font-family: inherit;
+}
+
+.notification-link-btn:hover {
+  text-decoration: underline !important;
+}
+
+.notification-list {
+  overflow-y: auto !important;
+  max-height: 22rem !important;
+}
+
+.notification-empty {
+  padding: 1.25rem 1rem !important;
+  text-align: center !important;
+  color: #6b7280 !important;
+  font-size: 0.875rem !important;
+}
+
+.notification-item {
+  display: block !important;
+  width: 100% !important;
+  text-align: left !important;
+  border: none !important;
+  background: none !important;
+  padding: 0.75rem 1rem !important;
+  cursor: pointer !important;
+  font-family: inherit;
+  border-left: 3px solid transparent !important;
+}
+
+.notification-item:hover {
+  background-color: #f9fafb !important;
+}
+
+.notification-item.unread {
+  background-color: #eef2ff !important;
+  border-left-color: #6366f1 !important;
+}
+
+.notification-item-title {
+  font-size: 0.8125rem !important;
+  font-weight: 600 !important;
+  color: #111827 !important;
+  margin-bottom: 0.2rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 0.5rem !important;
+}
+
+.messages-unread-pill {
+  flex-shrink: 0 !important;
+  min-width: 1.1rem !important;
+  padding: 0 0.35rem !important;
+  border-radius: 9999px !important;
+  background-color: #4f46e5 !important;
+  color: #ffffff !important;
+  font-size: 0.65rem !important;
+  font-weight: 600 !important;
+  line-height: 1.15rem !important;
+  text-align: center !important;
+}
+
+.notification-item-body {
+  font-size: 0.75rem !important;
+  color: #4b5563 !important;
+  line-height: 1.35 !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+}
+
+.notification-item-meta {
+  margin-top: 0.35rem !important;
+  font-size: 0.6875rem !important;
+  color: #9ca3af !important;
+}
+
 @media (max-width: 640px) {
   .search-box {
     display: none !important;
@@ -307,5 +474,10 @@
 
   .user-menu-btn span {
     display: none !important;
+  }
+
+  .notification-dropdown {
+    width: min(22rem, calc(100vw - 2rem)) !important;
+    right: -2rem !important;
   }
 }

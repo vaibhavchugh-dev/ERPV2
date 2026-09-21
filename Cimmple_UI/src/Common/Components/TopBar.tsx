@@ -12,15 +12,29 @@ import {
   faCog,
   faKeyboard,
   faInfoCircle,
+  faBell,
+  faEnvelope,
+  faComments,
+  faHeadset,
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
 import { LocationService, LocationMaster, LOCATION_KIND } from "../Services/LocationService";
 import { AuthService } from "../Services/AuthService";
+import { NotificationService, AppNotification } from "../Services/NotificationService";
+import { ConversationService, ConversationListItem } from "../Services/ConversationService";
+import { SupportTicketService } from "../Services/SupportTicketService";
+import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
+import NotifyUserDialog from "./NotifyUserDialog";
+import ContactSupportDialog from "./ContactSupportDialog";
+import ConversationPanel from "./ConversationPanel";
+import { stripMentionTokensForPreview } from "../Utils/chatMentions";
 import "./TopBar.scss";
+
+const NOTIFICATION_POLL_MS = 45000;
 
 /** Working locations for the switcher: sites and warehouses (not bins/shelves/zones). */
 const isWorkingLocation = (loc: { locType?: number | null }) => {
@@ -41,6 +55,19 @@ const TopBar: React.FC = () => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
+  const [messagesMenuOpen, setMessagesMenuOpen] = useState(false);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [supportDialogOpen, setSupportDialogOpen] = useState(false);
+  const [supportInitialTicketId, setSupportInitialTicketId] = useState<number | null>(null);
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
+  const [openConversationId, setOpenConversationId] = useState<number | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
+  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [currentLocation, setCurrentLocation] = useState<LocationMaster | null>(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
@@ -50,6 +77,8 @@ const TopBar: React.FC = () => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const locationMenuRef = useRef<HTMLDivElement>(null);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
+  const messagesMenuRef = useRef<HTMLDivElement>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const readStorageProfile = () => {
@@ -285,7 +314,7 @@ const TopBar: React.FC = () => {
     }
   }, [currentLocationId, locations, handleLocationChange]);
 
-  // Close search results when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
@@ -293,6 +322,12 @@ const TopBar: React.FC = () => {
       }
       if (locationMenuRef.current && !locationMenuRef.current.contains(event.target as Node)) {
         setLocationMenuOpen(false);
+      }
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target as Node)) {
+        setNotificationMenuOpen(false);
+      }
+      if (messagesMenuRef.current && !messagesMenuRef.current.contains(event.target as Node)) {
+        setMessagesMenuOpen(false);
       }
       if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) {
         setShowSearchResults(false);
@@ -305,10 +340,196 @@ const TopBar: React.FC = () => {
     };
   }, []);
 
+  const notificationsRefHasItems = useRef(false);
+  useEffect(() => {
+    notificationsRefHasItems.current = notifications.length > 0;
+  }, [notifications.length]);
+
+  const conversationsRefHasItems = useRef(false);
+  useEffect(() => {
+    conversationsRefHasItems.current = conversations.length > 0;
+  }, [conversations.length]);
+
+  const loadSupportUnread = useCallback(async () => {
+    try {
+      const count = await SupportTicketService.GetUnreadCount();
+      setSupportUnreadCount(count);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!isInAppNotificationsEnabled()) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    const silent = opts?.silent === true;
+    // Keep showing previous items while refreshing (avoid full "Loading…" flash).
+    if (!silent && !notificationsRefHasItems.current) {
+      setNotificationsLoading(true);
+    }
+    try {
+      const { items, unreadCount: count } = await NotificationService.GetMine(20, false);
+      setNotifications(items);
+      setUnreadCount(count);
+    } catch {
+      if (!silent && !notificationsRefHasItems.current) setNotifications([]);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
+  const loadConversations = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent && !conversationsRefHasItems.current) {
+      setMessagesLoading(true);
+    }
+    try {
+      const { items, unreadCount: count } = await ConversationService.ListMine(30);
+      setConversations(items);
+      setMessagesUnreadCount(count);
+    } catch {
+      if (!silent && !conversationsRefHasItems.current) setConversations([]);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, []);
+
+  // Prefetch lists (includes unread counts) so opening menus is usually instant
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void loadNotifications({ silent: true });
+      void loadConversations({ silent: true });
+      void loadSupportUnread();
+    };
+
+    tick();
+    timer = setInterval(tick, NOTIFICATION_POLL_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadNotifications, loadConversations, loadSupportUnread]);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search || "");
+      const raw = params.get("supportTicket");
+      const id = raw ? Number(raw) : 0;
+      if (id > 0) {
+        setSupportInitialTicketId(id);
+        setSupportDialogOpen(true);
+        params.delete("supportTicket");
+        const next = params.toString();
+        history.replace({
+          pathname: location.pathname,
+          search: next ? `?${next}` : "",
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, [location.search, location.pathname, history]);
+
+  const formatNotificationTime = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  };
+
+  const handleOpenNotifications = () => {
+    const next = !notificationMenuOpen;
+    setNotificationMenuOpen(next);
+    setMessagesMenuOpen(false);
+    setUserMenuOpen(false);
+    setLocationMenuOpen(false);
+    if (next) {
+      // Refresh in background; show cached list immediately if we have it.
+      void loadNotifications({ silent: notificationsRefHasItems.current });
+    }
+  };
+
+  const handleOpenMessages = () => {
+    const next = !messagesMenuOpen;
+    setMessagesMenuOpen(next);
+    setNotificationMenuOpen(false);
+    setUserMenuOpen(false);
+    setLocationMenuOpen(false);
+    if (next) {
+      void loadConversations({ silent: conversationsRefHasItems.current });
+    }
+  };
+
+  const handleNotificationClick = async (item: AppNotification) => {
+    if (!item.isRead) {
+      try {
+        await NotificationService.MarkRead([item.id]);
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n))
+        );
+        setUnreadCount((c) => Math.max(0, c - 1));
+      } catch {
+        // ignore
+      }
+    }
+    setNotificationMenuOpen(false);
+
+    if (
+      item.type === "SupportReply" ||
+      item.entityType === "SupportTicket"
+    ) {
+      const ticketId = item.entityId && item.entityId > 0 ? item.entityId : null;
+      setSupportInitialTicketId(ticketId);
+      setSupportDialogOpen(true);
+      return;
+    }
+
+    if (item.linkPath) {
+      history.push(item.linkPath);
+    }
+  };
+
+  const handleConversationClick = (item: ConversationListItem) => {
+    setMessagesMenuOpen(false);
+    setOpenConversationId(item.id);
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await NotificationService.MarkAllRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch {
+      // ignore
+    }
+  };
+
   // Close search when route changes
   useEffect(() => {
     setShowSearchResults(false);
     setSearchQuery('');
+    setNotificationMenuOpen(false);
+    setMessagesMenuOpen(false);
   }, [location.pathname]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -514,11 +735,154 @@ const TopBar: React.FC = () => {
           </div>
         )}
         
+        {/* Messages */}
+        <div className="notification-menu" ref={messagesMenuRef}>
+          <button
+            type="button"
+            className="notification-menu-btn"
+            onClick={() => void handleOpenMessages()}
+            title="Messages"
+            aria-label="Messages"
+          >
+            <FontAwesomeIcon icon={faComments} size="sm" />
+            {messagesUnreadCount > 0 && (
+              <span className="notification-badge">
+                {messagesUnreadCount > 99 ? "99+" : messagesUnreadCount}
+              </span>
+            )}
+          </button>
+          {messagesMenuOpen && (
+            <div className="notification-dropdown">
+              <div className="notification-dropdown-header">
+                <div className="notification-dropdown-title">Messages</div>
+                <div className="notification-dropdown-actions">
+                  <button
+                    type="button"
+                    className="notification-link-btn"
+                    onClick={() => {
+                      setMessagesMenuOpen(false);
+                      setNotifyDialogOpen(true);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faEnvelope} size="xs" />
+                    New message
+                  </button>
+                </div>
+              </div>
+              <div className="dropdown-divider"></div>
+              <div className="notification-list">
+                {messagesLoading && conversations.length === 0 ? (
+                  <div className="notification-empty">Loading…</div>
+                ) : conversations.length === 0 ? (
+                  <div className="notification-empty">No conversations yet</div>
+                ) : (
+                  conversations.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`notification-item ${item.unreadCount > 0 ? "unread" : ""}`}
+                      onClick={() => handleConversationClick(item)}
+                    >
+                      <div className="notification-item-title">
+                        {item.otherUserName || "Conversation"}
+                        {item.unreadCount > 0 && (
+                          <span className="messages-unread-pill">
+                            {item.unreadCount > 99 ? "99+" : item.unreadCount}
+                          </span>
+                        )}
+                      </div>
+                      {(item.subject || item.lastMessagePreview) && (
+                        <div className="notification-item-body">
+                          {item.subject
+                            ? `${item.subject}${item.lastMessagePreview ? ` — ${stripMentionTokensForPreview(item.lastMessagePreview)}` : ""}`
+                            : stripMentionTokensForPreview(item.lastMessagePreview || "")}
+                        </div>
+                      )}
+                      <div className="notification-item-meta">
+                        {item.lastMessageAt ? formatNotificationTime(item.lastMessageAt) : ""}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Notifications */}
+        <div className="notification-menu" ref={notificationMenuRef}>
+          <button
+            type="button"
+            className="notification-menu-btn"
+            onClick={() => void handleOpenNotifications()}
+            title="Notifications"
+            aria-label="Notifications"
+          >
+            <FontAwesomeIcon icon={faBell} size="sm" />
+            {unreadCount > 0 && (
+              <span className="notification-badge">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+          {notificationMenuOpen && (
+            <div className="notification-dropdown">
+              <div className="notification-dropdown-header">
+                <div className="notification-dropdown-title">Notifications</div>
+                <div className="notification-dropdown-actions">
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      className="notification-link-btn"
+                      onClick={() => void handleMarkAllRead()}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="dropdown-divider"></div>
+              <div className="notification-list">
+                {!isInAppNotificationsEnabled() ? (
+                  <div className="notification-empty">
+                    In-app notifications are disabled in System Settings.
+                  </div>
+                ) : notificationsLoading && notifications.length === 0 ? (
+                  <div className="notification-empty">Loading…</div>
+                ) : notifications.length === 0 ? (
+                  <div className="notification-empty">No notifications yet</div>
+                ) : (
+                  notifications.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`notification-item ${item.isRead ? "" : "unread"}`}
+                      onClick={() => void handleNotificationClick(item)}
+                    >
+                      <div className="notification-item-title">{item.title}</div>
+                      {item.body && (
+                        <div className="notification-item-body">{item.body}</div>
+                      )}
+                      <div className="notification-item-meta">
+                        {formatNotificationTime(item.createdAt)}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* User Menu */}
         <div className="user-menu" ref={userMenuRef}>
           <button
             className="user-menu-btn"
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            onClick={() => {
+              setUserMenuOpen(!userMenuOpen);
+              setMessagesMenuOpen(false);
+              setNotificationMenuOpen(false);
+            }}
           >
             <div className="user-avatar-small">
               <FontAwesomeIcon icon={faUser} size="sm" />
@@ -577,6 +941,23 @@ const TopBar: React.FC = () => {
               <button
                 type="button"
                 className="dropdown-item"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setSupportInitialTicketId(null);
+                  setSupportDialogOpen(true);
+                }}
+              >
+                <FontAwesomeIcon icon={faHeadset} size="sm" />
+                <span>Contact Support</span>
+                {supportUnreadCount > 0 && (
+                  <span className="messages-unread-pill" style={{ marginLeft: "auto" }}>
+                    {supportUnreadCount > 99 ? "99+" : supportUnreadCount}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
                 onClick={() => openAccountModal("about")}
               >
                 <FontAwesomeIcon icon={faInfoCircle} size="sm" />
@@ -598,6 +979,41 @@ const TopBar: React.FC = () => {
         onChangePassword={() => {
           setAccountModal(null);
           history.push("/change-password");
+        }}
+        onContactSupport={() => {
+          setAccountModal(null);
+          setSupportDialogOpen(true);
+        }}
+      />
+      <ContactSupportDialog
+        open={supportDialogOpen}
+        initialTicketId={supportInitialTicketId}
+        initialTab={supportInitialTicketId ? "mine" : "new"}
+        onClose={() => {
+          setSupportDialogOpen(false);
+          setSupportInitialTicketId(null);
+          void loadSupportUnread();
+        }}
+        onUnreadChanged={() => void loadSupportUnread()}
+      />
+      <NotifyUserDialog
+        open={notifyDialogOpen}
+        onClose={() => setNotifyDialogOpen(false)}
+        onSent={(conversationId) => {
+          void loadConversations({ silent: true });
+          if (conversationId && conversationId > 0) {
+            setOpenConversationId(conversationId);
+          }
+        }}
+      />
+      <ConversationPanel
+        conversationId={openConversationId}
+        onClose={() => {
+          setOpenConversationId(null);
+          void loadConversations({ silent: true });
+        }}
+        onChanged={() => {
+          void loadConversations({ silent: true });
         }}
       />
     </header>

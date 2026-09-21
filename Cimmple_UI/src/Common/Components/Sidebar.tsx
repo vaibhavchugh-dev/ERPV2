@@ -85,6 +85,7 @@ const Sidebar: React.FC = () => {
 
   const reportsItems: NavItem[] = [
     { icon: faChartLine, title: "Reports", path: "/reports" },
+    { icon: faClock, title: "Scheduled Report Emails", path: "/reports/schedules" },
   ];
 
   const purchasingItems: NavItem[] = [

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { MessagesButton } from "../../components/MessagesButton";
+import { NotificationBell } from "../../components/NotificationBell";
 import { AuthService } from "../../services/authService";
 import {
   formatNcrStatus,
@@ -265,14 +267,18 @@ export function QualityListPage() {
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">Cimmple Shop Floor</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="inline-flex min-h-tap items-center rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <MessagesButton />
+          <NotificationBell />
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex min-h-tap items-center rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Refresh
+          </button>
+        </div>
       </header>
 
       <Link

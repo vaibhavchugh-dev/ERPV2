@@ -98,6 +98,7 @@ export interface JobOrderComment {
   text: string;
   createdAt: string;
   createdBy: string;
+  mentionedUserIds?: number[];
 }
 
 export interface JobOrderStepNote {

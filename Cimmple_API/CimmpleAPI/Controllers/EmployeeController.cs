@@ -26,19 +26,22 @@ namespace CimmpleAPI.Controllers
         private readonly IConfiguration _configuration;
         private readonly IAuthService _authService;
         private readonly FaceRecognitionService _faceRecognition;
+        private readonly EmailOutboxService _emailOutbox;
 
         public EmployeeController(
             CimmpleDbContext context,
             IWebHostEnvironment environment,
             IConfiguration configuration,
             IAuthService authService,
-            FaceRecognitionService faceRecognition)
+            FaceRecognitionService faceRecognition,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _environment = environment;
             _configuration = configuration;
             _authService = authService;
             _faceRecognition = faceRecognition;
+            _emailOutbox = emailOutbox;
         }
 
         [HttpGet("GetEmployees")]
@@ -644,7 +647,9 @@ namespace CimmpleAPI.Controllers
                     && !string.IsNullOrWhiteSpace(employee.Email);
                 if (shouldSendWelcome && passwordSettings != null)
                 {
-                    var (emailOk, emailError) = IdentityEmailService.TrySendEmployeeWelcome(
+                    var (emailOk, emailError) = await IdentityEmailService.TryQueueEmployeeWelcomeAsync(
+                        _emailOutbox,
+                        employee.TenantID,
                         passwordSettings,
                         _configuration,
                         employee.Email,
@@ -652,7 +657,7 @@ namespace CimmpleAPI.Controllers
                         employee.UserName ?? "",
                         request.Password!);
                     welcomeEmailMessage = emailOk
-                        ? $"Welcome email sent to {employee.Email}."
+                        ? $"Welcome email queued for {employee.Email}."
                         : $"Welcome email was not sent: {emailError}";
                     if (emailOk)
                         employee.SendWelcomeEmail = 1;

@@ -23,15 +23,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly DocumentPdfService _documentPdfService;
         private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
 
         public AccountingController(
             CimmpleDbContext context,
             DocumentPdfService documentPdfService,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            EmailOutboxService emailOutbox)
         {
             _context = context;
             _documentPdfService = documentPdfService;
             _configuration = configuration;
+            _emailOutbox = emailOutbox;
         }
 
         [HttpGet("GetPaymentDashboardMetrics")]
@@ -1261,10 +1264,10 @@ namespace CimmpleAPI.Controllers
                         reportData = CashFlowDirectReportService.Build(_context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
                         break;
                     case "ar-aging":
-                        reportData = GenerateARAgingReport(tenantId, dateFilter.endDate, reportLocationId);
+                        reportData = AgingReportService.BuildArAging(_context, tenantId, dateFilter.endDate, reportLocationId);
                         break;
                     case "ap-aging":
-                        reportData = GenerateAPAgingReport(tenantId, dateFilter.endDate, reportLocationId);
+                        reportData = AgingReportService.BuildApAging(_context, tenantId, dateFilter.endDate, reportLocationId);
                         break;
                     case "trial-balance":
                         reportData = TrialBalanceReportService.Build(_context, tenantId, dateFilter.endDate, reportLocationId);
@@ -1305,188 +1308,6 @@ namespace CimmpleAPI.Controllers
             {
                 Console.WriteLine($"Error in GenerateFinancialReport: {ex.Message}");
                 return StatusCode(500, new { error = ex.Message });
-            }
-        }
-
-        private object GenerateARAgingReport(int tenantId, DateTime asOfDate, int? locationId = null)
-        {
-            var agingData = CalculateARAging(tenantId, asOfDate.Date, locationId);
-
-            return new
-            {
-                reportType = "AR Aging Report",
-                asOfDate = asOfDate.Date.ToString("yyyy-MM-dd"),
-                locationId,
-                agingBuckets = agingData
-            };
-        }
-
-        private object GenerateAPAgingReport(int tenantId, DateTime asOfDate, int? locationId = null)
-        {
-            var agingData = CalculateAPAging(tenantId, asOfDate.Date, locationId);
-
-            return new
-            {
-                reportType = "AP Aging Report",
-                asOfDate = asOfDate.Date.ToString("yyyy-MM-dd"),
-                locationId,
-                agingBuckets = agingData
-            };
-        }
-
-        private object CalculateARAging(int tenantId, DateTime asOfDate, int? locationId = null)
-        {
-            try
-            {
-                var unpaidInvoicesQuery = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId &&
-                                 !im.IsVoided &&
-                                 im.PaidAmount < im.TotalAmount - 0.009m &&
-                                 im.InvoiceDate <= asOfDate);
-                if (locationId.HasValue)
-                {
-                    var locId = locationId.Value;
-                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(im =>
-                        _context.InvoiceDetail.Any(id =>
-                            id.InvoiceId == im.Id &&
-                            _context.CustomerOrder.Any(co =>
-                                co.OrderID == id.OrderId &&
-                                co.Tenantid == tenantId &&
-                                co.locationId == locId)));
-                }
-
-                var unpaidInvoices = unpaidInvoicesQuery.ToList();
-
-                // Resolve customer name via first linked order when available
-                var invoiceIds = unpaidInvoices.Select(i => i.Id).ToList();
-                var customerByInvoice = (
-                    from id in _context.InvoiceDetail.AsNoTracking()
-                    join co in _context.CustomerOrder.AsNoTracking() on id.OrderId equals co.OrderID
-                    where invoiceIds.Contains(id.InvoiceId) && co.Tenantid == tenantId
-                    select new { id.InvoiceId, co.CustomerName, co.CustomerID }
-                ).ToList()
-                 .GroupBy(x => x.InvoiceId)
-                 .ToDictionary(g => g.Key, g => g.First());
-
-                var items = unpaidInvoices.Select(im =>
-                    new AccountingRules.AgingItem(
-                        im.DueDate,
-                        AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount)));
-
-                var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
-                var total = buckets.Sum(b => b.Amount);
-
-                var invoicesByBucket = unpaidInvoices
-                    .Select(im =>
-                    {
-                        customerByInvoice.TryGetValue(im.Id, out var cust);
-                        return new
-                        {
-                            bucket = AccountingRules.AgingBucketName(im.DueDate, asOfDate),
-                            invoiceId = im.Id,
-                            invoiceNo = string.IsNullOrWhiteSpace(im.PrefixInvoiceNo)
-                                ? im.InvoiceNo.ToString()
-                                : im.PrefixInvoiceNo,
-                            invoiceDate = im.InvoiceDate.ToString("yyyy-MM-dd"),
-                            dueDate = im.DueDate.ToString("yyyy-MM-dd"),
-                            customerId = cust?.CustomerID,
-                            customerName = cust?.CustomerName ?? "",
-                            openBalance = AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount),
-                            linkPath = "/orders/customer-invoices"
-                        };
-                    })
-                    .GroupBy(x => x.bucket)
-                    .ToDictionary(g => g.Key, g => g.OrderBy(x => x.dueDate).ToList());
-
-                return buckets.Select(b =>
-                {
-                    invoicesByBucket.TryGetValue(b.Name, out var invList);
-                    return new
-                    {
-                        bucket = b.Name,
-                        amount = b.Amount,
-                        percentage = b.Percentage(total),
-                        invoices = (object?)invList ?? Array.Empty<object>()
-                    };
-                }).ToArray();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error calculating AR aging: {ex.Message}");
-                return new[]
-                {
-                    new { bucket = "Current", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() }
-                };
-            }
-        }
-
-        private object CalculateAPAging(int tenantId, DateTime asOfDate, int? locationId = null)
-        {
-            try
-            {
-                var unpaidInvoicesQuery = _context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId &&
-                                  vim.voideddate == null &&
-                                  vim.PaidAmount < vim.TotalAmount - 0.009m &&
-                                  vim.InvoiceDate <= asOfDate);
-                if (locationId.HasValue)
-                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(vim => vim.locationId == locationId.Value);
-
-                var unpaidInvoices = unpaidInvoicesQuery.ToList();
-
-                var items = unpaidInvoices.Select(vim =>
-                    new AccountingRules.AgingItem(
-                        vim.DueDate,
-                        AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount)));
-
-                var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
-                var total = buckets.Sum(b => b.Amount);
-
-                var invoicesByBucket = unpaidInvoices
-                    .Select(vim => new
-                    {
-                        bucket = AccountingRules.AgingBucketName(vim.DueDate, asOfDate),
-                        invoiceId = vim.Id,
-                        invoiceNo = !string.IsNullOrWhiteSpace(vim.prefixinvoiceno)
-                            ? vim.prefixinvoiceno
-                            : (vim.InvoiceNo ?? vim.Id.ToString()),
-                        invoiceDate = vim.InvoiceDate.ToString("yyyy-MM-dd"),
-                        dueDate = vim.DueDate.ToString("yyyy-MM-dd"),
-                        vendorId = vim.vid,
-                        vendorName = vim.VendorName ?? "",
-                        openBalance = AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount),
-                        linkPath = "/purchasing/vendor-invoices"
-                    })
-                    .GroupBy(x => x.bucket)
-                    .ToDictionary(g => g.Key, g => g.OrderBy(x => x.dueDate).ToList());
-
-                return buckets.Select(b =>
-                {
-                    invoicesByBucket.TryGetValue(b.Name, out var invList);
-                    return new
-                    {
-                        bucket = b.Name,
-                        amount = b.Amount,
-                        percentage = b.Percentage(total),
-                        invoices = (object?)invList ?? Array.Empty<object>()
-                    };
-                }).ToArray();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error calculating AP aging: {ex.Message}");
-                return new[]
-                {
-                    new { bucket = "Current", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "1-30 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "31-60 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "61-90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() },
-                    new { bucket = "Over 90 Days", amount = 0m, percentage = 0m, invoices = (object)Array.Empty<object>() }
-                };
             }
         }
 
@@ -2301,7 +2122,7 @@ namespace CimmpleAPI.Controllers
                 Attachments = attachments
             };
 
-            var (ok, error) = EmailService.TrySend(settings, mail, _configuration);
+            var (ok, error) = await _emailOutbox.EnqueueAsync(tenantId, mail);
 
             _context.ArReminderLogs.Add(new ArReminderLog
             {
@@ -2309,9 +2130,9 @@ namespace CimmpleAPI.Controllers
                 InvoiceId = invoiceId,
                 SentUtc = DateTime.UtcNow,
                 ToEmail = toEmail,
-                Status = ok ? (attachedPdf ? "Sent" : "SentNoPdf") : "Failed",
+                Status = ok ? (attachedPdf ? "Queued" : "QueuedNoPdf") : "Failed",
                 Error = ok
-                    ? (attachedPdf ? null : "Reminder sent without invoice PDF attachment.")
+                    ? (attachedPdf ? null : "Reminder queued without invoice PDF attachment.")
                     : error,
                 ActorUserId = GetUserId()
             });

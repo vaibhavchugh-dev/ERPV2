@@ -152,6 +152,14 @@ namespace CimmpleAPI.Data
         public DbSet<ArReminderLog> ArReminderLogs { get; set; }
         public DbSet<BankReconciliationPeriod> BankReconciliationPeriods { get; set; }
         public DbSet<BankReconciliationPeriodItem> BankReconciliationPeriodItems { get; set; }
+        public DbSet<ReportSchedule> ReportSchedules { get; set; }
+        public DbSet<Notification> Notifications { get; set; }
+        public DbSet<EmailOutbox> EmailOutbox { get; set; }
+        public DbSet<Conversation> Conversations { get; set; }
+        public DbSet<ConversationParticipant> ConversationParticipants { get; set; }
+        public DbSet<ConversationMessage> ConversationMessages { get; set; }
+        public DbSet<SupportTicket> SupportTickets { get; set; }
+        public DbSet<SupportTicketMessage> SupportTicketMessages { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -745,6 +753,109 @@ namespace CimmpleAPI.Data
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => new { e.PeriodId, e.TransactionId }).IsUnique();
                 entity.HasIndex(e => e.TransactionId);
+            });
+
+            modelBuilder.Entity<ReportSchedule>(entity =>
+            {
+                entity.ToTable("ReportSchedule");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.ReportCategory).HasMaxLength(32);
+                entity.Property(e => e.ReportType).HasMaxLength(100);
+                entity.Property(e => e.ReportName).HasMaxLength(200);
+                entity.Property(e => e.DateRange).HasMaxLength(50);
+                entity.Property(e => e.Format).HasMaxLength(16);
+                entity.Property(e => e.Frequency).HasMaxLength(16);
+                entity.Property(e => e.TimeZoneId).HasMaxLength(100);
+                entity.Property(e => e.ToEmails).HasMaxLength(1000);
+                entity.Property(e => e.CcEmails).HasMaxLength(1000);
+                entity.Property(e => e.Subject).HasMaxLength(300);
+                entity.Property(e => e.LastRunStatus).HasMaxLength(32);
+                entity.Property(e => e.LastRunError).HasMaxLength(2000);
+                entity.HasIndex(e => new { e.TenantId, e.IsEnabled, e.NextRunUtc });
+                entity.HasIndex(e => new { e.IsEnabled, e.NextRunUtc });
+            });
+
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.ToTable("Notifications");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Type).HasMaxLength(64);
+                entity.Property(e => e.Title).HasMaxLength(200);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.Property(e => e.EntityType).HasMaxLength(64);
+                entity.Property(e => e.LinkPath).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.RecipientUserId, e.IsRead, e.CreatedAt });
+            });
+
+            modelBuilder.Entity<EmailOutbox>(entity =>
+            {
+                entity.ToTable("EmailOutbox");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.ToAddresses).HasMaxLength(1000);
+                entity.Property(e => e.CcAddresses).HasMaxLength(1000);
+                entity.Property(e => e.Subject).HasMaxLength(300);
+                entity.Property(e => e.LastError).HasMaxLength(2000);
+                entity.Property(e => e.LockedBy).HasMaxLength(128);
+                entity.HasIndex(e => new { e.Status, e.CreatedUtc });
+                entity.HasIndex(e => new { e.Status, e.LockedUntilUtc });
+            });
+
+            modelBuilder.Entity<Conversation>(entity =>
+            {
+                entity.ToTable("Conversations");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Subject).HasMaxLength(200);
+                entity.HasIndex(e => new { e.TenantId, e.LastMessageAt });
+            });
+
+            modelBuilder.Entity<ConversationParticipant>(entity =>
+            {
+                entity.ToTable("ConversationParticipants");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.ConversationId, e.UserId }).IsUnique();
+                entity.HasIndex(e => new { e.TenantId, e.UserId });
+            });
+
+            modelBuilder.Entity<ConversationMessage>(entity =>
+            {
+                entity.ToTable("ConversationMessages");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.HasIndex(e => new { e.ConversationId, e.CreatedAt });
+            });
+
+            modelBuilder.Entity<SupportTicket>(entity =>
+            {
+                entity.ToTable("SupportTickets");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Product).HasMaxLength(40);
+                entity.Property(e => e.Category).HasMaxLength(40);
+                entity.Property(e => e.Subject).HasMaxLength(200);
+                entity.Property(e => e.Description).HasMaxLength(4000);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.AppSource).HasMaxLength(20);
+                entity.Property(e => e.AppVersion).HasMaxLength(40);
+                entity.Property(e => e.UserAgent).HasMaxLength(500);
+                entity.Property(e => e.EntityType).HasMaxLength(80);
+                entity.Property(e => e.LinkPath).HasMaxLength(500);
+                entity.Property(e => e.AttachmentBlobName).HasMaxLength(260);
+                entity.Property(e => e.AttachmentFileName).HasMaxLength(260);
+                entity.Property(e => e.EmailError).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.CreatedByUserId, e.CreatedAt });
+                entity.HasIndex(e => new { e.TenantId, e.Status });
+                entity.HasIndex(e => new { e.Product, e.Status, e.UpdatedAt });
+            });
+
+            modelBuilder.Entity<SupportTicketMessage>(entity =>
+            {
+                entity.ToTable("SupportTicketMessages");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.AuthorType).HasMaxLength(20);
+                entity.Property(e => e.AuthorName).HasMaxLength(120);
+                entity.Property(e => e.Body).HasMaxLength(4000);
+                entity.Property(e => e.EmailError).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TicketId, e.CreatedAt });
             });
 
             modelBuilder.Entity<CimmpleAPI.Data.Models.Punch.FaceAttendanceLog>(entity =>

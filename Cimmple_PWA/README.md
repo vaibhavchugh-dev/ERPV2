@@ -26,7 +26,7 @@ cp .env.example .env
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `VITE_API_ROOT` | API base URL including `/api` | `http://localhost:5172/api` |
+| `VITE_API_ROOT` | API base URL including `/api`. Local: `/api` or `http://localhost:5172/api`. On hosted hostnames, relative `/api` and localhost are ignored and `https://api.v2.cimmple.net/api` is used. | `/api` |
 
 Do not commit `.env` or secrets.
 
@@ -36,7 +36,7 @@ Do not commit `.env` or secrets.
 npm run dev
 ```
 
-Opens at [http://localhost:5174](http://localhost:5174) by default.
+Opens at [http://localhost:5174/shop/](http://localhost:5174/shop/) (`base` is `/shop/` to match production). Do not use the site root; that path will serve HTML for JS/manifest requests.
 
 ## Build
 

@@ -45,6 +45,18 @@ namespace CimmpleAPI.Controllers
             return int.TryParse(userIdHeader, out var userId) ? userId : null;
         }
 
+        protected bool IsSupportStaff()
+        {
+            var portal = User?.FindFirst("portalType")?.Value;
+            return string.Equals(portal, "support", StringComparison.OrdinalIgnoreCase);
+        }
+
+        protected string? GetSupportStaffName()
+        {
+            return User?.FindFirst("supportStaffName")?.Value
+                ?? GetUsername();
+        }
+
         protected bool IsVendorPortal()
         {
             var portal = User?.FindFirst("portalType")?.Value;

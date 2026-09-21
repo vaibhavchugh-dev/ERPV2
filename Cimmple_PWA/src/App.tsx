@@ -9,6 +9,7 @@ import { QualityListPage } from "./pages/quality/QualityListPage";
 import { NcrFormPage } from "./pages/quality/NcrFormPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { SupportPage } from "./pages/SupportPage";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/quality/new" element={<NcrFormPage />} />
             <Route path="/quality/:ncrId" element={<NcrFormPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/support" element={<SupportPage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

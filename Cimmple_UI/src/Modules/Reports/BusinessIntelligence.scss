@@ -7,6 +7,10 @@
 
   .rpt-page-header {
     margin-bottom: 1rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
 
     h1 {
       margin: 0;
@@ -232,6 +236,23 @@
         border-color: #2563eb;
         box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
       }
+    }
+  }
+
+  .rpt-field-site {
+    width: min(22rem, 100%);
+    flex: 1 1 16rem;
+  }
+
+  .rpt-field-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.7rem;
+    line-height: 1.35;
+    color: #6b7280;
+
+    strong {
+      font-weight: 600;
+      color: #4b5563;
     }
   }
 

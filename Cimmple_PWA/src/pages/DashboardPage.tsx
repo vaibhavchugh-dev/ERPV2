@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { BarcodeScannerSheet } from "../components/BarcodeScannerSheet";
+import { MessagesButton } from "../components/MessagesButton";
+import { NotificationBell } from "../components/NotificationBell";
 import {
   DashboardAlert,
   DashboardService,
@@ -181,13 +183,17 @@ export function DashboardPage() {
               />
             </svg>
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-xl font-extrabold tracking-tight leading-tight text-slate-900 dark:text-white">
               Dashboard
             </h1>
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
               Shop floor
             </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <MessagesButton />
+            <NotificationBell />
           </div>
         </header>
 

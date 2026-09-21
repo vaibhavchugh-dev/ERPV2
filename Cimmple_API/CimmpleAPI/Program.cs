@@ -91,6 +91,15 @@ builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
 builder.Services.AddScoped<CimmpleAPI.Services.FaceRecognitionService>();
 
+// Scheduled report email runner
+builder.Services.AddScoped<CimmpleAPI.Services.ReportScheduleExecutionService>();
+builder.Services.AddHostedService<CimmpleAPI.Services.ReportScheduleHostedService>();
+builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
+builder.Services.AddScoped<CimmpleAPI.Services.ConversationService>();
+builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
+builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();
+builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
+
 // Legacy user repository (UserController login / maintenance helpers)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
