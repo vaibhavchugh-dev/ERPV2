@@ -1076,6 +1076,20 @@ namespace CimmpleAPI.Controllers
                     defaultFreightOutAccountId = defaults?.DefaultFreightOutAccountId,
                     defaultOtherChargeAccountId = defaults?.DefaultOtherChargeAccountId,
                     defaultFreightInAccountId = defaults?.DefaultFreightInAccountId,
+                    defaultWageExpenseAccountId = defaults?.DefaultWageExpenseAccountId,
+                    defaultEmployerPayrollTaxExpenseAccountId = defaults?.DefaultEmployerPayrollTaxExpenseAccountId,
+                    defaultEmployerPayrollTaxPayableAccountId = defaults?.DefaultEmployerPayrollTaxPayableAccountId,
+                    defaultFederalTaxPayableAccountId = defaults?.DefaultFederalTaxPayableAccountId,
+                    defaultStateTaxPayableAccountId = defaults?.DefaultStateTaxPayableAccountId,
+                    defaultLocalTaxPayableAccountId = defaults?.DefaultLocalTaxPayableAccountId,
+                    defaultSocialSecurityTaxPayableAccountId = defaults?.DefaultSocialSecurityTaxPayableAccountId,
+                    defaultMedicareTaxPayableAccountId = defaults?.DefaultMedicareTaxPayableAccountId,
+                    defaultPreTaxDeductionsPayableAccountId = defaults?.DefaultPreTaxDeductionsPayableAccountId,
+                    defaultRetirementDeductionsPayableAccountId = defaults?.DefaultRetirementDeductionsPayableAccountId,
+                    defaultPostTaxDeductionsPayableAccountId = defaults?.DefaultPostTaxDeductionsPayableAccountId,
+                    defaultGarnishmentsPayableAccountId = defaults?.DefaultGarnishmentsPayableAccountId,
+                    defaultNetPayPayableAccountId = defaults?.DefaultNetPayPayableAccountId,
+                    defaultPayrollBankId = defaults?.DefaultPayrollBankId,
                     paymentTerms,
                     approvalLimits
                 };
@@ -1132,6 +1146,42 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = otherChargeError });
                 if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultFreightInAccountId, "Freight In", out var freightInId, out var freightInError))
                     return BadRequest(new { error = freightInError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultWageExpenseAccountId, "Wage Expense", out var wageExpId, out var wageExpError))
+                    return BadRequest(new { error = wageExpError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultEmployerPayrollTaxExpenseAccountId, "Employer Payroll Tax Expense", out var erTaxExpId, out var erTaxExpError))
+                    return BadRequest(new { error = erTaxExpError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultEmployerPayrollTaxPayableAccountId, "Employer Payroll Tax Payable", out var erTaxPayId, out var erTaxPayError))
+                    return BadRequest(new { error = erTaxPayError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultFederalTaxPayableAccountId, "Federal Tax Payable", out var fedTaxId, out var fedTaxError))
+                    return BadRequest(new { error = fedTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultStateTaxPayableAccountId, "State Tax Payable", out var stateTaxId, out var stateTaxError))
+                    return BadRequest(new { error = stateTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultLocalTaxPayableAccountId, "Local Tax Payable", out var localTaxId, out var localTaxError))
+                    return BadRequest(new { error = localTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultSocialSecurityTaxPayableAccountId, "Social Security Payable", out var ssTaxId, out var ssTaxError))
+                    return BadRequest(new { error = ssTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultMedicareTaxPayableAccountId, "Medicare Payable", out var medTaxId, out var medTaxError))
+                    return BadRequest(new { error = medTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultPreTaxDeductionsPayableAccountId, "Pre-Tax Deductions Payable", out var preTaxId, out var preTaxError))
+                    return BadRequest(new { error = preTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultRetirementDeductionsPayableAccountId, "Retirement Deductions Payable", out var retId, out var retError))
+                    return BadRequest(new { error = retError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultPostTaxDeductionsPayableAccountId, "Post-Tax Deductions Payable", out var postTaxId, out var postTaxError))
+                    return BadRequest(new { error = postTaxError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultGarnishmentsPayableAccountId, "Garnishments Payable", out var garnId, out var garnError))
+                    return BadRequest(new { error = garnError });
+                if (!TryNormalizeOptionalAccountId(tenantId, request.DefaultNetPayPayableAccountId, "Net Pay Payable", out var netPayId, out var netPayError))
+                    return BadRequest(new { error = netPayError });
+
+                int? payrollBankId = null;
+                if (request.DefaultPayrollBankId is > 0)
+                {
+                    var bankOk = _context.BankMaster.AsNoTracking()
+                        .Any(b => b.Id == request.DefaultPayrollBankId.Value && b.TenantId == tenantId);
+                    if (!bankOk)
+                        return BadRequest(new { error = "Payroll bank is invalid for this tenant." });
+                    payrollBankId = request.DefaultPayrollBankId;
+                }
 
                 var defaults = _context.AccountingDefaults.FirstOrDefault(d => d.TenantId == tenantId);
                 var now = DateTime.UtcNow;
@@ -1163,6 +1213,20 @@ namespace CimmpleAPI.Controllers
                 defaults.DefaultFreightOutAccountId = freightOutId;
                 defaults.DefaultOtherChargeAccountId = otherChargeId;
                 defaults.DefaultFreightInAccountId = freightInId;
+                defaults.DefaultWageExpenseAccountId = wageExpId;
+                defaults.DefaultEmployerPayrollTaxExpenseAccountId = erTaxExpId;
+                defaults.DefaultEmployerPayrollTaxPayableAccountId = erTaxPayId;
+                defaults.DefaultFederalTaxPayableAccountId = fedTaxId;
+                defaults.DefaultStateTaxPayableAccountId = stateTaxId;
+                defaults.DefaultLocalTaxPayableAccountId = localTaxId;
+                defaults.DefaultSocialSecurityTaxPayableAccountId = ssTaxId;
+                defaults.DefaultMedicareTaxPayableAccountId = medTaxId;
+                defaults.DefaultPreTaxDeductionsPayableAccountId = preTaxId;
+                defaults.DefaultRetirementDeductionsPayableAccountId = retId;
+                defaults.DefaultPostTaxDeductionsPayableAccountId = postTaxId;
+                defaults.DefaultGarnishmentsPayableAccountId = garnId;
+                defaults.DefaultNetPayPayableAccountId = netPayId;
+                defaults.DefaultPayrollBankId = payrollBankId;
                 defaults.UpdatedDate = now;
 
                 // Upsert payment terms when provided (Setup Save). Dedicated CRUD also available.
@@ -2370,6 +2434,20 @@ namespace CimmpleAPI.Controllers
         public int? DefaultFreightOutAccountId { get; set; }
         public int? DefaultOtherChargeAccountId { get; set; }
         public int? DefaultFreightInAccountId { get; set; }
+        public int? DefaultWageExpenseAccountId { get; set; }
+        public int? DefaultEmployerPayrollTaxExpenseAccountId { get; set; }
+        public int? DefaultEmployerPayrollTaxPayableAccountId { get; set; }
+        public int? DefaultFederalTaxPayableAccountId { get; set; }
+        public int? DefaultStateTaxPayableAccountId { get; set; }
+        public int? DefaultLocalTaxPayableAccountId { get; set; }
+        public int? DefaultSocialSecurityTaxPayableAccountId { get; set; }
+        public int? DefaultMedicareTaxPayableAccountId { get; set; }
+        public int? DefaultPreTaxDeductionsPayableAccountId { get; set; }
+        public int? DefaultRetirementDeductionsPayableAccountId { get; set; }
+        public int? DefaultPostTaxDeductionsPayableAccountId { get; set; }
+        public int? DefaultGarnishmentsPayableAccountId { get; set; }
+        public int? DefaultNetPayPayableAccountId { get; set; }
+        public int? DefaultPayrollBankId { get; set; }
         public PaymentTermRequest[] PaymentTerms { get; set; }
         public ApprovalLimitRequest[] ApprovalLimits { get; set; }
     }

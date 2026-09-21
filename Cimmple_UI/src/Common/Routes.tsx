@@ -37,6 +37,9 @@ const JournalEntries = React.lazy(() => import("../Modules/Accounting/JournalEnt
 const GeneralLedger = React.lazy(() => import("../Modules/Accounting/GeneralLedger"));
 const AccountingPeriods = React.lazy(() => import("../Modules/Accounting/AccountingPeriods"));
 const AccountingSetup = React.lazy(() => import("../Modules/Accounting/AccountingSetup"));
+const PayrollJournalLinks = React.lazy(() => import("../Modules/Accounting/PayrollJournalLinks"));
+const ManualPayrollWizard = React.lazy(() => import("../Modules/Accounting/ManualPayrollWizard"));
+const ImportPayrollWizard = React.lazy(() => import("../Modules/Accounting/ImportPayrollWizard"));
 const SystemSettings = React.lazy(() => import("../Modules/Settings/SystemSettings"));
 const Documents = React.lazy(() => import("../Modules/Documents/Documents"));
 const BusinessIntelligence = React.lazy(() => import("../Modules/Reports/BusinessIntelligence"));
@@ -213,6 +216,21 @@ export const protectedRoutes: any[] = [
     path: "/accounts/journal-entries",
     name: "Journal Entries",
     Component: JournalEntries,
+  },
+  {
+    path: "/accounts/payroll/import",
+    name: "Import Payroll Journal",
+    Component: ImportPayrollWizard,
+  },
+  {
+    path: "/accounts/payroll/manual",
+    name: "Manual Payroll Journal",
+    Component: ManualPayrollWizard,
+  },
+  {
+    path: "/accounts/payroll",
+    name: "Payroll Journals",
+    Component: PayrollJournalLinks,
   },
   {
     path: "/accounts/general-ledger",

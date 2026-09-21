@@ -54,6 +54,27 @@ namespace CimmpleAPI.Data.Models
         /// <summary>Vendor bill freight-in expense account.</summary>
         public int? DefaultFreightInAccountId { get; set; }
 
+        // --- Payroll GL defaults (CimmplePay / manual / import journal buckets) ---
+
+        public int? DefaultWageExpenseAccountId { get; set; }
+        public int? DefaultEmployerPayrollTaxExpenseAccountId { get; set; }
+        public int? DefaultEmployerPayrollTaxPayableAccountId { get; set; }
+        public int? DefaultFederalTaxPayableAccountId { get; set; }
+        public int? DefaultStateTaxPayableAccountId { get; set; }
+        public int? DefaultLocalTaxPayableAccountId { get; set; }
+        public int? DefaultSocialSecurityTaxPayableAccountId { get; set; }
+        public int? DefaultMedicareTaxPayableAccountId { get; set; }
+        public int? DefaultPreTaxDeductionsPayableAccountId { get; set; }
+        public int? DefaultRetirementDeductionsPayableAccountId { get; set; }
+        public int? DefaultPostTaxDeductionsPayableAccountId { get; set; }
+        public int? DefaultGarnishmentsPayableAccountId { get; set; }
+
+        /// <summary>Net pay clearing / accrued payroll (credit on finalize).</summary>
+        public int? DefaultNetPayPayableAccountId { get; set; }
+
+        /// <summary>Optional BankMaster.Id preferred for payroll cash (also see ispayrollDefault).</summary>
+        public int? DefaultPayrollBankId { get; set; }
+
         /// <summary>Foundation flag for future GST / multi-rate tax returns (Phase 8).</summary>
         public bool GstEnabled { get; set; }
 
