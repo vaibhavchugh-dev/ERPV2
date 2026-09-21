@@ -162,6 +162,94 @@ BEGIN
     ALTER TABLE dbo.AccountingDefaults ADD [TaxRegistrationNumber] nvarchar(50) NULL;
 END
 
+-- Payroll GL default columns on AccountingDefaults
+IF OBJECT_ID(N'CimmpleFlow.AccountingDefaults', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultWageExpenseAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultWageExpenseAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultEmployerPayrollTaxExpenseAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultEmployerPayrollTaxExpenseAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultEmployerPayrollTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultEmployerPayrollTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultFederalTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultFederalTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultStateTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultStateTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultLocalTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultLocalTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultSocialSecurityTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultSocialSecurityTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultMedicareTaxPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultMedicareTaxPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultPreTaxDeductionsPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultPreTaxDeductionsPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultRetirementDeductionsPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultRetirementDeductionsPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultPostTaxDeductionsPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultPostTaxDeductionsPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultGarnishmentsPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultGarnishmentsPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultNetPayPayableAccountId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultNetPayPayableAccountId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.AccountingDefaults', N'DefaultPayrollBankId') IS NULL
+        ALTER TABLE CimmpleFlow.AccountingDefaults ADD [DefaultPayrollBankId] int NULL;
+END
+
+IF OBJECT_ID(N'CimmpleFlow.PayrollJournalLink', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.PayrollJournalLink (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [TenantId] int NOT NULL,
+        [LocationId] int NOT NULL,
+        [Source] nvarchar(32) NOT NULL,
+        [ExternalRunId] nvarchar(64) NULL,
+        [ProviderName] nvarchar(64) NULL,
+        [ReferenceNumber] nvarchar(100) NOT NULL,
+        [PayPeriodStart] datetime2 NULL,
+        [PayPeriodEnd] datetime2 NULL,
+        [PayDate] datetime2 NULL,
+        [JournalEntryId] int NOT NULL,
+        [Status] nvarchar(32) NOT NULL,
+        [Description] nvarchar(500) NULL,
+        [TotalDebits] decimal(18,2) NULL,
+        [CreatedUtc] datetime2 NOT NULL,
+        [CreatedByUserId] int NULL,
+        CONSTRAINT [PK_PayrollJournalLink] PRIMARY KEY ([Id])
+    );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_PayrollJournalLink_Tenant_Ref' AND object_id = OBJECT_ID(N'CimmpleFlow.PayrollJournalLink'))
+BEGIN
+    CREATE INDEX [IX_PayrollJournalLink_Tenant_Ref]
+        ON CimmpleFlow.PayrollJournalLink ([TenantId], [ReferenceNumber]);
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_PayrollJournalLink_Tenant_Source_External' AND object_id = OBJECT_ID(N'CimmpleFlow.PayrollJournalLink'))
+BEGIN
+    CREATE UNIQUE INDEX [IX_PayrollJournalLink_Tenant_Source_External]
+        ON CimmpleFlow.PayrollJournalLink ([TenantId], [Source], [ExternalRunId])
+        WHERE [ExternalRunId] IS NOT NULL AND [Status] = N'Posted';
+END
+
+-- P5 cash / remittance columns on PayrollJournalLink
+IF OBJECT_ID(N'CimmpleFlow.PayrollJournalLink', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'PaymentJournalEntryId') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [PaymentJournalEntryId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'PaymentPostedUtc') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [PaymentPostedUtc] datetime2 NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'PaymentBankId') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [PaymentBankId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'PaymentAmount') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [PaymentAmount] decimal(18,2) NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'TaxRemittanceJournalEntryId') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [TaxRemittanceJournalEntryId] int NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'TaxRemittancePostedUtc') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [TaxRemittancePostedUtc] datetime2 NULL;
+    IF COL_LENGTH(N'CimmpleFlow.PayrollJournalLink', N'TaxRemittanceAmount') IS NULL
+        ALTER TABLE CimmpleFlow.PayrollJournalLink ADD [TaxRemittanceAmount] decimal(18,2) NULL;
+END
+
 IF OBJECT_ID(N'CimmpleFlow.BankReconciliationPeriod', N'U') IS NULL
 BEGIN
     CREATE TABLE CimmpleFlow.BankReconciliationPeriod (

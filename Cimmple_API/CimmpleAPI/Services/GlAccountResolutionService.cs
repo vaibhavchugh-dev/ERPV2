@@ -294,6 +294,62 @@ public static class GlAccountResolutionService
             groupKeywords: new[] { "bank", "cash" });
     }
 
+    /// <summary>
+    /// Resolve GL cash/bank account for payroll: explicit bank → AccountingDefaults.DefaultPayrollBankId
+    /// → bank flagged ispayrollDefault → standard bank resolution.
+    /// </summary>
+    public static int? ResolvePayrollBank(CimmpleDbContext db, int tenantId, int? bankId = null)
+    {
+        if (bankId is > 0)
+            return ResolveBank(db, tenantId, bankId);
+
+        var defaults = GetDefaults(db, tenantId);
+        if (defaults?.DefaultPayrollBankId is int preferredBank && preferredBank > 0)
+        {
+            var fromDefault = ResolveBank(db, tenantId, preferredBank);
+            if (fromDefault.HasValue)
+                return fromDefault;
+        }
+
+        var payrollBankId = db.BankMaster
+            .AsNoTracking()
+            .Where(b => b.TenantId == tenantId && b.ispayrollDefault == true)
+            .OrderBy(b => b.Id)
+            .Select(b => (int?)b.Id)
+            .FirstOrDefault();
+
+        if (payrollBankId is > 0)
+        {
+            var fromFlag = ResolveBank(db, tenantId, payrollBankId);
+            if (fromFlag.HasValue)
+                return fromFlag;
+        }
+
+        return ResolveBank(db, tenantId, null);
+    }
+
+    public static int? ResolvePayrollAccount(CimmpleDbContext db, int tenantId, Func<AccountingDefaults, int?> selector, string? preferExactName = null)
+    {
+        var defaults = GetDefaults(db, tenantId);
+        if (defaults != null)
+        {
+            var id = selector(defaults);
+            if (id is > 0 && IsActiveAccountForTenant(db, tenantId, id.Value))
+                return id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(preferExactName))
+        {
+            return FindByKeywords(db, tenantId,
+                preferExactName: preferExactName,
+                typeKeywords: Array.Empty<string>(),
+                nameKeywords: new[] { preferExactName },
+                groupKeywords: Array.Empty<string>());
+        }
+
+        return null;
+    }
+
     private static int? FindByKeywords(
         CimmpleDbContext db,
         int tenantId,

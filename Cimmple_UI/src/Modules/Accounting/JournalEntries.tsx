@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import {
@@ -48,6 +48,8 @@ const getPaymentKind = (row: {
 };
 
 const JournalEntries: React.FC = () => {
+  const location = useLocation();
+  const history = useHistory();
   const [accounts, setAccounts] = useState<ChartofAccountMaster[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [items, setItems] = useState<
@@ -147,13 +149,18 @@ const JournalEntries: React.FC = () => {
     };
   }, [lines]);
 
-  const openDetail = async (id: number) => {
+  const openDetail = useCallback(async (id: number) => {
     setDetailOpen(true);
     setDetail(null);
     setDetailLoading(true);
     try {
       const row = await AccountingService.GetJournalEntry(id);
       setDetail(row);
+      if (row?.entryDate) {
+        const ed = ymdLocal(new Date(row.entryDate));
+        setFilterStart((prev) => (ed < prev ? ed : prev));
+        setFilterEnd((prev) => (ed > prev ? ed : prev));
+      }
     } catch (e) {
       console.error(e);
       toast.error("Failed to load entry detail.");
@@ -161,7 +168,24 @@ const JournalEntries: React.FC = () => {
     } finally {
       setDetailLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    const raw = params.get("id") || params.get("highlight");
+    const journalId = raw ? Number.parseInt(raw, 10) : 0;
+    if (!Number.isFinite(journalId) || journalId <= 0) {
+      return;
+    }
+    void openDetail(journalId);
+    params.delete("id");
+    params.delete("highlight");
+    const qs = params.toString();
+    history.replace({
+      pathname: location.pathname,
+      search: qs ? `?${qs}` : "",
+    });
+  }, [location.search, location.pathname, history, openDetail]);
 
   const postReversal = async () => {
     if (!detail?.id) return;

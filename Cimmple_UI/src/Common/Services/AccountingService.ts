@@ -522,6 +522,146 @@ export class AccountingService {
     });
   };
 
+  public static ListPayrollJournalLinks = async (params?: {
+    startDate?: string;
+    endDate?: string;
+    source?: string;
+    skip?: number;
+    take?: number;
+    locationId?: number;
+  }): Promise<{ total: number; items: any[] } | null> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.get(`/Payroll/List`, {
+      params: {
+        tenantId: tenantID,
+        startDate: params?.startDate,
+        endDate: params?.endDate,
+        source: params?.source,
+        skip: params?.skip ?? 0,
+        take: params?.take ?? 200,
+        locationId: params?.locationId,
+      },
+    }).then((response) => response.data.result);
+  };
+
+  public static RegisterPayrollJournal = async (body: {
+    journalEntryId: number;
+    source?: string;
+    externalRunId?: string;
+    payPeriodStart?: string;
+    payPeriodEnd?: string;
+    payDate?: string;
+    description?: string;
+  }): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/RegisterExisting`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static PreviewManualPayrollJournal = async (body: Record<string, unknown>): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PreviewManual`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static PostManualPayrollJournal = async (body: Record<string, unknown>): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PostManual`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static ParsePayrollImportCsv = async (body: {
+    csvText: string;
+    columnMapping?: Record<string, string>;
+  }): Promise<any> => {
+    return Instense.post(`/Payroll/ParseImportCsv`, body).then(
+      (response) => response.data.result
+    );
+  };
+
+  public static PreviewImportPayrollJournal = async (
+    body: Record<string, unknown>
+  ): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PreviewImport`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static PostImportPayrollJournal = async (
+    body: Record<string, unknown>
+  ): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PostImport`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static DownloadPayrollImportTemplate = async (): Promise<void> => {
+    const response = await Instense.get(`/Payroll/ImportTemplate`, {
+      responseType: "blob",
+    });
+    const blob = new Blob([response.data], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cimmple-payroll-import-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  public static GetPayrollCashPreview = async (linkId: number): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.get(`/Payroll/CashPreview/${linkId}`, {
+      params: { tenantId: tenantID },
+    }).then((response) => response.data.result);
+  };
+
+  public static PostPayrollNetPayment = async (body: {
+    linkId: number;
+    amount?: number;
+    paymentDate?: string;
+    bankId?: number;
+    description?: string;
+  }): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PostPayment`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
+  public static PostPayrollTaxRemittance = async (body: {
+    linkId: number;
+    paymentDate?: string;
+    bankId?: number;
+    description?: string;
+    lines: { accountId: number; amount: number; description?: string }[];
+  }): Promise<any> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    return Instense.post(`/Payroll/PostTaxRemittance`, {
+      tenantId: tenantID,
+      ...body,
+    }).then((response) => response.data.result);
+  };
+
   public static SendArReminder = async (invoiceId: number): Promise<any> => {
     return Instense.post(
       `/Accounting/SendArReminder`,

@@ -119,6 +119,7 @@ const Sidebar: React.FC = () => {
       title: "Ledger & reporting",
       items: [
         { icon: faBook, title: "Journal Entries", path: "/accounts/journal-entries" },
+        { icon: faDollarSign, title: "Payroll Journals", path: "/accounts/payroll" },
         { icon: faTable, title: "GL Account Activity", path: "/accounts/general-ledger" },
         { icon: faFileInvoice, title: "Financial Reports", path: "/accounts/reports" },
         { icon: faLock, title: "Period Close & Audit", path: "/accounts/periods" },

@@ -147,6 +147,7 @@ namespace CimmpleAPI.Data
         public DbSet<GlAccountingPeriodLock> GlAccountingPeriodLocks { get; set; }
         public DbSet<GlAuditEvent> GlAuditEvents { get; set; }
         public DbSet<AccountingDefaults> AccountingDefaults { get; set; }
+        public DbSet<PayrollJournalLink> PayrollJournalLinks { get; set; }
         public DbSet<PaymentTerm> PaymentTerms { get; set; }
         public DbSet<ApApprovalLimit> ApApprovalLimits { get; set; }
         public DbSet<ArReminderLog> ArReminderLogs { get; set; }
@@ -707,6 +708,22 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.DefaultCurrency).HasMaxLength(10);
                 entity.Property(e => e.TaxRate).HasColumnType("decimal(18,2)");
                 entity.Property(e => e.TaxRegistrationNumber).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<PayrollJournalLink>(entity =>
+            {
+                entity.ToTable("PayrollJournalLink");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Source).HasMaxLength(32);
+                entity.Property(e => e.ExternalRunId).HasMaxLength(64);
+                entity.Property(e => e.ProviderName).HasMaxLength(64);
+                entity.Property(e => e.ReferenceNumber).HasMaxLength(100);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.Description).HasMaxLength(500);
+                entity.Property(e => e.TotalDebits).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.PaymentAmount).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.TaxRemittanceAmount).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.TenantId, e.ReferenceNumber });
             });
 
             modelBuilder.Entity<PaymentTerm>(entity =>
