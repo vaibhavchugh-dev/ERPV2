@@ -168,7 +168,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_UI/build/
-          server-dir: ./v2.cimmple/
+          server-dir: ./
           state-name: erp-ui-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -214,7 +214,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_PWA/dist/
-          server-dir: ./shop/
+          server-dir: ./Shop/
           state-name: erp-pwa-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -234,7 +234,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_PWA/dist/
-          server-dir: ./shop/
+          server-dir: ./Shop/
           state-name: erp-pwa-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -279,7 +279,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_VPA/dist/
-          server-dir: ./v2.cimmple/vendor/
+          server-dir: ./Vendor/
           state-name: erp-vpa-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -299,7 +299,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_VPA/dist/
-          server-dir: ./v2.cimmple/vendor/
+          server-dir: ./Vendor/
           state-name: erp-vpa-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -344,7 +344,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_Punch/dist/
-          server-dir: ./punch/
+          server-dir: ../Punch/
           state-name: erp-punch-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -364,7 +364,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_Punch/dist/
-          server-dir: ./punch/
+          server-dir: ../Punch/
           state-name: erp-punch-ftp-sync-state.json
           log-level: standard
           timeout: 120000
