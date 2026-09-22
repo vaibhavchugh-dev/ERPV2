@@ -39,6 +39,7 @@ jobs:
             --configuration Release \
             --output artifacts/api \
             --no-self-contained
+          rm -rf artifacts/api/_build_verify artifacts/api/_build_verify2 artifacts/api/_build_check artifacts/api/_build_out* artifacts/api/_build_support_check
 
       - name: Take API offline so IIS releases file locks
         env:
@@ -54,6 +55,8 @@ jobs:
           sleep 10
 
       - name: Deploy API over FTP
+        id: ftp-api-1
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
@@ -61,13 +64,37 @@ jobs:
           password: ${{ secrets.FTP_API_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./artifacts/api/
-          state-name: ftp-deploy-sync-state.json
-          log-level: verbose
+          state-name: erp-api-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
           server-dir: ./
           dangerous-clean-slate: false
           exclude: |
             **/.git*
             **/.git*/**
+            **/_build*/**
+            **/appsettings.json
+            **/appsettings.*.json
+            **/*.pdb
+
+      - name: Retry API FTP deploy
+        if: steps.ftp-api-1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_API_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./artifacts/api/
+          state-name: erp-api-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          server-dir: ./
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/_build*/**
             **/appsettings.json
             **/appsettings.*.json
             **/*.pdb
@@ -109,6 +136,8 @@ jobs:
           npm run build
 
       - name: Deploy UI over FTP
+        id: ftp-ui-1
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
@@ -117,11 +146,34 @@ jobs:
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_UI/build/
           server-dir: ./
-          state-name: ftp-deploy-sync-state.json
-          log-level: verbose
+          state-name: erp-ui-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
           dangerous-clean-slate: false
           exclude: |
             **/.git*
             **/.git*/**
+            **/_build*/**
+            **/node_modules/**
+            **/*.map
+
+      - name: Retry UI FTP deploy
+        if: steps.ftp-ui-1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_UI/build/
+          server-dir: ./
+          state-name: erp-ui-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/_build*/**
             **/node_modules/**
             **/*.map
