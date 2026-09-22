@@ -57,7 +57,7 @@ jobs:
       - name: Deploy API over FTP
         id: ftp-api-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
@@ -80,7 +80,7 @@ jobs:
 
       - name: Retry API FTP deploy
         if: steps.ftp-api-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
@@ -140,7 +140,7 @@ jobs:
       - name: Deploy UI over FTP
         id: ftp-ui-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -161,7 +161,7 @@ jobs:
 
       - name: Retry UI FTP deploy
         if: steps.ftp-ui-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -207,7 +207,7 @@ jobs:
       - name: Deploy PWA over FTP
         id: ftp-pwa-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -227,7 +227,7 @@ jobs:
 
       - name: Retry PWA FTP deploy
         if: steps.ftp-pwa-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -272,7 +272,7 @@ jobs:
       - name: Deploy VPA over FTP
         id: ftp-vpa-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -292,7 +292,7 @@ jobs:
 
       - name: Retry VPA FTP deploy
         if: steps.ftp-vpa-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -337,7 +337,7 @@ jobs:
       - name: Deploy Punch over FTP
         id: ftp-punch-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
@@ -357,7 +357,7 @@ jobs:
 
       - name: Retry Punch FTP deploy
         if: steps.ftp-punch-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
