@@ -1,0 +1,127 @@
+name: Deploy API and UI via FTP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ftp-main
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 7.0.x
+  NODE_VERSION: "20"
+  FTP_PROTOCOL: ftp
+  FTP_API_SERVER_DEFAULT: 108.181.155.217
+  FTP_UI_SERVER_DEFAULT: 108.181.155.217
+  FTP_API_USERNAME_DEFAULT: erpapi
+  FTP_UI_USERNAME_DEFAULT: erpui
+
+jobs:
+  deploy-api:
+    name: Build and FTP API
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish API
+        run: |
+          dotnet publish Cimmple_API/CimmpleAPI/CimmpleAPI.csproj \
+            --configuration Release \
+            --output artifacts/api \
+            --no-self-contained
+
+      - name: Take API offline so IIS releases file locks
+        env:
+          FTP_SERVER: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_API_PASSWORD }}
+        run: |
+          printf 'updating\n' > app_offline.htm
+          curl --silent --show-error --ftp-pasv \
+            --user "${FTP_USER}:${FTP_PASS}" \
+            -T app_offline.htm \
+            "ftp://${FTP_SERVER}/app_offline.htm"
+          sleep 10
+
+      - name: Deploy API over FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_API_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./artifacts/api/
+          state-name: ftp-deploy-sync-state.json
+          log-level: verbose
+          server-dir: ./
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/appsettings.json
+            **/appsettings.*.json
+            **/*.pdb
+
+      - name: Bring API back online
+        if: success()
+        env:
+          FTP_SERVER: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_API_PASSWORD }}
+        run: |
+          curl --silent --show-error --ftp-pasv \
+            --user "${FTP_USER}:${FTP_PASS}" \
+            "ftp://${FTP_SERVER}/" \
+            -Q "DELE app_offline.htm"
+
+  deploy-ui:
+    name: Build and FTP UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Cimmple_UI/package-lock.json
+
+      - name: Install and build UI
+        working-directory: Cimmple_UI
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: false
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy UI over FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_UI/build/
+          server-dir: ./
+          state-name: ftp-deploy-sync-state.json
+          log-level: verbose
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
