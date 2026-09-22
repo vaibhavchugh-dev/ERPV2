@@ -73,6 +73,7 @@ jobs:
             **/.git*
             **/.git*/**
             **/_build*/**
+            **/wwwroot/uploads/**
             **/appsettings.json
             **/appsettings.*.json
             **/*.pdb
@@ -95,6 +96,7 @@ jobs:
             **/.git*
             **/.git*/**
             **/_build*/**
+            **/wwwroot/uploads/**
             **/appsettings.json
             **/appsettings.*.json
             **/*.pdb
