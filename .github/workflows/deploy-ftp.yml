@@ -67,12 +67,13 @@ jobs:
             echo "set ftp:passive-mode true"
             echo "set net:timeout 30"
             echo "set cmd:fail-exit false"
+            printf 'open ftp://%s\n' "$FTP_SERVER"
             while IFS= read -r dir; do
               printf 'mkdir -p "%s"\n' "$dir"
             done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
             echo "quit"
           } > ftp-mkdir.txt
-          lftp -f ftp-mkdir.txt "ftp://${FTP_SERVER}"
+          lftp -f ftp-mkdir.txt
 
       - name: Deploy API over FTP
         id: ftp-api-1
