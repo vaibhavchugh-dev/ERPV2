@@ -54,25 +54,6 @@ jobs:
             "ftp://${FTP_SERVER}/app_offline.htm"
           sleep 10
 
-      - name: Create missing API directories on FTP
-        env:
-          FTP_SERVER: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
-          FTP_USER: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
-          FTP_PASS: ${{ secrets.FTP_API_PASSWORD }}
-        run: |
-          printf '.\n' > .ftpkeep
-          while IFS= read -r dir; do
-            echo "Create $dir"
-            curl --silent --show-error --ftp-pasv --ftp-create-dirs \
-              --user "${FTP_USER}:${FTP_PASS}" \
-              -T .ftpkeep \
-              "ftp://${FTP_SERVER}/${dir}/.ftpkeep"
-            curl --silent --show-error --ftp-pasv \
-              --user "${FTP_USER}:${FTP_PASS}" \
-              "ftp://${FTP_SERVER}/${dir}/" \
-              -Q "DELE .ftpkeep" || true
-          done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
-
       - name: Deploy API over FTP
         id: ftp-api-1
         continue-on-error: true
