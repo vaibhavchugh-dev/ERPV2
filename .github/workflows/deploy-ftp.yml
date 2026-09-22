@@ -72,7 +72,7 @@ jobs:
             done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
             echo "quit"
           } > ftp-mkdir.txt
-          lftp "ftp://${FTP_SERVER}" -f ftp-mkdir.txt
+          lftp -f ftp-mkdir.txt "ftp://${FTP_SERVER}"
 
       - name: Deploy API over FTP
         id: ftp-api-1
