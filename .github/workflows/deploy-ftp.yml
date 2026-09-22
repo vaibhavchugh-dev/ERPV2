@@ -54,6 +54,26 @@ jobs:
             "ftp://${FTP_SERVER}/app_offline.htm"
           sleep 10
 
+      - name: Create missing API directories on FTP
+        env:
+          FTP_SERVER: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_API_PASSWORD }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+          printf 'machine %s\nlogin %s\npassword %s\n' "$FTP_SERVER" "$FTP_USER" "$FTP_PASS" > "$HOME/.netrc"
+          chmod 600 "$HOME/.netrc"
+          {
+            echo "set ftp:passive-mode true"
+            echo "set net:timeout 30"
+            echo "set cmd:fail-exit false"
+            while IFS= read -r dir; do
+              printf 'mkdir -p "%s"\n' "$dir"
+            done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
+            echo "quit"
+          } > ftp-mkdir.txt
+          lftp "ftp://${FTP_SERVER}" -f ftp-mkdir.txt
+
       - name: Deploy API over FTP
         id: ftp-api-1
         continue-on-error: true
