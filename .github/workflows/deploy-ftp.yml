@@ -168,7 +168,7 @@ jobs:
           password: ${{ secrets.FTP_UI_PASSWORD }}
           protocol: ${{ env.FTP_PROTOCOL }}
           local-dir: ./Cimmple_UI/build/
-          server-dir: ./
+          server-dir: ./v2.cimmple/
           state-name: erp-ui-ftp-sync-state.json
           log-level: standard
           timeout: 120000
@@ -177,5 +177,200 @@ jobs:
             **/.git*
             **/.git*/**
             **/_build*/**
+            **/node_modules/**
+            **/*.map
+
+  deploy-pwa:
+    name: Build and FTP Shop PWA
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Cimmple_PWA/package-lock.json
+
+      - name: Install and build PWA
+        working-directory: Cimmple_PWA
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: false
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy PWA over FTP
+        id: ftp-pwa-1
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_PWA/dist/
+          server-dir: ./shop/
+          state-name: erp-pwa-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
+
+      - name: Retry PWA FTP deploy
+        if: steps.ftp-pwa-1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_PWA/dist/
+          server-dir: ./shop/
+          state-name: erp-pwa-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
+
+  deploy-vpa:
+    name: Build and FTP Vendor portal
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Cimmple_VPA/package-lock.json
+
+      - name: Install and build VPA
+        working-directory: Cimmple_VPA
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: false
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy VPA over FTP
+        id: ftp-vpa-1
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_VPA/dist/
+          server-dir: ./v2.cimmple/vendor/
+          state-name: erp-vpa-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
+
+      - name: Retry VPA FTP deploy
+        if: steps.ftp-vpa-1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_VPA/dist/
+          server-dir: ./v2.cimmple/vendor/
+          state-name: erp-vpa-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
+
+  deploy-punch:
+    name: Build and FTP Punch
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Cimmple_Punch/package-lock.json
+
+      - name: Install and build Punch
+        working-directory: Cimmple_Punch
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          CI: false
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy Punch over FTP
+        id: ftp-punch-1
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_Punch/dist/
+          server-dir: ./punch/
+          state-name: erp-punch-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.map
+
+      - name: Retry Punch FTP deploy
+        if: steps.ftp-punch-1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          password: ${{ secrets.FTP_UI_PASSWORD }}
+          protocol: ${{ env.FTP_PROTOCOL }}
+          local-dir: ./Cimmple_Punch/dist/
+          server-dir: ./punch/
+          state-name: erp-punch-ftp-sync-state.json
+          log-level: standard
+          timeout: 120000
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
             **/node_modules/**
             **/*.map
