@@ -60,20 +60,18 @@ jobs:
           FTP_USER: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_API_PASSWORD }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
-          printf 'machine %s\nlogin %s\npassword %s\n' "$FTP_SERVER" "$FTP_USER" "$FTP_PASS" > "$HOME/.netrc"
-          chmod 600 "$HOME/.netrc"
-          {
-            echo "set ftp:passive-mode true"
-            echo "set net:timeout 30"
-            echo "set cmd:fail-exit false"
-            printf 'open ftp://%s\n' "$FTP_SERVER"
-            while IFS= read -r dir; do
-              printf 'mkdir -p "%s"\n' "$dir"
-            done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
-            echo "quit"
-          } > ftp-mkdir.txt
-          lftp -f ftp-mkdir.txt
+          printf '.\n' > .ftpkeep
+          while IFS= read -r dir; do
+            echo "Create $dir"
+            curl --silent --show-error --ftp-pasv --ftp-create-dirs \
+              --user "${FTP_USER}:${FTP_PASS}" \
+              -T .ftpkeep \
+              "ftp://${FTP_SERVER}/${dir}/.ftpkeep"
+            curl --silent --show-error --ftp-pasv \
+              --user "${FTP_USER}:${FTP_PASS}" \
+              "ftp://${FTP_SERVER}/${dir}/" \
+              -Q "DELE .ftpkeep" || true
+          done < <(cd artifacts/api && find . -type d -printf '%P\n' | sed '/^$/d' | sort)
 
       - name: Deploy API over FTP
         id: ftp-api-1
