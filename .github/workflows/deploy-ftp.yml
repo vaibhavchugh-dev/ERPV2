@@ -57,7 +57,7 @@ jobs:
       - name: Deploy API over FTP
         id: ftp-api-1
         continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
@@ -80,7 +80,7 @@ jobs:
 
       - name: Retry API FTP deploy
         if: steps.ftp-api-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_API_SERVER != '' && secrets.FTP_API_SERVER || env.FTP_API_SERVER_DEFAULT }}
           username: ${{ secrets.FTP_API_USERNAME != '' && secrets.FTP_API_USERNAME || env.FTP_API_USERNAME_DEFAULT }}
@@ -138,47 +138,13 @@ jobs:
           npm run build
 
       - name: Deploy UI over FTP
-        id: ftp-ui-1
-        continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_UI/build/
-          server-dir: ./
-          state-name: erp-ui-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/_build*/**
-            **/node_modules/**
-            **/*.map
-
-      - name: Retry UI FTP deploy
-        if: steps.ftp-ui-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_UI/build/
-          server-dir: ./
-          state-name: erp-ui-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/_build*/**
-            **/node_modules/**
-            **/*.map
+        env:
+          FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
+          LOCAL_DIR: Cimmple_UI/build
+          REMOTE_DIR: .
+        run: python .github/scripts/ftp_upload.py
 
   deploy-pwa:
     name: Build and FTP Shop PWA
@@ -205,45 +171,13 @@ jobs:
           npm run build
 
       - name: Deploy PWA over FTP
-        id: ftp-pwa-1
-        continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_PWA/dist/
-          server-dir: ./Shop/
-          state-name: erp-pwa-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
-
-      - name: Retry PWA FTP deploy
-        if: steps.ftp-pwa-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_PWA/dist/
-          server-dir: ./Shop/
-          state-name: erp-pwa-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
+        env:
+          FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
+          LOCAL_DIR: Cimmple_PWA/dist
+          REMOTE_DIR: Shop
+        run: python .github/scripts/ftp_upload.py
 
   deploy-vpa:
     name: Build and FTP Vendor portal
@@ -270,45 +204,13 @@ jobs:
           npm run build
 
       - name: Deploy VPA over FTP
-        id: ftp-vpa-1
-        continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_VPA/dist/
-          server-dir: ./Vendor/
-          state-name: erp-vpa-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
-
-      - name: Retry VPA FTP deploy
-        if: steps.ftp-vpa-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_VPA/dist/
-          server-dir: ./Vendor/
-          state-name: erp-vpa-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
+        env:
+          FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
+          LOCAL_DIR: Cimmple_VPA/dist
+          REMOTE_DIR: Vendor
+        run: python .github/scripts/ftp_upload.py
 
   deploy-punch:
     name: Build and FTP Punch
@@ -335,42 +237,10 @@ jobs:
           npm run build
 
       - name: Deploy Punch over FTP
-        id: ftp-punch-1
-        continue-on-error: true
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_Punch/dist/
-          server-dir: ../Punch/
-          state-name: erp-punch-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
-
-      - name: Retry Punch FTP deploy
-        if: steps.ftp-punch-1.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          username: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
-          password: ${{ secrets.FTP_UI_PASSWORD }}
-          protocol: ${{ env.FTP_PROTOCOL }}
-          local-dir: ./Cimmple_Punch/dist/
-          server-dir: ../Punch/
-          state-name: erp-punch-ftp-sync-state.json
-          log-level: standard
-          timeout: 120000
-          dangerous-clean-slate: false
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/*.map
+        env:
+          FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
+          LOCAL_DIR: Cimmple_Punch/dist
+          REMOTE_DIR: ../Punch
+        run: python .github/scripts/ftp_upload.py
