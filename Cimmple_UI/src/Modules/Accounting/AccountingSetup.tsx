@@ -4,6 +4,7 @@ import { faSave, faCog, faCalculator, faCalendar, faBook } from "@fortawesome/fr
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
+import { BankService, BankMaster } from "../../Common/Services/BankService";
 
 interface AccountingSettings {
   companyName: string;
@@ -22,6 +23,20 @@ interface AccountingSettings {
   defaultFreightOutAccountId?: number;
   defaultOtherChargeAccountId?: number;
   defaultFreightInAccountId?: number;
+  defaultWageExpenseAccountId?: number;
+  defaultEmployerPayrollTaxExpenseAccountId?: number;
+  defaultEmployerPayrollTaxPayableAccountId?: number;
+  defaultFederalTaxPayableAccountId?: number;
+  defaultStateTaxPayableAccountId?: number;
+  defaultLocalTaxPayableAccountId?: number;
+  defaultSocialSecurityTaxPayableAccountId?: number;
+  defaultMedicareTaxPayableAccountId?: number;
+  defaultPreTaxDeductionsPayableAccountId?: number;
+  defaultRetirementDeductionsPayableAccountId?: number;
+  defaultPostTaxDeductionsPayableAccountId?: number;
+  defaultGarnishmentsPayableAccountId?: number;
+  defaultNetPayPayableAccountId?: number;
+  defaultPayrollBankId?: number;
   paymentTerms: PaymentTerm[];
   approvalLimits: ApprovalLimit[];
 }
@@ -54,13 +69,26 @@ const AccountingSetup: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'general' | 'gl-defaults' | 'payment-terms' | 'approvals'>('general');
   const [saving, setSaving] = useState(false);
   const [coaAccounts, setCoaAccounts] = useState<ChartofAccountMaster[]>([]);
+  const [banks, setBanks] = useState<BankMaster[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadAccountingSettings();
     loadCoaAccounts();
+    loadBanks();
   }, []);
 
+  const loadBanks = async () => {
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const rows = await BankService.GetBanklist({
+        tenantid: storage?.tenantID || 0,
+      });
+      setBanks(rows || []);
+    } catch (error) {
+      console.error("Error loading banks:", error);
+    }
+  };
   const loadCoaAccounts = async () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -94,6 +122,20 @@ const AccountingSetup: React.FC = () => {
           defaultFreightOutAccountId: settingsData.defaultFreightOutAccountId || undefined,
           defaultOtherChargeAccountId: settingsData.defaultOtherChargeAccountId || undefined,
           defaultFreightInAccountId: settingsData.defaultFreightInAccountId || undefined,
+          defaultWageExpenseAccountId: settingsData.defaultWageExpenseAccountId || undefined,
+          defaultEmployerPayrollTaxExpenseAccountId: settingsData.defaultEmployerPayrollTaxExpenseAccountId || undefined,
+          defaultEmployerPayrollTaxPayableAccountId: settingsData.defaultEmployerPayrollTaxPayableAccountId || undefined,
+          defaultFederalTaxPayableAccountId: settingsData.defaultFederalTaxPayableAccountId || undefined,
+          defaultStateTaxPayableAccountId: settingsData.defaultStateTaxPayableAccountId || undefined,
+          defaultLocalTaxPayableAccountId: settingsData.defaultLocalTaxPayableAccountId || undefined,
+          defaultSocialSecurityTaxPayableAccountId: settingsData.defaultSocialSecurityTaxPayableAccountId || undefined,
+          defaultMedicareTaxPayableAccountId: settingsData.defaultMedicareTaxPayableAccountId || undefined,
+          defaultPreTaxDeductionsPayableAccountId: settingsData.defaultPreTaxDeductionsPayableAccountId || undefined,
+          defaultRetirementDeductionsPayableAccountId: settingsData.defaultRetirementDeductionsPayableAccountId || undefined,
+          defaultPostTaxDeductionsPayableAccountId: settingsData.defaultPostTaxDeductionsPayableAccountId || undefined,
+          defaultGarnishmentsPayableAccountId: settingsData.defaultGarnishmentsPayableAccountId || undefined,
+          defaultNetPayPayableAccountId: settingsData.defaultNetPayPayableAccountId || undefined,
+          defaultPayrollBankId: settingsData.defaultPayrollBankId || undefined,
           paymentTerms: settingsData.paymentTerms || [],
           approvalLimits: (settingsData.approvalLimits || []).map((l: any) => ({
             id: l.id,
@@ -132,6 +174,20 @@ const AccountingSetup: React.FC = () => {
         defaultFreightOutAccountId: settings.defaultFreightOutAccountId || null,
         defaultOtherChargeAccountId: settings.defaultOtherChargeAccountId || null,
         defaultFreightInAccountId: settings.defaultFreightInAccountId || null,
+        defaultWageExpenseAccountId: settings.defaultWageExpenseAccountId || null,
+        defaultEmployerPayrollTaxExpenseAccountId: settings.defaultEmployerPayrollTaxExpenseAccountId || null,
+        defaultEmployerPayrollTaxPayableAccountId: settings.defaultEmployerPayrollTaxPayableAccountId || null,
+        defaultFederalTaxPayableAccountId: settings.defaultFederalTaxPayableAccountId || null,
+        defaultStateTaxPayableAccountId: settings.defaultStateTaxPayableAccountId || null,
+        defaultLocalTaxPayableAccountId: settings.defaultLocalTaxPayableAccountId || null,
+        defaultSocialSecurityTaxPayableAccountId: settings.defaultSocialSecurityTaxPayableAccountId || null,
+        defaultMedicareTaxPayableAccountId: settings.defaultMedicareTaxPayableAccountId || null,
+        defaultPreTaxDeductionsPayableAccountId: settings.defaultPreTaxDeductionsPayableAccountId || null,
+        defaultRetirementDeductionsPayableAccountId: settings.defaultRetirementDeductionsPayableAccountId || null,
+        defaultPostTaxDeductionsPayableAccountId: settings.defaultPostTaxDeductionsPayableAccountId || null,
+        defaultGarnishmentsPayableAccountId: settings.defaultGarnishmentsPayableAccountId || null,
+        defaultNetPayPayableAccountId: settings.defaultNetPayPayableAccountId || null,
+        defaultPayrollBankId: settings.defaultPayrollBankId || null,
         paymentTerms: settings.paymentTerms,
         approvalLimits: settings.approvalLimits.map((l) => ({
           id: l.id,
@@ -502,6 +558,61 @@ const AccountingSetup: React.FC = () => {
                   'defaultFreightInAccountId',
                   'Debited on vendor bills when freight/shipping is charged.'
                 )}
+              </div>
+
+              <h3 style={{ margin: '2rem 0 0.5rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
+                Payroll GL Accounts
+              </h3>
+              <p style={{ margin: '0 0 1.5rem 0', color: '#6b7280', fontSize: '0.875rem' }}>
+                Defaults for CimmplePay sync, manual payroll journals, and future imports.
+                Account codes from the manufacturing seed (5010, 2100, 2111–2121, 6220) are typical choices.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                {renderAccountSelect('Wage Expense', 'defaultWageExpenseAccountId', 'Debit: gross wages (e.g. 5010 Direct Labor).')}
+                {renderAccountSelect('Employer Payroll Tax Expense', 'defaultEmployerPayrollTaxExpenseAccountId', 'Debit: employer FICA/FUTA/SUTA/benefits (e.g. 6220).')}
+                {renderAccountSelect('Employer Payroll Tax Payable', 'defaultEmployerPayrollTaxPayableAccountId', 'Credit: employer taxes payable (e.g. 2116).')}
+                {renderAccountSelect('Federal Tax Payable', 'defaultFederalTaxPayableAccountId', 'Credit: federal withholding (e.g. 2111).')}
+                {renderAccountSelect('State Tax Payable', 'defaultStateTaxPayableAccountId', 'Credit: state withholding (e.g. 2112).')}
+                {renderAccountSelect('Local Tax Payable', 'defaultLocalTaxPayableAccountId', 'Credit: local withholding (e.g. 2113).')}
+                {renderAccountSelect('Social Security Payable', 'defaultSocialSecurityTaxPayableAccountId', 'Credit: EE Social Security (e.g. 2114).')}
+                {renderAccountSelect('Medicare Payable', 'defaultMedicareTaxPayableAccountId', 'Credit: EE Medicare (e.g. 2115).')}
+                {renderAccountSelect('Pre-Tax Deductions Payable', 'defaultPreTaxDeductionsPayableAccountId', 'Credit: non-retirement pre-tax (e.g. 2117).')}
+                {renderAccountSelect('Retirement Deductions Payable', 'defaultRetirementDeductionsPayableAccountId', 'Credit: 401(k) etc. (e.g. 2118).')}
+                {renderAccountSelect('Post-Tax Deductions Payable', 'defaultPostTaxDeductionsPayableAccountId', 'Credit: post-tax deductions (e.g. 2119).')}
+                {renderAccountSelect('Garnishments Payable', 'defaultGarnishmentsPayableAccountId', 'Credit: garnishments (e.g. 2121).')}
+                {renderAccountSelect('Net Pay / Accrued Payroll', 'defaultNetPayPayableAccountId', 'Credit: net pay clearing (e.g. 2100 Accrued Payroll).')}
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
+                    Default Payroll Bank
+                  </label>
+                  <select
+                    value={settings.defaultPayrollBankId || ''}
+                    onChange={(e) =>
+                      updateSetting(
+                        'defaultPayrollBankId',
+                        e.target.value ? parseInt(e.target.value, 10) : undefined
+                      )
+                    }
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.375rem',
+                      fontSize: '0.875rem',
+                    }}
+                  >
+                    <option value="">— Not set (use bank flagged payroll default) —</option>
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.bankName || b.nickName || `Bank ${b.id}`}
+                        {b.ispayrollDefault ? ' (payroll default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: '0.35rem 0 0', color: '#6b7280', fontSize: '0.75rem' }}>
+                    Used when posting payroll cash; Bank Master “Default Payroll Bank” is the fallback.
+                  </p>
+                </div>
               </div>
             </div>
           )}
