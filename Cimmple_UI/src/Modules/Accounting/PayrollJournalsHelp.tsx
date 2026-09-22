@@ -147,8 +147,8 @@ const PayrollJournalsHelp: React.FC = () => {
                       </tr>
                       <tr>
                         <td>
-                          Provider connects Pay to this Flow site (API address and access token with
-                          location access). Clients do not set this.
+                          Provider configures Pay↔Flow server settings (API base URL and
+                          shared integration client id/secret). Clients do not set this.
                         </td>
                         <td>Provider</td>
                       </tr>
