@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "Cimmple_API/**"
+      - "Cimmple_UI/**"
+      - "Cimmple_PWA/**"
+      - "Cimmple_VPA/**"
+      - "Cimmple_Punch/**"
+      - ".github/workflows/deploy-ftp.yml"
+      - ".github/scripts/ftp_upload.py"
   workflow_dispatch:
 
 concurrency:
@@ -18,10 +26,62 @@ env:
   FTP_UI_SERVER_DEFAULT: 108.181.155.217
   FTP_API_USERNAME_DEFAULT: erpapi
   FTP_UI_USERNAME_DEFAULT: erpui
+  FTP_PWA_USERNAME_DEFAULT: erpshop
+  FTP_VPA_USERNAME_DEFAULT: erpvendor
+  FTP_PUNCH_USERNAME_DEFAULT: erppunch
 
 jobs:
+  changes:
+    name: Detect committed apps
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.pick.outputs.api }}
+      ui: ${{ steps.pick.outputs.ui }}
+      pwa: ${{ steps.pick.outputs.pwa }}
+      vpa: ${{ steps.pick.outputs.vpa }}
+      punch: ${{ steps.pick.outputs.punch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Paths in this push
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'Cimmple_API/**'
+            ui:
+              - 'Cimmple_UI/**'
+            pwa:
+              - 'Cimmple_PWA/**'
+            vpa:
+              - 'Cimmple_VPA/**'
+            punch:
+              - 'Cimmple_Punch/**'
+
+      - name: Choose apps to release
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "api=true" >> "$GITHUB_OUTPUT"
+            echo "ui=true" >> "$GITHUB_OUTPUT"
+            echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "vpa=true" >> "$GITHUB_OUTPUT"
+            echo "punch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
+            echo "ui=${{ steps.filter.outputs.ui }}" >> "$GITHUB_OUTPUT"
+            echo "pwa=${{ steps.filter.outputs.pwa }}" >> "$GITHUB_OUTPUT"
+            echo "vpa=${{ steps.filter.outputs.vpa }}" >> "$GITHUB_OUTPUT"
+            echo "punch=${{ steps.filter.outputs.punch }}" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy-api:
     name: Build and FTP API
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -115,6 +175,8 @@ jobs:
 
   deploy-ui:
     name: Build and FTP UI
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -148,6 +210,8 @@ jobs:
 
   deploy-pwa:
     name: Build and FTP Shop PWA
+    needs: changes
+    if: needs.changes.outputs.pwa == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -173,14 +237,16 @@ jobs:
       - name: Deploy PWA over FTP
         env:
           FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_PWA_USERNAME != '' && secrets.FTP_PWA_USERNAME || env.FTP_PWA_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_PWA/dist
-          REMOTE_DIR: Shop
+          REMOTE_DIR: .
         run: python .github/scripts/ftp_upload.py
 
   deploy-vpa:
     name: Build and FTP Vendor portal
+    needs: changes
+    if: needs.changes.outputs.vpa == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -206,14 +272,16 @@ jobs:
       - name: Deploy VPA over FTP
         env:
           FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_VPA_USERNAME != '' && secrets.FTP_VPA_USERNAME || env.FTP_VPA_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_VPA/dist
-          REMOTE_DIR: Vendor
+          REMOTE_DIR: .
         run: python .github/scripts/ftp_upload.py
 
   deploy-punch:
     name: Build and FTP Punch
+    needs: changes
+    if: needs.changes.outputs.punch == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -239,8 +307,8 @@ jobs:
       - name: Deploy Punch over FTP
         env:
           FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_PUNCH_USERNAME != '' && secrets.FTP_PUNCH_USERNAME || env.FTP_PUNCH_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_Punch/dist
-          REMOTE_DIR: ../Punch
+          REMOTE_DIR: .
         run: python .github/scripts/ftp_upload.py
