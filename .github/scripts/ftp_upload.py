@@ -58,6 +58,20 @@ goto(ftp, here, remote_parts)
 base = list(here)
 print(f"Uploading {local_dir} under login folder {'/'.join(base) or '.'}")
 
+def store(ftp: FTP, name: str, path: Path) -> None:
+    """Replace an existing file. IIS returns 550 when STOR cannot overwrite."""
+    try:
+        ftp.delete(name)
+    except error_perm:
+        pass
+    try:
+        with path.open("rb") as handle:
+            ftp.storbinary(f"STOR {name}", handle)
+    except error_perm:
+        with path.open("rb") as handle:
+            ftp.storbinary(f"STOR {name}", handle)
+
+
 count = 0
 for path in local_dir.rglob("*"):
     if not path.is_file() or path.suffix == ".map":
@@ -66,8 +80,11 @@ for path in local_dir.rglob("*"):
     folder, _, name = rel.rpartition("/")
     extra = [p for p in folder.split("/") if p]
     goto(ftp, here, base + extra)
-    with path.open("rb") as handle:
-        ftp.storbinary(f"STOR {name}", handle)
+    remote = "/".join(here + [name])
+    try:
+        store(ftp, name, path)
+    except error_perm as exc:
+        sys.exit(f"FTP refused {remote}: {exc}")
     count += 1
     print(f"uploaded {rel}")
 

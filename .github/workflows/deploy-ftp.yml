@@ -54,12 +54,16 @@ jobs:
               - 'Cimmple_API/**'
             ui:
               - 'Cimmple_UI/**'
+              - '.github/scripts/ftp_upload.py'
             pwa:
               - 'Cimmple_PWA/**'
+              - '.github/scripts/ftp_upload.py'
             vpa:
               - 'Cimmple_VPA/**'
+              - '.github/scripts/ftp_upload.py'
             punch:
               - 'Cimmple_Punch/**'
+              - '.github/scripts/ftp_upload.py'
 
       - name: Choose apps to release
         id: pick
