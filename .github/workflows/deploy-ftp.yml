@@ -91,7 +91,7 @@ jobs:
   deploy-api:
     name: Build and FTP API
     needs: changes
-    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'api') || needs.changes.outputs.api == 'true')
+    if: always() && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'api')) || (needs.changes.result == 'success' && needs.changes.outputs.api == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -186,7 +186,7 @@ jobs:
   deploy-ui:
     name: Build and FTP UI
     needs: changes
-    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'ui') || needs.changes.outputs.ui == 'true')
+    if: always() && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'ui')) || (needs.changes.result == 'success' && needs.changes.outputs.ui == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -221,7 +221,7 @@ jobs:
   deploy-pwa:
     name: Build and FTP Shop PWA
     needs: changes
-    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'pwa') || needs.changes.outputs.pwa == 'true')
+    if: always() && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'pwa')) || (needs.changes.result == 'success' && needs.changes.outputs.pwa == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -257,7 +257,7 @@ jobs:
   deploy-vpa:
     name: Build and FTP Vendor portal
     needs: changes
-    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'vpa') || needs.changes.outputs.vpa == 'true')
+    if: always() && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'vpa')) || (needs.changes.result == 'success' && needs.changes.outputs.vpa == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -292,7 +292,7 @@ jobs:
   deploy-punch:
     name: Build and FTP Punch
     needs: changes
-    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'punch') || needs.changes.outputs.punch == 'true')
+    if: always() && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'all' || github.event.inputs.target == 'punch')) || (needs.changes.result == 'success' && needs.changes.outputs.punch == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
