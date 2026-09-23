@@ -23,14 +23,28 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> List()
+        public async Task<IActionResult> List([FromQuery] int? locationId = null)
         {
             var tenantId = GetTenantId();
             if (tenantId <= 0)
                 return BadRequest(new { message = "Tenant id is required." });
 
-            var items = await _context.ReportSchedules.AsNoTracking()
-                .Where(s => s.TenantId == tenantId)
+            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                return forbid!;
+
+            var query = _context.ReportSchedules.AsNoTracking()
+                .Where(s => s.TenantId == tenantId);
+
+            if (filterLocationId.HasValue)
+            {
+                // Site-scoped schedules plus tenant-wide (null / 0) schedules.
+                query = query.Where(s =>
+                    s.LocationId == null
+                    || s.LocationId == 0
+                    || s.LocationId == filterLocationId.Value);
+            }
+
+            var items = await query
                 .OrderByDescending(s => s.UpdatedUtc)
                 .ToListAsync();
 

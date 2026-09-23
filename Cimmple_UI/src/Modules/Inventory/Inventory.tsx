@@ -140,6 +140,7 @@ const Inventory: React.FC = () => {
   const [reservations, setReservations] = useState<InventoryReservation[]>([]);
   const [itemMovements, setItemMovements] = useState<InventoryTransaction[] | null>(null);
   const [historyBalance, setHistoryBalance] = useState<InventoryBalance | null>(null);
+  const movementsSectionRef = useRef<HTMLDivElement>(null);
 
   // Seed search from report drill-down: ?search=
   useEffect(() => {
@@ -226,6 +227,12 @@ const Inventory: React.FC = () => {
 
   const handleOpenHistory = async (balance: InventoryBalance) => {
     setHistoryBalance(balance);
+    requestAnimationFrame(() => {
+      movementsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
     try {
       const rows = await InventoryService.GetTransactionHistory({
         productId: balance.productId || undefined,
@@ -576,7 +583,7 @@ const Inventory: React.FC = () => {
         </div>
       </div>
 
-      <div className="table-card movement-history-card">
+      <div className="table-card movement-history-card" ref={movementsSectionRef}>
         <div className="movement-history-header">
           <div>
             <h2>Recent movements</h2>

@@ -366,11 +366,15 @@ END");
             [FromQuery] string dateFrom = null,
             [FromQuery] string dateTo = null,
             [FromQuery] bool overdueOnly = false,
-            [FromQuery] bool openOnly = false)
+            [FromQuery] bool openOnly = false,
+            [FromQuery] int? locationId = null)
         {
             try
             {
-                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}, status={status}, category={category}, severity={severity}, source={source}, jobOrderId={jobOrderId}, customerId={customerId}, dateFrom={dateFrom}, dateTo={dateTo}, overdueOnly={overdueOnly}, openOnly={openOnly}");
+                Console.WriteLine($"GetNCRs called with tenantId: {tenantId}, status={status}, category={category}, severity={severity}, source={source}, jobOrderId={jobOrderId}, customerId={customerId}, dateFrom={dateFrom}, dateTo={dateTo}, overdueOnly={overdueOnly}, openOnly={openOnly}, locationId={locationId}");
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
 
                 await EnsureNcrExternalColumnsAsync();
 
@@ -471,6 +475,21 @@ END");
                 if (overdueOnly)
                 {
                     sql += " AND DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status <> 'Closed'";
+                }
+
+                if (filterLocationId.HasValue)
+                {
+                    // NCR site via linked job → customer order location. Unlinked NCRs only under All sites.
+                    sql += @" AND JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
+                        SELECT 1
+                        FROM CimmpleFlow.JobOrderMaster j
+                        INNER JOIN CimmpleFlow.CustomerOrder o
+                            ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
+                        WHERE j.JobOrderID = NonConformanceReports.JobOrderId
+                          AND j.Tenantid = @tenantId
+                          AND o.locationId = @locationId
+                    )";
+                    parameters.Add(("@locationId", filterLocationId.Value));
                 }
 
                 sql += " ORDER BY ReportedDate DESC";

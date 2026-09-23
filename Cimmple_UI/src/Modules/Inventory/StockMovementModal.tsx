@@ -57,6 +57,28 @@ const availableAtLocation = (
     )
     .reduce((sum, b) => sum + (b.quantityAvailable ?? 0), 0);
 
+const availableProductAtLocation = (
+  productId: number,
+  locationId: number,
+  balances: InventoryBalance[]
+): number =>
+  balances
+    .filter((b) => b.productId === productId && b.locationId === locationId)
+    .reduce((sum, b) => sum + (b.quantityAvailable ?? 0), 0);
+
+const hasBalanceAtLocation = (
+  opts: { productId?: number; rawMaterialId?: number },
+  locationId: number,
+  balances: InventoryBalance[]
+): boolean =>
+  balances.some(
+    (b) =>
+      b.locationId === locationId &&
+      (opts.productId
+        ? b.productId === opts.productId
+        : b.rawMaterialId === opts.rawMaterialId)
+  );
+
 const formatRmSize = (rm: RawMaterialOption): string => {
   const parts = [rm.thicknessMm, rm.widthMm, rm.lengthMm].filter((n) => n != null);
   return parts.length ? `${parts.join("×")} mm` : "";
@@ -210,12 +232,172 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     return [];
   };
 
+  const selectedDocument =
+    referenceId === ""
+      ? undefined
+      : documentOptions().find((d) => d.id === Number(referenceId));
+
   const selectedRawMaterial =
     rawMaterialId === ""
       ? undefined
       : rawMaterials.find((rm) => rm.id === Number(rawMaterialId));
 
   const issueLocationId = type === "transfer" ? fromLocationId : locationId;
+
+  const keepProductId =
+    productId !== ""
+      ? Number(productId)
+      : balance?.productId || undefined;
+  const keepRawId =
+    rawMaterialId !== ""
+      ? Number(rawMaterialId)
+      : balance?.rawMaterialId || undefined;
+
+  const visibleProducts = useMemo(() => {
+    let list = products;
+
+    if (
+      (type === "receive" || type === "issue" || type === "reserve") &&
+      referenceType === "JobOrder" &&
+      selectedDocument
+    ) {
+      const allowed = new Set<number>([
+        ...(selectedDocument.productId ? [selectedDocument.productId] : []),
+        ...(selectedDocument.bomProductIds || []),
+      ]);
+      if (allowed.size > 0) {
+        list = list.filter(
+          (p) =>
+            allowed.has(p.id) ||
+            (keepProductId != null && p.id === keepProductId) ||
+            (selectedDocument.partNo &&
+              (p.partNo || "").trim().toLowerCase() ===
+                selectedDocument.partNo.trim().toLowerCase())
+        );
+      } else if (selectedDocument.partNo) {
+        const part = selectedDocument.partNo.trim().toLowerCase();
+        list = list.filter(
+          (p) =>
+            (p.partNo || "").trim().toLowerCase() === part ||
+            (keepProductId != null && p.id === keepProductId)
+        );
+      }
+    }
+
+    if (
+      type === "receive" &&
+      referenceType === "VendorReceiving" &&
+      selectedDocument
+    ) {
+      list = list.filter((p) => {
+        if (selectedDocument.productId && p.id === selectedDocument.productId)
+          return true;
+        if (
+          selectedDocument.partNo &&
+          (p.partNo || "").trim().toLowerCase() ===
+            selectedDocument.partNo.trim().toLowerCase()
+        )
+          return true;
+        return keepProductId != null && p.id === keepProductId;
+      });
+    }
+
+    if (type === "issue" || type === "transfer" || type === "reserve") {
+      list = list.filter(
+        (p) =>
+          availableProductAtLocation(p.id, issueLocationId, balances) > 0 ||
+          (keepProductId != null && p.id === keepProductId)
+      );
+    } else if (type === "receive" && referenceType !== "JobOrder" && referenceType !== "VendorReceiving") {
+      const atLoc = list.filter(
+        (p) =>
+          hasBalanceAtLocation({ productId: p.id }, locationId, balances) ||
+          (keepProductId != null && p.id === keepProductId)
+      );
+      // Prefer location stock; fall back to full catalog so new parts can still be received.
+      if (atLoc.length > 0) list = atLoc;
+    }
+
+    return list;
+  }, [
+    products,
+    type,
+    referenceType,
+    selectedDocument,
+    issueLocationId,
+    locationId,
+    balances,
+    keepProductId,
+  ]);
+
+  const visibleRawMaterials = useMemo(() => {
+    let list = rawMaterials;
+
+    if (
+      (type === "receive" || type === "issue" || type === "reserve") &&
+      referenceType === "JobOrder" &&
+      selectedDocument
+    ) {
+      const allowed = new Set<number>(selectedDocument.bomRawMaterialIds || []);
+      if (allowed.size > 0) {
+        list = list.filter(
+          (rm) =>
+            allowed.has(rm.id) || (keepRawId != null && rm.id === keepRawId)
+        );
+      }
+    }
+
+    if (
+      type === "receive" &&
+      referenceType === "VendorReceiving" &&
+      selectedDocument
+    ) {
+      list = list.filter((rm) => {
+        if (
+          selectedDocument.rawMaterialId &&
+          rm.id === selectedDocument.rawMaterialId
+        )
+          return true;
+        if (
+          selectedDocument.partNo &&
+          (rm.partNo || "").trim().toLowerCase() ===
+            selectedDocument.partNo.trim().toLowerCase()
+        )
+          return true;
+        return keepRawId != null && rm.id === keepRawId;
+      });
+    }
+
+    if (type === "issue" || type === "transfer" || type === "reserve") {
+      list = list.filter(
+        (rm) =>
+          availableAtLocation(rm.id, issueLocationId, balances) > 0 ||
+          (keepRawId != null && rm.id === keepRawId)
+      );
+    } else if (
+      type === "receive" &&
+      referenceType !== "JobOrder" &&
+      referenceType !== "VendorReceiving"
+    ) {
+      const atLoc = list.filter(
+        (rm) =>
+          hasBalanceAtLocation({ rawMaterialId: rm.id }, locationId, balances) ||
+          (keepRawId != null && rm.id === keepRawId)
+      );
+      if (atLoc.length > 0) list = atLoc;
+    }
+
+    return list;
+  }, [
+    rawMaterials,
+    type,
+    referenceType,
+    selectedDocument,
+    issueLocationId,
+    locationId,
+    balances,
+    keepRawId,
+  ]);
 
   useEffect(() => {
     const loadLots = async () => {
@@ -261,7 +443,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       return (a.partNo || "").localeCompare(b.partNo || "");
     };
 
-    const onShelfRemnants = rawMaterials
+    const onShelfRemnants = visibleRawMaterials
       .filter(
         (rm) =>
           rm.isRemnant && availableAtLocation(rm.id, issueLocationId, balances) > 0
@@ -269,8 +451,12 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       .sort(compareRm);
 
     const onShelfIds = new Set(onShelfRemnants.map((rm) => rm.id));
-    const rest = rawMaterials
-      .filter((rm) => !onShelfIds.has(rm.id))
+    const rest = visibleRawMaterials
+      .filter(
+        (rm) =>
+          !onShelfIds.has(rm.id) &&
+          availableAtLocation(rm.id, issueLocationId, balances) > 0
+      )
       .sort((a, b) => {
         const aRem = a.isRemnant ? 0 : 1;
         const bRem = b.isRemnant ? 0 : 1;
@@ -280,7 +466,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
 
     return { onShelfRemnants, rest };
   }, [
-    rawMaterials,
+    visibleRawMaterials,
     balances,
     issueLocationId,
     selectedRawMaterial,
@@ -374,7 +560,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       return;
     }
 
-    if (referenceType === "VendorReceiving" || referenceType === "CustomerShipment") {
+    if (referenceType === "VendorReceiving" || referenceType === "CustomerShipment" || referenceType === "JobOrder") {
       const selected = documentOptions().find((d) => d.id === Number(referenceId));
       const remaining =
         selected && typeof selected.remainingQty === "number"
@@ -384,7 +570,11 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
         toast.error("Select the linked document, or set Linked to None.");
         return;
       }
-      if (remaining != null && qty - remaining > 0.0001) {
+      if (
+        remaining != null &&
+        qty - remaining > 0.0001 &&
+        (referenceType !== "JobOrder" || materialType === "product")
+      ) {
         toast.error(
           remaining <= 0
             ? "This document already has its full quantity in inventory. Unlink it or pick another."
@@ -568,17 +758,26 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                 <option value="">
                   {optionsLoading ? "Loading…" : "Select product"}
                 </option>
-                {products.map((p) => (
+                {visibleProducts.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.partNo || ""} - {p.partName || ""}
+                    {(type === "issue" || type === "transfer") &&
+                      ` · avail ${availableProductAtLocation(
+                        p.id,
+                        issueLocationId,
+                        balances
+                      )}`}
                   </option>
                 ))}
               </select>
-              {!optionsLoading && products.length === 0 && (
+              {!optionsLoading && visibleProducts.length === 0 && (
                 <div className="form-row-help" style={{ marginTop: 8 }}>
                   <p style={{ margin: "0 0 8px 0", fontSize: 13, color: "#666" }}>
-                    No products found. Products come from Product Master or customer orders/quotations.
+                    {type === "issue" || type === "transfer"
+                      ? "No products with available stock at this location."
+                      : "No products found for this location or linked document."}
                   </p>
+                  {type === "receive" && referenceType !== "JobOrder" && referenceType !== "VendorReceiving" && (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -598,6 +797,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                   >
                     {syncing ? "Syncing…" : "Sync from orders"}
                   </button>
+                  )}
                 </div>
               )}
             </div>
@@ -654,11 +854,17 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
                     )}
                   </>
                 ) : (
-                  rawMaterials.map((rm) => (
+                  visibleRawMaterials.map((rm) => (
                     <option key={rm.id} value={rm.id}>
                       {rm.isRemnant ? "Remnant · " : ""}
                       {rm.partNo || ""} - {rm.partName || ""}
                       {formatRmSize(rm) ? ` (${formatRmSize(rm)})` : ""}
+                      {(type === "transfer" || type === "receive") &&
+                        ` · avail ${availableAtLocation(
+                          rm.id,
+                          type === "transfer" ? fromLocationId : locationId,
+                          balances
+                        )}`}
                     </option>
                   ))
                 )}
@@ -666,9 +872,18 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
               {type === "issue" && (
                 <p className="form-row-help">
                   {preferredRemnantNote ||
-                    "Remnants already on this shelf are listed first. Shortest leftover of the same mill stock is preferred."}
+                    "Only materials with available stock at this location are listed. Remnants on this shelf appear first."}
                 </p>
               )}
+              {(type === "transfer" || type === "receive") &&
+                !optionsLoading &&
+                visibleRawMaterials.length === 0 && (
+                  <p className="form-row-help">
+                    {type === "transfer"
+                      ? "No raw materials with available stock at the from location."
+                      : "No raw materials found for this location or linked document."}
+                  </p>
+                )}
             </div>
           )}
 

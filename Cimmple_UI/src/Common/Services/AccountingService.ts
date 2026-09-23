@@ -298,6 +298,7 @@ export class AccountingService {
     skip?: number;
     take?: number;
     tenantId?: number;
+    locationId?: number;
   }): Promise<{
     items: Array<{
       id: number;
@@ -322,6 +323,7 @@ export class AccountingService {
         take: params?.take ?? 100,
         startDate: params?.startDate,
         endDate: params?.endDate,
+        locationId: params?.locationId,
       },
     }).then((response) => {
       return response.data.result as {

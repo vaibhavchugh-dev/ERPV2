@@ -36,7 +36,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int? relatedEntityId = null,
             [FromQuery] string? search = null,
             [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 20)
+            [FromQuery] int pageSize = 20,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -45,6 +46,9 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "TenantId is required" });
                 }
+
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
 
                 var query = _context.Documents
                     .Where(d => d.TenantId == tenantId && !d.IsDeleted)
@@ -75,6 +79,36 @@ namespace CimmpleAPI.Controllers
                         (d.DocumentNumber != null && d.DocumentNumber.ToLower().Contains(searchLower)) ||
                         (d.Description != null && d.Description.ToLower().Contains(searchLower)) ||
                         (d.Tags != null && d.Tags.ToLower().Contains(searchLower)));
+                }
+
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    var coIds = await _context.CustomerOrder.AsNoTracking()
+                        .Where(o => o.Tenantid == tenantId && o.locationId == loc)
+                        .Select(o => o.OrderID)
+                        .ToListAsync();
+                    var joIds = await (
+                        from j in _context.JobOrderMaster.AsNoTracking()
+                        join o in _context.CustomerOrder.AsNoTracking()
+                            on new { j.CustomerOrderID, Tenant = j.Tenantid } equals new { CustomerOrderID = o.OrderID, Tenant = o.Tenantid }
+                        where j.Tenantid == tenantId && o.locationId == loc
+                        select j.JobOrderID
+                    ).ToListAsync();
+                    var voIds = await _context.VendorOrders.AsNoTracking()
+                        .Where(o => o.Tenantid == tenantId && o.LocationId == loc)
+                        .Select(o => o.OrderID)
+                        .ToListAsync();
+
+                    query = query.Where(d =>
+                        d.RelatedEntityId != null
+                        && (
+                            ((d.RelatedEntityType == "CustomerOrder" || d.RelatedEntityType == "Order")
+                                && coIds.Contains(d.RelatedEntityId.Value))
+                            || (d.RelatedEntityType == "JobOrder" && joIds.Contains(d.RelatedEntityId.Value))
+                            || ((d.RelatedEntityType == "VendorOrder" || d.RelatedEntityType == "PurchaseOrder")
+                                && voIds.Contains(d.RelatedEntityId.Value))
+                        ));
                 }
 
                 var totalCount = await query.CountAsync();

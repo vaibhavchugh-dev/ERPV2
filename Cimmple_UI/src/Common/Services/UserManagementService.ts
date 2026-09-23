@@ -117,6 +117,7 @@ export interface UserQueryParams {
   status?: string;
   pageNumber?: number;
   pageSize?: number;
+  locationId?: number;
 }
 
 export interface PaginatedUsersResponse {
@@ -137,6 +138,9 @@ export class UserManagementService {
         tenantId: params.tenantid,
         ...(params.searchTerm && { searchTerm: params.searchTerm }),
         ...(params.status && { status: params.status }),
+        ...(params.locationId && params.locationId > 0
+          ? { locationId: params.locationId }
+          : {}),
         pageNumber: params.pageNumber || 1,
         pageSize: params.pageSize || 10
       }

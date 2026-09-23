@@ -26,6 +26,7 @@ import { ConversationService, ConversationListItem } from "../Services/Conversat
 import { SupportTicketService } from "../Services/SupportTicketService";
 import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
+import { shouldShowWorkingSiteSwitcher } from "../Utils/workingSiteVisibility";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
@@ -667,7 +668,7 @@ const TopBar: React.FC = () => {
       </div>
       <div className="header-right">
         {/* Location Switcher */}
-        {locations.length > 0 && (
+        {locations.length > 0 && shouldShowWorkingSiteSwitcher(location.pathname) && (
           <div className="location-menu" ref={locationMenuRef}>
             <button
               className="location-menu-btn"

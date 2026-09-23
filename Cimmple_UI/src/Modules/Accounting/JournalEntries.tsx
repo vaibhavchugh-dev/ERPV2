@@ -1,11 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useHistory, useLocation } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import {
   ChartofAccountsService,
   ChartofAccountMaster,
 } from "../../Common/Services/ChartofAccountsService";
+import MasterListPage, {
+  ColumnConfig,
+} from "../../Common/Components/MasterListPage/MasterListPage";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./JournalEntries.scss";
 
 type LineDraft = {
@@ -14,6 +18,18 @@ type LineDraft = {
   debit: string;
   credit: string;
   description: string;
+};
+
+type JournalRow = {
+  id: number;
+  entryDate: string;
+  referenceNumber: string;
+  description: string;
+  totalAmount: number;
+  reversesJournalEntryId?: number | null;
+  reversedByJournalEntryId?: number | null;
+  statusLabel: string;
+  paymentKind: "received" | "paid" | null;
 };
 
 const ymdLocal = (d: Date) => {
@@ -47,22 +63,28 @@ const getPaymentKind = (row: {
   return null;
 };
 
+const statusLabelFor = (row: {
+  referenceNumber?: string;
+  description?: string;
+  reversesJournalEntryId?: number | null;
+  reversedByJournalEntryId?: number | null;
+}): string => {
+  const kind = getPaymentKind(row);
+  if (kind === "received") return "Received";
+  if (kind === "paid") return "Paid";
+  if (row.reversedByJournalEntryId) return `Reversed (#${row.reversedByJournalEntryId})`;
+  if (row.reversesJournalEntryId) return `Reversal of #${row.reversesJournalEntryId}`;
+  return "—";
+};
+
 const JournalEntries: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const formRef = useRef<HTMLDivElement>(null);
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [accounts, setAccounts] = useState<ChartofAccountMaster[]>([]);
   const [listLoading, setListLoading] = useState(true);
-  const [items, setItems] = useState<
-    Array<{
-      id: number;
-      entryDate: string;
-      referenceNumber: string;
-      description: string;
-      totalAmount: number;
-      reversesJournalEntryId?: number | null;
-      reversedByJournalEntryId?: number | null;
-    }>
-  >([]);
+  const [items, setItems] = useState<JournalRow[]>([]);
   const [total, setTotal] = useState(0);
 
   const [filterStart, setFilterStart] = useState(() => {
@@ -71,18 +93,6 @@ const JournalEntries: React.FC = () => {
     return ymdLocal(d);
   });
   const [filterEnd, setFilterEnd] = useState(() => ymdLocal(new Date()));
-  const [search, setSearch] = useState("");
-
-  const filteredItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (r) =>
-        String(r.id).includes(q) ||
-        (r.referenceNumber || "").toLowerCase().includes(q) ||
-        (r.description || "").toLowerCase().includes(q)
-    );
-  }, [items, search]);
 
   const [entryDate, setEntryDate] = useState(() => ymdLocal(new Date()));
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -94,6 +104,7 @@ const JournalEntries: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [reversing, setReversing] = useState(false);
+  const [showNewEntry, setShowNewEntry] = useState(false);
 
   const storageTenant = useMemo(() => {
     try {
@@ -119,9 +130,15 @@ const JournalEntries: React.FC = () => {
         endDate: filterEnd,
         skip: 0,
         take: 200,
+        locationId: locationIdParam,
       });
       if (res) {
-        setItems(res.items || []);
+        const rows: JournalRow[] = (res.items || []).map((r: any) => ({
+          ...r,
+          statusLabel: statusLabelFor(r),
+          paymentKind: getPaymentKind(r),
+        }));
+        setItems(rows);
         setTotal(res.total);
       }
     } catch (e) {
@@ -130,7 +147,7 @@ const JournalEntries: React.FC = () => {
     } finally {
       setListLoading(false);
     }
-  }, [filterStart, filterEnd]);
+  }, [filterStart, filterEnd, locationIdParam]);
 
   useEffect(() => {
     loadAccounts();
@@ -288,127 +305,167 @@ const JournalEntries: React.FC = () => {
       (a.accountCode || "").localeCompare(b.accountCode || "")
     );
 
+  const columns: ColumnConfig<JournalRow>[] = [
+    {
+      key: "id",
+      label: "JE Number",
+      sortable: true,
+      locked: true,
+      render: (value) => <strong>#{value}</strong>,
+    },
+    {
+      key: "entryDate",
+      label: "Date",
+      sortable: true,
+    },
+    {
+      key: "referenceNumber",
+      label: "Reference",
+      sortable: true,
+      render: (value) => value || "—",
+    },
+    {
+      key: "description",
+      label: "Description",
+      sortable: true,
+      render: (value) => value || "—",
+    },
+    {
+      key: "statusLabel",
+      label: "Status",
+      sortable: true,
+      render: (_value, row) => {
+        if (row.paymentKind === "received") {
+          return (
+            <span className="je-entry-badge je-entry-badge--received">Received</span>
+          );
+        }
+        if (row.paymentKind === "paid") {
+          return <span className="je-entry-badge je-entry-badge--paid">Paid</span>;
+        }
+        return row.statusLabel;
+      },
+    },
+    {
+      key: "totalAmount",
+      label: "Balanced amount",
+      sortable: true,
+      align: "right",
+      render: (value) =>
+        value != null
+          ? Number(value).toLocaleString("en-US", {
+              style: "currency",
+              currency: "USD",
+            })
+          : "—",
+    },
+  ];
+
+  const openNewEntry = () => {
+    setShowNewEntry(true);
+  };
+
+  useEffect(() => {
+    if (!showNewEntry) return;
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [showNewEntry]);
+
   return (
     <div className="journal-entries-page">
-      <div className="je-header">
-        <h1>Journal entries</h1>
-        <p>
-          Post balanced debits and credits to the general ledger. Amounts flow
-          into financial reports that use posted journals. Closed periods block
-          new posts — manage under{" "}
-          <Link to="/accounts/periods">Period close &amp; audit</Link>.
-        </p>
-      </div>
+      <MasterListPage
+        title="Journal entries"
+        subtitle="Post balanced debits and credits to the general ledger. Closed periods block new posts — manage under Period close & audit."
+        columns={columns}
+        data={items}
+        loading={listLoading && items.length === 0}
+        enablePagination
+        onAdd={openNewEntry}
+        addButtonLabel="New entry"
+        onRowClick={(row) => void openDetail(row.id)}
+        searchPlaceholder="Search JE #, reference, description…"
+        searchFields={["id", "referenceNumber", "description", "statusLabel"]}
+        getRowId={(row) => row.id}
+        columnPreferenceKey="journalEntries.hiddenColumns"
+        filters={[masterListFilter]}
+        emptyMessage={
+          total === 0
+            ? "No journal headers in this period."
+            : "No journal entries match your search."
+        }
+        customActionButtons={[
+          {
+            label: listLoading ? "Loading…" : "Refresh",
+            onClick: () => void loadList(),
+            disabled: listLoading,
+            className: "btn-secondary",
+          },
+          {
+            label: "Period close",
+            onClick: () => history.push("/accounts/periods"),
+            className: "btn-secondary",
+          },
+        ]}
+        extraFilters={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}
+            >
+              <label
+                htmlFor="je-from"
+                style={{ fontSize: "0.8125rem", color: "#4b5563", fontWeight: 500 }}
+              >
+                From
+              </label>
+              <input
+                id="je-from"
+                type="date"
+                className="filter-select"
+                style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
+                value={filterStart}
+                onChange={(e) => setFilterStart(e.target.value)}
+              />
+            </div>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}
+            >
+              <label
+                htmlFor="je-to"
+                style={{ fontSize: "0.8125rem", color: "#4b5563", fontWeight: 500 }}
+              >
+                To
+              </label>
+              <input
+                id="je-to"
+                type="date"
+                className="filter-select"
+                style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
+                value={filterEnd}
+                onChange={(e) => setFilterEnd(e.target.value)}
+              />
+            </div>
+          </div>
+        }
+      />
 
-      <div className="je-panel">
-        <h2>Posted entries</h2>
-        <div className="je-filters">
-          <div>
-            <label>Search</label>
-            <input
-              type="search"
-              placeholder="JE #, reference, description…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div>
-            <label>From</label>
-            <input
-              type="date"
-              value={filterStart}
-              onChange={(e) => setFilterStart(e.target.value)}
-            />
-          </div>
-          <div>
-            <label>To</label>
-            <input
-              type="date"
-              value={filterEnd}
-              onChange={(e) => setFilterEnd(e.target.value)}
-            />
-          </div>
-          <button type="button" onClick={loadList} disabled={listLoading}>
-            {listLoading ? "Loading…" : "Refresh"}
+      {showNewEntry && (
+      <div className="je-panel" id="je-new-entry" ref={formRef}>
+        <div className="je-panel-head">
+          <h2>New journal entry</h2>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowNewEntry(false)}
+          >
+            Cancel
           </button>
         </div>
-        <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "0.75rem" }}>
-          Showing {filteredItems.length} of {total} in range
-          {search.trim() ? " (filtered)" : ""}.
-        </p>
-        <div className="je-table-wrap" style={{ marginTop: "0.5rem" }}>
-          <table className="je-table">
-            <thead>
-              <tr>
-                <th>JE Number</th>
-                <th>Date</th>
-                <th>Reference</th>
-                <th>Description</th>
-                <th>Status</th>
-                <th style={{ textAlign: "right" }}>Balanced amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredItems.length === 0 && !listLoading ? (
-                <tr>
-                  <td colSpan={6} style={{ color: "#6b7280" }}>
-                    No journal headers in this period.
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((r) => (
-                  <tr
-                    key={r.id}
-                    onClick={() => openDetail(r.id)}
-                    className={
-                      getPaymentKind(r) === "received"
-                        ? "je-row-received"
-                        : getPaymentKind(r) === "paid"
-                          ? "je-row-paid"
-                          : ""
-                    }
-                  >
-                    <td>
-                      <strong>#{r.id}</strong>
-                    </td>
-                    <td>{r.entryDate}</td>
-                    <td>{r.referenceNumber}</td>
-                    <td>{r.description}</td>
-                    <td style={{ fontSize: "0.8rem", color: "#6b7280" }}>
-                      {getPaymentKind(r) === "received" ? (
-                        <span className="je-entry-badge je-entry-badge--received">
-                          Received
-                        </span>
-                      ) : getPaymentKind(r) === "paid" ? (
-                        <span className="je-entry-badge je-entry-badge--paid">
-                          Paid
-                        </span>
-                      ) : r.reversedByJournalEntryId ? (
-                        `Reversed (#${r.reversedByJournalEntryId})`
-                      ) : r.reversesJournalEntryId ? (
-                        `Reversal of #${r.reversesJournalEntryId}`
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      {r.totalAmount != null
-                        ? r.totalAmount.toLocaleString("en-US", {
-                            style: "currency",
-                            currency: "USD",
-                          })
-                        : "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="je-panel">
-        <h2>New journal entry</h2>
         <div className="je-form-grid">
           <div>
             <label>Entry date</label>
@@ -528,6 +585,7 @@ const JournalEntries: React.FC = () => {
           </button>
         </div>
       </div>
+      )}
 
       {detailOpen && (
         <div
@@ -542,7 +600,10 @@ const JournalEntries: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="je-modal-head">
-              <h3>Journal detail</h3>
+              <h3>
+                Journal detail
+                {detail?.id ? ` #${detail.id}` : ""}
+              </h3>
               <button type="button" onClick={() => setDetailOpen(false)}>
                 ×
               </button>
@@ -615,8 +676,8 @@ const JournalEntries: React.FC = () => {
                   <div style={{ marginTop: "1rem" }}>
                     <button
                       type="button"
-                      className="je-submit"
-                      style={{ background: "#7c2d12" }}
+                      className="btn-secondary"
+                      style={{ marginRight: "0.75rem" }}
                       disabled={
                         reversing || !!detail.reversedByJournalEntryId
                       }
@@ -630,7 +691,6 @@ const JournalEntries: React.FC = () => {
                     {detail.reversedByJournalEntryId ? (
                       <span
                         style={{
-                          marginLeft: "0.75rem",
                           fontSize: "0.85rem",
                           color: "#6b7280",
                         }}

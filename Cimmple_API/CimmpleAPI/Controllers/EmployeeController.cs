@@ -45,12 +45,29 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetEmployees")]
-        public IActionResult GetEmployees([FromQuery] int tenantid)
+        public IActionResult GetEmployees([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
             try
             {
-                var users = _context.UserDetails
-                    .Where(u => u.TenantID == tenantid && (u.VendorId == null || u.VendorId == 0))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
+                var usersQuery = _context.UserDetails
+                    .Where(u => u.TenantID == tenantid && (u.VendorId == null || u.VendorId == 0));
+
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    var mappedUserIds = _context.UserMapping
+                        .Where(m => m.locationId == loc)
+                        .Select(m => m.userId);
+                    usersQuery = usersQuery.Where(u =>
+                        u.DefaultLocationId == loc
+                        || u.CanAccessAllLocations
+                        || mappedUserIds.Contains(u.User_UniqueID));
+                }
+
+                var users = usersQuery
                     .Select(u => new
                     {
                         u.User_UniqueID,

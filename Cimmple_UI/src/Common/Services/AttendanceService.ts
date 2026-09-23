@@ -38,6 +38,7 @@ export class AttendanceService {
     to: string;
     employeeId?: number;
     includeNoPunch?: boolean;
+    locationId?: number;
   }): Promise<AttendanceRegisterRow[]> => {
     const url = "/Attendance/GetRegister";
     const response = await Instense.get(url, {
@@ -46,6 +47,7 @@ export class AttendanceService {
         to: params.to,
         employeeId: params.employeeId || undefined,
         includeNoPunch: params.includeNoPunch || undefined,
+        locationId: params.locationId || undefined,
       },
     });
     return (response.data.result || []) as AttendanceRegisterRow[];

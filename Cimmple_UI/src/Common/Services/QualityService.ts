@@ -158,6 +158,7 @@ export interface NCRFilters {
   overdueOnly?: boolean;
   openOnly?: boolean;
   tenantId: number;
+  locationId?: number;
 }
 
 /** Convert listing date-range presets into inclusive dateFrom / exclusive-friendly dateTo (ISO date). */

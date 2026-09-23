@@ -236,7 +236,8 @@ namespace CimmpleAPI.Controllers
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
                 var (docOk, docError) = await ValidateLinkedDocumentQtyAsync(
-                    tenantId, refType, refId, request.Quantity, isReceive: true);
+                    tenantId, refType, refId, request.Quantity, isReceive: true,
+                    request.ProductId, request.RawMaterialId);
                 if (!docOk)
                     return BadRequest(new { error = docError });
 
@@ -272,7 +273,8 @@ namespace CimmpleAPI.Controllers
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
                 var (docOk, docError) = await ValidateLinkedDocumentQtyAsync(
-                    tenantId, refType, refId, request.Quantity, isReceive: false);
+                    tenantId, refType, refId, request.Quantity, isReceive: false,
+                    request.ProductId, request.RawMaterialId);
                 if (!docOk)
                     return BadRequest(new { error = docError });
 
@@ -904,19 +906,124 @@ namespace CimmpleAPI.Controllers
                 if (tenantId <= 0)
                     tenantId = GetTenantId();
 
-                var jobs = await _context.JobOrderMaster
+                var jobsRaw = await _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId)
                     .OrderByDescending(j => j.JobOrderID)
                     .Take(80)
                     .Select(j => new
                     {
+                        j.JobOrderID,
+                        j.JobNumber,
+                        j.JobOrderNumber,
+                        j.PartNo,
+                        j.PartName,
+                        j.QtyOrdered,
+                        j.CustomerOrderDetailID
+                    })
+                    .ToListAsync();
+
+                var jobPartNos = jobsRaw
+                    .Select(j => (j.PartNo ?? "").Trim())
+                    .Where(p => p.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var productsByPart = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                if (jobPartNos.Count > 0)
+                {
+                    var productRows = await _context.ProductMaster
+                        .AsNoTracking()
+                        .Where(p => p.tenantid == tenantId && p.partno != null && jobPartNos.Contains(p.partno))
+                        .Select(p => new { p.partno, p.Id })
+                        .ToListAsync();
+                    foreach (var group in productRows.GroupBy(p => p.partno!, StringComparer.OrdinalIgnoreCase))
+                        productsByPart[group.Key] = group.Min(x => x.Id);
+                }
+
+                var detailIds = jobsRaw.Where(j => j.CustomerOrderDetailID > 0)
+                    .Select(j => j.CustomerOrderDetailID).Distinct().ToList();
+                var detailProducts = detailIds.Count == 0
+                    ? new Dictionary<int, int?>()
+                    : await _context.CustomerOrderDetails
+                        .AsNoTracking()
+                        .Where(d => d.Tenantid == tenantId && detailIds.Contains(d.ID))
+                        .ToDictionaryAsync(d => d.ID, d => d.productid);
+
+                var jobIds = jobsRaw.Select(j => j.JobOrderID).ToList();
+                var jobFgReceipts = jobIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : await _context.InventoryTransaction
+                        .AsNoTracking()
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "JobOrder"
+                            && t.ReferenceId.HasValue
+                            && jobIds.Contains(t.ReferenceId.Value)
+                            && t.TransactionTypeId == 1
+                            && t.ProductId != null
+                            && t.RawMaterialId == null)
+                        .GroupBy(t => t.ReferenceId!.Value)
+                        .Select(g => new { id = g.Key, qty = g.Sum(x => x.Quantity) })
+                        .ToDictionaryAsync(x => x.id, x => x.qty);
+                var jobFgIssues = jobIds.Count == 0
+                    ? new Dictionary<int, decimal>()
+                    : await _context.InventoryTransaction
+                        .AsNoTracking()
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "JobOrder"
+                            && t.ReferenceId.HasValue
+                            && jobIds.Contains(t.ReferenceId.Value)
+                            && t.TransactionTypeId == 2
+                            && t.ProductId != null
+                            && t.RawMaterialId == null)
+                        .GroupBy(t => t.ReferenceId!.Value)
+                        .Select(g => new { id = g.Key, qty = g.Sum(x => x.Quantity < 0 ? -x.Quantity : x.Quantity) })
+                        .ToDictionaryAsync(x => x.id, x => x.qty);
+
+                var bomByJob = jobIds.Count == 0
+                    ? new Dictionary<int, List<(int? ProductId, int? RawMaterialId)>>()
+                    : (await _context.JobMaterialRequirement
+                        .AsNoTracking()
+                        .Where(m => m.Tenantid == tenantId && jobIds.Contains(m.JobOrderId))
+                        .Select(m => new { m.JobOrderId, m.ProductId, m.RawMaterialId })
+                        .ToListAsync())
+                        .GroupBy(m => m.JobOrderId)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.Select(x => (x.ProductId, x.RawMaterialId)).ToList());
+
+                var jobs = jobsRaw.Select(j =>
+                {
+                    var partNo = (j.PartNo ?? "").Trim();
+                    int? productId = null;
+                    if (j.CustomerOrderDetailID > 0
+                        && detailProducts.TryGetValue(j.CustomerOrderDetailID, out var dPid)
+                        && dPid.HasValue && dPid.Value > 0)
+                        productId = dPid;
+                    else if (partNo.Length > 0 && productsByPart.TryGetValue(partNo, out var pid))
+                        productId = pid;
+
+                    var received = jobFgReceipts.TryGetValue(j.JobOrderID, out var r) ? r : 0;
+                    var issued = jobFgIssues.TryGetValue(j.JobOrderID, out var i) ? i : 0;
+                    var net = Math.Max(0, received - issued);
+                    var remaining = Math.Max(0, j.QtyOrdered - net);
+                    var bom = bomByJob.TryGetValue(j.JobOrderID, out var lines) ? lines : null;
+                    return new
+                    {
                         id = j.JobOrderID,
                         label = !string.IsNullOrWhiteSpace(j.JobNumber)
                             ? j.JobNumber
                             : ("JO#" + j.JobOrderNumber),
-                        detail = (j.PartNo ?? "") + (string.IsNullOrWhiteSpace(j.PartName) ? "" : " — " + j.PartName)
-                    })
-                    .ToListAsync();
+                        detail = partNo + (string.IsNullOrWhiteSpace(j.PartName) ? "" : " — " + j.PartName)
+                            + " · remaining FG " + remaining.ToString("0.##"),
+                        partNo,
+                        productId,
+                        qtyOrdered = j.QtyOrdered,
+                        remainingQty = remaining,
+                        bomProductIds = bom?.Where(b => b.ProductId.HasValue).Select(b => b.ProductId!.Value).Distinct().ToList()
+                            ?? new List<int>(),
+                        bomRawMaterialIds = bom?.Where(b => b.RawMaterialId.HasValue).Select(b => b.RawMaterialId!.Value).Distinct().ToList()
+                            ?? new List<int>()
+                    };
+                }).ToList();
 
                 var receivingRows = await (
                     from r in _context.VendorReceiving
@@ -930,6 +1037,8 @@ namespace CimmpleAPI.Controllers
                         poNumber = o.PONumber,
                         partNo = d.PartNo,
                         partName = d.PartName,
+                        productId = d.ProductId,
+                        rawMaterialId = d.RawMaterialId,
                         receivedDate = r.ReceivedDate,
                         receivedQty = r.ReceivedQty
                     }
@@ -957,6 +1066,9 @@ namespace CimmpleAPI.Controllers
                         id = r.id,
                         label = "VO#" + FormatVendorPoNumber(r.poNumber),
                         remainingQty = remaining,
+                        partNo = r.partNo,
+                        productId = r.productId,
+                        rawMaterialId = r.rawMaterialId,
                         detail = ((r.partNo ?? "") + (string.IsNullOrWhiteSpace(r.partName) ? "" : " — " + r.partName)).Trim(' ', '—')
                             + (r.receivedDate == default ? "" : " · " + r.receivedDate.ToString("yyyy-MM-dd"))
                             + " · remaining " + remaining.ToString("0.##")
@@ -1027,28 +1139,157 @@ namespace CimmpleAPI.Controllers
             string? referenceType,
             int? referenceId,
             decimal quantity,
-            bool isReceive)
+            bool isReceive,
+            int? productId = null,
+            int? rawMaterialId = null)
         {
             if (!referenceId.HasValue || referenceId.Value <= 0 || string.IsNullOrWhiteSpace(referenceType))
                 return (true, "");
 
             if (isReceive && referenceType.Equals("VendorReceiving", StringComparison.OrdinalIgnoreCase))
             {
-                var received = await _context.VendorReceiving
-                    .Where(r => r.Tenantid == tenantId && r.ID == referenceId.Value)
-                    .Select(r => (decimal?)r.ReceivedQty)
-                    .FirstOrDefaultAsync() ?? 0;
+                var line = await (
+                    from r in _context.VendorReceiving.AsNoTracking()
+                    join d in _context.VendorOrderDetails.AsNoTracking() on r.VendorOrderDetailID equals d.ID
+                    where r.Tenantid == tenantId && r.ID == referenceId.Value
+                    select new
+                    {
+                        r.ReceivedQty,
+                        d.ProductId,
+                        d.RawMaterialId,
+                        d.PartNo
+                    }
+                ).FirstOrDefaultAsync();
+                if (line == null)
+                    return (false, "Vendor receive not found.");
+
+                var partMatches = false;
+                if (productId.HasValue && productId.Value > 0)
+                {
+                    if (line.ProductId.HasValue && line.ProductId.Value == productId.Value)
+                        partMatches = true;
+                    else if (!string.IsNullOrWhiteSpace(line.PartNo))
+                    {
+                        var partNo = line.PartNo.Trim();
+                        partMatches = await _context.ProductMaster.AsNoTracking()
+                            .AnyAsync(p => p.tenantid == tenantId
+                                && p.Id == productId.Value
+                                && p.partno != null
+                                && p.partno.Trim() == partNo);
+                    }
+                }
+                else if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                {
+                    if (line.RawMaterialId.HasValue && line.RawMaterialId.Value == rawMaterialId.Value)
+                        partMatches = true;
+                    else if (!string.IsNullOrWhiteSpace(line.PartNo))
+                    {
+                        var partNo = line.PartNo.Trim();
+                        partMatches = await _context.RawMaterialMaster.AsNoTracking()
+                            .AnyAsync(rm => rm.Tenantid == tenantId
+                                && rm.Id == rawMaterialId.Value
+                                && rm.PartNo != null
+                                && rm.PartNo.Trim() == partNo);
+                    }
+                }
+
+                if (!partMatches)
+                    return (false, "Selected part does not match the linked vendor receive line.");
+
                 var booked = await _context.InventoryTransaction
                     .Where(t => t.Tenantid == tenantId
                         && t.ReferenceType == "VendorReceiving"
                         && t.ReferenceId == referenceId.Value
                         && t.TransactionTypeId == 1)
                     .SumAsync(t => (decimal?)t.Quantity) ?? 0;
-                var remaining = received - booked;
+                var remaining = (decimal)line.ReceivedQty - booked;
                 if (quantity > remaining + 0.0001m)
                     return (false, remaining <= 0
                         ? "This vendor receive already posted its quantity to inventory."
                         : $"Quantity cannot exceed remaining {remaining:0.##} on that vendor receive.");
+            }
+
+            if (isReceive && referenceType.Equals("JobOrder", StringComparison.OrdinalIgnoreCase))
+            {
+                var job = await _context.JobOrderMaster.AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == referenceId.Value);
+                if (job == null)
+                    return (false, "Job order not found.");
+
+                var jobPartNo = (job.PartNo ?? "").Trim();
+                int? finishedProductId = null;
+                if (job.CustomerOrderDetailID > 0)
+                {
+                    finishedProductId = await _context.CustomerOrderDetails.AsNoTracking()
+                        .Where(d => d.ID == job.CustomerOrderDetailID && d.Tenantid == tenantId)
+                        .Select(d => d.productid)
+                        .FirstOrDefaultAsync();
+                }
+                if ((!finishedProductId.HasValue || finishedProductId.Value <= 0) && jobPartNo.Length > 0)
+                {
+                    finishedProductId = await _context.ProductMaster.AsNoTracking()
+                        .Where(p => p.tenantid == tenantId && p.partno != null && p.partno.Trim() == jobPartNo)
+                        .Select(p => (int?)p.Id)
+                        .FirstOrDefaultAsync();
+                }
+
+                var matchesFinished = productId.HasValue && productId.Value > 0
+                    && (
+                        (finishedProductId.HasValue && finishedProductId.Value == productId.Value)
+                        || (jobPartNo.Length > 0 && await _context.ProductMaster.AsNoTracking()
+                            .AnyAsync(p => p.tenantid == tenantId
+                                && p.Id == productId.Value
+                                && p.partno != null
+                                && p.partno.Trim() == jobPartNo))
+                    );
+
+                var matchesBom = false;
+                if (!matchesFinished)
+                {
+                    if (productId.HasValue && productId.Value > 0)
+                    {
+                        matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
+                            .AnyAsync(m => m.Tenantid == tenantId
+                                && m.JobOrderId == job.JobOrderID
+                                && m.ProductId == productId.Value);
+                    }
+                    else if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                    {
+                        matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
+                            .AnyAsync(m => m.Tenantid == tenantId
+                                && m.JobOrderId == job.JobOrderID
+                                && m.RawMaterialId == rawMaterialId.Value);
+                    }
+                }
+
+                if (!matchesFinished && !matchesBom)
+                    return (false, "Selected part is not the finished part or a material on this job order.");
+
+                if (matchesFinished)
+                {
+                    var received = await _context.InventoryTransaction
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "JobOrder"
+                            && t.ReferenceId == job.JobOrderID
+                            && t.TransactionTypeId == 1
+                            && t.ProductId != null
+                            && t.RawMaterialId == null)
+                        .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+                    var issued = await _context.InventoryTransaction
+                        .Where(t => t.Tenantid == tenantId
+                            && t.ReferenceType == "JobOrder"
+                            && t.ReferenceId == job.JobOrderID
+                            && t.TransactionTypeId == 2
+                            && t.ProductId != null
+                            && t.RawMaterialId == null)
+                        .SumAsync(t => (decimal?)(t.Quantity < 0 ? -t.Quantity : t.Quantity)) ?? 0;
+                    var net = Math.Max(0, received - issued);
+                    var remaining = job.QtyOrdered - net;
+                    if (quantity > remaining + 0.0001m)
+                        return (false, remaining <= 0
+                            ? "This job already has its full finished-goods quantity in inventory."
+                            : $"Quantity cannot exceed remaining finished goods {remaining:0.##} on that job.");
+                }
             }
 
             if (!isReceive && referenceType.Equals("CustomerShipment", StringComparison.OrdinalIgnoreCase))

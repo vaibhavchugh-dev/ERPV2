@@ -580,6 +580,13 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Job order already exists for this order detail" });
                 }
 
+                // Default JO qty to remaining demand (ordered − already shipped), not the full line.
+                var remainingQty = Math.Max(0, orderDetail.QtyOrdered - orderDetail.ShippedQty);
+                if (remainingQty <= 0)
+                {
+                    return BadRequest(new { error = "Nothing left to make — this order line is already fully shipped." });
+                }
+
                 var jobOrder = new JobOrderMaster
                 {
                     JobOrderNumber = AllocateNextJobOrderNumber(request.Tenantid),
@@ -592,7 +599,7 @@ namespace CimmpleAPI.Controllers
                     JobDesc = orderDetail.JobDesc ?? "",
                     PartNo = orderDetail.PartNo ?? "",
                     PartName = orderDetail.partname ?? "",
-                    QtyOrdered = orderDetail.QtyOrdered,
+                    QtyOrdered = remainingQty,
                     Unit = orderDetail.Unit ?? "",
                     UnitPrice = orderDetail.UnitPrice,
                     DueDate = orderDetail.DueDate.Date,
@@ -1536,8 +1543,9 @@ namespace CimmpleAPI.Controllers
                 if (qty <= 0)
                     return null;
 
-                var already = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
-                    .SumAsync(t => (decimal?)t.Quantity) ?? 0;
+                // Use net JO FG (receipts − reopen/issue reversals), not cumulative receipts,
+                // so re-complete after reopen restores stock instead of no-op / under-posting.
+                var already = await NetFinishedGoodsQtyAsync(tenantId, job.JobOrderID);
                 if (already >= qty)
                     return null;
 
@@ -1583,9 +1591,9 @@ namespace CimmpleAPI.Controllers
                 return null;
             }
 
-            var receivedQty = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
-                .SumAsync(t => (decimal?)t.Quantity) ?? 0;
-            if (receivedQty <= 0)
+            // Reopen: reverse only net JO FG still attributable after shipments.
+            var netQty = await NetFinishedGoodsQtyAsync(tenantId, job.JobOrderID);
+            if (netQty <= 0)
                 return null;
 
             decimal shippedQty = 0;
@@ -1598,7 +1606,7 @@ namespace CimmpleAPI.Controllers
                     .FirstOrDefaultAsync();
             }
 
-            var toReverse = receivedQty - shippedQty;
+            var toReverse = netQty - shippedQty;
             if (toReverse <= 0)
                 return null;
 

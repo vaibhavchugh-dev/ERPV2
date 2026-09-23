@@ -72,13 +72,15 @@ export class DocumentService {
     relatedEntityId?: number,
     search?: string,
     page: number = 1,
-    pageSize: number = 20
+    pageSize: number = 20,
+    locationId?: number
   ): Promise<DocumentsResponse> {
     const params: any = { page, pageSize };
     if (categoryId) params.categoryId = categoryId;
     if (relatedEntityType) params.relatedEntityType = relatedEntityType;
     if (relatedEntityId) params.relatedEntityId = relatedEntityId;
     if (search) params.search = search;
+    if (locationId && locationId > 0) params.locationId = locationId;
 
     const response = await Instense.get<DocumentsResponse>(baseUrl, {
       params,

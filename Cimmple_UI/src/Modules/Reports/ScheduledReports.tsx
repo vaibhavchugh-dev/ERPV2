@@ -17,6 +17,7 @@ import {
   formatScheduleInstant,
 } from "../../Common/Services/ReportScheduleService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./ScheduledReports.scss";
 
 const freqLabel = (s: ReportScheduleDto) => {
@@ -32,6 +33,7 @@ const freqLabel = (s: ReportScheduleDto) => {
 };
 
 const ScheduledReports: React.FC = () => {
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [items, setItems] = useState<ReportScheduleDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -40,7 +42,9 @@ const ScheduledReports: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await ReportScheduleService.List();
+      const list = await ReportScheduleService.List({
+        locationId: locationIdParam,
+      });
       setItems(list);
     } catch (error: any) {
       toast.error(
@@ -49,7 +53,7 @@ const ScheduledReports: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locationIdParam]);
 
   useEffect(() => {
     load();
@@ -115,6 +119,26 @@ const ScheduledReports: React.FC = () => {
           <FontAwesomeIcon icon={faSync} spin={loading} /> Refresh
         </button>
       </header>
+
+      <div className="sr-filters" style={{ marginBottom: "1rem" }}>
+        <select
+          className="filter-select"
+          value={masterListFilter.value}
+          onChange={(e) => masterListFilter.onChange(e.target.value)}
+          style={{
+            padding: "0.5rem 2rem 0.5rem 0.75rem",
+            border: "1px solid #d1d5db",
+            borderRadius: "0.5rem",
+            fontSize: "0.875rem",
+          }}
+        >
+          {masterListFilter.options.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {loading && items.length === 0 ? (
         <div className="sr-empty">Loading schedules…</div>
