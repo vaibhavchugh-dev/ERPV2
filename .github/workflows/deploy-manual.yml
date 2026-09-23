@@ -1,20 +1,23 @@
-name: Deploy API and UI via FTP
+name: Manual deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "Cimmple_API/**"
-      - "Cimmple_UI/**"
-      - "Cimmple_PWA/**"
-      - "Cimmple_VPA/**"
-      - "Cimmple_Punch/**"
-      - ".github/workflows/deploy-ftp.yml"
-      - ".github/scripts/ftp_upload.py"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: App to build and upload
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - api
+          - ui
+          - pwa
+          - vpa
+          - punch
 
 concurrency:
-  group: deploy-ftp-main
+  group: deploy-ftp-manual
   cancel-in-progress: false
 
 env:
@@ -30,52 +33,9 @@ env:
   FTP_PUNCH_USERNAME_DEFAULT: erppunch
 
 jobs:
-  changes:
-    name: Detect committed apps
-    runs-on: ubuntu-latest
-    outputs:
-      api: ${{ steps.pick.outputs.api }}
-      ui: ${{ steps.pick.outputs.ui }}
-      pwa: ${{ steps.pick.outputs.pwa }}
-      vpa: ${{ steps.pick.outputs.vpa }}
-      punch: ${{ steps.pick.outputs.punch }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Paths in this push
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            api:
-              - 'Cimmple_API/**'
-            ui:
-              - 'Cimmple_UI/**'
-              - '.github/scripts/ftp_upload.py'
-            pwa:
-              - 'Cimmple_PWA/**'
-              - '.github/scripts/ftp_upload.py'
-            vpa:
-              - 'Cimmple_VPA/**'
-              - '.github/scripts/ftp_upload.py'
-            punch:
-              - 'Cimmple_Punch/**'
-              - '.github/scripts/ftp_upload.py'
-
-      - name: Choose apps to release
-        id: pick
-        run: |
-          echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
-          echo "ui=${{ steps.filter.outputs.ui }}" >> "$GITHUB_OUTPUT"
-          echo "pwa=${{ steps.filter.outputs.pwa }}" >> "$GITHUB_OUTPUT"
-          echo "vpa=${{ steps.filter.outputs.vpa }}" >> "$GITHUB_OUTPUT"
-          echo "punch=${{ steps.filter.outputs.punch }}" >> "$GITHUB_OUTPUT"
-
   deploy-api:
     name: Build and FTP API
-    needs: changes
-    if: needs.changes.outputs.api == 'true'
+    if: inputs.target == 'all' || inputs.target == 'api'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -169,8 +129,7 @@ jobs:
 
   deploy-ui:
     name: Build and FTP UI
-    needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: inputs.target == 'all' || inputs.target == 'ui'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -204,8 +163,7 @@ jobs:
 
   deploy-pwa:
     name: Build and FTP Shop PWA
-    needs: changes
-    if: needs.changes.outputs.pwa == 'true'
+    if: inputs.target == 'all' || inputs.target == 'pwa'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -240,8 +198,7 @@ jobs:
 
   deploy-vpa:
     name: Build and FTP Vendor portal
-    needs: changes
-    if: needs.changes.outputs.vpa == 'true'
+    if: inputs.target == 'all' || inputs.target == 'vpa'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -275,8 +232,7 @@ jobs:
 
   deploy-punch:
     name: Build and FTP Punch
-    needs: changes
-    if: needs.changes.outputs.punch == 'true'
+    if: inputs.target == 'all' || inputs.target == 'punch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
