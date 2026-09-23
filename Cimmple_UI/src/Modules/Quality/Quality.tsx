@@ -13,6 +13,7 @@ import {
   resolveNcrDateRange,
 } from "../../Common/Services/QualityService";
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import NonConformanceReportSlideout from "./NonConformanceReportSlideout";
 import "./Quality.scss";
 
@@ -31,6 +32,7 @@ const Quality: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const returnToRef = useRef<string | null>(null);
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [ncrs, setNcrs] = useState<NonConformanceReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -96,7 +98,7 @@ const Quality: React.FC = () => {
   useEffect(() => {
     loadNCRs();
     loadStats();
-  }, [filters]);
+  }, [filters, locationIdParam]);
 
   const loadCustomers = async () => {
     try {
@@ -132,6 +134,7 @@ const Quality: React.FC = () => {
         ...(filters.due === "overdue" && { overdueOnly: true }),
         ...(dateFrom && { dateFrom }),
         ...(dateTo && { dateTo }),
+        ...(locationIdParam ? { locationId: locationIdParam } : {}),
       };
 
       const result = await QualityService.GetNCRs(filterParams);
@@ -528,6 +531,7 @@ const Quality: React.FC = () => {
           },
         ]}
         filters={[
+          masterListFilter,
           {
             label: "Status",
             options: statusOptions,

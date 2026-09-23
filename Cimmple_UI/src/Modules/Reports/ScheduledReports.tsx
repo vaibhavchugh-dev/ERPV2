@@ -14,31 +14,26 @@ import {
   ReportScheduleDto,
   ReportScheduleService,
   minutesToTimeInput,
+  formatScheduleInstant,
 } from "../../Common/Services/ReportScheduleService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import "./ScheduledReports.scss";
 
 const freqLabel = (s: ReportScheduleDto) => {
+  const time = minutesToTimeInput(s.timeOfDayMinutes);
   if (s.frequency === "Weekly") {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    return `Weekly (${days[s.dayOfWeek ?? 1]} ${minutesToTimeInput(s.timeOfDayMinutes)})`;
+    return `Weekly (${days[s.dayOfWeek ?? 1]} ${time})`;
   }
   if (s.frequency === "Monthly") {
-    return `Monthly (day ${s.dayOfMonth ?? 1} @ ${minutesToTimeInput(s.timeOfDayMinutes)})`;
+    return `Monthly (day ${s.dayOfMonth ?? 1} @ ${time})`;
   }
-  return `Daily @ ${minutesToTimeInput(s.timeOfDayMinutes)}`;
-};
-
-const fmtUtc = (value?: string | null) => {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
+  return `Daily @ ${time}`;
 };
 
 const ScheduledReports: React.FC = () => {
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [items, setItems] = useState<ReportScheduleDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -47,7 +42,9 @@ const ScheduledReports: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await ReportScheduleService.List();
+      const list = await ReportScheduleService.List({
+        locationId: locationIdParam,
+      });
       setItems(list);
     } catch (error: any) {
       toast.error(
@@ -56,7 +53,7 @@ const ScheduledReports: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locationIdParam]);
 
   useEffect(() => {
     load();
@@ -123,6 +120,26 @@ const ScheduledReports: React.FC = () => {
         </button>
       </header>
 
+      <div className="sr-filters" style={{ marginBottom: "1rem" }}>
+        <select
+          className="filter-select"
+          value={masterListFilter.value}
+          onChange={(e) => masterListFilter.onChange(e.target.value)}
+          style={{
+            padding: "0.5rem 2rem 0.5rem 0.75rem",
+            border: "1px solid #d1d5db",
+            borderRadius: "0.5rem",
+            fontSize: "0.875rem",
+          }}
+        >
+          {masterListFilter.options.map((opt) => (
+            <option key={opt.value || "all"} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {loading && items.length === 0 ? (
         <div className="sr-empty">Loading schedules…</div>
       ) : items.length === 0 ? (
@@ -172,7 +189,7 @@ const ScheduledReports: React.FC = () => {
                       )}
                     </td>
                     <td>
-                      <div>{fmtUtc(item.lastRunUtc)}</div>
+                      <div>{formatScheduleInstant(item.lastRunUtc, item.timeZoneId)}</div>
                       {item.lastRunStatus && (
                         <div
                           className={`sr-status ${
@@ -184,7 +201,11 @@ const ScheduledReports: React.FC = () => {
                         </div>
                       )}
                     </td>
-                    <td>{item.isEnabled ? fmtUtc(item.nextRunUtc) : "Paused"}</td>
+                    <td>
+                      {item.isEnabled
+                        ? formatScheduleInstant(item.nextRunUtc, item.timeZoneId)
+                        : "Paused"}
+                    </td>
                     <td>{item.isEnabled ? "Enabled" : "Paused"}</td>
                     <td className="sr-actions">
                       <button

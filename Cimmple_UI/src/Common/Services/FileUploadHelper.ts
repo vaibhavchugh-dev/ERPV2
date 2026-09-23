@@ -46,9 +46,17 @@ export function formatFileSize(size: number): string {
 export function getApiErrorMessage(error: unknown, fallback = "Request failed"): string {
   const err = error as {
     message?: string;
-    response?: { data?: { error?: string; message?: string } };
+    response?: { status?: number; data?: { error?: string; message?: string } };
   };
-  return err?.response?.data?.error || err?.response?.data?.message || err?.message || fallback;
+  const status = err?.response?.status;
+  const apiMsg = err?.response?.data?.error || err?.response?.data?.message;
+  if (status === 403) {
+    return (
+      (typeof apiMsg === "string" && apiMsg.trim()) ||
+      "You don't have access to this document."
+    );
+  }
+  return apiMsg || err?.message || fallback;
 }
 
 export function validateSelectedFiles(

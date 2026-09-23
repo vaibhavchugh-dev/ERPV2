@@ -62,12 +62,27 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var total = query.Count();
-                var items = query
+                var page = query
                     .OrderByDescending(p => p.PayDate ?? p.CreatedUtc)
                     .ThenByDescending(p => p.Id)
                     .Skip(skip)
                     .Take(take)
-                    .Select(p => new
+                    .ToList();
+
+                var defaults = _context.AccountingDefaults.AsNoTracking()
+                    .FirstOrDefault(d => d.TenantId == tid);
+                var accruedId = defaults?.DefaultNetPayPayableAccountId ?? 0;
+
+                var items = page.Select(p =>
+                {
+                    var suggested = accruedId > 0
+                        ? PayrollCashJournalService.GetAccruedNetPayCredit(_context, p.JournalEntryId, accruedId)
+                        : 0m;
+                    var paid = Math.Round(p.PaymentAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+                    if (p.PaymentJournalEntryId.HasValue && paid <= 0 && suggested > 0)
+                        paid = suggested;
+                    var remaining = Math.Round(Math.Max(0m, suggested - paid), 2, MidpointRounding.AwayFromZero);
+                    return new
                     {
                         p.Id,
                         p.Source,
@@ -86,12 +101,14 @@ namespace CimmpleAPI.Controllers
                         p.PaymentJournalEntryId,
                         p.PaymentPostedUtc,
                         p.PaymentBankId,
-                        p.PaymentAmount,
+                        PaymentAmount = paid > 0 ? paid : p.PaymentAmount,
                         p.TaxRemittanceJournalEntryId,
                         p.TaxRemittancePostedUtc,
-                        p.TaxRemittanceAmount
-                    })
-                    .ToList();
+                        p.TaxRemittanceAmount,
+                        suggestedNetPay = suggested,
+                        remainingNetPay = remaining
+                    };
+                }).ToList();
 
                 return Ok(new { result = new { total, items } });
             }
@@ -125,6 +142,11 @@ namespace CimmpleAPI.Controllers
                 var suggestedNet = accruedId > 0
                     ? PayrollCashJournalService.GetAccruedNetPayCredit(_context, link.JournalEntryId, accruedId)
                     : 0m;
+                var paidAmount = Math.Round(link.PaymentAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+                // Legacy: payment JE exists but amount not stored — treat as fully paid.
+                if (link.PaymentJournalEntryId.HasValue && paidAmount <= 0 && suggestedNet > 0)
+                    paidAmount = suggestedNet;
+                var remainingNet = Math.Round(Math.Max(0m, suggestedNet - paidAmount), 2, MidpointRounding.AwayFromZero);
                 var taxLines = PayrollCashJournalService.GetTaxPayableCreditsFromAccrual(
                     _context, link.JournalEntryId, defaults);
                 var bankGl = GlAccountResolutionService.ResolvePayrollBank(_context, tid, defaults?.DefaultPayrollBankId);
@@ -138,13 +160,17 @@ namespace CimmpleAPI.Controllers
                         link.JournalEntryId,
                         accruedPayrollAccountId = accruedId > 0 ? accruedId : (int?)null,
                         suggestedNetPay = suggestedNet,
-                        paymentAlreadyPosted = link.PaymentJournalEntryId.HasValue,
+                        paidAmount,
+                        remainingNetPay = remainingNet,
+                        paymentFullyPaid = remainingNet <= 0,
+                        paymentAlreadyPosted = remainingNet <= 0,
                         paymentJournalEntryId = link.PaymentJournalEntryId,
                         taxRemittanceAlreadyPosted = link.TaxRemittanceJournalEntryId.HasValue,
                         taxRemittanceJournalEntryId = link.TaxRemittanceJournalEntryId,
                         defaultPayrollBankId = defaults?.DefaultPayrollBankId,
                         payrollBankGlAccountId = bankGl,
-                        taxPayableLines = taxLines
+                        taxPayableLines = taxLines,
+                        linkStatus = link.Status
                     }
                 });
             }
@@ -193,20 +219,6 @@ namespace CimmpleAPI.Controllers
                 if (link.Status != PayrollJournalStatuses.Posted)
                     return BadRequest(new { error = "Only Posted payroll links can receive a payment journal." });
 
-                if (link.PaymentJournalEntryId.HasValue)
-                {
-                    return Ok(new
-                    {
-                        result = new
-                        {
-                            id = link.Id,
-                            journalEntryId = link.PaymentJournalEntryId,
-                            alreadyExists = true,
-                            message = "Net-pay payment journal already posted."
-                        }
-                    });
-                }
-
                 var defaults = _context.AccountingDefaults.AsNoTracking()
                     .FirstOrDefault(d => d.TenantId == tenantId);
                 var accruedId = defaults?.DefaultNetPayPayableAccountId ?? 0;
@@ -229,7 +241,41 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var suggested = PayrollCashJournalService.GetAccruedNetPayCredit(_context, link.JournalEntryId, accruedId);
-                var amount = Math.Round(request.Amount ?? suggested, 2, MidpointRounding.AwayFromZero);
+                var alreadyPaid = Math.Round(link.PaymentAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+                var remaining = Math.Round(Math.Max(0m, suggested - alreadyPaid), 2, MidpointRounding.AwayFromZero);
+
+                if (remaining <= 0)
+                {
+                    return Ok(new
+                    {
+                        result = new
+                        {
+                            id = link.Id,
+                            journalEntryId = link.PaymentJournalEntryId,
+                            alreadyExists = true,
+                            amount = alreadyPaid,
+                            remainingNetPay = 0m,
+                            message = "Net pay is already fully paid for this payroll period."
+                        }
+                    });
+                }
+
+                // Legacy single-payment links used PaymentJournalEntryId without PaymentAmount.
+                if (link.PaymentJournalEntryId.HasValue && alreadyPaid <= 0 && suggested > 0)
+                {
+                    return Ok(new
+                    {
+                        result = new
+                        {
+                            id = link.Id,
+                            journalEntryId = link.PaymentJournalEntryId,
+                            alreadyExists = true,
+                            message = "Net-pay payment journal already posted."
+                        }
+                    });
+                }
+
+                var amount = Math.Round(request.Amount ?? remaining, 2, MidpointRounding.AwayFromZero);
                 if (amount <= 0)
                 {
                     return BadRequest(new
@@ -237,6 +283,8 @@ namespace CimmpleAPI.Controllers
                         error = "Payment amount must be greater than zero. Confirm Accrued Payroll was credited on the accrual journal, or enter an amount."
                     });
                 }
+                if (amount > remaining)
+                    amount = remaining;
 
                 var paymentDate = (request.PaymentDate ?? link.PayDate ?? DateTime.Today).Date;
                 var periodKey = GlWorkflowService.PeriodKeyFromDate(paymentDate);
@@ -247,30 +295,20 @@ namespace CimmpleAPI.Controllers
                 if (!TryResolveLocationId(locId, out locId, out var forbidLoc, fallback: 1))
                     return forbidLoc!;
 
-                var refNo = $"PAYPMT-{link.ReferenceNumber}";
+                var seq = alreadyPaid > 0 || link.PaymentJournalEntryId.HasValue
+                    ? (int)(DateTime.UtcNow.Ticks % 100000)
+                    : 1;
+                var refNo = $"PAYPMT-{link.Id}-{seq}";
                 var existingRef = _context.JournalEntries.AsNoTracking()
                     .FirstOrDefault(j => j.TenantId == tenantId && j.ReferenceNumber == refNo);
                 if (existingRef != null)
                 {
-                    link.PaymentJournalEntryId = existingRef.Id;
-                    link.PaymentPostedUtc = DateTime.UtcNow;
-                    link.PaymentBankId = bankId;
-                    link.PaymentAmount = amount;
-                    _context.SaveChanges();
-                    return Ok(new
-                    {
-                        result = new
-                        {
-                            id = link.Id,
-                            journalEntryId = existingRef.Id,
-                            alreadyExists = true,
-                            message = "Payment journal reference already exists; link updated."
-                        }
-                    });
+                    refNo = $"PAYPMT-{link.Id}-{DateTime.UtcNow:yyyyMMddHHmmss}";
                 }
 
                 var desc = string.IsNullOrWhiteSpace(request.Description)
-                    ? $"Net pay disbursement for {link.ReferenceNumber}"
+                    ? $"Net pay disbursement for {link.ReferenceNumber}" +
+                      (remaining - amount > 0.009m ? " (partial)" : "")
                     : request.Description.Trim();
 
                 using var tx = _context.Database.BeginTransaction();
@@ -307,10 +345,11 @@ namespace CimmpleAPI.Controllers
                     });
                     _context.SaveChanges();
 
+                    var newPaid = Math.Round(alreadyPaid + amount, 2, MidpointRounding.AwayFromZero);
                     link.PaymentJournalEntryId = header.Id;
                     link.PaymentPostedUtc = DateTime.UtcNow;
                     link.PaymentBankId = bankId;
-                    link.PaymentAmount = amount;
+                    link.PaymentAmount = newPaid;
                     _context.SaveChanges();
 
                     GlWorkflowService.AddAudit(_context, tenantId, "PayrollNetPayPayment", GetUserId(), header.Id, null,
@@ -318,6 +357,7 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                     tx.Commit();
 
+                    var stillRemaining = Math.Round(Math.Max(0m, suggested - newPaid), 2, MidpointRounding.AwayFromZero);
                     return Ok(new
                     {
                         result = new
@@ -325,8 +365,12 @@ namespace CimmpleAPI.Controllers
                             id = link.Id,
                             journalEntryId = header.Id,
                             amount,
+                            paidAmount = newPaid,
+                            remainingNetPay = stillRemaining,
                             alreadyExists = false,
-                            message = "Net-pay payment journal posted."
+                            message = stillRemaining > 0
+                                ? $"Partial net-pay payment posted ({amount:N2}). Remaining {stillRemaining:N2}."
+                                : "Net-pay payment journal posted."
                         }
                     });
                 }
@@ -717,7 +761,7 @@ namespace CimmpleAPI.Controllers
                 });
             }
 
-            if (!built.IsBalanced || built.Lines.Count < 2)
+            if (!built.CanPost || built.Lines.Count < 2)
             {
                 return BadRequest(new
                 {

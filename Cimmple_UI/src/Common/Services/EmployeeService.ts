@@ -133,7 +133,7 @@ export interface Role {
 
 export class EmployeeService {
   public static GetEmployees = async (
-    request: { tenantid: number }
+    request: { tenantid: number; locationId?: number }
   ): Promise<EmployeeMaster[] | null> => {
     // Use the tenantid from request if provided, otherwise fall back to localStorage
     let tenantID = request.tenantid || 0;
@@ -151,7 +151,12 @@ export class EmployeeService {
 
     const url = `/Employee/GetEmployees`;
     return Instense.get(url, {
-      params: { tenantid: tenantID },
+      params: {
+        tenantid: tenantID,
+        ...(request.locationId && request.locationId > 0
+          ? { locationId: request.locationId }
+          : {}),
+      },
     }).then((response) => {
       const result = response.data.result as EmployeeMaster[];
       return result;

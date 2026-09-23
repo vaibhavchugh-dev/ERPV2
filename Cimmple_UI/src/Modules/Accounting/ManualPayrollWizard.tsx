@@ -32,6 +32,8 @@ type PreviewLine = {
 
 type PreviewResult = {
   isBalanced: boolean;
+  canPost?: boolean;
+  hasMissingAccounts?: boolean;
   totalDebits: number;
   totalCredits: number;
   missingAccountKeys: string[];
@@ -192,10 +194,10 @@ const ManualPayrollWizard: React.FC = () => {
       setStep(2);
       if (result?.missingAccountKeys?.length) {
         toast.warn(
-          "Some payroll GL defaults are missing. Set them under Accounting Setup → Payroll GL Accounts."
+          "Some payroll GL defaults are missing. Amounts may still balance — set accounts under Accounting Setup → Payroll GL Accounts."
         );
       } else if (!result?.isBalanced) {
-        toast.warn("Journal is not balanced yet — check amounts or use Suggest net.");
+        toast.warn("Journal amounts are not balanced yet — check amounts or use Suggest net.");
       }
     } catch (e: any) {
       const msg =
@@ -207,8 +209,15 @@ const ManualPayrollWizard: React.FC = () => {
   };
 
   const handlePost = async () => {
-    if (!preview?.isBalanced) {
-      toast.error("Fix the preview so the journal is balanced before posting.");
+    const canPost =
+      preview?.canPost ??
+      (preview?.isBalanced && !(preview?.missingAccountKeys?.length > 0));
+    if (!canPost) {
+      toast.error(
+        preview?.hasMissingAccounts || (preview?.missingAccountKeys?.length ?? 0) > 0
+          ? "Map missing payroll GL defaults before posting."
+          : "Fix the preview so the journal amounts are balanced before posting."
+      );
       return;
     }
     setPosting(true);
@@ -401,7 +410,7 @@ const ManualPayrollWizard: React.FC = () => {
             {" · "}
             Credits <strong>{fmtMoney(preview.totalCredits)}</strong>
             {" · "}
-            {preview.isBalanced ? "Balanced" : "Not balanced"}
+            {preview.isBalanced ? "Amounts balanced" : "Amounts not balanced"}
           </p>
 
           {Math.abs(preview.netPayDifference) > 0.02 && (
@@ -412,9 +421,11 @@ const ManualPayrollWizard: React.FC = () => {
             </p>
           )}
 
-          {preview.missingAccountKeys?.length > 0 && (
+          {(preview.hasMissingAccounts || preview.missingAccountKeys?.length > 0) && (
             <p style={{ color: "#b91c1c", fontSize: "0.875rem" }}>
-              Missing GL defaults for: {preview.missingAccountKeys.join(", ")}
+              Missing GL defaults for: {(preview.missingAccountKeys || []).join(", ")}. Amounts may
+              still balance — map these accounts under Accounting Setup → Payroll GL Accounts before
+              posting.
             </p>
           )}
 
@@ -454,7 +465,10 @@ const ManualPayrollWizard: React.FC = () => {
             <button
               type="button"
               className="je-submit"
-              disabled={!preview.isBalanced || posting || (preview.missingAccountKeys?.length ?? 0) > 0}
+              disabled={
+                !(preview.canPost ?? (preview.isBalanced && !(preview.missingAccountKeys?.length > 0))) ||
+                posting
+              }
               onClick={() => void handlePost()}
             >
               {posting ? "Posting…" : "Post to general ledger"}

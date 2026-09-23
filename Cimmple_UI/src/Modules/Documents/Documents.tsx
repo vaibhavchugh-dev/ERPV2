@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { DocumentService, Document, DocumentCategory } from "../../Common/Services/DocumentService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import DocumentUploadModal from "./DocumentUploadModal";
 import DocumentDetailModal from "./DocumentDetailModal";
@@ -28,6 +29,7 @@ const parseTags = (tags?: string): string[] =>
 
 const Documents: React.FC = () => {
   const location = useLocation();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,7 +53,7 @@ const Documents: React.FC = () => {
   useEffect(() => {
     loadCategories();
     loadDocuments();
-  }, [page, selectedCategoryId, searchTerm]);
+  }, [page, selectedCategoryId, searchTerm, locationIdParam]);
 
   // Handle URL parameter to open document detail modal
   useEffect(() => {
@@ -94,7 +96,8 @@ const Documents: React.FC = () => {
         undefined,
         searchTerm || undefined,
         page,
-        pageSize
+        pageSize,
+        locationIdParam
       );
       setDocuments(result.documents);
       setTotalCount(result.totalCount);
@@ -289,6 +292,24 @@ const Documents: React.FC = () => {
               setPage(1);
             }}
           />
+        </div>
+
+        <div className="filter-group">
+          <FontAwesomeIcon icon={faFilter} />
+          <select
+            className="filter-select"
+            value={masterListFilter.value}
+            onChange={(e) => {
+              masterListFilter.onChange(e.target.value);
+              setPage(1);
+            }}
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="filter-group">

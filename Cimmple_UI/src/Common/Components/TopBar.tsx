@@ -26,12 +26,14 @@ import { ConversationService, ConversationListItem } from "../Services/Conversat
 import { SupportTicketService } from "../Services/SupportTicketService";
 import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
+import { shouldShowWorkingSiteSwitcher } from "../Utils/workingSiteVisibility";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
 import ContactSupportDialog from "./ContactSupportDialog";
 import ConversationPanel from "./ConversationPanel";
-import { stripMentionTokensForPreview } from "../Utils/chatMentions";
+import { stripMentionTokensForPreview, navigateToMentionDocument } from "../Utils/chatMentions";
+import { formatDateTime } from "../Utils/Formatting";
 import "./TopBar.scss";
 
 const NOTIFICATION_POLL_MS = 45000;
@@ -443,18 +445,8 @@ const TopBar: React.FC = () => {
   }, [location.search, location.pathname, history]);
 
   const formatNotificationTime = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return "";
-      return d.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
+    if (!iso) return "";
+    return formatDateTime(iso) || "";
   };
 
   const handleOpenNotifications = () => {
@@ -505,7 +497,7 @@ const TopBar: React.FC = () => {
     }
 
     if (item.linkPath) {
-      history.push(item.linkPath);
+      navigateToMentionDocument(item.linkPath, history);
     }
   };
 
@@ -595,10 +587,11 @@ const TopBar: React.FC = () => {
 
   const handleResultClick = (result: SearchResult) => {
     const url = GlobalSearchService.getResultUrl(result);
-    
-    // Navigate to the page
-    history.push(url);
-    
+
+    if (!navigateToMentionDocument(url, history)) {
+      return;
+    }
+
     // Close search
     setShowSearchResults(false);
     setSearchQuery('');
@@ -675,7 +668,7 @@ const TopBar: React.FC = () => {
       </div>
       <div className="header-right">
         {/* Location Switcher */}
-        {locations.length > 0 && (
+        {locations.length > 0 && shouldShowWorkingSiteSwitcher(location.pathname) && (
           <div className="location-menu" ref={locationMenuRef}>
             <button
               className="location-menu-btn"

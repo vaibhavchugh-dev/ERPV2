@@ -150,13 +150,17 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string? from,
             [FromQuery] string? to,
             [FromQuery] int? employeeId,
-            [FromQuery] bool includeNoPunch = false)
+            [FromQuery] bool includeNoPunch = false,
+            [FromQuery] int? locationId = null)
         {
             var tenantId = GetTenantId();
             if (tenantId <= 0)
             {
                 return BadRequest(new { message = "Tenant is required" });
             }
+
+            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                return forbid!;
 
             var todayLocal = GetTenantLocalNow(tenantId).Date;
             var fromLocal = ParseDay(from, todayLocal);
@@ -183,6 +187,19 @@ namespace CimmpleAPI.Controllers
                 employeesQuery = employeesQuery.Where(u => u.User_UniqueID == employeeId.Value);
             }
 
+            if (filterLocationId.HasValue)
+            {
+                var loc = filterLocationId.Value;
+                var mappedUserIds = _db.UserMapping
+                    .AsNoTracking()
+                    .Where(m => m.locationId == loc)
+                    .Select(m => m.userId);
+                employeesQuery = employeesQuery.Where(u =>
+                    u.DefaultLocationId == loc
+                    || u.CanAccessAllLocations
+                    || mappedUserIds.Contains(u.User_UniqueID));
+            }
+
             var employees = await employeesQuery
                 .Select(u => new
                 {
@@ -198,12 +215,21 @@ namespace CimmpleAPI.Controllers
 
             var userIds = employees.Select(e => e.User_UniqueID).ToList();
 
-            var punches = await _db.FaceAttendanceLog.AsNoTracking()
+            var punchesQuery = _db.FaceAttendanceLog.AsNoTracking()
                 .Where(p => p.TenantId == tenantId
                     && p.IsSuccess
                     && p.PunchTime >= startUtc
                     && p.PunchTime < endUtc
-                    && userIds.Contains(p.UserUniqueId))
+                    && userIds.Contains(p.UserUniqueId));
+
+            if (filterLocationId.HasValue)
+            {
+                punchesQuery = punchesQuery.Where(p =>
+                    p.LocationId == filterLocationId.Value
+                    || p.LocationId == 0);
+            }
+
+            var punches = await punchesQuery
                 .OrderBy(p => p.PunchTime)
                 .ToListAsync();
 
@@ -277,8 +303,8 @@ namespace CimmpleAPI.Controllers
                     }
 
                     var hours = SumWorkedHours(dayLogs, nowLocal, day == todayLocal, tenantId);
-                    var locationId = last?.LocationId ?? employee.DefaultLocationId ?? 0;
-                    locationNames.TryGetValue(locationId, out var locationName);
+                    var rowLocationId = last?.LocationId ?? employee.DefaultLocationId ?? 0;
+                    locationNames.TryGetValue(rowLocationId, out var locationName);
 
                     rows.Add(new
                     {

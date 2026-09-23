@@ -364,9 +364,16 @@ const convertReportToCsv = (data: any): string => {
 const DRILLABLE_REPORTS = new Set([
   "job-status-dashboard",
   "sales-performance",
+  "sales-trends",
+  "revenue-by-location",
   "top-customers",
+  "customer-profitability",
+  "customer-lifetime-value",
+  "customer-payment-behavior",
+  "job-completion-time",
   "vendor-performance",
   "ncr-trends",
+  "defect-rate",
   "on-time-delivery",
   "customer-order-history",
   "purchase-trends",
@@ -933,6 +940,9 @@ const Reports: React.FC = () => {
             <OperationalReportDrillDrawer
               meta={drillMeta}
               onClose={() => setDrillMeta(null)}
+              locationId={
+                locationIdParam === undefined ? null : locationIdParam
+              }
             />
           </div>
         </section>

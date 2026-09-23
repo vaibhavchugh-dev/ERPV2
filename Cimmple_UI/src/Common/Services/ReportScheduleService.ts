@@ -52,8 +52,16 @@ export interface ReportScheduleUpsertPayload {
 }
 
 export class ReportScheduleService {
-  public static List = async (): Promise<ReportScheduleDto[]> => {
-    const response = await Instense.get(`/ReportSchedules`);
+  public static List = async (params?: {
+    locationId?: number;
+  }): Promise<ReportScheduleDto[]> => {
+    const response = await Instense.get(`/ReportSchedules`, {
+      params: {
+        ...(params?.locationId && params.locationId > 0
+          ? { locationId: params.locationId }
+          : {}),
+      },
+    });
     return response.data?.result || [];
   };
 
@@ -103,4 +111,39 @@ export const timeInputToMinutes = (value: string): number => {
   const [hh, mm] = (value || "08:00").split(":").map((x) => parseInt(x, 10));
   if (Number.isNaN(hh) || Number.isNaN(mm)) return 480;
   return Math.min(1439, Math.max(0, hh * 60 + mm));
+};
+
+/**
+ * Format a UTC instant in the schedule's timezone as 24-hour `YYYY-MM-DD HH:mm`.
+ */
+export const formatScheduleInstant = (
+  value?: string | null,
+  timeZoneId?: string | null
+): string => {
+  if (!value) return "—";
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    const tz = (timeZoneId || "UTC").trim() || "UTC";
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const get = (type: string) =>
+      parts.find((p) => p.type === type)?.value ?? "";
+    const hour = get("hour") === "24" ? "00" : get("hour");
+    return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")}`;
+  } catch {
+    try {
+      return new Date(value).toISOString().replace("T", " ").slice(0, 16);
+    } catch {
+      return value;
+    }
+  }
 };
