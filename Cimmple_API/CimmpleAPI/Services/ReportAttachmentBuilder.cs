@@ -39,10 +39,12 @@ namespace CimmpleAPI.Services
             if (string.IsNullOrEmpty(category))
                 category = IsFinancial(reportType) ? "financial" : "operational";
 
+            var asOfLocal = ReportScheduleTiming.GetTenantLocalNow(schedule.TimeZoneId);
             var dateFilter = ReportDateRangeHelper.Resolve(
                 schedule.DateRange,
                 schedule.CustomStartDate,
-                schedule.CustomEndDate);
+                schedule.CustomEndDate,
+                asOfLocal);
 
             int? locationId = schedule.LocationId.HasValue && schedule.LocationId.Value > 0
                 ? schedule.LocationId

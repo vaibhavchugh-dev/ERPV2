@@ -71,6 +71,18 @@ const JournalEntries: React.FC = () => {
     return ymdLocal(d);
   });
   const [filterEnd, setFilterEnd] = useState(() => ymdLocal(new Date()));
+  const [search, setSearch] = useState("");
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (r) =>
+        String(r.id).includes(q) ||
+        (r.referenceNumber || "").toLowerCase().includes(q) ||
+        (r.description || "").toLowerCase().includes(q)
+    );
+  }, [items, search]);
 
   const [entryDate, setEntryDate] = useState(() => ymdLocal(new Date()));
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -292,6 +304,15 @@ const JournalEntries: React.FC = () => {
         <h2>Posted entries</h2>
         <div className="je-filters">
           <div>
+            <label>Search</label>
+            <input
+              type="search"
+              placeholder="JE #, reference, description…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div>
             <label>From</label>
             <input
               type="date"
@@ -312,12 +333,14 @@ const JournalEntries: React.FC = () => {
           </button>
         </div>
         <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "0.75rem" }}>
-          Showing {items.length} of {total} in range.
+          Showing {filteredItems.length} of {total} in range
+          {search.trim() ? " (filtered)" : ""}.
         </p>
         <div className="je-table-wrap" style={{ marginTop: "0.5rem" }}>
           <table className="je-table">
             <thead>
               <tr>
+                <th>JE Number</th>
                 <th>Date</th>
                 <th>Reference</th>
                 <th>Description</th>
@@ -326,14 +349,14 @@ const JournalEntries: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && !listLoading ? (
+              {filteredItems.length === 0 && !listLoading ? (
                 <tr>
-                  <td colSpan={5} style={{ color: "#6b7280" }}>
+                  <td colSpan={6} style={{ color: "#6b7280" }}>
                     No journal headers in this period.
                   </td>
                 </tr>
               ) : (
-                items.map((r) => (
+                filteredItems.map((r) => (
                   <tr
                     key={r.id}
                     onClick={() => openDetail(r.id)}
@@ -345,6 +368,9 @@ const JournalEntries: React.FC = () => {
                           : ""
                     }
                   >
+                    <td>
+                      <strong>#{r.id}</strong>
+                    </td>
                     <td>{r.entryDate}</td>
                     <td>{r.referenceNumber}</td>
                     <td>{r.description}</td>

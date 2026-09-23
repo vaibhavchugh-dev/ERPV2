@@ -129,7 +129,7 @@ namespace CimmpleAPI.Controllers
                 if (quotation.Locationid.HasValue && quotation.Locationid.Value > 0 &&
                     !CanAccessLocation(quotation.Locationid.Value))
                 {
-                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 // Query details - handle QuantityTiers column gracefully if it doesn't exist
@@ -1289,7 +1289,7 @@ namespace CimmpleAPI.Controllers
                     quotation.locationid.Value > 0 &&
                     !CanAccessLocation(quotation.locationid.Value))
                 {
-                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 if (IsVendorPortal())

@@ -181,10 +181,14 @@ public static class QualityReportsService
         var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
             .Select(n => new
             {
-                n.NcrNumber,
+                n.NcrId,
+                NcrNumber = n.NcrNumber ?? "",
                 PartNo = n.PartNo ?? "",
                 n.DefectQuantity,
                 n.TotalQuantity,
+                Status = n.Status ?? "",
+                Title = n.Title ?? "",
+                n.ReportedDate,
             })
             .OrderByDescending(n => n.DefectQuantity)
             .ToList();
@@ -209,8 +213,29 @@ public static class QualityReportsService
             var rate = n.TotalQuantity > 0
                 ? (decimal)n.DefectQuantity / n.TotalQuantity * 100m
                 : 0m;
+            var ncrLabel = string.IsNullOrWhiteSpace(n.NcrNumber) ? $"NCR #{n.NcrId}" : n.NcrNumber;
             section.AddRow(
-                n.NcrNumber ?? "",
+                new ReportRowMetaDto
+                {
+                    EntityType = "ncr",
+                    EntityId = n.NcrId,
+                    Title = ncrLabel,
+                    LinkPath = "/quality",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = ncrLabel,
+                            SubLabel = string.IsNullOrWhiteSpace(n.Title) ? (string.IsNullOrWhiteSpace(n.PartNo) ? "—" : n.PartNo) : Truncate(n.Title, 80),
+                            Date = n.ReportedDate.ToString("yyyy-MM-dd"),
+                            Amount = n.TotalQuantity > 0 ? ReportResultFactory.Pct(rate) : "—",
+                            Status = string.IsNullOrWhiteSpace(n.Status) ? "—" : n.Status,
+                            EntityId = n.NcrId,
+                            LinkPath = "/quality"
+                        }
+                    }
+                },
+                ncrLabel,
                 string.IsNullOrWhiteSpace(n.PartNo) ? "—" : n.PartNo,
                 ReportResultFactory.Num(n.DefectQuantity),
                 ReportResultFactory.Num(n.TotalQuantity),

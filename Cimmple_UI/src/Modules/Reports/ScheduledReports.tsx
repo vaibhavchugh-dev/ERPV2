@@ -14,28 +14,21 @@ import {
   ReportScheduleDto,
   ReportScheduleService,
   minutesToTimeInput,
+  formatScheduleInstant,
 } from "../../Common/Services/ReportScheduleService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import "./ScheduledReports.scss";
 
 const freqLabel = (s: ReportScheduleDto) => {
+  const time = minutesToTimeInput(s.timeOfDayMinutes);
   if (s.frequency === "Weekly") {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    return `Weekly (${days[s.dayOfWeek ?? 1]} ${minutesToTimeInput(s.timeOfDayMinutes)})`;
+    return `Weekly (${days[s.dayOfWeek ?? 1]} ${time})`;
   }
   if (s.frequency === "Monthly") {
-    return `Monthly (day ${s.dayOfMonth ?? 1} @ ${minutesToTimeInput(s.timeOfDayMinutes)})`;
+    return `Monthly (day ${s.dayOfMonth ?? 1} @ ${time})`;
   }
-  return `Daily @ ${minutesToTimeInput(s.timeOfDayMinutes)}`;
-};
-
-const fmtUtc = (value?: string | null) => {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
+  return `Daily @ ${time}`;
 };
 
 const ScheduledReports: React.FC = () => {
@@ -172,7 +165,7 @@ const ScheduledReports: React.FC = () => {
                       )}
                     </td>
                     <td>
-                      <div>{fmtUtc(item.lastRunUtc)}</div>
+                      <div>{formatScheduleInstant(item.lastRunUtc, item.timeZoneId)}</div>
                       {item.lastRunStatus && (
                         <div
                           className={`sr-status ${
@@ -184,7 +177,11 @@ const ScheduledReports: React.FC = () => {
                         </div>
                       )}
                     </td>
-                    <td>{item.isEnabled ? fmtUtc(item.nextRunUtc) : "Paused"}</td>
+                    <td>
+                      {item.isEnabled
+                        ? formatScheduleInstant(item.nextRunUtc, item.timeZoneId)
+                        : "Paused"}
+                    </td>
                     <td>{item.isEnabled ? "Enabled" : "Paused"}</td>
                     <td className="sr-actions">
                       <button

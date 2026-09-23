@@ -31,7 +31,8 @@ import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
 import ContactSupportDialog from "./ContactSupportDialog";
 import ConversationPanel from "./ConversationPanel";
-import { stripMentionTokensForPreview } from "../Utils/chatMentions";
+import { stripMentionTokensForPreview, navigateToMentionDocument } from "../Utils/chatMentions";
+import { formatDateTime } from "../Utils/Formatting";
 import "./TopBar.scss";
 
 const NOTIFICATION_POLL_MS = 45000;
@@ -443,18 +444,8 @@ const TopBar: React.FC = () => {
   }, [location.search, location.pathname, history]);
 
   const formatNotificationTime = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return "";
-      return d.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
+    if (!iso) return "";
+    return formatDateTime(iso) || "";
   };
 
   const handleOpenNotifications = () => {
@@ -505,7 +496,7 @@ const TopBar: React.FC = () => {
     }
 
     if (item.linkPath) {
-      history.push(item.linkPath);
+      navigateToMentionDocument(item.linkPath, history);
     }
   };
 
@@ -595,10 +586,11 @@ const TopBar: React.FC = () => {
 
   const handleResultClick = (result: SearchResult) => {
     const url = GlobalSearchService.getResultUrl(result);
-    
-    // Navigate to the page
-    history.push(url);
-    
+
+    if (!navigateToMentionDocument(url, history)) {
+      return;
+    }
+
     // Close search
     setShowSearchResults(false);
     setSearchQuery('');

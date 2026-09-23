@@ -1,5 +1,7 @@
 import React from "react";
+import { toast } from "react-toastify";
 import { SearchResult, GlobalSearchService } from "../Services/GlobalSearchService";
+import { AuthService } from "../Services/AuthService";
 
 /** Stored token: @[type:id|Label] — Label may not contain ']' */
 export const CHAT_MENTION_RE = /@\[([a-zA-Z]+):(\d+)\|([^\]]+)\]/g;
@@ -61,6 +63,36 @@ export function urlForChatMention(type: string, id: number): string | null {
   const fake = { id, type } as SearchResult;
   const url = GlobalSearchService.getResultUrl(fake);
   return url && url !== "/home" ? url : null;
+}
+
+/** Path without query/hash for RBAC checks. */
+export function pathOnlyFromUrl(url: string): string {
+  return (url.split("?")[0] || "").split("#")[0] || "/";
+}
+
+/**
+ * Navigate to a document mention/link. Shows a clear toast when the user
+ * lacks module permission instead of a silent redirect / blank open.
+ */
+export function navigateToMentionDocument(
+  url: string,
+  history: { push: (path: string) => void },
+  options?: { onBeforeNavigate?: () => void }
+): boolean {
+  if (!url || url === "/home") {
+    toast.error("This document link is not available.");
+    return false;
+  }
+  const pathOnly = pathOnlyFromUrl(url);
+  if (!AuthService.hasPermissionForPath(pathOnly)) {
+    toast.error(
+      "You don't have access to this document. Ask an administrator to grant permission for this module."
+    );
+    return false;
+  }
+  options?.onBeforeNavigate?.();
+  history.push(url);
+  return true;
 }
 
 export function extractMentionedUserIds(body: string): number[] {

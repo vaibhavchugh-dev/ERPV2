@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsSafe } from "../../Contexts/SettingsContext";
 import ColumnChooser from "../ColumnChooser";
 import { useColumnChooser } from "../../Hooks/useColumnChooser";
@@ -45,6 +45,12 @@ export interface MasterListPageProps<T = any> {
   searchFields?: (keyof T | string)[]; // Fields to search in
   /** Seed the search box (e.g. from report deep-link ?search=). */
   initialSearchTerm?: string;
+  /**
+   * When set, search changes are reported to the parent (debounced).
+   * Use for server-side search so clearing the box reloads the full list.
+   * Client-side field filtering is skipped while this callback is provided.
+   */
+  onSearchChange?: (term: string) => void;
   /** Custom row matcher (e.g. JO# / CO# display formats). Overrides default field search when provided. */
   matchRowSearch?: (row: T, searchLower: string) => boolean;
   filters?: {
@@ -81,6 +87,7 @@ const MasterListPage = <T extends Record<string, any>>({
   searchPlaceholder = "Search...",
   searchFields = [],
   initialSearchTerm = "",
+  onSearchChange,
   matchRowSearch,
   filters = [],
   extraFilters,
@@ -96,14 +103,30 @@ const MasterListPage = <T extends Record<string, any>>({
   const [searchTerm, setSearchTerm] = useState(() =>
     (initialSearchTerm || "").trim()
   );
+  const userEditedSearchRef = useRef(false);
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     const next = (initialSearchTerm || "").trim();
-    if (next) setSearchTerm(next);
+    if (next) {
+      userEditedSearchRef.current = false;
+      setSearchTerm(next);
+    }
   }, [initialSearchTerm]);
+
+  // Debounce server search so typing does not hammer the API; clear is immediate.
+  // Skip the initial / seeded value — parent already owns that filter.
+  useEffect(() => {
+    if (!onSearchChange || !userEditedSearchRef.current) return;
+    const trimmed = searchTerm.trim();
+    const delay = trimmed === "" ? 0 : 300;
+    const timer = window.setTimeout(() => {
+      onSearchChange(trimmed);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm, onSearchChange]);
 
   const chooserColumns = useMemo(() => {
     const mapped = columns.map((column) => ({
@@ -158,6 +181,8 @@ const MasterListPage = <T extends Record<string, any>>({
   };
 
   const filteredData = data.filter((row) => {
+    // Parent owns filtering when onSearchChange is provided (server-side search).
+    if (onSearchChange) return true;
     if (!searchTerm) return true;
 
     const searchLower = searchTerm.toLowerCase();
@@ -299,7 +324,10 @@ const MasterListPage = <T extends Record<string, any>>({
             className="search-input"
             placeholder={searchPlaceholder}
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              userEditedSearchRef.current = true;
+              setSearchTerm(e.target.value);
+            }}
           />
         </div>
 

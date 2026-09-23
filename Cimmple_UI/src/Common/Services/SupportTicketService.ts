@@ -21,6 +21,8 @@ export interface SupportTicketListItem {
   id: number;
   tenantId?: number;
   tenantName?: string | null;
+  locationId?: number | null;
+  locationName?: string | null;
   product?: string;
   category: string;
   subject: string;
@@ -38,7 +40,6 @@ export interface SupportTicketListItem {
 export interface SupportTicketDetail extends SupportTicketListItem {
   description: string;
   appVersion?: string | null;
-  locationId?: number | null;
   entityType?: string | null;
   entityId?: number | null;
   linkPath?: string | null;

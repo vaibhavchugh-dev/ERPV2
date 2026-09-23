@@ -27,6 +27,11 @@ export type OperationalDrillMeta = {
 type Props = {
   meta: OperationalDrillMeta | null;
   onClose: () => void;
+  /**
+   * Report site scope for related-screen deep links.
+   * undefined = omit; null = All sites; number = that site.
+   */
+  locationId?: number | null;
 };
 
 function emptyMessage(meta: OperationalDrillMeta): string {
@@ -35,13 +40,18 @@ function emptyMessage(meta: OperationalDrillMeta): string {
       return `No job orders found for status “${meta.entityKey || "this status"}”.`;
     case "customer":
       return "No orders or invoices found for this customer in the report period.";
+    case "invoice-period":
+    case "location":
+    case "invoice":
+      return "No invoices found for this selection.";
     case "vendor":
     case "vendor-part":
     case "vendor-po":
     case "po-month":
       return "No purchase orders found for this selection.";
     case "ncr-bucket":
-      return `No NCRs found for “${meta.entityKey || "this bucket"}”.`;
+    case "ncr":
+      return `No NCRs found for “${meta.entityKey || meta.title || "this selection"}”.`;
     case "stock-date":
     case "stock-type":
       return "No stock movements in this group.";
@@ -51,12 +61,18 @@ function emptyMessage(meta: OperationalDrillMeta): string {
       return "No quotation detail available.";
     case "job":
       return "No job detail available.";
+    case "process":
+      return "No job orders found for this process.";
     default:
       return "Nothing to show for this row. Try opening the related screen for the full list.";
   }
 }
 
-const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
+const OperationalReportDrillDrawer: React.FC<Props> = ({
+  meta,
+  onClose,
+  locationId,
+}) => {
   const history = useHistory();
   const [visibleCount, setVisibleCount] = useState(DRILL_DETAIL_PAGE_SIZE);
 
@@ -87,22 +103,30 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
   const remaining = Math.max(0, details.length - visibleCount);
 
   if (!meta) return null;
-
+  // Revenue-by-location rows carry the site on EntityId; prefer that over report scope.
+  const linkLocationId =
+    meta.entityType === "location"
+      ? meta.entityId != null && meta.entityId > 0
+        ? meta.entityId
+        : null
+      : locationId;
   const primaryPath = buildDrillLink({
     path: meta.linkPath || "/reports",
-    entityId: meta.entityId,
+    entityId: meta.entityType === "location" ? null : meta.entityId,
     entityKey: meta.entityKey,
     entityType: meta.entityType,
     title: meta.title,
     search: meta.entityType === "inventory-item" ? meta.entityKey : null,
+    locationId: linkLocationId,
   });
 
   const go = (path: string, opts?: { newTab?: boolean }) => {
-    onClose();
     if (opts?.newTab) {
+      // Keep the report preview and drill drawer open in this tab.
       window.open(path, "_blank", "noopener,noreferrer");
       return;
     }
+    onClose();
     history.push(path);
   };
 
@@ -186,6 +210,7 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
                           d.linkPath?.startsWith("/inventory")
                             ? d.label
                             : null,
+                        locationId: linkLocationId,
                       });
                       return (
                         <tr key={i}>
@@ -252,3 +277,4 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({ meta, onClose }) => {
 };
 
 export default OperationalReportDrillDrawer;
+

@@ -922,7 +922,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading job order:", error);
-      toast.error(`Error loading job order: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error loading job order"));
     } finally {
       setLoading(false);
       setInitialLoading(false);
@@ -1258,6 +1258,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       Comments: next,
     }));
   };
+
+  const effectiveJobOrderId = formData.JobOrderID > 0 ? formData.JobOrderID : jobOrderId;
 
   const handleApplyJobTemplate = async (pickedTemplate?: JobTemplate) => {
     const sourceTemplate = pickedTemplate || selectedTemplate;
@@ -3911,6 +3913,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
               listFirst
               allowDelete={false}
               onChange={handleCommentsChange}
+              persistContext={
+                effectiveJobOrderId > 0
+                  ? {
+                      entityType: "JobOrder",
+                      entityId: effectiveJobOrderId,
+                      entityLabel: formData.JobNumber
+                        ? `Job Order ${formData.JobNumber}`
+                        : `Job Order #${effectiveJobOrderId}`,
+                      linkPath: `/job-orders?open=${effectiveJobOrderId}`,
+                    }
+                  : null
+              }
             />
           </div>
 
