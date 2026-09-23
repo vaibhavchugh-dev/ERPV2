@@ -46,6 +46,7 @@ env:
 jobs:
   changes:
     name: Detect committed apps
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       api: ${{ steps.pick.outputs.api }}
@@ -81,27 +82,16 @@ jobs:
       - name: Choose apps to release
         id: pick
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            target="${{ inputs.target }}"
-            for app in api ui pwa vpa punch; do
-              if [ "$target" = "all" ] || [ "$target" = "$app" ]; then
-                echo "$app=true" >> "$GITHUB_OUTPUT"
-              else
-                echo "$app=false" >> "$GITHUB_OUTPUT"
-              fi
-            done
-          else
-            echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
-            echo "ui=${{ steps.filter.outputs.ui }}" >> "$GITHUB_OUTPUT"
-            echo "pwa=${{ steps.filter.outputs.pwa }}" >> "$GITHUB_OUTPUT"
-            echo "vpa=${{ steps.filter.outputs.vpa }}" >> "$GITHUB_OUTPUT"
-            echo "punch=${{ steps.filter.outputs.punch }}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
+          echo "ui=${{ steps.filter.outputs.ui }}" >> "$GITHUB_OUTPUT"
+          echo "pwa=${{ steps.filter.outputs.pwa }}" >> "$GITHUB_OUTPUT"
+          echo "vpa=${{ steps.filter.outputs.vpa }}" >> "$GITHUB_OUTPUT"
+          echo "punch=${{ steps.filter.outputs.punch }}" >> "$GITHUB_OUTPUT"
 
   deploy-api:
     name: Build and FTP API
     needs: changes
-    if: needs.changes.outputs.api == 'true'
+    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'api') || needs.changes.outputs.api == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -196,7 +186,7 @@ jobs:
   deploy-ui:
     name: Build and FTP UI
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'ui') || needs.changes.outputs.ui == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -231,7 +221,7 @@ jobs:
   deploy-pwa:
     name: Build and FTP Shop PWA
     needs: changes
-    if: needs.changes.outputs.pwa == 'true'
+    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'pwa') || needs.changes.outputs.pwa == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -267,7 +257,7 @@ jobs:
   deploy-vpa:
     name: Build and FTP Vendor portal
     needs: changes
-    if: needs.changes.outputs.vpa == 'true'
+    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'vpa') || needs.changes.outputs.vpa == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -302,7 +292,7 @@ jobs:
   deploy-punch:
     name: Build and FTP Punch
     needs: changes
-    if: needs.changes.outputs.punch == 'true'
+    if: always() && (needs.changes.result == 'success' || needs.changes.result == 'skipped') && (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'punch') || needs.changes.outputs.punch == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
