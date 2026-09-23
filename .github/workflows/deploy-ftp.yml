@@ -209,7 +209,7 @@ jobs:
           FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_UI/build
-          REMOTE_DIR: .
+          REMOTE_DIR: ./
         run: python .github/scripts/ftp_upload.py
 
   deploy-pwa:
@@ -244,7 +244,8 @@ jobs:
           FTP_USER: ${{ secrets.FTP_PWA_USERNAME != '' && secrets.FTP_PWA_USERNAME || env.FTP_PWA_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_PWA/dist
-          REMOTE_DIR: .
+          REMOTE_DIR: ./
+
         run: python .github/scripts/ftp_upload.py
 
   deploy-vpa:
@@ -279,7 +280,7 @@ jobs:
           FTP_USER: ${{ secrets.FTP_VPA_USERNAME != '' && secrets.FTP_VPA_USERNAME || env.FTP_VPA_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_VPA/dist
-          REMOTE_DIR: .
+          REMOTE_DIR: ./
         run: python .github/scripts/ftp_upload.py
 
   deploy-punch:
@@ -314,5 +315,5 @@ jobs:
           FTP_USER: ${{ secrets.FTP_PUNCH_USERNAME != '' && secrets.FTP_PUNCH_USERNAME || env.FTP_PUNCH_USERNAME_DEFAULT }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_Punch/dist
-          REMOTE_DIR: .
+          REMOTE_DIR: ./
         run: python .github/scripts/ftp_upload.py
