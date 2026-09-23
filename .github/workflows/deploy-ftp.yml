@@ -13,6 +13,19 @@ on:
       - ".github/workflows/deploy-ftp.yml"
       - ".github/scripts/ftp_upload.py"
   workflow_dispatch:
+    inputs:
+      target:
+        description: App to build and upload
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - api
+          - ui
+          - pwa
+          - vpa
+          - punch
 
 concurrency:
   group: deploy-ftp-main
@@ -69,11 +82,14 @@ jobs:
         id: pick
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "api=true" >> "$GITHUB_OUTPUT"
-            echo "ui=true" >> "$GITHUB_OUTPUT"
-            echo "pwa=true" >> "$GITHUB_OUTPUT"
-            echo "vpa=true" >> "$GITHUB_OUTPUT"
-            echo "punch=true" >> "$GITHUB_OUTPUT"
+            target="${{ inputs.target }}"
+            for app in api ui pwa vpa punch; do
+              if [ "$target" = "all" ] || [ "$target" = "$app" ]; then
+                echo "$app=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "$app=false" >> "$GITHUB_OUTPUT"
+              fi
+            done
           else
             echo "api=${{ steps.filter.outputs.api }}" >> "$GITHUB_OUTPUT"
             echo "ui=${{ steps.filter.outputs.ui }}" >> "$GITHUB_OUTPUT"
