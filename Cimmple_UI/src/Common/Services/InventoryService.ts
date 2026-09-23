@@ -51,6 +51,12 @@ export interface MovementDocumentOption {
   label: string;
   detail?: string;
   remainingQty?: number;
+  partNo?: string;
+  productId?: number;
+  rawMaterialId?: number;
+  qtyOrdered?: number;
+  bomProductIds?: number[];
+  bomRawMaterialIds?: number[];
 }
 
 export interface JobMaterialUsage {

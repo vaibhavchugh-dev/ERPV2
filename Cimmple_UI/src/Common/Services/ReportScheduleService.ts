@@ -52,8 +52,16 @@ export interface ReportScheduleUpsertPayload {
 }
 
 export class ReportScheduleService {
-  public static List = async (): Promise<ReportScheduleDto[]> => {
-    const response = await Instense.get(`/ReportSchedules`);
+  public static List = async (params?: {
+    locationId?: number;
+  }): Promise<ReportScheduleDto[]> => {
+    const response = await Instense.get(`/ReportSchedules`, {
+      params: {
+        ...(params?.locationId && params.locationId > 0
+          ? { locationId: params.locationId }
+          : {}),
+      },
+    });
     return response.data?.result || [];
   };
 

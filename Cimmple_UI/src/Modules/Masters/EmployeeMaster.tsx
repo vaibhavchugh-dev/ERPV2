@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import EmployeeMasterSlideout from "./EmployeeMasterSlideout";
@@ -28,6 +29,7 @@ const COLUMN_PREFERENCE_KEY = "employeeMaster.hiddenColumns";
 const EmployeeMasterComponent: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [employees, setEmployees] = useState<EmployeeMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -49,7 +51,7 @@ const EmployeeMasterComponent: React.FC = () => {
 
   useEffect(() => {
     loadEmployees();
-  }, []);
+  }, [locationIdParam]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -90,7 +92,10 @@ const EmployeeMasterComponent: React.FC = () => {
       }
 
       console.log('[EmployeeMaster] Loading employees with tenantID:', tenantID);
-      const result = await EmployeeService.GetEmployees({ tenantid: tenantID });
+      const result = await EmployeeService.GetEmployees({
+        tenantid: tenantID,
+        locationId: locationIdParam,
+      });
       console.log('[EmployeeMaster] API response:', result);
       
       if (result && Array.isArray(result)) {
@@ -325,6 +330,31 @@ const EmployeeMasterComponent: React.FC = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
             className="search-input"
           />
+        </div>
+        <div className="filter-group">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+          </svg>
+          <select
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+            className="filter-select"
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="filter-group">
           <svg

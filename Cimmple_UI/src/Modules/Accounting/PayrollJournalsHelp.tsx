@@ -5,15 +5,32 @@ import "../../Common/Components/UserAccountModals.scss";
 
 type HelpTab = "pay" | "import" | "manual";
 
+type PayrollJournalsHelpProps = {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+};
+
 const TABS: { id: HelpTab; label: string }[] = [
   { id: "pay", label: "CimmplePay" },
   { id: "import", label: "Third-party" },
   { id: "manual", label: "Manual" },
 ];
 
-const PayrollJournalsHelp: React.FC = () => {
-  const [open, setOpen] = useState(false);
+const PayrollJournalsHelp: React.FC<PayrollJournalsHelpProps> = ({
+  open: openProp,
+  onOpenChange,
+  hideTrigger = false,
+}) => {
+  const [internalOpen, setInternalOpen] = useState(false);
   const [tab, setTab] = useState<HelpTab>("pay");
+  const controlled = openProp !== undefined;
+  const open = controlled ? !!openProp : internalOpen;
+
+  const setOpen = (next: boolean) => {
+    if (!controlled) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -26,15 +43,17 @@ const PayrollJournalsHelp: React.FC = () => {
 
   return (
     <>
-      <button
-        type="button"
-        className="je-help-btn"
-        title="Payroll setup help"
-        aria-label="Payroll setup help"
-        onClick={() => setOpen(true)}
-      >
-        <FontAwesomeIcon icon={faCircleQuestion} />
-      </button>
+      {!hideTrigger && (
+        <button
+          type="button"
+          className="je-help-btn"
+          title="Payroll setup help"
+          aria-label="Payroll setup help"
+          onClick={() => setOpen(true)}
+        >
+          <FontAwesomeIcon icon={faCircleQuestion} />
+        </button>
+      )}
 
       {open && (
         <div

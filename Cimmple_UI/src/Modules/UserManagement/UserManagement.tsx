@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { UserManagementService, UserManagement as UserManagementType, UserQueryParams, PaginatedUsersResponse, Role } from "../../Common/Services/UserManagementService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import UserManagementSlideout from "./UserManagementSlideout";
 import RolePermissionManager from "./RolePermissionManager";
 import RoleManager from "./RoleManager";
@@ -11,6 +12,7 @@ import "./UserManagement.scss";
 const UserManagementComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [users, setUsers] = useState<UserManagementType[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<number>(0);
@@ -49,7 +51,7 @@ const UserManagementComponent: React.FC = () => {
   useEffect(() => {
     loadUsers();
     loadRoles();
-  }, [searchTerm, filterValue, pagination.pageNumber]);
+  }, [searchTerm, filterValue, pagination.pageNumber, locationIdParam]);
 
   useEffect(() => {
     // Create a map of role IDs to role names for quick lookup
@@ -91,7 +93,8 @@ const UserManagementComponent: React.FC = () => {
         searchTerm: searchTerm || undefined,
         status: filterValue !== "all" ? filterValue : undefined,
         pageNumber: pagination.pageNumber,
-        pageSize: pagination.pageSize
+        pageSize: pagination.pageSize,
+        locationId: locationIdParam,
       };
 
       console.log('[UserManagement] Loading users with params:', params);
@@ -220,6 +223,23 @@ const UserManagementComponent: React.FC = () => {
               className="search-input"
             />
             <i className="fas fa-search search-icon"></i>
+          </div>
+
+          <div className="filter-container">
+            <select
+              value={masterListFilter.value}
+              onChange={(e) => {
+                masterListFilter.onChange(e.target.value);
+                setPagination((prev) => ({ ...prev, pageNumber: 1 }));
+              }}
+              className="filter-select"
+            >
+              {masterListFilter.options.map((opt) => (
+                <option key={opt.value || "all"} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="filter-container">

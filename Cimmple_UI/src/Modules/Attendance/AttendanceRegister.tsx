@@ -9,6 +9,7 @@ import {
   AttendanceStatus,
 } from "../../Common/Services/AttendanceService";
 import { EmployeeMaster, EmployeeService } from "../../Common/Services/EmployeeService";
+import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import "../Masters/CustomerMaster.scss";
 import "../Masters/CustomerMasterSlideout.scss";
@@ -72,6 +73,7 @@ const displayName = (row: { firstName?: string; lastName?: string }) =>
   `${row.firstName || ""} ${row.lastName || ""}`.trim() || "—";
 
 const AttendanceRegister: React.FC = () => {
+  const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [fromDate, setFromDate] = useState(todayIso);
   const [toDate, setToDate] = useState(todayIso);
   const [employeeId, setEmployeeId] = useState(0);
@@ -99,7 +101,10 @@ const AttendanceRegister: React.FC = () => {
   const loadEmployees = async () => {
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-      const result = await EmployeeService.GetEmployees({ tenantid: storage?.tenantID || 0 });
+      const result = await EmployeeService.GetEmployees({
+        tenantid: storage?.tenantID || 0,
+        locationId: locationIdParam,
+      });
       setEmployees(Array.isArray(result) ? result : []);
     } catch {
       setEmployees([]);
@@ -114,6 +119,7 @@ const AttendanceRegister: React.FC = () => {
         to: toDate,
         employeeId: employeeId || undefined,
         includeNoPunch,
+        locationId: locationIdParam,
       });
       setRows(result);
     } catch (error: any) {
@@ -126,12 +132,12 @@ const AttendanceRegister: React.FC = () => {
 
   useEffect(() => {
     loadEmployees();
-  }, []);
+  }, [locationIdParam]);
 
   useEffect(() => {
     loadRegister();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromDate, toDate, employeeId, includeNoPunch]);
+  }, [fromDate, toDate, employeeId, includeNoPunch, locationIdParam]);
 
   const filteredRows = useMemo(() => {
     const term = searchTerm.toLowerCase();
@@ -283,6 +289,19 @@ const AttendanceRegister: React.FC = () => {
       </div>
 
       <div className="page-filters">
+        <div className="filter-group">
+          <select
+            className="filter-select"
+            value={masterListFilter.value}
+            onChange={(e) => masterListFilter.onChange(e.target.value)}
+          >
+            {masterListFilter.options.map((opt) => (
+              <option key={opt.value || "all"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="filter-group">
           <input
             type="date"
