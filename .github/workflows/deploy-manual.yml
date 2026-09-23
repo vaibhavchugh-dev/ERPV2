@@ -155,7 +155,7 @@ jobs:
       - name: Deploy UI over FTP
         env:
           FTP_SERVER: ${{ secrets.FTP_UI_SERVER != '' && secrets.FTP_UI_SERVER || env.FTP_UI_SERVER_DEFAULT }}
-          FTP_USER: ${{ secrets.FTP_UI_USERNAME != '' && secrets.FTP_UI_USERNAME || env.FTP_UI_USERNAME_DEFAULT }}
+          FTP_USER: ${{ secrets.FTP_UI_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_UI_PASSWORD }}
           LOCAL_DIR: Cimmple_UI/build
           REMOTE_DIR: ./
