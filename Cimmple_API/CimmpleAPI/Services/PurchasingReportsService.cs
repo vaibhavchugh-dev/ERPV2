@@ -37,6 +37,7 @@ public static class PurchasingReportsService
                 o.OrderDate,
                 o.TotalAmount,
                 Status = o.Status ?? "",
+                MaterialType = o.MaterialType ?? "",
             })
             .ToList();
 
@@ -50,20 +51,52 @@ public static class PurchasingReportsService
 
         var details = db.VendorOrderDetails.AsNoTracking()
             .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID))
-            .Select(d => new { d.ID, d.OrderID, d.DueDateDateTime })
+            .Select(d => new
+            {
+                d.ID,
+                d.OrderID,
+                d.DueDateDateTime,
+                d.QtyOrdered,
+                LineType = d.LineType ?? "",
+            })
             .ToList();
 
         var detailIds = details.Select(d => d.ID).ToList();
         var receiving = db.VendorReceiving.AsNoTracking()
             .Where(r => r.Tenantid == tenantId && detailIds.Contains(r.VendorOrderDetailID))
-            .Select(r => new { r.VendorOrderDetailID, r.ReceivedDate })
+            .Select(r => new { r.VendorOrderDetailID, r.ReceivedDate, r.ReceivedQty })
             .ToList();
 
         var maxReceivedByDetail = receiving
             .GroupBy(r => r.VendorOrderDetailID)
             .ToDictionary(g => g.Key, g => g.Max(x => x.ReceivedDate));
 
+        var receivedQtyByDetail = receiving
+            .GroupBy(r => r.VendorOrderDetailID)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.ReceivedQty));
+
         var detailsByOrder = details.GroupBy(d => d.OrderID).ToDictionary(g => g.Key, g => g.ToList());
+
+        // Derive display status the same way Vendor Orders list does (from receiving qty).
+        var statusByOrder = orders.ToDictionary(
+            o => o.OrderID,
+            o =>
+            {
+                var detailModels = details
+                    .Where(d => d.OrderID == o.OrderID)
+                    .Select(l => new Data.Models.VendorOrderDetail
+                    {
+                        ID = l.ID,
+                        QtyOrdered = l.QtyOrdered,
+                        LineType = l.LineType,
+                    })
+                    .ToList();
+                return DeriveVendorReceiveStatus(
+                    detailModels,
+                    receivedQtyByDetail,
+                    o.MaterialType,
+                    o.Status);
+            });
 
         var byVendor = orders
             .GroupBy(o => new
@@ -89,7 +122,7 @@ public static class PurchasingReportsService
             totalPos += poCount;
 
             var statusMix = string.Join(", ",
-                g.GroupBy(x => NormalizeVendorStatus(x.Status))
+                g.GroupBy(x => statusByOrder.TryGetValue(x.OrderID, out var st) ? st : (string.IsNullOrWhiteSpace(x.Status) ? "Unknown" : x.Status.Trim()))
                     .OrderByDescending(s => s.Count())
                     .Select(s => $"{s.Key}:{s.Count()}"));
 
@@ -124,15 +157,19 @@ public static class PurchasingReportsService
                     EntityId = g.Key.VendorID > 0 ? g.Key.VendorID : null,
                     Title = g.Key.Name,
                     LinkPath = "/purchasing/vendor-orders",
-                    Details = g.OrderByDescending(o => o.TotalAmount).Select(o => new ReportDrillItemDto
+                    Details = g.OrderByDescending(o => o.TotalAmount).Select(o =>
                     {
-                        Label = FormatVendorOrderLabel(o.PONumber, o.VendorPoNumber),
-                        SubLabel = string.IsNullOrWhiteSpace(o.Status) ? "—" : NormalizeVendorStatus(o.Status),
-                        Date = o.OrderDate.ToString("yyyy-MM-dd"),
-                        Amount = ReportResultFactory.Money(o.TotalAmount),
-                        Status = NormalizeVendorStatus(o.Status),
-                        EntityId = o.OrderID,
-                        LinkPath = "/purchasing/vendor-orders"
+                        var derived = statusByOrder.TryGetValue(o.OrderID, out var st) ? st : o.Status;
+                        return new ReportDrillItemDto
+                        {
+                            Label = FormatVendorOrderLabel(o.PONumber),
+                            SubLabel = VendorOrderSubLabel(o.VendorPoNumber, derived),
+                            Date = o.OrderDate.ToString("yyyy-MM-dd"),
+                            Amount = ReportResultFactory.Money(o.TotalAmount),
+                            Status = string.IsNullOrWhiteSpace(derived) ? "—" : derived,
+                            EntityId = o.OrderID,
+                            LinkPath = "/purchasing/vendor-orders"
+                        };
                     }).ToList()
                 },
                 g.Key.Name,
@@ -201,8 +238,8 @@ public static class PurchasingReportsService
                     LinkPath = "/purchasing/vendor-orders",
                     Details = g.OrderByDescending(o => o.OrderDate).Select(o => new ReportDrillItemDto
                     {
-                        Label = FormatVendorOrderLabel(o.PONumber, o.VendorPoNumber),
-                        SubLabel = string.IsNullOrWhiteSpace(o.VendorName) ? "—" : o.VendorName.Trim(),
+                        Label = FormatVendorOrderLabel(o.PONumber),
+                        SubLabel = VendorOrderSubLabel(o.VendorPoNumber, o.VendorName),
                         Date = o.OrderDate.ToString("yyyy-MM-dd"),
                         Amount = ReportResultFactory.Money(o.TotalAmount),
                         Status = NormalizeVendorStatus(o.Status),
@@ -302,8 +339,8 @@ public static class PurchasingReportsService
                 .OrderByDescending(x => x.Spend)
                 .Select(x => new ReportDrillItemDto
                 {
-                    Label = FormatVendorOrderLabel(x.PONumber, x.VendorPoNumber),
-                    SubLabel = x.Part,
+                    Label = FormatVendorOrderLabel(x.PONumber),
+                    SubLabel = VendorOrderSubLabel(x.VendorPoNumber, x.Part),
                     Date = x.OrderDate.ToString("yyyy-MM-dd"),
                     Amount = ReportResultFactory.Money(x.Spend),
                     Status = NormalizeVendorStatus(x.Status),
@@ -442,10 +479,15 @@ public static class PurchasingReportsService
                 VendorName = o.VendorName ?? "",
                 o.PONumber,
                 VendorPoNumber = o.VendorPoNumber ?? "",
+                o.TotalAmount,
                 PartNo = d.PartNo ?? "",
                 PartName = d.PartName ?? "",
                 JobNumber = d.JobNumber ?? "",
                 d.ID,
+                d.UnitPrice,
+                d.QtyOrdered,
+                d.Discount,
+                d.DiscountType,
                 HeaderDue = o.ExternalOrderDate,
                 LineDue = d.DueDateDateTime,
             }).ToList()
@@ -455,6 +497,8 @@ public static class PurchasingReportsService
                 l.VendorName,
                 l.PONumber,
                 l.VendorPoNumber,
+                l.TotalAmount,
+                LineSpend = LineNetSpend(l.UnitPrice, l.QtyOrdered, l.Discount, l.DiscountType),
                 Part = ResolveVendorLinePart(l.PartNo, l.PartName, l.JobNumber),
                 l.ID,
                 DueDate = ResolveVendorDueDate(l.HeaderDue, l.LineDue),
@@ -492,7 +536,7 @@ public static class PurchasingReportsService
             }
 
             var vendor = string.IsNullOrWhiteSpace(line.VendorName) ? "(unknown)" : line.VendorName.Trim();
-            var voLabel = FormatVendorOrderLabel(line.PONumber, line.VendorPoNumber);
+            var voLabel = FormatVendorOrderLabel(line.PONumber);
             table.AddRow(
                 new ReportRowMetaDto
                 {
@@ -505,8 +549,9 @@ public static class PurchasingReportsService
                         new()
                         {
                             Label = voLabel,
-                            SubLabel = $"{vendor} · {line.Part}",
+                            SubLabel = VendorOrderSubLabel(line.VendorPoNumber, $"{vendor} · {line.Part}"),
                             Date = due.ToString("yyyy-MM-dd"),
+                            Amount = ReportResultFactory.Money(line.LineSpend > 0 ? line.LineSpend : line.TotalAmount),
                             Status = !hasRecv ? "Not received" : (isOnTime ? "On time" : "Late"),
                             EntityId = line.OrderID,
                             LinkPath = "/purchasing/vendor-orders"
@@ -544,17 +589,27 @@ public static class PurchasingReportsService
     }
 
     /// <summary>
-    /// Prefer Vendor PO Number when set; otherwise display sequential number as VO# (same as Vendor Orders UI).
+    /// Display sequential VO# from PONumber (same as Vendor Orders UI / PDF).
+    /// Vendor PO Number is shown separately via <see cref="VendorOrderSubLabel"/>.
     /// </summary>
-    private static string FormatVendorOrderLabel(int poNumber, string? vendorPoNumber)
+    private static string FormatVendorOrderLabel(int poNumber)
     {
-        if (!string.IsNullOrWhiteSpace(vendorPoNumber))
-            return vendorPoNumber.Trim();
         var display = poNumber < 1000 ? poNumber + 999 : poNumber;
         return $"VO#{display}";
     }
 
-    /// <summary>Collapse receiving aliases so status mix counts are consistent.</summary>
+    private static string VendorOrderSubLabel(string? vendorPoNumber, string? other)
+    {
+        var vendorPo = (vendorPoNumber ?? "").Trim();
+        var rest = (other ?? "").Trim();
+        if (!string.IsNullOrEmpty(vendorPo) && !string.IsNullOrEmpty(rest))
+            return $"Vendor PO: {vendorPo} · {rest}";
+        if (!string.IsNullOrEmpty(vendorPo))
+            return $"Vendor PO: {vendorPo}";
+        return string.IsNullOrEmpty(rest) ? "—" : rest;
+    }
+
+    /// <summary>Collapse receiving aliases so drill status text stays consistent.</summary>
     private static string NormalizeVendorStatus(string? status)
     {
         if (string.IsNullOrWhiteSpace(status))
@@ -567,6 +622,75 @@ public static class PurchasingReportsService
             s.Equals("Fully Received", StringComparison.OrdinalIgnoreCase))
             return "Fully Received";
         return s;
+    }
+
+    /// <summary>
+    /// Mirror Vendor Orders list: derive Fully/Partially Received from receiving qty
+    /// (OrderController.DeriveVendorReceiveStatus).
+    /// </summary>
+    private static string DeriveVendorReceiveStatus(
+        IReadOnlyCollection<Data.Models.VendorOrderDetail> details,
+        IReadOnlyDictionary<int, int> receivedByDetail,
+        string? materialType,
+        string currentStatus)
+    {
+        var status = string.IsNullOrWhiteSpace(currentStatus) ? "" : currentStatus.Trim();
+        var recalculate =
+            status.Equals("Sent", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Partially Received", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Fully Received", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Receiving", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+
+        if (!recalculate)
+            return string.IsNullOrEmpty(status) ? "Unknown" : status;
+
+        var receivable = details.Where(d => VendorLineCountsTowardReceive(d, materialType)).ToList();
+        if (receivable.Count == 0)
+            return string.IsNullOrEmpty(status) ? "Unknown" : status;
+
+        var allComplete = true;
+        var anyReceived = false;
+        foreach (var detail in receivable)
+        {
+            var rec = receivedByDetail.TryGetValue(detail.ID, out var qty) ? qty : 0;
+            if (rec > 0) anyReceived = true;
+            if (rec < detail.QtyOrdered) allComplete = false;
+        }
+
+        if (allComplete && anyReceived)
+            return "Fully Received";
+        if (anyReceived)
+            return "Partially Received";
+        if (status.Equals("Fully Received", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Partially Received", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Receiving", StringComparison.OrdinalIgnoreCase)
+            || status.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+            return "Sent";
+        return status;
+    }
+
+    private static bool VendorLineCountsTowardReceive(Data.Models.VendorOrderDetail detail, string? orderMaterialType)
+    {
+        if (detail.QtyOrdered <= 0)
+            return false;
+        var lineType = NormalizeVendorOrderLineType(detail.LineType, orderMaterialType);
+        return !string.Equals(lineType, "Service", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(lineType, "Subcontract", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeVendorOrderLineType(string? value, string? orderMaterialType)
+    {
+        var allowed = new[] { "RawMaterial", "FinishedProduct", "Tool", "Service", "Subcontract", "Other" };
+        var v = (value ?? "").Trim();
+        if (string.IsNullOrEmpty(v))
+            return string.Equals(orderMaterialType, "Service", StringComparison.OrdinalIgnoreCase) ? "Service" : "RawMaterial";
+        foreach (var a in allowed)
+        {
+            if (string.Equals(v, a, StringComparison.OrdinalIgnoreCase))
+                return a;
+        }
+        return "Other";
     }
 
     /// <summary>

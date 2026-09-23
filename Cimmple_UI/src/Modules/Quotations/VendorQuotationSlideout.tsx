@@ -499,7 +499,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         setSelectedJobOrders(newSelectedJobOrders);
       }
     } catch (error: any) {
-      toast.error("Error loading quotation");
+      toast.error(getApiErrorMessage(error, "Error loading quotation"));
       console.error(error);
     } finally {
       setLoading(false);
@@ -2547,8 +2547,22 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               comments={comments}
               onChange={(next) => {
                 setComments(next);
-                setIsStateChanged(true);
+                const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
+                if (!(id > 0)) setIsStateChanged(true);
               }}
+              persistContext={(() => {
+                const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
+                if (!(id > 0)) return null;
+                return {
+                  entityType: "VendorQuotation",
+                  entityId: id,
+                  entityLabel:
+                    formData.PONumber > 0
+                      ? `Vendor Quotation VQ-${formData.PONumber}`
+                      : `Vendor Quotation #${id}`,
+                  linkPath: `/quotations/vendor?open=${id}`,
+                };
+              })()}
             />
           </div>
 

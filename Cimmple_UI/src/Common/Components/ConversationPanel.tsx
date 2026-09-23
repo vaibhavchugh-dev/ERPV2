@@ -15,8 +15,10 @@ import {
   ChatMessageBody,
   encodePendingMentionsInBody,
   flattenDocumentSearchResults,
+  navigateToMentionDocument,
   typeBadge,
 } from "../Utils/chatMentions";
+import { formatDateTime } from "../Utils/Formatting";
 import "./ConversationPanel.scss";
 
 interface ConversationPanelProps {
@@ -267,18 +269,8 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   if (!conversationId) return null;
 
   const formatTime = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return "";
-      return d.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
+    if (!iso) return "";
+    return formatDateTime(iso) || "";
   };
 
   const handleSend = async () => {
@@ -361,8 +353,7 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     body={m.body}
                     isMine={m.isMine}
                     onOpenDocument={(url) => {
-                      onClose();
-                      history.push(url);
+                      navigateToMentionDocument(url, history, { onBeforeNavigate: onClose });
                     }}
                   />
                 </div>

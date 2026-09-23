@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faEye, faPrint, faEnvelope, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
@@ -412,10 +412,19 @@ const CustomerInvoices: React.FC = () => {
         return;
       }
     }
+    // Strip deep-link query after seeding; keep locationId until useSiteListFilter reads it
+    // (pathname-only replace is fine once Site filter is pinned from URL).
     if (search && search.trim()) {
       history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
+
+  const handleListSearchChange = useCallback((term: string) => {
+    setFilters((prev) => {
+      if (prev.searchTerm === term) return prev;
+      return { ...prev, searchTerm: term };
+    });
+  }, []);
 
   // Listen for custom event from global search
   useEffect(() => {
@@ -788,6 +797,8 @@ const CustomerInvoices: React.FC = () => {
         enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
+        initialSearchTerm={filters.searchTerm}
+        onSearchChange={handleListSearchChange}
         filters={[
           masterListFilter,
           {

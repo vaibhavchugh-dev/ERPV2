@@ -26,6 +26,8 @@ type PayrollLinkRow = {
   paymentAmount?: number | null;
   taxRemittanceJournalEntryId?: number | null;
   taxRemittanceAmount?: number | null;
+  suggestedNetPay?: number | null;
+  remainingNetPay?: number | null;
 };
 
 type TaxLine = {
@@ -66,15 +68,32 @@ const PayrollJournalLinks: React.FC = () => {
   });
   const [filterEnd, setFilterEnd] = useState(() => ymd(new Date()));
   const [source, setSource] = useState("");
+  const [search, setSearch] = useState("");
 
   const [cashLink, setCashLink] = useState<PayrollLinkRow | null>(null);
   const [cashMode, setCashMode] = useState<"payment" | "tax" | null>(null);
   const [cashLoading, setCashLoading] = useState(false);
   const [cashPosting, setCashPosting] = useState(false);
   const [suggestedNet, setSuggestedNet] = useState(0);
+  const [remainingNet, setRemainingNet] = useState(0);
+  const [paidAmount, setPaidAmount] = useState(0);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => ymd(new Date()));
   const [taxLines, setTaxLines] = useState<TaxLine[]>([]);
+
+  const filteredItems = items.filter((row) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      String(row.id).includes(q) ||
+      String(row.journalEntryId).includes(q) ||
+      String(row.paymentJournalEntryId || "").includes(q) ||
+      (row.referenceNumber || "").toLowerCase().includes(q) ||
+      (row.description || "").toLowerCase().includes(q) ||
+      (row.source || "").toLowerCase().includes(q) ||
+      (row.externalRunId || "").toLowerCase().includes(q)
+    );
+  });
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -107,8 +126,14 @@ const PayrollJournalLinks: React.FC = () => {
     try {
       const preview = await AccountingService.GetPayrollCashPreview(row.id);
       const net = Number(preview?.suggestedNetPay || 0);
+      const paid = Number(preview?.paidAmount || 0);
+      const remaining = Number(
+        preview?.remainingNetPay != null ? preview.remainingNetPay : Math.max(0, net - paid)
+      );
       setSuggestedNet(net);
-      setPaymentAmount(net > 0 ? net.toFixed(2) : "");
+      setPaidAmount(paid);
+      setRemainingNet(remaining);
+      setPaymentAmount(remaining > 0 ? remaining.toFixed(2) : "");
       const lines: TaxLine[] = (preview?.taxPayableLines || []).map((l: any) => ({
         bucketKey: l.bucketKey,
         label: l.label,
@@ -117,8 +142,8 @@ const PayrollJournalLinks: React.FC = () => {
         selected: true,
       }));
       setTaxLines(lines);
-      if (mode === "payment" && preview?.paymentAlreadyPosted) {
-        toast.info("Net-pay payment already posted for this period.");
+      if (mode === "payment" && remaining <= 0) {
+        toast.info("Net pay is already fully paid for this period.");
       }
       if (mode === "tax" && preview?.taxRemittanceAlreadyPosted) {
         toast.info("Tax remittance already posted for this period.");
@@ -145,6 +170,10 @@ const PayrollJournalLinks: React.FC = () => {
       toast.error("Enter a payment amount greater than zero.");
       return;
     }
+    if (remainingNet > 0 && amount > remainingNet + 0.009) {
+      toast.error(`Amount cannot exceed remaining net pay (${fmtMoney(remainingNet)}).`);
+      return;
+    }
     setCashPosting(true);
     try {
       const result = await AccountingService.PostPayrollNetPayment({
@@ -153,9 +182,10 @@ const PayrollJournalLinks: React.FC = () => {
         paymentDate,
       });
       toast.success(
-        result?.alreadyExists
-          ? "Payment journal already existed."
-          : `Posted net-pay payment JE #${result?.journalEntryId}.`
+        result?.message ||
+          (result?.alreadyExists
+            ? "Payment journal already existed."
+            : `Posted net-pay payment JE #${result?.journalEntryId}.`)
       );
       closeCashModal();
       await loadList();
@@ -226,6 +256,16 @@ const PayrollJournalLinks: React.FC = () => {
       </div>
 
       <div className="page-filters">
+        <div className="filter-group">
+          <input
+            type="search"
+            className="filter-select"
+            placeholder="Search reference, JE #, description…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ minWidth: 220 }}
+          />
+        </div>
         <div className="filter-group payroll-date-filter">
           <span>From</span>
           <input
@@ -278,14 +318,17 @@ const PayrollJournalLinks: React.FC = () => {
         <div className="table-wrapper">
           {loading ? (
             <p className="payroll-list-status">Loading…</p>
-          ) : items.length === 0 ? (
+          ) : filteredItems.length === 0 ? (
             <p className="payroll-list-status">
               No payroll journals in this range. Post from CimmplePay, use Manual payroll or Import
               CSV, or widen the dates.
             </p>
           ) : (
             <>
-              <p className="payroll-list-count">{total} payroll period(s)</p>
+              <p className="payroll-list-count">
+                {filteredItems.length}
+                {search.trim() ? ` matching of ${total}` : ` of ${total}`} payroll period(s)
+              </p>
               <table className="customers-table">
                 <thead>
                   <tr>
@@ -293,6 +336,7 @@ const PayrollJournalLinks: React.FC = () => {
                     <th>Period</th>
                     <th>Reference</th>
                     <th>Source</th>
+                    <th>Status</th>
                     <th>Accrual</th>
                     <th>Net pay</th>
                     <th>Tax remittance</th>
@@ -300,7 +344,11 @@ const PayrollJournalLinks: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((row) => (
+                  {filteredItems.map((row) => {
+                    const remaining = Number(row.remainingNetPay ?? 0);
+                    const showPay =
+                      row.status === "Posted" && remaining > 0.009;
+                    return (
                     <tr key={row.id}>
                       <td>{fmtDate(row.payDate)}</td>
                       <td>
@@ -318,6 +366,7 @@ const PayrollJournalLinks: React.FC = () => {
                           <div className="je-muted">Run #{row.externalRunId}</div>
                         ) : null}
                       </td>
+                      <td>{row.status || "—"}</td>
                       <td>
                         <Link to={`/accounts/journal-entries?id=${row.journalEntryId}`}>
                           JE #{row.journalEntryId}
@@ -325,12 +374,21 @@ const PayrollJournalLinks: React.FC = () => {
                         <div className="je-muted">{fmtMoney(row.totalDebits)}</div>
                       </td>
                       <td>
-                        {row.paymentJournalEntryId ? (
+                        {row.paymentJournalEntryId || Number(row.paymentAmount || 0) > 0 ? (
                           <>
-                            <Link to={`/accounts/journal-entries?id=${row.paymentJournalEntryId}`}>
-                              JE #{row.paymentJournalEntryId}
-                            </Link>
-                            <div className="je-muted">{fmtMoney(row.paymentAmount)}</div>
+                            {row.paymentJournalEntryId ? (
+                              <Link to={`/accounts/journal-entries?id=${row.paymentJournalEntryId}`}>
+                                JE #{row.paymentJournalEntryId}
+                              </Link>
+                            ) : (
+                              <span>Partial</span>
+                            )}
+                            <div className="je-muted">
+                              Paid {fmtMoney(row.paymentAmount)}
+                              {remaining > 0.009
+                                ? ` · Remaining ${fmtMoney(remaining)}`
+                                : " · Paid in full"}
+                            </div>
                           </>
                         ) : (
                           <span className="je-muted">Not paid</span>
@@ -350,13 +408,15 @@ const PayrollJournalLinks: React.FC = () => {
                       </td>
                       <td>
                         <div className="action-buttons">
-                          {!row.paymentJournalEntryId && row.status === "Posted" ? (
+                          {showPay ? (
                             <button
                               type="button"
                               className="btn btn-sm btn-secondary"
                               onClick={() => void openCashModal(row, "payment")}
                             >
-                              Post net pay
+                              {Number(row.paymentAmount || 0) > 0
+                                ? "Pay remaining"
+                                : "Post net pay"}
                             </button>
                           ) : null}
                           {!row.taxRemittanceJournalEntryId && row.status === "Posted" ? (
@@ -368,13 +428,16 @@ const PayrollJournalLinks: React.FC = () => {
                               Post tax remittance
                             </button>
                           ) : null}
-                          {row.paymentJournalEntryId && row.taxRemittanceJournalEntryId ? (
+                          {!showPay &&
+                          row.taxRemittanceJournalEntryId &&
+                          remaining <= 0.009 ? (
                             <span className="je-muted">—</span>
                           ) : null}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </>
@@ -401,7 +464,9 @@ const PayrollJournalLinks: React.FC = () => {
                 <>
                   <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>
                     Creates: <strong>Dr Accrued Payroll</strong> / <strong>Cr payroll bank</strong>.
-                    Suggested from accrual JE credit to Net Pay account: {fmtMoney(suggestedNet)}.
+                    Suggested net {fmtMoney(suggestedNet)}
+                    {paidAmount > 0 ? ` · Already paid ${fmtMoney(paidAmount)}` : ""}
+                    {" · "}Remaining {fmtMoney(remainingNet)}. Partial payments are allowed.
                   </p>
                   <label style={{ display: "block", marginTop: "0.75rem", fontSize: "0.8rem", fontWeight: 500 }}>
                     Payment date
@@ -413,10 +478,11 @@ const PayrollJournalLinks: React.FC = () => {
                     />
                   </label>
                   <label style={{ display: "block", marginTop: "0.75rem", fontSize: "0.8rem", fontWeight: 500 }}>
-                    Amount
+                    Amount (max {fmtMoney(remainingNet)})
                     <input
                       type="number"
                       min={0}
+                      max={remainingNet > 0 ? remainingNet : undefined}
                       step="0.01"
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}

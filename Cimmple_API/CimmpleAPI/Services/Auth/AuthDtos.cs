@@ -20,6 +20,21 @@ namespace CimmpleAPI.Services.Auth
         public string RefreshToken { get; set; } = string.Empty;
     }
 
+    /// <summary>Client-credentials request to mint a short-lived JWT for a specific Flow tenant/location.</summary>
+    public class IntegrationTokenRequest
+    {
+        public string ClientId { get; set; } = string.Empty;
+        public string ClientSecret { get; set; } = string.Empty;
+        public int TenantId { get; set; }
+        public int LocationId { get; set; }
+    }
+
+    public class IntegrationTokenResponse
+    {
+        public string AccessToken { get; set; } = string.Empty;
+        public DateTime ExpiresAtUtc { get; set; }
+    }
+
     public class ChangePasswordRequest
     {
         public string CurrentPassword { get; set; } = string.Empty;

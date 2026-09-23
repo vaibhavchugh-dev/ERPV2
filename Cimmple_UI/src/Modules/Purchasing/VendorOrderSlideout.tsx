@@ -514,7 +514,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         setSelectedJobOrders(newSelectedJobOrders);
       }
     } catch (error: any) {
-      toast.error("Error loading order");
+      toast.error(getApiErrorMessage(error, "Error loading order"));
       console.error(error);
     } finally {
       setLoading(false);
@@ -2656,8 +2656,22 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               comments={comments}
               onChange={(next) => {
                 setComments(next);
-                setIsStateChanged(true);
+                const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+                if (!(id > 0)) setIsStateChanged(true);
               }}
+              persistContext={(() => {
+                const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+                if (!(id > 0)) return null;
+                return {
+                  entityType: "VendorOrder",
+                  entityId: id,
+                  entityLabel:
+                    formData.PONumber > 0
+                      ? `Vendor Order VO-${formData.PONumber}`
+                      : `Vendor Order #${id}`,
+                  linkPath: `/purchasing/vendor-orders?open=${id}`,
+                };
+              })()}
             />
           </div>
 

@@ -39,6 +39,8 @@ namespace CimmpleAPI.Services
         public int Id { get; set; }
         public int TenantId { get; set; }
         public string? TenantName { get; set; }
+        public int? LocationId { get; set; }
+        public string? LocationName { get; set; }
         public string Product { get; set; } = "";
         public string Category { get; set; } = "";
         public string Subject { get; set; } = "";
@@ -57,7 +59,6 @@ namespace CimmpleAPI.Services
     {
         public string Description { get; set; } = "";
         public string? AppVersion { get; set; }
-        public int? LocationId { get; set; }
         public string? EntityType { get; set; }
         public int? EntityId { get; set; }
         public string? LinkPath { get; set; }
@@ -635,6 +636,21 @@ namespace CimmpleAPI.Services
                     .ToDictionaryAsync(x => x.TenantId, x => x.Name ?? $"Tenant {x.TenantId}");
             }
 
+            var locationIds = tickets
+                .Where(t => t.LocationId.HasValue && t.LocationId.Value > 0)
+                .Select(t => t.LocationId!.Value)
+                .Distinct()
+                .ToList();
+            var locationNames = locationIds.Count == 0
+                ? new Dictionary<int, string>()
+                : await _context.Locations.AsNoTracking()
+                    .Where(l => locationIds.Contains(l.LocationId))
+                    .ToDictionaryAsync(
+                        l => l.LocationId,
+                        l => string.IsNullOrWhiteSpace(l.Name)
+                            ? (string.IsNullOrWhiteSpace(l.Code) ? $"Location {l.LocationId}" : l.Code)
+                            : (string.IsNullOrWhiteSpace(l.Code) ? l.Name : $"{l.Name} ({l.Code})"));
+
             var userKeys = tickets.Select(t => new { t.TenantId, t.CreatedByUserId }).Distinct().ToList();
             var tenantIdSet = userKeys.Select(k => k.TenantId).Distinct().ToList();
             var userIdSet = userKeys.Select(k => k.CreatedByUserId).Distinct().ToList();
@@ -651,6 +667,11 @@ namespace CimmpleAPI.Services
                 TenantId = t.TenantId,
                 TenantName = includeTenantName
                     ? (tenantNames.TryGetValue(t.TenantId, out var n) ? n : $"Tenant {t.TenantId}")
+                    : null,
+                LocationId = t.LocationId,
+                LocationName = t.LocationId.HasValue && t.LocationId.Value > 0 &&
+                               locationNames.TryGetValue(t.LocationId.Value, out var ln)
+                    ? ln
                     : null,
                 Product = t.Product,
                 Category = t.Category,
@@ -684,6 +705,19 @@ namespace CimmpleAPI.Services
                     .FirstOrDefaultAsync();
             }
 
+            string? locationName = null;
+            if (t.LocationId.HasValue && t.LocationId.Value > 0)
+            {
+                var loc = await _context.Locations.AsNoTracking()
+                    .FirstOrDefaultAsync(l => l.LocationId == t.LocationId.Value);
+                if (loc != null)
+                {
+                    locationName = string.IsNullOrWhiteSpace(loc.Name)
+                        ? (string.IsNullOrWhiteSpace(loc.Code) ? $"Location {loc.LocationId}" : loc.Code)
+                        : (string.IsNullOrWhiteSpace(loc.Code) ? loc.Name : $"{loc.Name} ({loc.Code})");
+                }
+            }
+
             var messages = await _context.SupportTicketMessages.AsNoTracking()
                 .Where(m => m.TicketId == t.Id)
                 .OrderBy(m => m.CreatedAt)
@@ -695,6 +729,8 @@ namespace CimmpleAPI.Services
                 Id = t.Id,
                 TenantId = t.TenantId,
                 TenantName = tenantName ?? (viewerIsStaff ? $"Tenant {t.TenantId}" : null),
+                LocationId = t.LocationId,
+                LocationName = locationName,
                 Product = t.Product,
                 Category = t.Category,
                 Subject = t.Subject,
@@ -710,7 +746,6 @@ namespace CimmpleAPI.Services
                 HasUnread = t.ClientHasUnread,
                 Description = t.Description,
                 AppVersion = t.AppVersion,
-                LocationId = t.LocationId,
                 EntityType = t.EntityType,
                 EntityId = t.EntityId,
                 LinkPath = t.LinkPath,
@@ -838,7 +873,7 @@ namespace CimmpleAPI.Services
             return string.IsNullOrWhiteSpace(supportTo) ? "contact@cimmple.com" : supportTo;
         }
 
-        private static string BuildNewTicketEmailBody(SupportTicket ticket, string displayName, string? userEmail)
+        private string BuildNewTicketEmailBody(SupportTicket ticket, string displayName, string? userEmail)
         {
             var sb = new StringBuilder();
             sb.Append("<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#111;\">");
@@ -857,7 +892,16 @@ namespace CimmpleAPI.Services
             if (!string.IsNullOrWhiteSpace(ticket.AppVersion))
                 AppendRow(sb, "Version", WebUtility.HtmlEncode(ticket.AppVersion));
             if (ticket.LocationId.HasValue)
-                AppendRow(sb, "Location id", ticket.LocationId.Value.ToString());
+            {
+                var locName = _context.Locations.AsNoTracking()
+                    .Where(l => l.LocationId == ticket.LocationId.Value)
+                    .Select(l => l.Name)
+                    .FirstOrDefault();
+                AppendRow(sb, "Location",
+                    string.IsNullOrWhiteSpace(locName)
+                        ? ticket.LocationId.Value.ToString()
+                        : $"{locName} (#{ticket.LocationId.Value})");
+            }
             if (!string.IsNullOrWhiteSpace(ticket.EntityType) || ticket.EntityId.HasValue)
                 AppendRow(sb, "Entity", $"{WebUtility.HtmlEncode(ticket.EntityType ?? "")} #{ticket.EntityId}");
             if (!string.IsNullOrWhiteSpace(ticket.LinkPath))

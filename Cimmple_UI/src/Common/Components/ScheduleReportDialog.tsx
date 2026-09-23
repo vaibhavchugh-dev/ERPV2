@@ -200,6 +200,17 @@ const ScheduleReportDialog: React.FC<ScheduleReportDialogProps> = ({
     }
   };
 
+  let tenantTzLabel = "America/New_York";
+  try {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    tenantTzLabel =
+      (isEdit ? editSchedule?.timeZoneId : null) ||
+      storage?.timezone ||
+      "America/New_York";
+  } catch {
+    /* keep default */
+  }
+
   return (
     <div
       style={{
@@ -399,13 +410,27 @@ const ScheduleReportDialog: React.FC<ScheduleReportDialogProps> = ({
           )}
 
           <div>
-            <label style={labelStyle}>Send time (local / tenant timezone)</label>
+            <label style={labelStyle}>
+              Send time (24-hour, tenant timezone: {tenantTzLabel})
+            </label>
             <input
               style={fieldStyle}
               type="time"
+              step={60}
               value={timeValue || minutesToTimeInput(480)}
               onChange={(e) => setTimeValue(e.target.value)}
             />
+            <p
+              style={{
+                margin: "0.35rem 0 0",
+                fontSize: "0.75rem",
+                color: "#6b7280",
+                lineHeight: 1.35,
+              }}
+            >
+              Stored as 24-hour HH:mm. Schedule / Next / Last run columns use the
+              same 24-hour format in this timezone.
+            </p>
           </div>
         </div>
 

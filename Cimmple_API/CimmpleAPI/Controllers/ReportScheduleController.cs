@@ -63,6 +63,9 @@ namespace CimmpleAPI.Controllers
                 CreatedUtc = DateTime.UtcNow
             });
 
+            if (string.IsNullOrWhiteSpace(entity.TimeZoneId))
+                entity.TimeZoneId = "America/New_York";
+
             if (!TryResolveListLocationFilter(entity.LocationId, out var locId, out var forbid))
                 return forbid!;
             entity.LocationId = locId;
@@ -90,6 +93,9 @@ namespace CimmpleAPI.Controllers
                 return NotFound(new { message = "Schedule not found." });
 
             MapToEntity(request, entity);
+
+            if (string.IsNullOrWhiteSpace(entity.TimeZoneId))
+                entity.TimeZoneId = "America/New_York";
 
             if (!TryResolveListLocationFilter(entity.LocationId, out var locId, out var forbid))
                 return forbid!;

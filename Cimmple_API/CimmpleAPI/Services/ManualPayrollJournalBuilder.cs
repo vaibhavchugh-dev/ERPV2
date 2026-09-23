@@ -38,10 +38,13 @@ namespace CimmpleAPI.Services
 
             var lines = new List<ManualPayrollPreviewLine>();
             var missing = new List<string>();
+            decimal theoreticalDr = 0m;
+            decimal theoreticalCr = 0m;
 
             void AddDebit(string bucket, string label, int? accountId, decimal amount)
             {
                 if (amount <= 0) return;
+                theoreticalDr += amount;
                 if (accountId is not > 0)
                 {
                     missing.Add(bucket);
@@ -61,6 +64,7 @@ namespace CimmpleAPI.Services
             void AddCredit(string bucket, string label, int? accountId, decimal amount)
             {
                 if (amount <= 0) return;
+                theoreticalCr += amount;
                 if (accountId is not > 0)
                 {
                     missing.Add(bucket);
@@ -99,9 +103,11 @@ namespace CimmpleAPI.Services
             AddCredit("employerPayrollTaxPayable", "Employer payroll taxes / benefits payable",
                 defaults?.DefaultEmployerPayrollTaxPayableAccountId, employer);
 
-            var totalDr = lines.Sum(l => l.Debit);
-            var totalCr = lines.Sum(l => l.Credit);
-            var balanced = Math.Abs(totalDr - totalCr) <= BalanceTolerance && lines.Count >= 2;
+            // Amount balance uses theoretical totals (includes buckets with missing GL accounts).
+            var amountsBalanced = Math.Abs(theoreticalDr - theoreticalCr) <= BalanceTolerance
+                                  && (theoreticalDr > 0 || theoreticalCr > 0);
+            var missingKeys = missing.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var canPost = amountsBalanced && missingKeys.Count == 0 && lines.Count >= 2;
 
             var source = string.IsNullOrWhiteSpace(meta.Source)
                 ? PayrollJournalSources.Manual
@@ -132,10 +138,12 @@ namespace CimmpleAPI.Services
 
             return new ManualPayrollBuildResult
             {
-                IsBalanced = balanced && missing.Count == 0,
-                TotalDebits = totalDr,
-                TotalCredits = totalCr,
-                MissingAccountKeys = missing.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                IsBalanced = amountsBalanced,
+                CanPost = canPost,
+                HasMissingAccounts = missingKeys.Count > 0,
+                TotalDebits = theoreticalDr,
+                TotalCredits = theoreticalCr,
+                MissingAccountKeys = missingKeys,
                 ExpectedNetPay = expectedNet,
                 EnteredNetPay = net,
                 NetPayDifference = Round(net - expectedNet),
@@ -218,7 +226,11 @@ namespace CimmpleAPI.Services
 
     public class ManualPayrollBuildResult
     {
+        /// <summary>True when theoretical debit/credit amounts balance (ignores missing GL mapping).</summary>
         public bool IsBalanced { get; set; }
+        /// <summary>True when amounts balance and every required GL account is mapped.</summary>
+        public bool CanPost { get; set; }
+        public bool HasMissingAccounts { get; set; }
         public decimal TotalDebits { get; set; }
         public decimal TotalCredits { get; set; }
         public List<string> MissingAccountKeys { get; set; } = new();

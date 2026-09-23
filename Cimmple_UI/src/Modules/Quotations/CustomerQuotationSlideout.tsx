@@ -25,6 +25,7 @@ import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCac
 import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
+  getApiErrorMessage,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
@@ -408,7 +409,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading quotation:", error);
-      toast.error(`Error loading quotation: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error loading quotation"));
     } finally {
       setLoading(false);
       setIsHydrating(false);
@@ -2572,8 +2573,21 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
               comments={comments}
               onChange={(next) => {
                 setComments(next);
-                setIsStateChanged(true);
+                if (!(effectiveQuotationId > 0)) setIsStateChanged(true);
               }}
+              persistContext={
+                effectiveQuotationId > 0
+                  ? {
+                      entityType: "CustomerQuotation",
+                      entityId: effectiveQuotationId,
+                      entityLabel:
+                        formData.PONumber > 0
+                          ? `Customer Quotation CQ-${formData.PONumber}`
+                          : `Customer Quotation #${effectiveQuotationId}`,
+                      linkPath: `/quotations/customer?open=${effectiveQuotationId}`,
+                    }
+                  : null
+              }
             />
           </div>
 

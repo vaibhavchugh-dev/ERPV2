@@ -109,6 +109,7 @@ public static class SalesReportsService
                 Period = g.Key,
                 Invoices = g.Count(),
                 Revenue = g.Sum(x => x.TotalAmount),
+                Items = g.OrderByDescending(x => x.InvoiceDate).ToList(),
             })
             .OrderBy(x => x.Period)
             .ToList();
@@ -132,6 +133,25 @@ public static class SalesReportsService
         foreach (var row in byPeriod)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "invoice-period",
+                    EntityKey = row.Period,
+                    Title = $"Invoices — {row.Period}",
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = string.IsNullOrWhiteSpace(inv.CustomerName)
+                            ? inv.InvoiceDate.ToString("yyyy-MM-dd")
+                            : inv.CustomerName.Trim(),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolveInvoicePaymentStatus(inv),
+                        EntityId = inv.Id,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
                 row.Period,
                 ReportResultFactory.Num(row.Invoices),
                 ReportResultFactory.Money(row.Revenue));
@@ -188,28 +208,37 @@ public static class SalesReportsService
 
         var lines = linesQuery.ToList();
 
+        // Prefer ProductId for grouping; fall back to a normalized description label so
+        // legacy "Name - PN" invoice text merges with "PN — Name" ProductMaster labels.
         var byProduct = lines
             .GroupBy(x =>
             {
                 if (x.ProductId.HasValue && x.ProductId.Value > 0)
                 {
-                    var name = !string.IsNullOrWhiteSpace(x.PartName)
-                        ? x.PartName!.Trim()
-                        : (!string.IsNullOrWhiteSpace(x.PartNo) ? x.PartNo!.Trim() : $"Product #{x.ProductId}");
-                    var partNo = !string.IsNullOrWhiteSpace(x.PartNo) ? x.PartNo!.Trim() : "";
-                    return string.IsNullOrEmpty(partNo) || partNo.Equals(name, StringComparison.OrdinalIgnoreCase)
-                        ? name
-                        : $"{partNo} — {name}";
+                    var label = FormatPart(x.PartNo, x.PartName);
+                    if (string.IsNullOrWhiteSpace(label))
+                        label = $"Product #{x.ProductId}";
+                    return (Key: $"id:{x.ProductId.Value}", Label: label);
                 }
 
-                return string.IsNullOrWhiteSpace(x.Description) ? "(Unspecified)" : x.Description.Trim();
+                var descLabel = NormalizeInvoiceDescriptionLabel(x.Description);
+                return (Key: $"desc:{descLabel.ToLowerInvariant()}", Label: descLabel);
             })
             .Select(g => new
             {
-                Product = g.Key,
+                Product = g.Key.Label,
                 Qty = g.Sum(x => (decimal)x.qty),
                 Revenue = g.Sum(x => x.Amount),
-                Invoices = g.Select(x => x.Id).Distinct().Count(),
+                InvoiceIds = g.Select(x => x.Id).Distinct().ToList(),
+            })
+            // Merge description-only rows into ProductMaster rows when labels match.
+            .GroupBy(r => r.Product, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new
+            {
+                Product = g.First().Product,
+                Qty = g.Sum(x => x.Qty),
+                Revenue = g.Sum(x => x.Revenue),
+                Invoices = g.SelectMany(x => x.InvoiceIds).Distinct().Count(),
             })
             .OrderByDescending(x => x.Revenue)
             .ThenBy(x => x.Product)
@@ -395,6 +424,7 @@ public static class SalesReportsService
                     : (g.Key > 0 ? $"Location #{g.Key}" : "(Unassigned)"),
                 Invoices = g.Count(),
                 Revenue = g.Sum(x => x.TotalAmount),
+                Items = g.OrderByDescending(x => x.InvoiceDate).ToList(),
             })
             .OrderByDescending(x => x.Revenue)
             .ThenBy(x => x.Location)
@@ -420,6 +450,26 @@ public static class SalesReportsService
         foreach (var row in byLocation)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "location",
+                    EntityId = row.LocationId > 0 ? row.LocationId : null,
+                    EntityKey = row.LocationId > 0 ? row.LocationId.ToString() : "0",
+                    Title = row.Location,
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = string.IsNullOrWhiteSpace(inv.CustomerName)
+                            ? inv.InvoiceDate.ToString("yyyy-MM-dd")
+                            : inv.CustomerName.Trim(),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolveInvoicePaymentStatus(inv),
+                        EntityId = inv.Id,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
                 row.Location,
                 ReportResultFactory.Num(row.Invoices),
                 ReportResultFactory.Money(row.Revenue));
@@ -504,6 +554,50 @@ public static class SalesReportsService
 
     private static string FormatInvoiceNo(string? prefix, int invoiceNo) =>
         !string.IsNullOrWhiteSpace(prefix) ? prefix! : invoiceNo.ToString();
+
+    private static string FormatPart(string? partNo, string? partName)
+    {
+        var no = partNo?.Trim() ?? "";
+        var name = partName?.Trim() ?? "";
+        if (string.IsNullOrEmpty(no)) return name;
+        if (string.IsNullOrEmpty(name) || no.Equals(name, StringComparison.OrdinalIgnoreCase))
+            return no;
+        return $"{no} — {name}";
+    }
+
+    /// <summary>
+    /// Invoice lines often store Description as "PartName - PartNo". Normalize to "PartNo — PartName"
+    /// so unlinked lines can merge with ProductMaster-backed rows.
+    /// </summary>
+    private static string NormalizeInvoiceDescriptionLabel(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return "(Unspecified)";
+
+        var raw = description.Trim();
+        // Prefer em dash already in canonical form
+        if (raw.Contains(" — ", StringComparison.Ordinal))
+            return raw;
+
+        // "Name - PN" or "Name-PN" → try to reorder when the right side looks like a part number
+        var sepIdx = raw.LastIndexOf(" - ", StringComparison.Ordinal);
+        if (sepIdx < 0)
+            sepIdx = raw.LastIndexOf('-');
+        if (sepIdx > 0 && sepIdx < raw.Length - 1)
+        {
+            var left = raw[..sepIdx].Trim().TrimEnd('-').Trim();
+            var right = raw[(sepIdx + 1)..].Trim().TrimStart('-').Trim();
+            if (!string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right))
+            {
+                // Heuristic: PN# / codes often on the right in invoice descriptions
+                if (right.Contains('#') || right.Any(char.IsDigit))
+                    return FormatPart(right, left);
+                return FormatPart(left, right);
+            }
+        }
+
+        return raw;
+    }
 
     private static string FormatQuoteNumber(int poNumber) =>
         poNumber < 1000 ? $"CQ#{poNumber + 999}" : $"CQ#{poNumber}";

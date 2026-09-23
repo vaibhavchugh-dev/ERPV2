@@ -515,6 +515,10 @@ namespace CimmpleAPI.Controllers
                 if (source.ReversedByJournalEntryId.HasValue)
                     return BadRequest(new { error = "This entry has already been reversed." });
 
+                var payrollGuard = ValidatePayrollReverseGuards(tenantId, source);
+                if (payrollGuard != null)
+                    return payrollGuard;
+
                 var reversalDate = request.EntryDate?.Date ?? DateTime.Today;
                 var revPeriodKey = GlWorkflowService.PeriodKeyFromDate(reversalDate);
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, revPeriodKey))
@@ -600,6 +604,11 @@ namespace CimmpleAPI.Controllers
                     source.ReversedByJournalEntryId = header.Id;
                     _context.SaveChanges();
 
+                    var reverseAmount = fromLines.Sum(f => f.Amount);
+                    if (reverseAmount <= 0)
+                        reverseAmount = toLines.Sum(t => t.Amount);
+                    ApplyPayrollLinkLifecycleOnReverse(tenantId, source, reverseAmount);
+
                     GlWorkflowService.AddAudit(_context, tenantId, "JournalReverse", GetUserId(), header.Id,
                         source.Id, lockKey, baseRef);
                     _context.SaveChanges();
@@ -625,6 +634,108 @@ namespace CimmpleAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Block accrual reverse when cash legs exist; block payment reverse when remittance posted.
+        /// </summary>
+        private IActionResult? ValidatePayrollReverseGuards(int tenantId, JournalEntry source)
+        {
+            var accrualLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && p.JournalEntryId == source.Id)
+                .ToList();
+            foreach (var link in accrualLinks)
+            {
+                if (link.TaxRemittanceJournalEntryId.HasValue)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Cannot reverse this accrual: tax remittance has already been posted. Reverse the remittance journal first."
+                    });
+                }
+                if (link.PaymentJournalEntryId.HasValue || (link.PaymentAmount ?? 0m) > 0.009m)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Cannot reverse this accrual: net-pay payment has already been posted. Reverse payment journal(s) first."
+                    });
+                }
+            }
+
+            var paymentLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && p.PaymentJournalEntryId == source.Id)
+                .ToList();
+            // Also match earlier partial payment JEs by reference prefix PAYPMT-{linkId}-
+            var partialPrefixLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && (p.PaymentAmount ?? 0m) > 0)
+                .AsEnumerable()
+                .Where(p =>
+                    !string.IsNullOrWhiteSpace(source.ReferenceNumber) &&
+                    source.ReferenceNumber.StartsWith($"PAYPMT-{p.Id}-", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var link in paymentLinks.Concat(partialPrefixLinks).DistinctBy(p => p.Id))
+            {
+                if (link.TaxRemittanceJournalEntryId.HasValue)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Cannot reverse this payment: related tax remittance has already been posted. Reverse the remittance journal first."
+                    });
+                }
+            }
+
+            return null;
+        }
+
+        private void ApplyPayrollLinkLifecycleOnReverse(int tenantId, JournalEntry source, decimal reverseAmount)
+        {
+            var accrualLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && p.JournalEntryId == source.Id)
+                .ToList();
+            foreach (var link in accrualLinks)
+            {
+                link.Status = PayrollJournalStatuses.Reversed;
+            }
+
+            var remittanceLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && p.TaxRemittanceJournalEntryId == source.Id)
+                .ToList();
+            foreach (var link in remittanceLinks)
+            {
+                link.TaxRemittanceJournalEntryId = null;
+                link.TaxRemittancePostedUtc = null;
+                link.TaxRemittanceAmount = null;
+            }
+
+            var paymentLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && p.PaymentJournalEntryId == source.Id)
+                .ToList();
+            var partialPrefixLinks = _context.PayrollJournalLinks
+                .Where(p => p.TenantId == tenantId && (p.PaymentAmount ?? 0m) > 0)
+                .AsEnumerable()
+                .Where(p =>
+                    !string.IsNullOrWhiteSpace(source.ReferenceNumber) &&
+                    source.ReferenceNumber.StartsWith($"PAYPMT-{p.Id}-", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var link in paymentLinks.Concat(partialPrefixLinks).DistinctBy(p => p.Id))
+            {
+                var paid = Math.Round(link.PaymentAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+                var subtract = Math.Round(reverseAmount, 2, MidpointRounding.AwayFromZero);
+                if (subtract <= 0) subtract = paid;
+                var remaining = Math.Round(Math.Max(0m, paid - subtract), 2, MidpointRounding.AwayFromZero);
+                link.PaymentAmount = remaining > 0 ? remaining : null;
+                if (link.PaymentJournalEntryId == source.Id || remaining <= 0)
+                {
+                    link.PaymentJournalEntryId = remaining > 0 ? link.PaymentJournalEntryId : null;
+                    if (remaining <= 0)
+                    {
+                        link.PaymentJournalEntryId = null;
+                        link.PaymentPostedUtc = null;
+                        link.PaymentBankId = null;
+                    }
+                }
             }
         }
     }

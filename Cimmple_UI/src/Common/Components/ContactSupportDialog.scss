@@ -8,6 +8,7 @@
   justify-content: flex-end;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .contact-support-dialog {
@@ -127,6 +128,7 @@
   overflow: auto;
   flex: 1;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .contact-support-intro {

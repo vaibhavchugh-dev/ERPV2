@@ -32,11 +32,13 @@ public static class CustomerReportsService
             .GroupBy(i => new { i.CustomerId, i.CustomerName })
             .Select(g => new
             {
+                g.Key.CustomerId,
                 Customer = string.IsNullOrWhiteSpace(g.Key.CustomerName)
                     ? $"Customer #{g.Key.CustomerId}"
                     : g.Key.CustomerName,
                 Revenue = g.Sum(x => x.TotalAmount),
                 Invoices = g.Count(),
+                Items = g.OrderByDescending(x => x.InvoiceDate).ToList(),
             })
             .OrderByDescending(x => x.Revenue)
             .ThenBy(x => x.Customer)
@@ -53,7 +55,29 @@ public static class CustomerReportsService
                 "Customer", "Revenue", "Invoices")
             .WithNumeric(1, 2);
         foreach (var row in byCustomer)
-            section.AddRow(row.Customer, ReportResultFactory.Money(row.Revenue), ReportResultFactory.Num(row.Invoices));
+        {
+            section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "customer",
+                    EntityId = row.CustomerId > 0 ? row.CustomerId : null,
+                    Title = row.Customer,
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolvePaymentStatus(inv, EffectivePaidAmount(inv)),
+                        EntityId = inv.InvoiceId,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
+                row.Customer,
+                ReportResultFactory.Money(row.Revenue),
+                ReportResultFactory.Num(row.Invoices));
+        }
         report.Sections.Add(section);
 
         return report;
@@ -80,6 +104,7 @@ public static class CustomerReportsService
             .GroupBy(i => new { i.CustomerId, i.CustomerName })
             .Select(g => new
             {
+                g.Key.CustomerId,
                 Customer = string.IsNullOrWhiteSpace(g.Key.CustomerName)
                     ? $"Customer #{g.Key.CustomerId}"
                     : g.Key.CustomerName,
@@ -87,6 +112,7 @@ public static class CustomerReportsService
                 Invoices = g.Count(),
                 FirstInvoice = g.Min(x => x.InvoiceDate),
                 LastInvoice = g.Max(x => x.InvoiceDate),
+                Items = g.OrderByDescending(x => x.InvoiceDate).ToList(),
             })
             .OrderByDescending(x => x.LifetimeRevenue)
             .ThenBy(x => x.Customer)
@@ -105,6 +131,23 @@ public static class CustomerReportsService
         foreach (var row in byCustomer)
         {
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "customer",
+                    EntityId = row.CustomerId > 0 ? row.CustomerId : null,
+                    Title = row.Customer,
+                    LinkPath = "/orders/customer-invoices",
+                    Details = row.Items.Select(inv => new ReportDrillItemDto
+                    {
+                        Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                        SubLabel = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                        Amount = ReportResultFactory.Money(inv.TotalAmount),
+                        Status = ResolvePaymentStatus(inv, EffectivePaidAmount(inv)),
+                        EntityId = inv.InvoiceId,
+                        LinkPath = "/orders/customer-invoices"
+                    }).ToList()
+                },
                 row.Customer,
                 ReportResultFactory.Money(row.LifetimeRevenue),
                 ReportResultFactory.Num(row.Invoices),
@@ -360,6 +403,28 @@ public static class CustomerReportsService
             }
 
             section.AddRow(
+                new ReportRowMetaDto
+                {
+                    EntityType = "invoice",
+                    EntityId = inv.InvoiceId,
+                    Title = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                    LinkPath = "/orders/customer-invoices",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
+                            SubLabel = string.IsNullOrWhiteSpace(inv.CustomerName)
+                                ? $"Customer #{inv.CustomerId}"
+                                : inv.CustomerName,
+                            Date = inv.InvoiceDate.ToString("yyyy-MM-dd"),
+                            Amount = ReportResultFactory.Money(inv.TotalAmount),
+                            Status = status,
+                            EntityId = inv.InvoiceId,
+                            LinkPath = "/orders/customer-invoices"
+                        }
+                    }
+                },
                 FormatInvoiceNo(inv.PrefixInvoiceNo, inv.InvoiceNo),
                 string.IsNullOrWhiteSpace(inv.CustomerName) ? $"Customer #{inv.CustomerId}" : inv.CustomerName,
                 inv.InvoiceDate.ToString("yyyy-MM-dd"),

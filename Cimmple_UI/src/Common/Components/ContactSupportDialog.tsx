@@ -104,7 +104,16 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    const prevBodyOverflow = document.body.style.overflow;
+    const pageContent = document.querySelector(".page-content") as HTMLElement | null;
+    const prevPageOverflow = pageContent?.style.overflow ?? "";
+    document.body.style.overflow = "hidden";
+    if (pageContent) pageContent.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = prevBodyOverflow;
+      if (pageContent) pageContent.style.overflow = prevPageOverflow;
+    };
   }, [open, onClose]);
 
   const openTicket = async (id: number) => {
@@ -389,6 +398,12 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
                   <dl className="support-detail-fields">
                     <dt>Category</dt>
                     <dd>{selected.category}</dd>
+                    {selected.locationName && (
+                      <>
+                        <dt>Location</dt>
+                        <dd>{selected.locationName}</dd>
+                      </>
+                    )}
                     <dt>Submitted</dt>
                     <dd>{formatWhen(selected.createdAt)}</dd>
                     {selected.attachmentFileName && (

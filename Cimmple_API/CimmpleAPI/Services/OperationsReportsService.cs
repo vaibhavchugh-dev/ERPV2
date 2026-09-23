@@ -73,8 +73,29 @@ public static class OperationsReportsService
             var completed = CompletionDate(j);
             var lead = (completed.Date - j.OrderDate.Date).TotalDays;
             leadDays.Add(lead);
+            var joLabel = FormatJobOrderNumber(j.JobOrderNumber);
             table.AddRow(
-                FormatJobOrderNumber(j.JobOrderNumber),
+                new ReportRowMetaDto
+                {
+                    EntityType = "job",
+                    EntityId = j.JobOrderID,
+                    Title = joLabel,
+                    LinkPath = "/job-orders",
+                    Details = new List<ReportDrillItemDto>
+                    {
+                        new()
+                        {
+                            Label = joLabel,
+                            SubLabel = j.CustomerName ?? "",
+                            Date = completed.ToString("yyyy-MM-dd"),
+                            Amount = ReportResultFactory.Days(lead),
+                            Status = j.Status ?? "Completed",
+                            EntityId = j.JobOrderID,
+                            LinkPath = "/job-orders"
+                        }
+                    }
+                },
+                joLabel,
                 j.CustomerName ?? "",
                 FormatPart(j.PartNo, j.PartName),
                 j.OrderDate.ToString("yyyy-MM-dd"),
@@ -96,7 +117,8 @@ public static class OperationsReportsService
             .ToList();
         if (tracked.Count > 0)
         {
-            var byProcess = new Dictionary<string, (int Count, double Hours)>(StringComparer.OrdinalIgnoreCase);
+            var byProcess = new Dictionary<string, (int Count, double Hours, List<(Data.Models.JobOrderMaster Job, double Hours)> Items)>(
+                StringComparer.OrdinalIgnoreCase);
             foreach (var j in tracked)
             {
                 foreach (var step in ParseSteps(j.RoutingStepsJson))
@@ -104,8 +126,9 @@ public static class OperationsReportsService
                     var name = string.IsNullOrWhiteSpace(step.processName) ? "(unnamed)" : step.processName.Trim();
                     var hours = GetElapsedSeconds(step) / 3600d;
                     if (!byProcess.TryGetValue(name, out var agg))
-                        agg = (0, 0);
-                    byProcess[name] = (agg.Count + 1, agg.Hours + hours);
+                        agg = (0, 0, new List<(Data.Models.JobOrderMaster, double)>());
+                    agg.Items.Add((j, hours));
+                    byProcess[name] = (agg.Count + 1, agg.Hours + hours, agg.Items);
                 }
             }
 
@@ -118,7 +141,36 @@ public static class OperationsReportsService
                 foreach (var kv in byProcess.OrderByDescending(x => x.Value.Hours).ThenBy(x => x.Key))
                 {
                     var avg = kv.Value.Count == 0 ? 0 : kv.Value.Hours / kv.Value.Count;
+                    // One drill row per job (sum hours if multiple steps of same process on a job)
+                    var jobDetails = kv.Value.Items
+                        .GroupBy(x => x.Job.JobOrderID)
+                        .Select(g =>
+                        {
+                            var job = g.First().Job;
+                            var joLabel = FormatJobOrderNumber(job.JobOrderNumber);
+                            return new ReportDrillItemDto
+                            {
+                                Label = joLabel,
+                                SubLabel = job.CustomerName ?? "",
+                                Date = job.OrderDate.ToString("yyyy-MM-dd"),
+                                Amount = ReportResultFactory.Num((decimal)g.Sum(x => x.Hours)),
+                                Status = job.Status ?? "",
+                                EntityId = job.JobOrderID,
+                                LinkPath = "/job-orders"
+                            };
+                        })
+                        .OrderByDescending(d => d.Label)
+                        .ToList();
+
                     processSection.AddRow(
+                        new ReportRowMetaDto
+                        {
+                            EntityType = "process",
+                            EntityKey = kv.Key,
+                            Title = $"Process — {kv.Key}",
+                            LinkPath = "/job-orders",
+                            Details = jobDetails
+                        },
                         kv.Key,
                         ReportResultFactory.Num(kv.Value.Count),
                         ReportResultFactory.Num((decimal)avg));
