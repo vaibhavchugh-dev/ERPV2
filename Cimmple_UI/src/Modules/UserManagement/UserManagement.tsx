@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { UserManagementService, UserManagement as UserManagementType, UserQueryParams, PaginatedUsersResponse, Role } from "../../Common/Services/UserManagementService";
@@ -49,6 +49,7 @@ const UserManagementComponent: React.FC = () => {
   const [showRoleManager, setShowRoleManager] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [rolesMap, setRolesMap] = useState<{ [key: number]: string }>({});
+  const loadRequestIdRef = useRef(0);
 
   useEffect(() => {
     const trimmed = searchTerm.trim();
@@ -92,6 +93,7 @@ const UserManagementComponent: React.FC = () => {
   };
 
   const loadUsers = async () => {
+    const requestId = ++loadRequestIdRef.current;
     if (!hasLoadedOnce) setLoading(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -113,6 +115,7 @@ const UserManagementComponent: React.FC = () => {
 
       console.log('[UserManagement] Loading users with params:', params);
       const result: PaginatedUsersResponse = await UserManagementService.GetUsers(params);
+      if (requestId !== loadRequestIdRef.current) return;
       console.log('[UserManagement] API response:', result);
 
       if (result && result.users) {
@@ -124,12 +127,15 @@ const UserManagementComponent: React.FC = () => {
         setUsers([]);
       }
     } catch (error: any) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error('[UserManagement] Error loading users:', error);
       toast.error(`Error loading users: ${error.message || 'Unknown error'}`);
       setUsers([]);
     } finally {
-      setHasLoadedOnce(true);
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setHasLoadedOnce(true);
+        setLoading(false);
+      }
     }
   };
 

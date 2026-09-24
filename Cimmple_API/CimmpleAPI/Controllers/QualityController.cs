@@ -373,7 +373,7 @@ END");
             {
                 Console.WriteLine($"GetNCRs called with tenantId: {tenantId}, status={status}, category={category}, severity={severity}, source={source}, jobOrderId={jobOrderId}, customerId={customerId}, dateFrom={dateFrom}, dateTo={dateTo}, overdueOnly={overdueOnly}, openOnly={openOnly}, locationId={locationId}");
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 await EnsureNcrExternalColumnsAsync();
@@ -490,6 +490,34 @@ END");
                           AND o.locationId = @locationId
                     )";
                     parameters.Add(("@locationId", filterLocationId.Value));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    if (allowed.Count == 0)
+                    {
+                        sql += " AND 1 = 0";
+                    }
+                    else
+                    {
+                        // Restricted All-sites: only NCRs linked to jobs at allowed locations (unlinked excluded).
+                        var inParams = new List<string>();
+                        for (var i = 0; i < allowed.Count; i++)
+                        {
+                            var name = $"@loc{i}";
+                            inParams.Add(name);
+                            parameters.Add((name, allowed[i]));
+                        }
+                        sql += $@" AND JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
+                            SELECT 1
+                            FROM CimmpleFlow.JobOrderMaster j
+                            INNER JOIN CimmpleFlow.CustomerOrder o
+                                ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
+                            WHERE j.JobOrderID = NonConformanceReports.JobOrderId
+                              AND j.Tenantid = @tenantId
+                              AND o.locationId IN ({string.Join(", ", inParams)})
+                        )";
+                    }
                 }
 
                 sql += " ORDER BY ReportedDate DESC";

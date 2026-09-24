@@ -16,7 +16,7 @@ import {
 } from "../Services/SupportTicketService";
 import { APP_VERSION } from "../Constants/AppVersion";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
-import { formatDateTime } from "../Utils/Formatting";
+import { useFormatting } from "../Hooks/useFormatting";
 import "./ContactSupportDialog.scss";
 
 interface ContactSupportDialogProps {
@@ -28,10 +28,6 @@ interface ContactSupportDialogProps {
 }
 
 type Tab = "new" | "mine";
-
-function formatWhen(iso: string): string {
-  return formatDateTime(iso) || iso;
-}
 
 function statusClass(status: string): string {
   const s = (status || "").toLowerCase();
@@ -48,6 +44,8 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
   onUnreadChanged,
 }) => {
   const { locationId } = useActiveLocation();
+  const { formatDateTime } = useFormatting();
+  const formatWhen = (iso: string) => formatDateTime(iso) || iso;
   const [tab, setTab] = useState<Tab>(initialTab);
   const [category, setCategory] = useState<SupportCategory>("Bug");
   const [subject, setSubject] = useState("");

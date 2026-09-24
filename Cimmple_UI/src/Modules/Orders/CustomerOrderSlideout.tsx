@@ -25,6 +25,8 @@ import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
   getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
@@ -461,6 +463,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       toast.error(getApiErrorMessage(error, "Error loading order"));
       setLoading(false);
       setIsHydrating(false);
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     }
   };
 

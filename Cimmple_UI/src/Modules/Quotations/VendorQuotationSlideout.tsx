@@ -37,6 +37,8 @@ import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
   getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -501,6 +503,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     } catch (error: any) {
       toast.error(getApiErrorMessage(error, "Error loading quotation"));
       console.error(error);
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     } finally {
       setLoading(false);
       setIsHydrating(false);

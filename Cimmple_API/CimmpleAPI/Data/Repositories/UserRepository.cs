@@ -71,7 +71,7 @@ namespace CimmpleAPI.Data.Repositories
 
                     if (userRole != null)
                     {
-                        if (userRole.ResetPwd == "Yes" &&
+                        if ((userRole.ResetPwd == "Yes" || userRole.ResetPwd == "Y") &&
                             user.PwdResetDate.HasValue &&
                             user.PwdResetDate.Value.AddDays(90) < DateTime.UtcNow)
                         {

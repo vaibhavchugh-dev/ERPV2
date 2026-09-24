@@ -22,7 +22,7 @@ public static class JobOrderStatusReportService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -46,6 +46,13 @@ public static class JobOrderStatusReportService
         {
             var locId = locationId.Value;
             query = query.Where(x => x.OrderLocationId == locId);
+        }
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(x => allowed.Contains(x.OrderLocationId));
         }
 
         var rows = query

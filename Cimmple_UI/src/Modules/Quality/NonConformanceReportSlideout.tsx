@@ -19,6 +19,11 @@ import { NCRCodeService, NCRCodeMaster } from "../../Common/Services/NCRCodeServ
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import {
+  getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
+} from "../../Common/Services/FileUploadHelper";
 import "./NonConformanceReportSlideout.scss";
 
 interface NonConformanceReportSlideoutProps {
@@ -295,7 +300,12 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
         toast.error("NCR not found or failed to load");
       }
     } catch (error: any) {
-      toast.error(`Error loading NCR: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error loading NCR"));
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     } finally {
       setLoading(false);
     }

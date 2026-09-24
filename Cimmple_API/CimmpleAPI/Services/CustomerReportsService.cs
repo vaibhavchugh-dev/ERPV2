@@ -15,7 +15,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -26,7 +26,7 @@ public static class CustomerReportsService
             endDate.Date,
             locationId);
 
-        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId);
+        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId, restrictToLocationIds);
 
         var byCustomer = invoices
             .GroupBy(i => new { i.CustomerId, i.CustomerName })
@@ -88,7 +88,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         // All-time revenue; PeriodStart/End retained as filter context only.
         var report = ReportResultFactory.Create(
@@ -98,7 +98,7 @@ public static class CustomerReportsService
             endDate.Date,
             locationId);
 
-        var invoices = LoadDistinctInvoices(db, tenantId, start: null, endExclusive: null, locationId);
+        var invoices = LoadDistinctInvoices(db, tenantId, start: null, endExclusive: null, locationId, restrictToLocationIds);
 
         var byCustomer = invoices
             .GroupBy(i => new { i.CustomerId, i.CustomerName })
@@ -164,7 +164,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -181,6 +181,13 @@ public static class CustomerReportsService
                         && o.OrderDate < endExclusive);
         if (locationId.HasValue && locationId.Value > 0)
             ordersQuery = ordersQuery.Where(o => o.locationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            ordersQuery = allowed.Count == 0
+                ? ordersQuery.Where(_ => false)
+                : ordersQuery.Where(o => allowed.Contains(o.locationId));
+        }
 
         var orders = ordersQuery
             .Select(o => new
@@ -310,7 +317,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -321,7 +328,7 @@ public static class CustomerReportsService
             endDate.Date,
             locationId);
 
-        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId);
+        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId, restrictToLocationIds);
 
         // Distinct OrderId counts via invoice details (one pass over details for invoices in set)
         var invoiceIds = invoices.Select(i => i.InvoiceId).ToHashSet();
@@ -402,7 +409,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -413,7 +420,7 @@ public static class CustomerReportsService
             endDate.Date,
             locationId);
 
-        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId);
+        var invoices = LoadDistinctInvoices(db, tenantId, start, endExclusive, locationId, restrictToLocationIds);
 
         var fullyPaid = invoices.Where(i => IsFullyPaid(i)).ToList();
         var partial = invoices.Where(i => IsPartialPaid(i)).ToList();
@@ -550,7 +557,7 @@ public static class CustomerReportsService
         int tenantId,
         DateTime? start,
         DateTime? endExclusive,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var query =
             from im in db.InvoiceMaster.AsNoTracking()
@@ -579,6 +586,13 @@ public static class CustomerReportsService
             query = query.Where(x => x.InvoiceDate < endExclusive.Value);
         if (locationId.HasValue && locationId.Value > 0)
             query = query.Where(x => x.locationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(x => allowed.Contains(x.locationId));
+        }
 
         return query
             .AsEnumerable()

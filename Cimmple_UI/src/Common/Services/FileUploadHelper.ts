@@ -59,6 +59,27 @@ export function getApiErrorMessage(error: unknown, fallback = "Request failed"):
   return apiMsg || err?.message || fallback;
 }
 
+/** True when an Axios (or Axios-like) error has HTTP status 403. */
+export function isApiForbidden(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  return status === 403;
+}
+
+/**
+ * Strip deep-link open params from the current URL without a navigation.
+ * Keeps pathname and other search params intact.
+ */
+export function clearOpenQueryFromUrl(): void {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("open") && !url.searchParams.has("orderId")) return;
+  url.searchParams.delete("open");
+  url.searchParams.delete("orderId");
+  const search = url.searchParams.toString();
+  const next = search ? `${url.pathname}?${search}` : url.pathname;
+  window.history.replaceState(window.history.state, "", next);
+}
+
 export function validateSelectedFiles(
   files: File[],
   options?: {

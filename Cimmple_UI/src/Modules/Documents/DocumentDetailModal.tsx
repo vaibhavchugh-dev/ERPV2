@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
 import {
   DocumentService,
   Document,
   DocumentVersion,
 } from "../../Common/Services/DocumentService";
+import {
+  DEFAULT_UPLOAD_EXTENSIONS,
+  validateSelectedFiles,
+} from "../../Common/Services/FileUploadHelper";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faTimes,
@@ -17,6 +21,8 @@ import {
   faEye,
 } from "@fortawesome/free-solid-svg-icons";
 import "./DocumentDetailModal.scss";
+
+const DOC_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 interface DocumentDetailModalProps {
   document: Document;
@@ -45,11 +51,37 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   const [documentNumber, setDocumentNumber] = useState(document.documentNumber || "");
   const [saving, setSaving] = useState(false);
 
+  const fileAcceptAttr = useMemo(
+    () => DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(","),
+    []
+  );
+
   useEffect(() => {
     if (document.requiresVersionControl) {
       loadVersions();
     }
   }, [document.id]);
+
+  const handleVersionFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) {
+      setSelectedFile(null);
+      return;
+    }
+    const { valid, errors } = validateSelectedFiles([selected], {
+      acceptedExtensions: DEFAULT_UPLOAD_EXTENSIONS,
+      maxFileSizeBytes: DOC_MAX_UPLOAD_BYTES,
+    });
+    if (errors.length > 0) {
+      toast.error(errors[0]);
+    }
+    if (valid.length === 0) {
+      setSelectedFile(null);
+      e.target.value = "";
+      return;
+    }
+    setSelectedFile(valid[0]);
+  };
 
   const loadVersions = async () => {
     setLoadingVersions(true);
@@ -378,7 +410,8 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                   <label>File:</label>
                   <input
                     type="file"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    accept={fileAcceptAttr}
+                    onChange={handleVersionFileChange}
                   />
                   {selectedFile && (
                     <p className="file-info">

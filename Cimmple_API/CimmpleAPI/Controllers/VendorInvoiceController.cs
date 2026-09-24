@@ -39,7 +39,7 @@ namespace CimmpleAPI.Controllers
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}");
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var invoicesQuery = _context.VendorInvoiceMaster
@@ -48,6 +48,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     invoicesQuery = invoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    invoicesQuery = allowed.Count == 0
+                        ? invoicesQuery.Where(vim => false)
+                        : invoicesQuery.Where(vim => allowed.Contains(vim.locationId));
                 }
 
                 var invoices = invoicesQuery.ToList();

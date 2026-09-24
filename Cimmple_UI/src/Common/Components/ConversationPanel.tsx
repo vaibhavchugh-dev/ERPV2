@@ -18,7 +18,7 @@ import {
   navigateToMentionDocument,
   typeBadge,
 } from "../Utils/chatMentions";
-import { formatDateTime } from "../Utils/Formatting";
+import { useFormatting } from "../Hooks/useFormatting";
 import "./ConversationPanel.scss";
 
 interface ConversationPanelProps {
@@ -33,6 +33,7 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   onChanged,
 }) => {
   const history = useHistory();
+  const { formatDateTime } = useFormatting();
   const [thread, setThread] = useState<ConversationThread | null>(null);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");

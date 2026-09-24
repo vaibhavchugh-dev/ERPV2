@@ -512,6 +512,18 @@ namespace CimmpleAPI.Controllers
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, "Adjustment");
 
+                // Job-linked adjust: same-part only (FG or BOM). No remaining-qty / double-post caps.
+                if (refType != null
+                    && refType.Equals("JobOrder", StringComparison.OrdinalIgnoreCase)
+                    && refId.HasValue
+                    && refId.Value > 0)
+                {
+                    var (partOk, partError, _, _, _) = await ValidateJobOrderLinkedPartAsync(
+                        tenantId, refId.Value, request.ProductId, request.RawMaterialId);
+                    if (!partOk)
+                        return BadRequest(new { error = partError });
+                }
+
                 var (success, error) = await _inventoryService.AdjustStockAsync(
                     tenantId,
                     request.ProductId,
@@ -1139,6 +1151,73 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Job-linked movements: part must be the finished good or a BOM material. No qty caps.
+        /// Shared by receive/issue validation and AdjustStock (part-match only).
+        /// </summary>
+        private async Task<(bool Ok, string Error, bool MatchesFinished, int JobOrderId, decimal QtyOrdered)> ValidateJobOrderLinkedPartAsync(
+            int tenantId,
+            int jobOrderId,
+            int? productId,
+            int? rawMaterialId)
+        {
+            var job = await _context.JobOrderMaster.AsNoTracking()
+                .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == jobOrderId);
+            if (job == null)
+                return (false, "Job order not found.", false, 0, 0);
+
+            var jobPartNo = (job.PartNo ?? "").Trim();
+            int? finishedProductId = null;
+            if (job.CustomerOrderDetailID > 0)
+            {
+                finishedProductId = await _context.CustomerOrderDetails.AsNoTracking()
+                    .Where(d => d.ID == job.CustomerOrderDetailID && d.Tenantid == tenantId)
+                    .Select(d => d.productid)
+                    .FirstOrDefaultAsync();
+            }
+            if ((!finishedProductId.HasValue || finishedProductId.Value <= 0) && jobPartNo.Length > 0)
+            {
+                finishedProductId = await _context.ProductMaster.AsNoTracking()
+                    .Where(p => p.tenantid == tenantId && p.partno != null && p.partno.Trim() == jobPartNo)
+                    .Select(p => (int?)p.Id)
+                    .FirstOrDefaultAsync();
+            }
+
+            var matchesFinished = productId.HasValue && productId.Value > 0
+                && (
+                    (finishedProductId.HasValue && finishedProductId.Value == productId.Value)
+                    || (jobPartNo.Length > 0 && await _context.ProductMaster.AsNoTracking()
+                        .AnyAsync(p => p.tenantid == tenantId
+                            && p.Id == productId.Value
+                            && p.partno != null
+                            && p.partno.Trim() == jobPartNo))
+                );
+
+            var matchesBom = false;
+            if (!matchesFinished)
+            {
+                if (productId.HasValue && productId.Value > 0)
+                {
+                    matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
+                        .AnyAsync(m => m.Tenantid == tenantId
+                            && m.JobOrderId == job.JobOrderID
+                            && m.ProductId == productId.Value);
+                }
+                else if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                {
+                    matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
+                        .AnyAsync(m => m.Tenantid == tenantId
+                            && m.JobOrderId == job.JobOrderID
+                            && m.RawMaterialId == rawMaterialId.Value);
+                }
+            }
+
+            if (!matchesFinished && !matchesBom)
+                return (false, "Selected part is not the finished part or a material on this job order.", false, job.JobOrderID, job.QtyOrdered);
+
+            return (true, "", matchesFinished, job.JobOrderID, job.QtyOrdered);
+        }
+
         private async Task<(bool Ok, string Error)> ValidateLinkedDocumentQtyAsync(
             int tenantId,
             string? referenceType,
@@ -1216,68 +1295,18 @@ namespace CimmpleAPI.Controllers
 
             if (referenceType.Equals("JobOrder", StringComparison.OrdinalIgnoreCase))
             {
-                var job = await _context.JobOrderMaster.AsNoTracking()
-                    .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == referenceId.Value);
-                if (job == null)
-                    return (false, "Job order not found.");
+                var (partOk, partError, matchesFinished, jobId, qtyOrdered) = await ValidateJobOrderLinkedPartAsync(
+                    tenantId, referenceId.Value, productId, rawMaterialId);
+                if (!partOk)
+                    return (false, partError);
 
-                var jobPartNo = (job.PartNo ?? "").Trim();
-                int? finishedProductId = null;
-                if (job.CustomerOrderDetailID > 0)
-                {
-                    finishedProductId = await _context.CustomerOrderDetails.AsNoTracking()
-                        .Where(d => d.ID == job.CustomerOrderDetailID && d.Tenantid == tenantId)
-                        .Select(d => d.productid)
-                        .FirstOrDefaultAsync();
-                }
-                if ((!finishedProductId.HasValue || finishedProductId.Value <= 0) && jobPartNo.Length > 0)
-                {
-                    finishedProductId = await _context.ProductMaster.AsNoTracking()
-                        .Where(p => p.tenantid == tenantId && p.partno != null && p.partno.Trim() == jobPartNo)
-                        .Select(p => (int?)p.Id)
-                        .FirstOrDefaultAsync();
-                }
-
-                var matchesFinished = productId.HasValue && productId.Value > 0
-                    && (
-                        (finishedProductId.HasValue && finishedProductId.Value == productId.Value)
-                        || (jobPartNo.Length > 0 && await _context.ProductMaster.AsNoTracking()
-                            .AnyAsync(p => p.tenantid == tenantId
-                                && p.Id == productId.Value
-                                && p.partno != null
-                                && p.partno.Trim() == jobPartNo))
-                    );
-
-                var matchesBom = false;
-                if (!matchesFinished)
-                {
-                    if (productId.HasValue && productId.Value > 0)
-                    {
-                        matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
-                            .AnyAsync(m => m.Tenantid == tenantId
-                                && m.JobOrderId == job.JobOrderID
-                                && m.ProductId == productId.Value);
-                    }
-                    else if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
-                    {
-                        matchesBom = await _context.JobMaterialRequirement.AsNoTracking()
-                            .AnyAsync(m => m.Tenantid == tenantId
-                                && m.JobOrderId == job.JobOrderID
-                                && m.RawMaterialId == rawMaterialId.Value);
-                    }
-                }
-
-                // Receive and Issue both require the part to belong to the job (FG or BOM).
-                if (!matchesFinished && !matchesBom)
-                    return (false, "Selected part is not the finished part or a material on this job order.");
-
-                // Double-post guard for finished-goods receive only.
+                // Double-post guard for finished-goods receive only (not Adjust / Issue).
                 if (isReceive && matchesFinished)
                 {
                     var received = await _context.InventoryTransaction
                         .Where(t => t.Tenantid == tenantId
                             && t.ReferenceType == "JobOrder"
-                            && t.ReferenceId == job.JobOrderID
+                            && t.ReferenceId == jobId
                             && t.TransactionTypeId == 1
                             && t.ProductId != null
                             && t.RawMaterialId == null)
@@ -1285,13 +1314,13 @@ namespace CimmpleAPI.Controllers
                     var issued = await _context.InventoryTransaction
                         .Where(t => t.Tenantid == tenantId
                             && t.ReferenceType == "JobOrder"
-                            && t.ReferenceId == job.JobOrderID
+                            && t.ReferenceId == jobId
                             && t.TransactionTypeId == 2
                             && t.ProductId != null
                             && t.RawMaterialId == null)
                         .SumAsync(t => (decimal?)(t.Quantity < 0 ? -t.Quantity : t.Quantity)) ?? 0;
                     var net = Math.Max(0, received - issued);
-                    var remaining = job.QtyOrdered - net;
+                    var remaining = qtyOrdered - net;
                     if (quantity > remaining + 0.0001m)
                         return (false, remaining <= 0
                             ? "This job already has its full finished-goods quantity in inventory."

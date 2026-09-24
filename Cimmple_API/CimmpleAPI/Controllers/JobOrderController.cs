@@ -663,7 +663,7 @@ namespace CimmpleAPI.Controllers
                 {
                     impact.CanDelete = false;
                     impact.BlockingReasons.Add(
-                        $"This job still has {fgOnHand:0.##} finished goods in inventory. Reopen the job to reverse stock, or ship/issue the goods before deleting.");
+                        "Cannot delete while finished goods remain in inventory. Reopen the job to reverse stock first.");
                 }
 
                 // Check if job order is in progress or completed

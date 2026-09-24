@@ -257,7 +257,10 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     let list = products;
 
     if (
-      (type === "receive" || type === "issue" || type === "reserve") &&
+      (type === "receive" ||
+        type === "issue" ||
+        type === "reserve" ||
+        type === "adjust") &&
       referenceType === "JobOrder" &&
       selectedDocument
     ) {
@@ -334,7 +337,10 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     let list = rawMaterials;
 
     if (
-      (type === "receive" || type === "issue" || type === "reserve") &&
+      (type === "receive" ||
+        type === "issue" ||
+        type === "reserve" ||
+        type === "adjust") &&
       referenceType === "JobOrder" &&
       selectedDocument
     ) {

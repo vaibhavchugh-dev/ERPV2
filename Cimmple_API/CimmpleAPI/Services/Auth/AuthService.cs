@@ -510,6 +510,7 @@ namespace CimmpleAPI.Services.Auth
         {
             string? roleName = null;
             string? roleTag = null;
+            string? roleResetPwd = null;
             if (user.Role.HasValue)
             {
                 try
@@ -517,6 +518,7 @@ namespace CimmpleAPI.Services.Auth
                     var role = await _db.UserRole.AsNoTracking().FirstOrDefaultAsync(r => r.RoleID == user.Role.Value);
                     roleName = role?.RoleName;
                     roleTag = role?.RoleTag;
+                    roleResetPwd = role?.ResetPwd;
                 }
                 catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
                 {
@@ -646,7 +648,9 @@ namespace CimmpleAPI.Services.Auth
                 CanAccessAllLocations = canAccessAll,
                 DefaultLocationId = defaultLocationId,
                 MustChangePassword = string.Equals(user.ChangePassword, "Y", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(user.ChangePassword, "Yes", StringComparison.OrdinalIgnoreCase),
+                    || string.Equals(user.ChangePassword, "Yes", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(roleResetPwd, "Y", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(roleResetPwd, "Yes", StringComparison.OrdinalIgnoreCase),
                 VendorId = user.VendorId,
                 VendorCode = vendorCode,
                 PortalType = portalType,

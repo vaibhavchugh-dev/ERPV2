@@ -15,11 +15,11 @@ public static class SalesReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var end = endDate.Date;
-        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId);
+        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId, restrictToLocationIds);
 
         var byCustomer = invoices
             .GroupBy(x => new
@@ -96,11 +96,11 @@ public static class SalesReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var end = endDate.Date;
-        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId);
+        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId, restrictToLocationIds);
 
         var byPeriod = invoices
             .GroupBy(x => x.InvoiceDate.ToString("yyyy-MM"))
@@ -169,7 +169,7 @@ public static class SalesReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var end = endDate.Date;
@@ -204,6 +204,13 @@ public static class SalesReportsService
         {
             var locId = locationId.Value;
             linesQuery = linesQuery.Where(x => x.LocationId == locId);
+        }
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            linesQuery = allowed.Count == 0
+                ? linesQuery.Where(_ => false)
+                : linesQuery.Where(x => allowed.Contains(x.LocationId));
         }
 
         var lines = linesQuery.ToList();
@@ -282,7 +289,7 @@ public static class SalesReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var end = endDate.Date;
@@ -297,6 +304,13 @@ public static class SalesReportsService
         {
             var locId = locationId.Value;
             query = query.Where(q => q.Locationid == locId);
+        }
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(q => q.Locationid.HasValue && allowed.Contains(q.Locationid.Value));
         }
 
         var quotes = query
@@ -402,11 +416,11 @@ public static class SalesReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var end = endDate.Date;
-        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId);
+        var invoices = LoadDistinctBilledInvoices(db, tenantId, start, end, locationId, restrictToLocationIds);
 
         var locationNames = db.Locations.AsNoTracking()
             .Where(l => l.TenantId == tenantId)
@@ -494,7 +508,7 @@ public static class SalesReportsService
         int tenantId,
         DateTime start,
         DateTime end,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var endExclusive = end.AddDays(1);
 
@@ -527,6 +541,13 @@ public static class SalesReportsService
         {
             var locId = locationId.Value;
             query = query.Where(x => x.LocationId == locId);
+        }
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(x => allowed.Contains(x.LocationId));
         }
 
         return query

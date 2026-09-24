@@ -44,7 +44,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var dateFilter = GetDateRangeFilter(dateRange);
@@ -62,6 +62,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    jobOrdersQuery = allowed.Count == 0
+                        ? jobOrdersQuery.Where(_ => false)
+                        : jobOrdersQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 // Production Metrics
@@ -118,6 +128,19 @@ namespace CimmpleAPI.Controllers
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
                 }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    unpaidCustomerInvoicesQuery = allowed.Count == 0
+                        ? unpaidCustomerInvoicesQuery.Where(_ => false)
+                        : unpaidCustomerInvoicesQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
+                }
 
                 var unpaidCustomerInvoices = unpaidCustomerInvoicesQuery
                     .ToList()
@@ -140,6 +163,13 @@ namespace CimmpleAPI.Controllers
                                  vim.voideddate == null);
                 if (filterLocationId.HasValue)
                     unpaidVendorInvoicesQuery = unpaidVendorInvoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    unpaidVendorInvoicesQuery = allowed.Count == 0
+                        ? unpaidVendorInvoicesQuery.Where(_ => false)
+                        : unpaidVendorInvoicesQuery.Where(vim => allowed.Contains(vim.locationId));
+                }
 
                 var unpaidVendorInvoices = unpaidVendorInvoicesQuery
                     .ToList()
@@ -172,10 +202,23 @@ namespace CimmpleAPI.Controllers
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
                 }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    revenueThisMonthQuery = allowed.Count == 0
+                        ? revenueThisMonthQuery.Where(_ => false)
+                        : revenueThisMonthQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
+                }
                 var revenueThisMonth = revenueThisMonthQuery.Sum(im => (decimal?)im.TotalAmount) ?? 0;
 
                 var cashFlow = CashFlowMetricsCalculator.Calculate(
-                    _context, tenantId, dateFilter, filterLocationId);
+                    _context, tenantId, dateFilter, filterLocationId, restrictToLocationIds);
                 var cashIn = cashFlow.cashIn;
                 var cashOut = cashFlow.cashOut;
                 var netCashFlow = cashIn - cashOut;
@@ -217,6 +260,13 @@ namespace CimmpleAPI.Controllers
                                (co.Status == "Pending" || co.Status == "Draft"));
                 if (filterLocationId.HasValue)
                     pendingCustomerOrdersQuery = pendingCustomerOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    pendingCustomerOrdersQuery = allowed.Count == 0
+                        ? pendingCustomerOrdersQuery.Where(_ => false)
+                        : pendingCustomerOrdersQuery.Where(co => allowed.Contains(co.locationId));
+                }
                 var pendingCustomerOrders = pendingCustomerOrdersQuery.Count();
 
                 var pendingVendorOrdersQuery = _context.VendorOrders
@@ -225,6 +275,13 @@ namespace CimmpleAPI.Controllers
                                (vo.Status == "Pending" || vo.Status == "Draft"));
                 if (filterLocationId.HasValue)
                     pendingVendorOrdersQuery = pendingVendorOrdersQuery.Where(vo => vo.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    pendingVendorOrdersQuery = allowed.Count == 0
+                        ? pendingVendorOrdersQuery.Where(_ => false)
+                        : pendingVendorOrdersQuery.Where(vo => vo.LocationId.HasValue && allowed.Contains(vo.LocationId.Value));
+                }
                 var pendingVendorOrders = pendingVendorOrdersQuery.Count();
 
                 // Overdue shipments = unshipped (or under-shipped) lines past promised due date
@@ -237,6 +294,13 @@ namespace CimmpleAPI.Controllers
                                  co.Status != "Fully Invoiced");
                 if (filterLocationId.HasValue)
                     activeOrdersQuery = activeOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    activeOrdersQuery = allowed.Count == 0
+                        ? activeOrdersQuery.Where(_ => false)
+                        : activeOrdersQuery.Where(co => allowed.Contains(co.locationId));
+                }
 
                 var activeOrderIds = activeOrdersQuery
                     .Select(co => co.OrderID)
@@ -270,6 +334,13 @@ namespace CimmpleAPI.Controllers
                                q.OrderDate <= dateFilter.endDate);
                 if (filterLocationId.HasValue)
                     quotationsThisMonthQuery = quotationsThisMonthQuery.Where(q => q.Locationid == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    quotationsThisMonthQuery = allowed.Count == 0
+                        ? quotationsThisMonthQuery.Where(_ => false)
+                        : quotationsThisMonthQuery.Where(q => q.Locationid.HasValue && allowed.Contains(q.Locationid.Value));
+                }
                 var quotationsThisMonth = quotationsThisMonthQuery.Count();
 
                 var ordersThisMonthQuery = _context.CustomerOrder
@@ -278,6 +349,13 @@ namespace CimmpleAPI.Controllers
                                co.OrderDate <= dateFilter.endDate);
                 if (filterLocationId.HasValue)
                     ordersThisMonthQuery = ordersThisMonthQuery.Where(co => co.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    ordersThisMonthQuery = allowed.Count == 0
+                        ? ordersThisMonthQuery.Where(_ => false)
+                        : ordersThisMonthQuery.Where(co => allowed.Contains(co.locationId));
+                }
                 var ordersThisMonth = ordersThisMonthQuery.Count();
 
                 var conversionRate = quotationsThisMonth > 0
@@ -355,7 +433,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var dateFilter = GetDateRangeFilter(period);
@@ -368,6 +446,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    jobOrdersQuery = allowed.Count == 0
+                        ? jobOrdersQuery.Where(_ => false)
+                        : jobOrdersQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 var jobOrdersByStatus = jobOrdersQuery
@@ -432,7 +520,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var days = period == "7days" ? 7 : period == "30days" ? 30 : 90;
@@ -452,6 +540,19 @@ namespace CimmpleAPI.Controllers
                                 co.OrderID == id.OrderId &&
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    revenueQuery = allowed.Count == 0
+                        ? revenueQuery.Where(_ => false)
+                        : revenueQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
                 }
 
                 var revenueData = revenueQuery
@@ -478,6 +579,13 @@ namespace CimmpleAPI.Controllers
                                  vim.InvoiceDate >= startDate);
                 if (filterLocationId.HasValue)
                     expenseQuery = expenseQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    expenseQuery = allowed.Count == 0
+                        ? expenseQuery.Where(_ => false)
+                        : expenseQuery.Where(vim => allowed.Contains(vim.locationId));
+                }
 
                 var expenseData = expenseQuery
                     .GroupBy(vim => vim.InvoiceDate.Date)
@@ -537,7 +645,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var activities = new List<object>();
@@ -552,6 +660,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    recentJobOrdersQuery = allowed.Count == 0
+                        ? recentJobOrdersQuery.Where(_ => false)
+                        : recentJobOrdersQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 var recentJobOrders = recentJobOrdersQuery
@@ -597,6 +715,19 @@ namespace CimmpleAPI.Controllers
                                 co.OrderID == id.OrderId &&
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    recentInvoicesQuery = allowed.Count == 0
+                        ? recentInvoicesQuery.Where(_ => false)
+                        : recentInvoicesQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
                 }
 
                 var recentInvoices = recentInvoicesQuery
@@ -674,7 +805,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var today = DateTime.Now.Date;
@@ -695,6 +826,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    overdueJobsQuery = allowed.Count == 0
+                        ? overdueJobsQuery.Where(_ => false)
+                        : overdueJobsQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 var overdueJobs = overdueJobsQuery
@@ -728,6 +869,19 @@ namespace CimmpleAPI.Controllers
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
                 }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    overdueARQuery = allowed.Count == 0
+                        ? overdueARQuery.Where(_ => false)
+                        : overdueARQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
+                }
 
                 var overdueAR = overdueARQuery
                     .Select(im => new
@@ -753,6 +907,13 @@ namespace CimmpleAPI.Controllers
                                  vim.Paydate == null);
                 if (filterLocationId.HasValue)
                     overdueAPQuery = overdueAPQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    overdueAPQuery = allowed.Count == 0
+                        ? overdueAPQuery.Where(_ => false)
+                        : overdueAPQuery.Where(vim => allowed.Contains(vim.locationId));
+                }
 
                 var overdueAP = overdueAPQuery
                     .Select(vim => new
@@ -843,7 +1004,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var dateFilter = GetDateRangeFilter("This Month");
@@ -864,6 +1025,13 @@ namespace CimmpleAPI.Controllers
 
                 if (filterLocationId.HasValue)
                     topCustomersQuery = topCustomersQuery.Where(x => x.co.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    topCustomersQuery = allowed.Count == 0
+                        ? topCustomersQuery.Where(_ => false)
+                        : topCustomersQuery.Where(x => allowed.Contains(x.co.locationId));
+                }
 
                 var topCustomers = topCustomersQuery
                     .GroupBy(x => new { x.co.CustomerID, x.co.CustomerName })
@@ -914,7 +1082,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var dateFilter = GetDateRangeFilter("This Month");
@@ -930,6 +1098,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    topProductsQuery = allowed.Count == 0
+                        ? topProductsQuery.Where(_ => false)
+                        : topProductsQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 var topProducts = topProductsQuery
@@ -980,11 +1158,12 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
-                // NonConformanceReport has no locationId — leave tenant-wide (filterLocationId unused)
+                // NonConformanceReport has no locationId — leave tenant-wide (location filters unused)
                 _ = filterLocationId;
+                _ = restrictToLocationIds;
 
                 var ncrByStatus = _context.NonConformanceReports
                     .Where(n => n.TenantId == tenantId && n.Status != null)
@@ -1032,7 +1211,7 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var endDate = DateTime.Now.AddDays(days).Date;
@@ -1058,6 +1237,16 @@ namespace CimmpleAPI.Controllers
                         _context.CustomerOrder.Any(co =>
                             co.OrderID == j.CustomerOrderID &&
                             co.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    jobDeadlinesQuery = allowed.Count == 0
+                        ? jobDeadlinesQuery.Where(_ => false)
+                        : jobDeadlinesQuery.Where(j =>
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == j.CustomerOrderID &&
+                                allowed.Contains(co.locationId)));
                 }
 
                 var jobDeadlines = jobDeadlinesQuery
@@ -1092,6 +1281,19 @@ namespace CimmpleAPI.Controllers
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
                 }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    invoiceDeadlinesQuery = allowed.Count == 0
+                        ? invoiceDeadlinesQuery.Where(_ => false)
+                        : invoiceDeadlinesQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
+                }
 
                 var invoiceDeadlines = invoiceDeadlinesQuery
                     .Select(im => new
@@ -1117,6 +1319,13 @@ namespace CimmpleAPI.Controllers
                                  vim.Paydate == null);
                 if (filterLocationId.HasValue)
                     vendorInvoiceDeadlinesQuery = vendorInvoiceDeadlinesQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    vendorInvoiceDeadlinesQuery = allowed.Count == 0
+                        ? vendorInvoiceDeadlinesQuery.Where(_ => false)
+                        : vendorInvoiceDeadlinesQuery.Where(vim => allowed.Contains(vim.locationId));
+                }
 
                 var vendorInvoiceDeadlines = vendorInvoiceDeadlinesQuery
                     .Select(vim => new

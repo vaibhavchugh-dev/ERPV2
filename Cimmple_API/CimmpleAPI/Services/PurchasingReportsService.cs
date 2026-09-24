@@ -14,7 +14,7 @@ public static class PurchasingReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -25,7 +25,7 @@ public static class PurchasingReportsService
             endDate.Date,
             locationId);
 
-        var orders = QueryVendorOrders(db, tenantId, locationId)
+        var orders = QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
             .Where(o => o.OrderDate >= start && o.OrderDate < endExclusive)
             .Select(o => new
             {
@@ -43,7 +43,7 @@ public static class PurchasingReportsService
 
         var orderIds = orders.Select(o => o.OrderID).ToList();
 
-        var headerDueByOrder = QueryVendorOrders(db, tenantId, locationId)
+        var headerDueByOrder = QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
             .Where(o => orderIds.Contains(o.OrderID))
             .Select(o => new { o.OrderID, o.ExternalOrderDate })
             .ToList()
@@ -192,7 +192,7 @@ public static class PurchasingReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -203,7 +203,7 @@ public static class PurchasingReportsService
             endDate.Date,
             locationId);
 
-        var orders = QueryVendorOrders(db, tenantId, locationId)
+        var orders = QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
             .Where(o => o.OrderDate >= start && o.OrderDate < endExclusive)
             .Select(o => new
             {
@@ -265,7 +265,7 @@ public static class PurchasingReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -278,7 +278,7 @@ public static class PurchasingReportsService
 
         var lines = (
             from d in db.VendorOrderDetails.AsNoTracking()
-            join o in QueryVendorOrders(db, tenantId, locationId)
+            join o in QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
                 on d.OrderID equals o.OrderID
             where d.Tenantid == tenantId
                   && o.OrderDate >= start
@@ -381,7 +381,7 @@ public static class PurchasingReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -394,7 +394,7 @@ public static class PurchasingReportsService
 
         var lines = (
             from d in db.VendorOrderDetails.AsNoTracking()
-            join o in QueryVendorOrders(db, tenantId, locationId)
+            join o in QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
                 on d.OrderID equals o.OrderID
             where d.Tenantid == tenantId
                   && o.OrderDate >= start
@@ -455,7 +455,7 @@ public static class PurchasingReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -468,7 +468,7 @@ public static class PurchasingReportsService
 
         var lines = (
             from d in db.VendorOrderDetails.AsNoTracking()
-            join o in QueryVendorOrders(db, tenantId, locationId)
+            join o in QueryVendorOrders(db, tenantId, locationId, restrictToLocationIds)
                 on d.OrderID equals o.OrderID
             where d.Tenantid == tenantId
                   && o.OrderDate >= start
@@ -744,13 +744,15 @@ public static class PurchasingReportsService
     private static IQueryable<Data.Models.VendorOrder> QueryVendorOrders(
         CimmpleDbContext db,
         int tenantId,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var query = db.VendorOrders.AsNoTracking().Where(o => o.Tenantid == tenantId);
-        if (locationId.HasValue && locationId.Value > 0)
+        var allowed = ReportLocationScope.Resolve(locationId, restrictToLocationIds);
+        if (allowed != null)
         {
-            var locId = locationId.Value;
-            query = query.Where(o => o.LocationId == locId);
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(o => o.LocationId.HasValue && allowed.Contains(o.LocationId.Value));
         }
         return query;
     }

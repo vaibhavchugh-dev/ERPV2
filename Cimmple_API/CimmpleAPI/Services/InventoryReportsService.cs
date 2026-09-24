@@ -13,7 +13,7 @@ public static class InventoryReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var report = ReportResultFactory.Create(
             "inventory-valuation",
@@ -26,6 +26,13 @@ public static class InventoryReportsService
             .Where(b => b.Tenantid == tenantId);
         if (locationId.HasValue && locationId.Value > 0)
             balancesQuery = balancesQuery.Where(b => b.LocationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            balancesQuery = allowed.Count == 0
+                ? balancesQuery.Where(_ => false)
+                : balancesQuery.Where(b => allowed.Contains(b.LocationId));
+        }
 
         var rawRows = (
             from b in balancesQuery
@@ -155,7 +162,7 @@ public static class InventoryReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -172,6 +179,13 @@ public static class InventoryReportsService
                         && t.TransactionDate < endExclusive);
         if (locationId.HasValue && locationId.Value > 0)
             txQuery = txQuery.Where(t => t.LocationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            txQuery = allowed.Count == 0
+                ? txQuery.Where(_ => false)
+                : txQuery.Where(t => allowed.Contains(t.LocationId));
+        }
 
         var txs = (
             from t in txQuery
@@ -320,7 +334,7 @@ public static class InventoryReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -340,6 +354,13 @@ public static class InventoryReportsService
                         && t.ReferenceType.ToLower() == "joborder");
         if (locationId.HasValue && locationId.Value > 0)
             txQuery = txQuery.Where(t => t.LocationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            txQuery = allowed.Count == 0
+                ? txQuery.Where(_ => false)
+                : txQuery.Where(t => allowed.Contains(t.LocationId));
+        }
 
         var rows = (
             from t in txQuery
@@ -399,7 +420,7 @@ public static class InventoryReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -414,6 +435,13 @@ public static class InventoryReportsService
             .Where(b => b.Tenantid == tenantId);
         if (locationId.HasValue && locationId.Value > 0)
             balancesQuery = balancesQuery.Where(b => b.LocationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            balancesQuery = allowed.Count == 0
+                ? balancesQuery.Where(_ => false)
+                : balancesQuery.Where(b => allowed.Contains(b.LocationId));
+        }
 
         var balances = (
             from b in balancesQuery
@@ -467,6 +495,13 @@ public static class InventoryReportsService
                         && t.Quantity < 0);
         if (locationId.HasValue && locationId.Value > 0)
             txQuery = txQuery.Where(t => t.LocationId == locationId.Value);
+        else if (restrictToLocationIds != null)
+        {
+            var allowed = restrictToLocationIds.ToList();
+            txQuery = allowed.Count == 0
+                ? txQuery.Where(_ => false)
+                : txQuery.Where(t => allowed.Contains(t.LocationId));
+        }
 
         var outbound = txQuery
             .Select(t => new { t.ProductId, t.RawMaterialId, t.Quantity })

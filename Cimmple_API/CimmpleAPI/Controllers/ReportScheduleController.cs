@@ -29,7 +29,7 @@ namespace CimmpleAPI.Controllers
             if (tenantId <= 0)
                 return BadRequest(new { message = "Tenant id is required." });
 
-            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                 return forbid!;
 
             var query = _context.ReportSchedules.AsNoTracking()
@@ -42,6 +42,18 @@ namespace CimmpleAPI.Controllers
                     s.LocationId == null
                     || s.LocationId == 0
                     || s.LocationId == filterLocationId.Value);
+            }
+            else if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                query = allowed.Count == 0
+                    ? query.Where(s =>
+                        s.LocationId == null
+                        || s.LocationId == 0)
+                    : query.Where(s =>
+                        s.LocationId == null
+                        || s.LocationId == 0
+                        || (s.LocationId.HasValue && allowed.Contains(s.LocationId.Value)));
             }
 
             var items = await query
@@ -172,7 +184,7 @@ namespace CimmpleAPI.Controllers
             if (!ok)
                 return BadRequest(new { message = error ?? "Failed to run schedule." });
 
-            return Ok(new { message = "Report generated and emailed.", result = ToDto(entity) });
+            return Ok(new { message = "Report generated and email queued for delivery.", result = ToDto(entity) });
         }
 
         private static void ApplyCategoryDefault(ReportSchedule entity)

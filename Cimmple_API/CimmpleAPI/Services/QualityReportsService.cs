@@ -15,7 +15,7 @@ public static class QualityReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -26,7 +26,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId, restrictToLocationIds)
             .Select(n => new
             {
                 n.NcrId,
@@ -167,7 +167,7 @@ public static class QualityReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -178,7 +178,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId, restrictToLocationIds)
             .Select(n => new
             {
                 n.NcrId,
@@ -251,7 +251,7 @@ public static class QualityReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -262,7 +262,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId, restrictToLocationIds)
             .Select(n => new
             {
                 Category = n.Category ?? "Unknown",
@@ -299,7 +299,7 @@ public static class QualityReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -310,7 +310,7 @@ public static class QualityReportsService
             endDate.Date,
             locationId);
 
-        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId)
+        var ncrs = QueryNcrs(db, tenantId, start, endExclusive, locationId, restrictToLocationIds)
             .Select(n => new
             {
                 Category = n.RootCauseCategory ?? "",
@@ -364,23 +364,25 @@ public static class QualityReportsService
         int tenantId,
         DateTime start,
         DateTime endExclusive,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var query = db.NonConformanceReports.AsNoTracking()
             .Where(n => n.TenantId == tenantId
                         && n.ReportedDate >= start
                         && n.ReportedDate < endExclusive);
 
-        if (!locationId.HasValue || locationId.Value <= 0)
+        var allowed = ReportLocationScope.Resolve(locationId, restrictToLocationIds);
+        if (allowed == null)
             return query;
+        if (allowed.Count == 0)
+            return query.Where(_ => false);
 
-        var locId = locationId.Value;
         var jobIdsAtSite =
             from j in db.JobOrderMaster.AsNoTracking()
             where j.Tenantid == tenantId
             join o in db.CustomerOrder.AsNoTracking().Where(x => x.Tenantid == tenantId)
                 on j.CustomerOrderID equals o.OrderID
-            where o.locationId == locId
+            where allowed.Contains(o.locationId)
             select j.JobOrderID;
 
         return query.Where(n => n.JobOrderId.HasValue && jobIdsAtSite.Contains(n.JobOrderId.Value));

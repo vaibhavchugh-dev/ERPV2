@@ -159,7 +159,7 @@ namespace CimmpleAPI.Controllers
                 return BadRequest(new { message = "Tenant is required" });
             }
 
-            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+            if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                 return forbid!;
 
             var todayLocal = GetTenantLocalNow(tenantId).Date;
@@ -199,6 +199,25 @@ namespace CimmpleAPI.Controllers
                     || u.CanAccessAllLocations
                     || mappedUserIds.Contains(u.User_UniqueID));
             }
+            else if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                if (allowed.Count == 0)
+                {
+                    employeesQuery = employeesQuery.Where(u => false);
+                }
+                else
+                {
+                    var mappedUserIds = _db.UserMapping
+                        .AsNoTracking()
+                        .Where(m => allowed.Contains(m.locationId))
+                        .Select(m => m.userId);
+                    employeesQuery = employeesQuery.Where(u =>
+                        (u.DefaultLocationId.HasValue && allowed.Contains(u.DefaultLocationId.Value))
+                        || u.CanAccessAllLocations
+                        || mappedUserIds.Contains(u.User_UniqueID));
+                }
+            }
 
             var employees = await employeesQuery
                 .Select(u => new
@@ -227,6 +246,15 @@ namespace CimmpleAPI.Controllers
                 punchesQuery = punchesQuery.Where(p =>
                     p.LocationId == filterLocationId.Value
                     || p.LocationId == 0);
+            }
+            else if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                punchesQuery = allowed.Count == 0
+                    ? punchesQuery.Where(p => p.LocationId == 0)
+                    : punchesQuery.Where(p =>
+                        p.LocationId == 0
+                        || allowed.Contains(p.LocationId));
             }
 
             var punches = await punchesQuery

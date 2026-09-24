@@ -45,7 +45,7 @@ public static class OperationsReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -56,7 +56,7 @@ public static class OperationsReportsService
             endDate.Date,
             locationId);
 
-        var jobs = QueryJobs(db, tenantId, locationId)
+        var jobs = QueryJobs(db, tenantId, locationId, restrictToLocationIds)
             .Where(j => j.OrderDate >= start && j.OrderDate < endExclusive)
             .ToList()
             .Where(j => ClosedStatuses.Contains(j.Status ?? ""))
@@ -187,7 +187,7 @@ public static class OperationsReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -198,7 +198,7 @@ public static class OperationsReportsService
             endDate.Date,
             locationId);
 
-        var jobs = QueryJobs(db, tenantId, locationId)
+        var jobs = QueryJobs(db, tenantId, locationId, restrictToLocationIds)
             .Where(j => j.DueDate >= start && j.DueDate < endExclusive)
             .ToList()
             .Where(j => !CancelledStatuses.Contains(j.Status ?? ""))
@@ -262,7 +262,7 @@ public static class OperationsReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -273,7 +273,7 @@ public static class OperationsReportsService
             endDate.Date,
             locationId);
 
-        var jobs = QueryJobs(db, tenantId, locationId)
+        var jobs = QueryJobs(db, tenantId, locationId, restrictToLocationIds)
             .Where(j => j.OrderDate >= start && j.OrderDate < endExclusive)
             .ToList()
             .Where(j => j.EnableJobTracking && !string.IsNullOrWhiteSpace(j.RoutingStepsJson))
@@ -336,7 +336,7 @@ public static class OperationsReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -347,7 +347,7 @@ public static class OperationsReportsService
             endDate.Date,
             locationId);
 
-        var jobs = QueryJobs(db, tenantId, locationId)
+        var jobs = QueryJobs(db, tenantId, locationId, restrictToLocationIds)
             .Where(j => j.OrderDate >= start && j.OrderDate < endExclusive)
             .ToList()
             .Where(j => j.EnableJobTracking && !string.IsNullOrWhiteSpace(j.RoutingStepsJson))
@@ -397,7 +397,7 @@ public static class OperationsReportsService
         int tenantId,
         DateTime startDate,
         DateTime endDate,
-        int? locationId = null)
+        int? locationId = null, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var start = startDate.Date;
         var endExclusive = endDate.Date.AddDays(1);
@@ -408,7 +408,7 @@ public static class OperationsReportsService
             endDate.Date,
             locationId);
 
-        var jobs = QueryJobs(db, tenantId, locationId)
+        var jobs = QueryJobs(db, tenantId, locationId, restrictToLocationIds)
             .Where(j => j.OrderDate >= start && j.OrderDate < endExclusive)
             .ToList()
             .Where(j => j.EnableJobTracking && !string.IsNullOrWhiteSpace(j.RoutingStepsJson))
@@ -476,7 +476,7 @@ public static class OperationsReportsService
     private static IQueryable<Data.Models.JobOrderMaster> QueryJobs(
         CimmpleDbContext db,
         int tenantId,
-        int? locationId)
+        int? locationId, IReadOnlyList<int>? restrictToLocationIds = null)
     {
         var query =
             from j in db.JobOrderMaster.AsNoTracking()
@@ -486,10 +486,12 @@ public static class OperationsReportsService
             from o in orderGroup.DefaultIfEmpty()
             select new { Job = j, LocationId = o != null ? o.locationId : 0 };
 
-        if (locationId.HasValue && locationId.Value > 0)
+        var allowed = ReportLocationScope.Resolve(locationId, restrictToLocationIds);
+        if (allowed != null)
         {
-            var locId = locationId.Value;
-            query = query.Where(x => x.LocationId == locId);
+            query = allowed.Count == 0
+                ? query.Where(_ => false)
+                : query.Where(x => allowed.Contains(x.LocationId));
         }
 
         return query.Select(x => x.Job);

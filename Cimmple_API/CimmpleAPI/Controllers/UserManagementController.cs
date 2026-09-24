@@ -44,7 +44,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var query = _context.UserDetails.Where(u => u.TenantID == tenantId
@@ -60,6 +60,24 @@ namespace CimmpleAPI.Controllers
                         u.DefaultLocationId == loc
                         || u.CanAccessAllLocations
                         || mappedUserIds.Contains(u.User_UniqueID));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    if (allowed.Count == 0)
+                    {
+                        query = query.Where(u => false);
+                    }
+                    else
+                    {
+                        var mappedUserIds = _context.UserMapping
+                            .Where(m => allowed.Contains(m.locationId))
+                            .Select(m => m.userId);
+                        query = query.Where(u =>
+                            (u.DefaultLocationId.HasValue && allowed.Contains(u.DefaultLocationId.Value))
+                            || u.CanAccessAllLocations
+                            || mappedUserIds.Contains(u.User_UniqueID));
+                    }
                 }
 
                 // Apply filters
@@ -97,8 +115,7 @@ namespace CimmpleAPI.Controllers
                         Phone1 = u.Phone1,
                         EmployeeType = u.EmployeeType,
                         DateOfHire = u.Date_of_hire,
-                        CreateDate = u.CreateDate,
-                        IsSalesAgent = u.IsSalesAgent
+                        CreateDate = u.CreateDate
                     })
                     .ToListAsync();
 
@@ -182,9 +199,6 @@ namespace CimmpleAPI.Controllers
                         PrimaryContact = u.PrimaryContact,
                         DOB = u.DOB,
                         SSN = u.SSN,
-                        IsSalesAgent = u.IsSalesAgent,
-                        AllowPTO = u.AllowPTO,
-                        AllowPerformance = u.AllowPerformance,
                         SendWelcomeEmail = u.SendWelcomeEmail,
                         CreateDate = u.CreateDate
                     })
@@ -234,9 +248,6 @@ namespace CimmpleAPI.Controllers
                 // Update account management fields only
                 user.Status = userDto.Status;
                 user.Role = userDto.Role;
-                user.IsSalesAgent = userDto.IsSalesAgent ? 1 : 0;
-                user.AllowPTO = userDto.AllowPTO ? 1 : 0;
-                user.AllowPerformance = userDto.AllowPerformance ? 1 : 0;
                 
                 // Update termination info if status is being changed to Inactive
                 if (userDto.Status == "Inactive" && string.IsNullOrEmpty(user.Date_of_termination))
@@ -396,7 +407,8 @@ namespace CimmpleAPI.Controllers
                         name = r.RoleName,
                         description = r.RoleTag ?? $"Role: {r.RoleName}",
                         orderNo = r.OrderNo,
-                        tenantId = r.TenantId
+                        tenantId = r.TenantId,
+                        resetPwd = NormalizeResetPwdFlag(r.ResetPwd)
                     })
                     .ToListAsync();
 
@@ -551,8 +563,6 @@ namespace CimmpleAPI.Controllers
 
                     await _context.PermissionMaster.AddRangeAsync(missingPermissions);
                     await _context.SaveChangesAsync();
-                    await AssignInheritedPermissionsAsync(missingPermissions);
-
                     Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
                     return Ok(new { message = $"Added {missingPermissions.Count} missing permissions", count = existingCount + missingPermissions.Count, added = missingPermissions.Count, clearExisting = false });
                 }
@@ -639,7 +649,7 @@ namespace CimmpleAPI.Controllers
                     RoleTag = dto.Description ?? dto.RoleName,
                     TenantId = dto.TenantId,
                     OrderNo = orderNo,
-                    ResetPwd = dto.ResetPwd ?? "N"
+                    ResetPwd = NormalizeResetPwdFlag(dto.ResetPwd)
                 };
 
                 _context.UserRole.Add(newRole);
@@ -697,7 +707,7 @@ namespace CimmpleAPI.Controllers
                 if (dto.OrderNo.HasValue)
                     role.OrderNo = dto.OrderNo.Value;
                 if (!string.IsNullOrEmpty(dto.ResetPwd))
-                    role.ResetPwd = dto.ResetPwd;
+                    role.ResetPwd = NormalizeResetPwdFlag(dto.ResetPwd);
 
                 await _context.SaveChangesAsync();
 
@@ -803,46 +813,19 @@ namespace CimmpleAPI.Controllers
             };
         }
 
-        private async Task AssignInheritedPermissionsAsync(List<PermissionMaster> addedPermissions)
+        /// <summary>Normalize role ResetPwd to Y/N (also accepts Yes/No from legacy data).</summary>
+        private static string NormalizeResetPwdFlag(string? value)
         {
-            var ncrCodesPermission = addedPermissions.FirstOrDefault(p => p.Url == "/quality/ncr-codes");
-            if (ncrCodesPermission == null || ncrCodesPermission.PermissionId <= 0)
+            if (string.IsNullOrWhiteSpace(value)) return "N";
+            var v = value.Trim();
+            if (string.Equals(v, "Y", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "Yes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
+                || v == "1")
             {
-                return;
+                return "Y";
             }
-
-            var qualityPermission = await _context.PermissionMaster
-                .FirstOrDefaultAsync(p => p.Url == "/quality");
-            if (qualityPermission == null)
-            {
-                return;
-            }
-
-            var roleAssignments = await _context.PermissionRole
-                .Where(pr => pr.PermissionId == qualityPermission.PermissionId)
-                .Select(pr => new { pr.RoleId, pr.TenantId })
-                .Distinct()
-                .ToListAsync();
-
-            foreach (var assignment in roleAssignments)
-            {
-                var alreadyAssigned = await _context.PermissionRole.AnyAsync(pr =>
-                    pr.RoleId == assignment.RoleId &&
-                    pr.TenantId == assignment.TenantId &&
-                    pr.PermissionId == ncrCodesPermission.PermissionId);
-
-                if (!alreadyAssigned)
-                {
-                    _context.PermissionRole.Add(new PermissionRole
-                    {
-                        RoleId = assignment.RoleId,
-                        TenantId = assignment.TenantId,
-                        PermissionId = ncrCodesPermission.PermissionId
-                    });
-                }
-            }
-
-            await _context.SaveChangesAsync();
+            return "N";
         }
     }
 
@@ -861,7 +844,6 @@ namespace CimmpleAPI.Controllers
         public string? EmployeeType { get; set; }
         public string? DateOfHire { get; set; }
         public DateTime? CreateDate { get; set; }
-        public int? IsSalesAgent { get; set; }
     }
 
     public class UserDetailDto
@@ -889,9 +871,6 @@ namespace CimmpleAPI.Controllers
         public string? PrimaryContact { get; set; }
         public string? DOB { get; set; }
         public string? SSN { get; set; }
-        public int? IsSalesAgent { get; set; }
-        public int? AllowPTO { get; set; }
-        public int? AllowPerformance { get; set; }
         public int? SendWelcomeEmail { get; set; }
         public DateTime? CreateDate { get; set; }
     }
@@ -906,9 +885,6 @@ namespace CimmpleAPI.Controllers
         // Account Management Fields Only
         public string? Status { get; set; }
         public int? Role { get; set; }
-        public bool IsSalesAgent { get; set; }
-        public bool AllowPTO { get; set; }
-        public bool AllowPerformance { get; set; }
         public string? TerminationReason { get; set; }
         // Note: Profile data (name, email, phone, address) should be managed via Employee Master
     }

@@ -7,6 +7,11 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import DocumentUploadModal from "./DocumentUploadModal";
 import DocumentDetailModal from "./DocumentDetailModal";
+import {
+  getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
+} from "../../Common/Services/FileUploadHelper";
 import "./Documents.scss";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -50,6 +55,7 @@ const Documents: React.FC = () => {
   const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
   const [activeViewerIndex, setActiveViewerIndex] = useState(0);
   const viewerUrlRef = useRef<string | null>(null);
+  const loadRequestIdRef = useRef(0);
 
   useEffect(() => {
     const trimmed = searchTerm.trim();
@@ -64,7 +70,7 @@ const Documents: React.FC = () => {
   useEffect(() => {
     loadCategories();
     loadDocuments();
-  }, [page, selectedCategoryId, debouncedSearch, locationIdParam]);
+  }, [page, debouncedSearch, locationIdParam]);
 
   // Handle URL parameter to open document detail modal
   useEffect(() => {
@@ -85,7 +91,13 @@ const Documents: React.FC = () => {
       setShowDetailModal(true);
     } catch (error: any) {
       console.error("Error loading document:", error);
-      toast.error("Document not found");
+      toast.error(getApiErrorMessage(error, "Document not found"));
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        setShowDetailModal(false);
+        setSelectedDocument(null);
+        return;
+      }
     }
   };
 
@@ -99,10 +111,11 @@ const Documents: React.FC = () => {
   };
 
   const loadDocuments = async () => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const result = await DocumentService.GetDocuments(
-        selectedCategoryId,
+        undefined,
         undefined,
         undefined,
         debouncedSearch || undefined,
@@ -110,14 +123,18 @@ const Documents: React.FC = () => {
         pageSize,
         locationIdParam
       );
+      if (requestId !== loadRequestIdRef.current) return;
       setDocuments(result.documents);
       setTotalCount(result.totalCount);
       setTotalPages(result.totalPages);
     } catch (error: any) {
+      if (requestId !== loadRequestIdRef.current) return;
       console.error("Error loading documents:", error);
       toast.error(`Error loading documents: ${error.message || "Unknown error"}`);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -259,12 +276,18 @@ const Documents: React.FC = () => {
   }, [documents]);
 
   const filteredDocuments = useMemo(() => {
-    if (!selectedTag) return documents;
-    const tagLower = selectedTag.toLowerCase();
-    return documents.filter((d) =>
-      parseTags(d.tags).some((t) => t.toLowerCase() === tagLower)
-    );
-  }, [documents, selectedTag]);
+    let list = documents;
+    if (selectedCategoryId) {
+      list = list.filter((d) => d.categoryId === selectedCategoryId);
+    }
+    if (selectedTag) {
+      const tagLower = selectedTag.toLowerCase();
+      list = list.filter((d) =>
+        parseTags(d.tags).some((t) => t.toLowerCase() === tagLower)
+      );
+    }
+    return list;
+  }, [documents, selectedCategoryId, selectedTag]);
 
   const renderTagChips = (tags?: string) => {
     const list = parseTags(tags);
@@ -298,10 +321,7 @@ const Documents: React.FC = () => {
             type="text"
             placeholder="Search by name, number, or tags…"
             value={searchTerm}
-            onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
 
@@ -330,7 +350,6 @@ const Documents: React.FC = () => {
             value={selectedCategoryId || ""}
             onChange={(e) => {
               setSelectedCategoryId(e.target.value ? parseInt(e.target.value) : undefined);
-              setPage(1);
             }}
           >
             <option value="">All Categories</option>
@@ -390,9 +409,15 @@ const Documents: React.FC = () => {
       ) : filteredDocuments.length === 0 ? (
         <div className="empty-state">
           <FontAwesomeIcon icon={faTags} size="3x" />
-          <p>No documents match the selected tag</p>
-          <button className="btn btn-primary" onClick={() => setSelectedTag("")}>
-            Clear Tag Filter
+          <p>No documents match the selected filters</p>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              setSelectedTag("");
+              setSelectedCategoryId(undefined);
+            }}
+          >
+            Clear Filters
           </button>
         </div>
       ) : viewMode === "grid" ? (

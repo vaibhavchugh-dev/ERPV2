@@ -9,6 +9,11 @@ import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Compone
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import {
+  getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
+} from '../../Common/Services/FileUploadHelper';
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -496,8 +501,13 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       }
     } catch (error: any) {
       console.error('Error loading invoice details:', error);
-      toast.error(`Error loading invoice details: ${error.message || 'Unknown error'}`);
+      toast.error(getApiErrorMessage(error, 'Error loading invoice details'));
       setInvoice(null);
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     } finally {
       setLoading(false);
     }

@@ -1,7 +1,6 @@
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace CimmpleAPI.Services
@@ -9,16 +8,16 @@ namespace CimmpleAPI.Services
     public class ReportScheduleExecutionService
     {
         private readonly CimmpleDbContext _context;
-        private readonly IConfiguration _configuration;
+        private readonly EmailOutboxService _emailOutbox;
         private readonly ILogger<ReportScheduleExecutionService> _logger;
 
         public ReportScheduleExecutionService(
             CimmpleDbContext context,
-            IConfiguration configuration,
+            EmailOutboxService emailOutbox,
             ILogger<ReportScheduleExecutionService> logger)
         {
             _context = context;
-            _configuration = configuration;
+            _emailOutbox = emailOutbox;
             _logger = logger;
         }
 
@@ -51,9 +50,6 @@ namespace CimmpleAPI.Services
                     await MarkFailureAsync(schedule, attachment.Error ?? "Failed to generate report.");
                     return (false, attachment.Error);
                 }
-
-                var settings = await _context.SystemSettings.AsNoTracking()
-                    .FirstOrDefaultAsync(s => s.TenantId == schedule.TenantId, cancellationToken);
 
                 var reportLabel = string.IsNullOrWhiteSpace(schedule.ReportName)
                     ? schedule.ReportType
@@ -89,10 +85,10 @@ namespace CimmpleAPI.Services
                     }
                 };
 
-                var (ok, error) = EmailService.TrySend(settings, mail, _configuration);
+                var (ok, error) = await _emailOutbox.EnqueueAsync(schedule.TenantId, mail);
                 if (!ok)
                 {
-                    await MarkFailureAsync(schedule, error ?? "Failed to send email.");
+                    await MarkFailureAsync(schedule, error ?? "Failed to queue email.");
                     return (false, error);
                 }
 

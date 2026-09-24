@@ -25,6 +25,8 @@ import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
   getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
 import {
   VENDOR_ORDER_LINE_TYPES,
@@ -516,6 +518,11 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     } catch (error: any) {
       toast.error(getApiErrorMessage(error, "Error loading order"));
       console.error(error);
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     } finally {
       setLoading(false);
       setIsHydrating(false);
