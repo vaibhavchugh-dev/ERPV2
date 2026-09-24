@@ -40,13 +40,20 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var quotationsQuery = _context.QuotationOrder.Where(q => q.Tenantid == tenantid);
                 if (filterLocationId.HasValue)
                 {
                     quotationsQuery = quotationsQuery.Where(q => q.Locationid == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    quotationsQuery = allowed.Count == 0
+                        ? quotationsQuery.Where(q => false)
+                        : quotationsQuery.Where(q => q.Locationid.HasValue && allowed.Contains(q.Locationid.Value));
                 }
 
                 var quotations = quotationsQuery
@@ -1008,7 +1015,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 // Filter out response-only quotations - these are child quotations that shouldn't appear in listing
@@ -1018,6 +1025,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     quotationsQuery = quotationsQuery.Where(q => q.locationid == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    quotationsQuery = allowed.Count == 0
+                        ? quotationsQuery.Where(q => false)
+                        : quotationsQuery.Where(q => q.locationid.HasValue && allowed.Contains(q.locationid.Value));
                 }
 
                 var quotations = quotationsQuery

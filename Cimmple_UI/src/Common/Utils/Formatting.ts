@@ -213,7 +213,11 @@ export const formatDateTime = (
     const timeFormat = resolved?.timeFormat || '12';
     const timezone = resolved?.timezone || 'America/New_York';
     
-    const dateObj = moment(date);
+    // API UTC instants often arrive as ISO without Z; treat ISO datetimes as UTC.
+    const dateObj =
+      typeof date === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(date.trim())
+        ? moment.utc(date)
+        : moment(date);
     
     if (!dateObj.isValid()) {
       return String(date);

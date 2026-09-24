@@ -562,7 +562,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var now = DateTime.Now;
@@ -590,6 +590,11 @@ namespace CimmpleAPI.Controllers
                     case "last month":
                         reqStartDate = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
                         reqEndDate = new DateTime(now.Year, now.Month, 1).AddDays(-1);
+                        break;
+                    case "this year":
+                        reqStartDate = new DateTime(now.Year, 1, 1);
+                        break;
+                    case "custom":
                         break;
                     case "all":
                     case "all dates":
@@ -645,6 +650,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                     query = query.Where(x =>
                         x.CustomerOrder.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(x => false)
+                        : query.Where(x => allowed.Contains(x.CustomerOrder.locationId));
+                }
                 if (customerId.HasValue)
                     query = query.Where(x => x.CustomerOrder.CustomerID == customerId.Value);
                 if (!string.IsNullOrWhiteSpace(searchTerm))

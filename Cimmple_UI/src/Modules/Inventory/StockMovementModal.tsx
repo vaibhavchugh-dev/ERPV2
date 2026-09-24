@@ -560,16 +560,22 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       return;
     }
 
-    if (referenceType === "VendorReceiving" || referenceType === "CustomerShipment" || referenceType === "JobOrder") {
+    // Document remainingQty is receive/shipment-posting capacity — only enforce for those flows.
+    // Transfer / Adjust / Reserve / Job Issue must not reuse finished-goods receive remaining.
+    const needsLinkedDoc =
+      (type === "receive" &&
+        (referenceType === "VendorReceiving" || referenceType === "JobOrder")) ||
+      (type === "issue" && referenceType === "CustomerShipment");
+    if (needsLinkedDoc) {
+      if (referenceId === "") {
+        toast.error("Select the linked document, or set Linked to None.");
+        return;
+      }
       const selected = documentOptions().find((d) => d.id === Number(referenceId));
       const remaining =
         selected && typeof selected.remainingQty === "number"
           ? selected.remainingQty
           : undefined;
-      if (referenceId === "") {
-        toast.error("Select the linked document, or set Linked to None.");
-        return;
-      }
       if (
         remaining != null &&
         qty - remaining > 0.0001 &&
@@ -577,11 +583,20 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       ) {
         toast.error(
           remaining <= 0
-            ? "This document already has its full quantity in inventory. Unlink it or pick another."
+            ? type === "issue"
+              ? "This shipment already took that quantity off the shelf. Unlink it or pick another."
+              : "This document already has its full quantity in inventory. Unlink it or pick another."
             : `Quantity cannot exceed remaining ${remaining} on that document.`
         );
         return;
       }
+    } else if (
+      (type === "receive" || type === "issue") &&
+      referenceType !== "" &&
+      referenceId === ""
+    ) {
+      toast.error("Select the linked document, or set Linked to None.");
+      return;
     }
 
     const hasProduct = materialType === "product" && productId !== "";

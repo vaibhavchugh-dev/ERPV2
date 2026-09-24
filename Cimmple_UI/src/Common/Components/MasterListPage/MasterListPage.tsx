@@ -53,6 +53,11 @@ export interface MasterListPageProps<T = any> {
   onSearchChange?: (term: string) => void;
   /** Custom row matcher (e.g. JO# / CO# display formats). Overrides default field search when provided. */
   matchRowSearch?: (row: T, searchLower: string) => boolean;
+  /**
+   * When using onSearchChange, ignore non-empty terms shorter than this (empty still clears).
+   * Default 0 = no minimum.
+   */
+  minSearchLength?: number;
   filters?: {
     label: string;
     options: FilterOption[];
@@ -89,6 +94,7 @@ const MasterListPage = <T extends Record<string, any>>({
   initialSearchTerm = "",
   onSearchChange,
   matchRowSearch,
+  minSearchLength = 0,
   filters = [],
   extraFilters,
   emptyMessage = "No data available",
@@ -123,10 +129,13 @@ const MasterListPage = <T extends Record<string, any>>({
     const trimmed = searchTerm.trim();
     const delay = trimmed === "" ? 0 : 300;
     const timer = window.setTimeout(() => {
+      if (trimmed !== "" && minSearchLength > 0 && trimmed.length < minSearchLength) {
+        return;
+      }
       onSearchChange(trimmed);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [searchTerm, onSearchChange]);
+  }, [searchTerm, onSearchChange, minSearchLength]);
 
   const chooserColumns = useMemo(() => {
     const mapped = columns.map((column) => ({

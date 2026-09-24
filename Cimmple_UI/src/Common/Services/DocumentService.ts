@@ -109,7 +109,8 @@ export class DocumentService {
     tags?: string,
     relatedEntityType?: string,
     relatedEntityId?: number,
-    documentNumber?: string
+    documentNumber?: string,
+    locationId?: number
   ): Promise<{ id: number; message: string }> {
     const formData = new FormData();
     formData.append("file", file);
@@ -121,6 +122,11 @@ export class DocumentService {
     if (relatedEntityType) formData.append("relatedEntityType", relatedEntityType);
     if (relatedEntityId) formData.append("relatedEntityId", relatedEntityId.toString());
     if (documentNumber) formData.append("documentNumber", documentNumber);
+    const loc =
+      locationId && locationId > 0
+        ? locationId
+        : Number(localStorage.getItem("locationId") || 0);
+    if (loc > 0) formData.append("locationId", String(loc));
 
     const response = await Instense.post<{ id: number; message: string }>(
       `${baseUrl}/upload`,

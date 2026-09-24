@@ -1061,16 +1061,21 @@ namespace CimmpleAPI.Controllers
                 {
                     var booked = bookedReceives.TryGetValue(r.id, out var q) ? q : 0;
                     var remaining = Math.Max(0, r.receivedQty - booked);
+                    var partLabel = ((r.partNo ?? "") + (string.IsNullOrWhiteSpace(r.partName) ? "" : " — " + r.partName)).Trim(' ', '—');
+                    var dateLabel = r.receivedDate == default ? "" : r.receivedDate.ToString("yyyy-MM-dd");
                     return new
                     {
                         id = r.id,
-                        label = "VO#" + FormatVendorPoNumber(r.poNumber),
+                        label = "VO#" + FormatVendorPoNumber(r.poNumber)
+                            + (string.IsNullOrWhiteSpace(partLabel) ? "" : " · " + partLabel)
+                            + (string.IsNullOrWhiteSpace(dateLabel) ? "" : " · " + dateLabel)
+                            + " · rem " + remaining.ToString("0.##"),
                         remainingQty = remaining,
                         partNo = r.partNo,
                         productId = r.productId,
                         rawMaterialId = r.rawMaterialId,
-                        detail = ((r.partNo ?? "") + (string.IsNullOrWhiteSpace(r.partName) ? "" : " — " + r.partName)).Trim(' ', '—')
-                            + (r.receivedDate == default ? "" : " · " + r.receivedDate.ToString("yyyy-MM-dd"))
+                        detail = "Receipt #" + r.id
+                            + " · qty " + r.receivedQty.ToString("0.##")
                             + " · remaining " + remaining.ToString("0.##")
                     };
                 }).ToList();
@@ -1209,7 +1214,7 @@ namespace CimmpleAPI.Controllers
                         : $"Quantity cannot exceed remaining {remaining:0.##} on that vendor receive.");
             }
 
-            if (isReceive && referenceType.Equals("JobOrder", StringComparison.OrdinalIgnoreCase))
+            if (referenceType.Equals("JobOrder", StringComparison.OrdinalIgnoreCase))
             {
                 var job = await _context.JobOrderMaster.AsNoTracking()
                     .FirstOrDefaultAsync(j => j.Tenantid == tenantId && j.JobOrderID == referenceId.Value);
@@ -1262,10 +1267,12 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                // Receive and Issue both require the part to belong to the job (FG or BOM).
                 if (!matchesFinished && !matchesBom)
                     return (false, "Selected part is not the finished part or a material on this job order.");
 
-                if (matchesFinished)
+                // Double-post guard for finished-goods receive only.
+                if (isReceive && matchesFinished)
                 {
                     var received = await _context.InventoryTransaction
                         .Where(t => t.Tenantid == tenantId
@@ -1294,9 +1301,55 @@ namespace CimmpleAPI.Controllers
 
             if (!isReceive && referenceType.Equals("CustomerShipment", StringComparison.OrdinalIgnoreCase))
             {
-                var shipped = await _context.ShippingDetails
-                    .Where(d => d.ShipmentId == referenceId.Value)
-                    .SumAsync(d => (decimal?)d.ShippedQty) ?? 0;
+                var shipmentLines = await (
+                    from sd in _context.ShippingDetails.AsNoTracking()
+                    where sd.ShipmentId == referenceId.Value
+                    join od in _context.CustomerOrderDetails.AsNoTracking()
+                        on sd.OrderDetailID equals od.ID into odg
+                    from od in odg.DefaultIfEmpty()
+                    select new
+                    {
+                        sd.ShippedQty,
+                        ProductId = od != null ? od.productid : null,
+                        PartNo = od != null ? od.PartNo : null
+                    }
+                ).ToListAsync();
+
+                if (shipmentLines.Count == 0)
+                    return (false, "Shipment not found or has no lines.");
+
+                var partMatches = false;
+                if (productId.HasValue && productId.Value > 0)
+                {
+                    partMatches = shipmentLines.Any(l =>
+                        l.ProductId.HasValue && l.ProductId.Value == productId.Value);
+                    if (!partMatches)
+                    {
+                        var partNos = shipmentLines
+                            .Select(l => (l.PartNo ?? "").Trim())
+                            .Where(p => p.Length > 0)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                        if (partNos.Count > 0)
+                        {
+                            partMatches = await _context.ProductMaster.AsNoTracking()
+                                .AnyAsync(p => p.tenantid == tenantId
+                                    && p.Id == productId.Value
+                                    && p.partno != null
+                                    && partNos.Contains(p.partno));
+                        }
+                    }
+                }
+                else if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
+                {
+                    // Shipments are finished-goods; raw materials are not valid for shipment issue.
+                    partMatches = false;
+                }
+
+                if (!partMatches)
+                    return (false, "Selected part does not match a line on that shipment.");
+
+                var shipped = shipmentLines.Sum(l => (decimal)l.ShippedQty);
                 var booked = Math.Abs(await _context.InventoryTransaction
                     .Where(t => t.Tenantid == tenantId
                         && t.ReferenceType == "CustomerShipment"

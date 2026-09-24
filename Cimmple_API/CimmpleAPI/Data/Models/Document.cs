@@ -64,6 +64,9 @@ namespace CimmpleAPI.Data.Models
         
         public int? CurrentVersionId { get; set; }
 
+        /// <summary>Working site where the document was created / belongs.</summary>
+        public int? LocationId { get; set; }
+
         // Navigation properties
         [ForeignKey("CategoryId")]
         public DocumentCategory? Category { get; set; }

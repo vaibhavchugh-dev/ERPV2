@@ -65,10 +65,11 @@ namespace CimmpleAPI.Controllers
                 // Apply filters
                 if (!string.IsNullOrEmpty(searchTerm))
                 {
+                    var term = searchTerm.Trim().ToLower();
                     query = query.Where(u =>
-                        (u.FirstName + " " + u.LastName).Contains(searchTerm) ||
-                        u.Email.Contains(searchTerm) ||
-                        u.UserName.Contains(searchTerm));
+                        ((u.FirstName ?? "") + " " + (u.LastName ?? "")).ToLower().Contains(term) ||
+                        (u.Email != null && u.Email.ToLower().Contains(term)) ||
+                        (u.UserName != null && u.UserName.ToLower().Contains(term)));
                 }
 
                 if (!string.IsNullOrEmpty(status))

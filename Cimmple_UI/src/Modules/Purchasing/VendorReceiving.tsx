@@ -6,6 +6,7 @@ import VendorReceivingDetail from "./VendorReceivingDetail";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 
 const VendorReceiving: React.FC = () => {
   const location = useLocation();
@@ -165,7 +166,15 @@ const VendorReceiving: React.FC = () => {
         loading={loading}
         enablePagination
         searchPlaceholder="Search by PO #, vendor..."
-        searchFields={["orderNumber", "vendorName", "vendorCode"]}
+        matchRowSearch={(row, q) => {
+          const num = Number(row.orderNumber ?? 0);
+          if (matchDisplayDocNumber(q, num, ["vo#", "vo"])) return true;
+          const hay = [row.vendorName, row.vendorCode, row.status]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }}
         filters={[masterListFilter]}
       />
       {showDetail && (

@@ -47,8 +47,10 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "TenantId is required" });
                 }
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
+
+                await EnsureDocumentLocationColumnAsync();
 
                 var query = _context.Documents
                     .Where(d => d.TenantId == tenantId && !d.IsDeleted)
@@ -101,14 +103,52 @@ namespace CimmpleAPI.Controllers
                         .ToListAsync();
 
                     query = query.Where(d =>
-                        d.RelatedEntityId != null
-                        && (
-                            ((d.RelatedEntityType == "CustomerOrder" || d.RelatedEntityType == "Order")
-                                && coIds.Contains(d.RelatedEntityId.Value))
-                            || (d.RelatedEntityType == "JobOrder" && joIds.Contains(d.RelatedEntityId.Value))
-                            || ((d.RelatedEntityType == "VendorOrder" || d.RelatedEntityType == "PurchaseOrder")
-                                && voIds.Contains(d.RelatedEntityId.Value))
-                        ));
+                        (d.LocationId.HasValue && d.LocationId.Value == loc)
+                        || (d.RelatedEntityId != null
+                            && (
+                                ((d.RelatedEntityType == "CustomerOrder" || d.RelatedEntityType == "Order")
+                                    && coIds.Contains(d.RelatedEntityId.Value))
+                                || (d.RelatedEntityType == "JobOrder" && joIds.Contains(d.RelatedEntityId.Value))
+                                || ((d.RelatedEntityType == "VendorOrder" || d.RelatedEntityType == "PurchaseOrder")
+                                    && voIds.Contains(d.RelatedEntityId.Value))
+                            )));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    if (allowed.Count == 0)
+                    {
+                        query = query.Where(d => false);
+                    }
+                    else
+                    {
+                        var coIds = await _context.CustomerOrder.AsNoTracking()
+                            .Where(o => o.Tenantid == tenantId && allowed.Contains(o.locationId))
+                            .Select(o => o.OrderID)
+                            .ToListAsync();
+                        var joIds = await (
+                            from j in _context.JobOrderMaster.AsNoTracking()
+                            join o in _context.CustomerOrder.AsNoTracking()
+                                on new { j.CustomerOrderID, Tenant = j.Tenantid } equals new { CustomerOrderID = o.OrderID, Tenant = o.Tenantid }
+                            where j.Tenantid == tenantId && allowed.Contains(o.locationId)
+                            select j.JobOrderID
+                        ).ToListAsync();
+                        var voIds = await _context.VendorOrders.AsNoTracking()
+                            .Where(o => o.Tenantid == tenantId && o.LocationId.HasValue && allowed.Contains(o.LocationId.Value))
+                            .Select(o => o.OrderID)
+                            .ToListAsync();
+
+                        query = query.Where(d =>
+                            (d.LocationId.HasValue && allowed.Contains(d.LocationId.Value))
+                            || (d.RelatedEntityId != null
+                                && (
+                                    ((d.RelatedEntityType == "CustomerOrder" || d.RelatedEntityType == "Order")
+                                        && coIds.Contains(d.RelatedEntityId.Value))
+                                    || (d.RelatedEntityType == "JobOrder" && joIds.Contains(d.RelatedEntityId.Value))
+                                    || ((d.RelatedEntityType == "VendorOrder" || d.RelatedEntityType == "PurchaseOrder")
+                                        && voIds.Contains(d.RelatedEntityId.Value))
+                                )));
+                    }
                 }
 
                 var totalCount = await query.CountAsync();
@@ -239,7 +279,7 @@ namespace CimmpleAPI.Controllers
             [FromForm] string? description = null, [FromForm] int? categoryId = null,
             [FromForm] string? requiresVersionControl = null, [FromForm] string? tags = null,
             [FromForm] string? relatedEntityType = null, [FromForm] int? relatedEntityId = null,
-            [FromForm] string? documentNumber = null)
+            [FromForm] string? documentNumber = null, [FromForm] int? locationId = null)
         {
             try
             {
@@ -250,6 +290,8 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "TenantId is required" });
                 }
+
+                await EnsureDocumentLocationColumnAsync();
 
                 // If userId is not provided, use tenantId as fallback for development
                 if (userId == 0)
@@ -307,6 +349,12 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Create document record
+                int? resolvedLocationId = null;
+                if (locationId.HasValue && locationId.Value > 0 && CanAccessLocation(locationId.Value))
+                    resolvedLocationId = locationId.Value;
+                else if (TryGetActiveLocationId(out var activeLoc, out _) && activeLoc.HasValue)
+                    resolvedLocationId = activeLoc;
+
                 var document = new Document
                 {
                     DocumentName = documentName,
@@ -325,7 +373,8 @@ namespace CimmpleAPI.Controllers
                     DocumentNumber = finalDocumentNumber,
                     IsDocumentNumberAutoGenerated = isAutoGenerated,
                     IsActive = true,
-                    IsDeleted = false
+                    IsDeleted = false,
+                    LocationId = resolvedLocationId
                 };
 
                 _context.Documents.Add(document);
@@ -889,6 +938,23 @@ namespace CimmpleAPI.Controllers
         }
 
         // Helper method to generate document number
+        private async Task EnsureDocumentLocationColumnAsync()
+        {
+            try
+            {
+                await _context.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH('CimmpleFlow.Documents', 'LocationId') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.Documents ADD LocationId int NULL;
+END
+");
+            }
+            catch
+            {
+                // Column may already exist or schema differs; EF will surface errors on use.
+            }
+        }
+
         private async Task<string> GenerateDocumentNumber(int tenantId, int? categoryId = null)
         {
             var year = DateTime.UtcNow.Year;

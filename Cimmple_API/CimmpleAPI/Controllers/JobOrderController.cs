@@ -44,7 +44,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 // Job orders inherit location from the linked customer order.
@@ -64,6 +64,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     query = query.Where(x => x.OrderLocationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(x => false)
+                        : query.Where(x => allowed.Contains(x.OrderLocationId));
                 }
 
                 var rows = await query
@@ -1530,14 +1537,26 @@ namespace CimmpleAPI.Controllers
         {
             var nowCompleted = IsCompletedStatus(job.Status);
             var wasCompleted = IsCompletedStatus(previousStatus);
-            if (nowCompleted == wasCompleted)
+            var stepsReopenedUnderShip =
+                !wasCompleted
+                && !nowCompleted
+                && (string.Equals(previousStatus, "Partially Shipped", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(previousStatus, "Shipped", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(job.Status, "Partially Shipped", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(job.Status, "Shipped", StringComparison.OrdinalIgnoreCase))
+                && request.RoutingSteps != null
+                && request.RoutingSteps.Count > 0
+                && request.RoutingSteps.Any(s =>
+                    !string.Equals(s.status, "Completed", StringComparison.OrdinalIgnoreCase));
+
+            if (nowCompleted == wasCompleted && !stepsReopenedUnderShip)
                 return null;
 
             var tenantId = job.Tenantid;
             var userId = request.UserId > 0 ? request.UserId : (int?)null;
             var label = JobInventoryLabel(job);
 
-            if (nowCompleted)
+            if (nowCompleted && !wasCompleted)
             {
                 var qty = ResolveFinishedQty(job, request);
                 if (qty <= 0)
@@ -1591,10 +1610,26 @@ namespace CimmpleAPI.Controllers
                 return null;
             }
 
-            // Reopen: reverse only net JO FG still attributable after shipments.
+            if (!wasCompleted && !stepsReopenedUnderShip)
+                return null;
+
+            // Reopen: reverse JO FG still on the shelf.
+            // Shipments issue against CustomerShipment (JO net stays high); ShippedQty estimates
+            // how much already left. If ShippedQty overstates, fall back to on-hand.
             var netQty = await NetFinishedGoodsQtyAsync(tenantId, job.JobOrderID);
             if (netQty <= 0)
                 return null;
+
+            var receipt = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
+                .OrderByDescending(t => t.TransactionDate)
+                .FirstOrDefaultAsync();
+            var reverseLocationId = receipt?.LocationId ?? await ResolveJobInventoryLocationAsync(job);
+            if (!reverseLocationId.HasValue)
+                return $"Job saved but reversing finished goods failed: no inventory location for {label}.";
+
+            var reverseProductId = receipt?.ProductId;
+            if (!reverseProductId.HasValue)
+                return $"Job saved but reversing finished goods failed: no finished product on {label}.";
 
             decimal shippedQty = 0;
             if (job.CustomerOrderDetailID > 0)
@@ -1606,19 +1641,15 @@ namespace CimmpleAPI.Controllers
                     .FirstOrDefaultAsync();
             }
 
-            var toReverse = netQty - shippedQty;
+            var onHand = await _inventoryService.GetOnHandAsync(
+                tenantId, reverseProductId.Value, reverseLocationId.Value);
+            var toReverse = Math.Max(0m, netQty - shippedQty);
+            if (toReverse <= 0 && onHand > 0)
+                toReverse = Math.Min(netQty, onHand);
+            else if (toReverse > 0 && onHand >= 0)
+                toReverse = Math.Min(toReverse, onHand > 0 ? onHand : toReverse);
+
             if (toReverse <= 0)
-                return null;
-
-            var receipt = await FinishedGoodsReceiptsQuery(tenantId, job.JobOrderID)
-                .OrderByDescending(t => t.TransactionDate)
-                .FirstOrDefaultAsync();
-            var reverseLocationId = receipt?.LocationId ?? await ResolveJobInventoryLocationAsync(job);
-            if (!reverseLocationId.HasValue)
-                return null;
-
-            var reverseProductId = receipt?.ProductId;
-            if (!reverseProductId.HasValue)
                 return null;
 
             var (issueOk, issueErr) = await _inventoryService.IssueStockInTransactionAsync(

@@ -34,6 +34,7 @@ const Documents: React.FC = () => {
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | undefined>(undefined);
   const [selectedTag, setSelectedTag] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -51,9 +52,19 @@ const Documents: React.FC = () => {
   const viewerUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const trimmed = searchTerm.trim();
+    const delay = trimmed === "" ? 0 : 300;
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(trimmed);
+      setPage(1);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
     loadCategories();
     loadDocuments();
-  }, [page, selectedCategoryId, searchTerm, locationIdParam]);
+  }, [page, selectedCategoryId, debouncedSearch, locationIdParam]);
 
   // Handle URL parameter to open document detail modal
   useEffect(() => {
@@ -94,7 +105,7 @@ const Documents: React.FC = () => {
         selectedCategoryId,
         undefined,
         undefined,
-        searchTerm || undefined,
+        debouncedSearch || undefined,
         page,
         pageSize,
         locationIdParam

@@ -32,6 +32,11 @@ type Props = {
    * undefined = omit; null = All sites; number = that site.
    */
   locationId?: number | null;
+  /** Report period (yyyy-MM-dd) for related screens */
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  /** Optional amount column header (e.g. Rate for defect drill-down) */
+  amountColumnLabel?: string;
 };
 
 function emptyMessage(meta: OperationalDrillMeta): string {
@@ -72,6 +77,9 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
   meta,
   onClose,
   locationId,
+  periodStart,
+  periodEnd,
+  amountColumnLabel = "Amount",
 }) => {
   const history = useHistory();
   const [visibleCount, setVisibleCount] = useState(DRILL_DETAIL_PAGE_SIZE);
@@ -118,6 +126,8 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
     title: meta.title,
     search: meta.entityType === "inventory-item" ? meta.entityKey : null,
     locationId: linkLocationId,
+    startDate: periodStart,
+    endDate: periodEnd,
   });
 
   const go = (path: string, opts?: { newTab?: boolean }) => {
@@ -186,7 +196,7 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
                       <th>Item</th>
                       <th>Date</th>
                       <th>Status</th>
-                      <th className="num">Amount</th>
+                      <th className="num">{amountColumnLabel}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -211,6 +221,8 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
                             ? d.label
                             : null,
                         locationId: linkLocationId,
+                        startDate: periodStart,
+                        endDate: periodEnd,
                       });
                       return (
                         <tr key={i}>

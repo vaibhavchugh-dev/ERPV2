@@ -195,6 +195,52 @@ public static class CustomerReportsService
             })
             .ToList();
 
+        var orderIds = orders.Select(o => o.OrderID).ToList();
+        var details = orderIds.Count == 0
+            ? new List<(int OrderID, int ID, int QtyOrdered, int ShippedQty, int InvoicedQty)>()
+            : db.CustomerOrderDetails.AsNoTracking()
+                .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID))
+                .Select(d => new { d.OrderID, d.ID, d.QtyOrdered, d.ShippedQty, d.InvoicedQty })
+                .AsEnumerable()
+                .Select(d => (d.OrderID, d.ID, d.QtyOrdered, d.ShippedQty, d.InvoicedQty))
+                .ToList();
+        var detailIds = details.Select(d => d.ID).ToList();
+        var shippedByDetail = detailIds.Count == 0
+            ? new Dictionary<int, int>()
+            : (
+                from sd in db.ShippingDetails.AsNoTracking()
+                where sd.OrderDetailID.HasValue && detailIds.Contains(sd.OrderDetailID.Value)
+                join s in db.Shipping.AsNoTracking() on sd.ShipmentId equals s.Id
+                where s.TenantId == tenantId
+                group sd by sd.OrderDetailID!.Value into g
+                select new { Id = g.Key, Qty = g.Sum(x => x.ShippedQty) }
+              ).ToDictionary(x => x.Id, x => x.Qty);
+        var invoicedByDetail = detailIds.Count == 0
+            ? new Dictionary<int, int>()
+            : (
+                from id in db.InvoiceDetail.AsNoTracking()
+                where id.OrderDetailID.HasValue && detailIds.Contains(id.OrderDetailID.Value)
+                join im in db.InvoiceMaster.AsNoTracking() on id.InvoiceId equals im.Id
+                where im.TenantId == tenantId
+                group id by id.OrderDetailID!.Value into g
+                select new { Id = g.Key, Qty = g.Sum(x => x.QtyInvoiced) }
+              ).ToDictionary(x => x.Id, x => x.Qty);
+
+        string DeriveStatus(int orderId, string stored)
+        {
+            var lines = details.Where(d => d.OrderID == orderId).ToList();
+            var totalOrdered = lines.Sum(d => d.QtyOrdered);
+            var totalShipped = lines.Sum(d =>
+                shippedByDetail.TryGetValue(d.ID, out var sq) ? sq : d.ShippedQty);
+            var totalInvoiced = lines.Sum(d =>
+                invoicedByDetail.TryGetValue(d.ID, out var iq) ? iq : d.InvoicedQty);
+            if (totalInvoiced > 0)
+                return totalInvoiced >= totalOrdered ? "Fully Invoiced" : "Partially Invoiced";
+            if (totalShipped > 0)
+                return totalShipped >= totalOrdered ? "Shipped" : "Partially Shipped";
+            return string.IsNullOrWhiteSpace(stored) ? "Draft" : stored;
+        }
+
         var byCustomer = orders
             .GroupBy(o => new { o.CustomerID, o.CustomerName })
             .Select(g => new
@@ -206,7 +252,16 @@ public static class CustomerReportsService
                 Orders = g.Count(),
                 OrderValue = g.Sum(x => x.TotalAmount),
                 LastOrder = g.Max(x => x.OrderDate),
-                Items = g.OrderByDescending(x => x.OrderDate).ToList()
+                Items = g.OrderByDescending(x => x.OrderDate)
+                    .Select(o => new
+                    {
+                        o.OrderID,
+                        o.PONumber,
+                        o.OrderDate,
+                        o.TotalAmount,
+                        Status = DeriveStatus(o.OrderID, o.Status)
+                    })
+                    .ToList()
             })
             .OrderByDescending(x => x.OrderValue)
             .ThenBy(x => x.Customer)

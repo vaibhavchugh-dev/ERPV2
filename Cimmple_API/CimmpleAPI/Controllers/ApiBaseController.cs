@@ -171,20 +171,37 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// Shared multi-site list filter: only apply when the client passes an explicit
-        /// <paramref name="queryLocationId"/> &gt; 0. Does not auto-filter from X-Location-Id
-        /// so tenant-wide lists remain visible by default. Pass 0/null for all locations.
+        /// Shared multi-site list filter.
+        /// - Explicit <paramref name="queryLocationId"/> &gt; 0: filter to that site (if allowed).
+        /// - All sites (null/0): unrestricted users see tenant-wide; restricted users are limited
+        ///   to <paramref name="restrictToLocationIds"/> (JWT locationIds).
         /// </summary>
         protected bool TryResolveListLocationFilter(
             int? queryLocationId,
             out int? filterLocationId,
             out IActionResult? forbidResult)
         {
+            return TryResolveListLocationFilter(
+                queryLocationId, out filterLocationId, out forbidResult, out _);
+        }
+
+        /// <inheritdoc cref="TryResolveListLocationFilter(int?, out int?, out IActionResult?)"/>
+        protected bool TryResolveListLocationFilter(
+            int? queryLocationId,
+            out int? filterLocationId,
+            out IActionResult? forbidResult,
+            out IReadOnlyList<int>? restrictToLocationIds)
+        {
             filterLocationId = null;
             forbidResult = null;
+            restrictToLocationIds = null;
 
             if (!queryLocationId.HasValue || queryLocationId.Value <= 0)
             {
+                if (!CanAccessAllLocations())
+                {
+                    restrictToLocationIds = GetAllowedLocationIds();
+                }
                 return true;
             }
 

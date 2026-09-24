@@ -16,6 +16,7 @@ import {
 } from "../Services/SupportTicketService";
 import { APP_VERSION } from "../Constants/AppVersion";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
+import { formatDateTime } from "../Utils/Formatting";
 import "./ContactSupportDialog.scss";
 
 interface ContactSupportDialogProps {
@@ -29,11 +30,7 @@ interface ContactSupportDialogProps {
 type Tab = "new" | "mine";
 
 function formatWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatDateTime(iso) || iso;
 }
 
 function statusClass(status: string): string {
@@ -197,10 +194,20 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
 
   const downloadAttachment = async () => {
     if (!selected?.hasAttachment) return;
+    const toastId = toast.info("Downloading attachment...", { autoClose: false });
     try {
       await SupportTicketService.DownloadAttachment(selected.id);
+      toast.update(toastId, {
+        render: "Download complete",
+        type: "success",
+        autoClose: 2000,
+      });
     } catch {
-      toast.error("Failed to download attachment.");
+      toast.update(toastId, {
+        render: "Failed to download attachment.",
+        type: "error",
+        autoClose: 4000,
+      });
     }
   };
 
