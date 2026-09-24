@@ -42,15 +42,23 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 // Shared multi-site: return all tenant orders unless an explicit location filter is passed.
+                // Restricted users on All sites only see assigned locations.
                 var ordersQuery = _context.CustomerOrder.AsNoTracking()
                     .Where(o => o.Tenantid == tenantid);
                 if (filterLocationId.HasValue)
                 {
                     ordersQuery = ordersQuery.Where(o => o.locationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    ordersQuery = allowed.Count == 0
+                        ? ordersQuery.Where(o => false)
+                        : ordersQuery.Where(o => allowed.Contains(o.locationId));
                 }
 
                 // Project only list fields — avoid materializing large JSON columns on headers.
@@ -1863,7 +1871,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var vendorOrdersQuery = _context.VendorOrders
@@ -1873,6 +1881,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     vendorOrdersQuery = vendorOrdersQuery.Where(o => o.LocationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    vendorOrdersQuery = allowed.Count == 0
+                        ? vendorOrdersQuery.Where(o => false)
+                        : vendorOrdersQuery.Where(o => o.LocationId.HasValue && allowed.Contains(o.LocationId.Value));
                 }
 
                 var vendorOrders = await vendorOrdersQuery
@@ -2657,6 +2672,34 @@ namespace CimmpleAPI.Controllers
                 if (savedOrder != null)
                 {
                     savedOrder.MaterialType = DeriveVendorOrderMaterialType(linkedDetails, savedOrder.MaterialType);
+
+                    // Keep receive status in sync when lines are added after Fully Received
+                    // so the order reappears on Vendor Receiving.
+                    var detailIds = linkedDetails.Select(d => d.ID).ToList();
+                    var receivedByDetail = detailIds.Count == 0
+                        ? new Dictionary<int, int>()
+                        : await _context.VendorReceiving
+                            .AsNoTracking()
+                            .Where(r => r.Tenantid == tenantid && detailIds.Contains(r.VendorOrderDetailID))
+                            .GroupBy(r => r.VendorOrderDetailID)
+                            .ToDictionaryAsync(g => g.Key, g => g.Sum(r => r.ReceivedQty));
+                    var receiveStatus = DeriveVendorReceiveStatus(
+                        linkedDetails, receivedByDetail, savedOrder.MaterialType, savedOrder.Status ?? "Draft");
+                    if (!string.Equals(savedOrder.Status, receiveStatus, StringComparison.OrdinalIgnoreCase)
+                        && (string.Equals(savedOrder.Status, "Sent", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(savedOrder.Status, "Partially Received", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(savedOrder.Status, "Fully Received", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(savedOrder.Status, "Receiving", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(savedOrder.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(receiveStatus, "Sent", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(receiveStatus, "Partially Received", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(receiveStatus, "Fully Received", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        // Prefer client status for Draft; otherwise persist derived receive status.
+                        if (!string.Equals(savedOrder.Status, "Draft", StringComparison.OrdinalIgnoreCase))
+                            savedOrder.Status = receiveStatus;
+                    }
+
                     await _context.SaveChangesAsync();
                 }
 
@@ -3547,15 +3590,27 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var ordersQuery = _context.VendorOrders
                     .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId && (o.Status == "Sent" || o.Status == "Partially Received"));
+                    .Where(o => o.Tenantid == tenantId && (
+                        o.Status == "Sent"
+                        || o.Status == "Partially Received"
+                        || o.Status == "Fully Received"
+                        || o.Status == "Receiving"
+                        || o.Status == "Completed"));
 
                 if (filterLocationId.HasValue)
                     ordersQuery = ordersQuery.Where(o => o.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    ordersQuery = allowed.Count == 0
+                        ? ordersQuery.Where(o => false)
+                        : ordersQuery.Where(o => o.LocationId.HasValue && allowed.Contains(o.LocationId.Value));
+                }
 
                 var orders = await ordersQuery
                     .OrderByDescending(o => o.OrderDate)

@@ -5,15 +5,12 @@ import {
   SupportTicketDetail,
   SupportTicketListItem,
 } from "../Common/Services/SupportTicketService";
+import { formatDateTime } from "../Common/Utils/Formatting";
 import "./SupportInbox.scss";
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  return formatDateTime(iso) || iso;
 }
 
 function statusClass(status: string): string {
@@ -248,9 +245,24 @@ const SupportInboxPage: React.FC = () => {
                         type="button"
                         className="si-btn si-btn--ghost"
                         onClick={() => {
-                          void SupportStaffAuth.downloadAttachment(detail.id).catch(() =>
-                            toast.error("Failed to download attachment.")
-                          );
+                          const toastId = toast.info("Downloading attachment...", {
+                            autoClose: false,
+                          });
+                          void SupportStaffAuth.downloadAttachment(detail.id)
+                            .then(() => {
+                              toast.update(toastId, {
+                                render: "Download complete",
+                                type: "success",
+                                autoClose: 2000,
+                              });
+                            })
+                            .catch(() => {
+                              toast.update(toastId, {
+                                render: "Failed to download attachment.",
+                                type: "error",
+                                autoClose: 4000,
+                              });
+                            });
                         }}
                       >
                         Download: {detail.attachmentFileName}

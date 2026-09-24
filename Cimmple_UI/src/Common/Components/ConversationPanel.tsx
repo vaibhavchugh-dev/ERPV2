@@ -109,9 +109,19 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
   }, [conversationId, load]);
 
   useEffect(() => {
-    if (!listRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [thread?.messages?.length]);
+    if (!listRef.current || !thread?.messages?.length) return;
+    const el = listRef.current;
+    const scrollToEnd = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    scrollToEnd();
+    const raf = requestAnimationFrame(scrollToEnd);
+    const t = window.setTimeout(scrollToEnd, 50);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [conversationId, thread?.id, thread?.messages?.length, loading]);
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");

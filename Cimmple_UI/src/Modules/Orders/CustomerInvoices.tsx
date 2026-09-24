@@ -360,6 +360,8 @@ interface FilterOptions {
   customerId?: number;
   dateRange: string;
   searchTerm: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 const CustomerInvoices: React.FC = () => {
@@ -398,8 +400,19 @@ const CustomerInvoices: React.FC = () => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open');
     const search = params.get('search');
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    const dateRange = params.get('dateRange');
     if (search && search.trim()) {
-      setFilters((prev) => ({ ...prev, searchTerm: search.trim(), dateRange: 'All' }));
+      setFilters((prev) => ({ ...prev, searchTerm: search.trim() }));
+    }
+    if (startDate || endDate || dateRange) {
+      setFilters((prev) => ({
+        ...prev,
+        dateRange: dateRange || (startDate || endDate ? 'Custom' : prev.dateRange),
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      }));
     }
     if (openId) {
       const id = parseInt(openId, 10);
@@ -414,7 +427,12 @@ const CustomerInvoices: React.FC = () => {
     }
     // Strip deep-link query after seeding; keep locationId until useSiteListFilter reads it
     // (pathname-only replace is fine once Site filter is pinned from URL).
-    if (search && search.trim()) {
+    if (
+      (search && search.trim()) ||
+      startDate ||
+      endDate ||
+      dateRange
+    ) {
       history.replace(location.pathname);
     }
   }, [location.search, history, location.pathname, location.state]);
@@ -449,7 +467,9 @@ const CustomerInvoices: React.FC = () => {
         filters.searchTerm,
         filters.customerId,
         filters.dateRange,
-        locationIdParam
+        locationIdParam,
+        filters.startDate,
+        filters.endDate
       );
 
       if (result && Array.isArray(result)) {
@@ -783,7 +803,9 @@ const CustomerInvoices: React.FC = () => {
     { value: 'Last 30 Days', label: 'Last 30 Days' },
     { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
-    { value: 'Last Month', label: 'Last Month' }
+    { value: 'Last Month', label: 'Last Month' },
+    { value: 'This Year', label: 'This Year' },
+    { value: 'Custom', label: 'Custom' },
   ];
 
   return (
@@ -799,6 +821,7 @@ const CustomerInvoices: React.FC = () => {
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         initialSearchTerm={filters.searchTerm}
         onSearchChange={handleListSearchChange}
+        minSearchLength={2}
         filters={[
           masterListFilter,
           {

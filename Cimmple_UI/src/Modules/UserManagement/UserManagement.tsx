@@ -32,7 +32,9 @@ const UserManagementComponent: React.FC = () => {
     }
   }, [location.search, history, location.pathname]);
   const [loading, setLoading] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<keyof UserManagementType | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -49,9 +51,21 @@ const UserManagementComponent: React.FC = () => {
   const [rolesMap, setRolesMap] = useState<{ [key: number]: string }>({});
 
   useEffect(() => {
+    const trimmed = searchTerm.trim();
+    const delay = trimmed === "" ? 0 : 300;
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(trimmed);
+      setPagination((prev) =>
+        prev.pageNumber === 1 ? prev : { ...prev, pageNumber: 1 }
+      );
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
     loadUsers();
     loadRoles();
-  }, [searchTerm, filterValue, pagination.pageNumber, locationIdParam]);
+  }, [debouncedSearch, filterValue, pagination.pageNumber, locationIdParam]);
 
   useEffect(() => {
     // Create a map of role IDs to role names for quick lookup
@@ -78,7 +92,7 @@ const UserManagementComponent: React.FC = () => {
   };
 
   const loadUsers = async () => {
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       let tenantID = storage?.tenantID || 0;
@@ -90,7 +104,7 @@ const UserManagementComponent: React.FC = () => {
 
       const params: UserQueryParams = {
         tenantid: tenantID,
-        searchTerm: searchTerm || undefined,
+        searchTerm: debouncedSearch || undefined,
         status: filterValue !== "all" ? filterValue : undefined,
         pageNumber: pagination.pageNumber,
         pageSize: pagination.pageSize,
@@ -114,6 +128,7 @@ const UserManagementComponent: React.FC = () => {
       toast.error(`Error loading users: ${error.message || 'Unknown error'}`);
       setUsers([]);
     } finally {
+      setHasLoadedOnce(true);
       setLoading(false);
     }
   };

@@ -116,15 +116,45 @@ export const timeInputToMinutes = (value: string): number => {
 /**
  * Format a UTC instant in the schedule's timezone as 24-hour `YYYY-MM-DD HH:mm`.
  */
+const WINDOWS_TO_IANA: Record<string, string> = {
+  "Eastern Standard Time": "America/New_York",
+  "Central Standard Time": "America/Chicago",
+  "Mountain Standard Time": "America/Denver",
+  "Pacific Standard Time": "America/Los_Angeles",
+  "US Mountain Standard Time": "America/Phoenix",
+  "GMT Standard Time": "Europe/London",
+  "Romance Standard Time": "Europe/Paris",
+  "W. Europe Standard Time": "Europe/Berlin",
+  "India Standard Time": "Asia/Kolkata",
+  "Arabian Standard Time": "Asia/Dubai",
+  "Singapore Standard Time": "Asia/Singapore",
+  "Tokyo Standard Time": "Asia/Tokyo",
+  "AUS Eastern Standard Time": "Australia/Sydney",
+  "New Zealand Standard Time": "Pacific/Auckland",
+};
+
+const resolveScheduleTimeZone = (timeZoneId?: string | null): string => {
+  const raw = (timeZoneId || "UTC").trim() || "UTC";
+  return WINDOWS_TO_IANA[raw] || raw;
+};
+
 export const formatScheduleInstant = (
   value?: string | null,
   timeZoneId?: string | null
 ): string => {
   if (!value) return "—";
   try {
-    const date = new Date(value);
+    const raw = String(value).trim();
+    // Treat API datetime2 (no Z) as UTC.
+    const utcIso =
+      /^\d{4}-\d{2}-\d{2}T/.test(raw) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
+        ? `${raw}Z`
+        : raw.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(raw)
+        ? raw
+        : `${raw.replace(" ", "T")}Z`;
+    const date = new Date(utcIso);
     if (Number.isNaN(date.getTime())) return value;
-    const tz = (timeZoneId || "UTC").trim() || "UTC";
+    const tz = resolveScheduleTimeZone(timeZoneId);
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: tz,
       year: "numeric",
@@ -140,10 +170,6 @@ export const formatScheduleInstant = (
     const hour = get("hour") === "24" ? "00" : get("hour");
     return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")}`;
   } catch {
-    try {
-      return new Date(value).toISOString().replace("T", " ").slice(0, 16);
-    } catch {
-      return value;
-    }
+    return value;
   }
 };

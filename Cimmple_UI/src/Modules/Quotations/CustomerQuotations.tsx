@@ -8,6 +8,7 @@ import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import "./CustomerQuotations.scss";
 
 const CustomerQuotations: React.FC = () => {
@@ -252,6 +253,16 @@ const CustomerQuotations: React.FC = () => {
           },
         ]}
         searchPlaceholder="Search quotations..."
+        matchRowSearch={(row, q) => {
+          const quotation = row as QuotationMaster;
+          const num = Number(quotation.quotationNumber ?? 0);
+          if (matchDisplayDocNumber(q, num, ["cq#", "cq", "co#", "co"])) return true;
+          const hay = [quotation.customerName, quotation.customerCode, quotation.status]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }}
         getRowId={(row) => (row as QuotationMaster).orderID}
       />
 

@@ -8,6 +8,7 @@ import VendorOrderSlideout from "../Purchasing/VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import "./VendorQuotations.scss";
 
 const VendorQuotations: React.FC = () => {
@@ -342,6 +343,16 @@ const VendorQuotations: React.FC = () => {
           },
         ]}
         searchPlaceholder="Search quotations..."
+        matchRowSearch={(row, q) => {
+          const quotation = row as VendorQuotationMaster;
+          const num = Number(quotation.quotationNumber ?? 0);
+          if (matchDisplayDocNumber(q, num, ["vq#", "vq", "vo#", "vo"])) return true;
+          const hay = [quotation.vendorName, quotation.vendorCode, quotation.status]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }}
         getRowId={(row) => (row as VendorQuotationMaster).orderID}
       />
 

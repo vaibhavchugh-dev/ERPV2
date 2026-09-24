@@ -6,6 +6,7 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
@@ -297,6 +298,16 @@ const VendorOrders: React.FC = () => {
         ]}
         searchPlaceholder="Search orders..."
         initialSearchTerm={seedSearch}
+        matchRowSearch={(row, q) => {
+          const order = row as VendorOrderMaster;
+          const num = Number(order.orderNumber ?? 0);
+          if (matchDisplayDocNumber(q, num, ["vo#", "vo", "vq#", "vq"])) return true;
+          const hay = [order.vendorName, order.vendorCode, order.status]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }}
         getRowId={(row) => (row as VendorOrderMaster).orderID}
       />
 

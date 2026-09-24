@@ -943,6 +943,14 @@ const Reports: React.FC = () => {
               locationId={
                 locationIdParam === undefined ? null : locationIdParam
               }
+              periodStart={reportData?.periodStart || null}
+              periodEnd={reportData?.periodEnd || null}
+              amountColumnLabel={
+                loadedReportId === "defect-rate" ||
+                drillMeta?.entityType === "ncr"
+                  ? "Rate"
+                  : "Amount"
+              }
             />
           </div>
         </section>

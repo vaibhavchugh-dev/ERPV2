@@ -7,6 +7,7 @@ import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import "./CustomerOrders.scss";
 
 const CustomerOrders: React.FC = () => {
@@ -224,6 +225,16 @@ const CustomerOrders: React.FC = () => {
         ]}
         searchPlaceholder="Search orders..."
         initialSearchTerm={seedSearch}
+        matchRowSearch={(row, q) => {
+          const order = row as OrderMaster;
+          const num = Number(order.orderNumber ?? 0);
+          if (matchDisplayDocNumber(q, num, ["co#", "co", "cq#", "cq"])) return true;
+          const hay = [order.customerName, order.customerCode, order.quotationNo, order.status]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        }}
         getRowId={(row) => (row as OrderMaster).orderID}
       />
 
