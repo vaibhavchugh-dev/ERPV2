@@ -290,7 +290,7 @@ namespace CimmpleAPI.Controllers
 
                 if (order.locationId > 0 && !CanAccessLocation(order.locationId))
                 {
-                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 int actualOrderId = order.OrderID;
@@ -2035,7 +2035,7 @@ namespace CimmpleAPI.Controllers
                 if (order.LocationId.HasValue && order.LocationId.Value > 0 &&
                     !CanAccessLocation(order.LocationId.Value))
                 {
-                    return StatusCode(403, new { message = "You do not have access to the selected location" });
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 int actualOrderId = order.OrderID;

@@ -219,28 +219,56 @@ const Sidebar: React.FC = () => {
     setActiveSection((current) => (current === section.id ? null : section.id));
   };
 
-  const pathBelongsToSection = (section: NavSection, pathname: string) =>
-    section.items.some(
-      (item) => pathname === item.path || pathname.startsWith(`${item.path}/`)
+  /**
+   * Longest-match active path: `/reports/schedules` should not also activate `/reports`,
+   * and `/quality/ncr-codes` should not also activate `/quality`.
+   */
+  const isPathActive = (
+    pathname: string,
+    itemPath: string,
+    siblingPaths: string[]
+  ) => {
+    const matches =
+      pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+    if (!matches) return false;
+    return !siblingPaths.some(
+      (other) =>
+        other !== itemPath &&
+        other.length > itemPath.length &&
+        (pathname === other || pathname.startsWith(`${other}/`))
     );
+  };
 
-  const renderNavList = (items: NavItem[], sectionId: string) => (
-    <ul className="nav-list">
-      {items.map((item) => (
-        <li key={item.path}>
-          <NavLink
-            to={item.path}
-            className={`nav-item nav-item-${sectionId}`}
-            activeClassName="active"
-            onClick={closeSecondary}
-          >
-            <FontAwesomeIcon icon={item.icon} size="lg" />
-            <span>{item.title}</span>
-          </NavLink>
-        </li>
-      ))}
-    </ul>
-  );
+  const pathBelongsToSection = (section: NavSection, pathname: string) => {
+    const siblingPaths = section.items.map((i) => i.path);
+    return section.items.some((item) =>
+      isPathActive(pathname, item.path, siblingPaths)
+    );
+  };
+
+  const renderNavList = (items: NavItem[], sectionId: string) => {
+    const siblingPaths = items.map((i) => i.path);
+    return (
+      <ul className="nav-list">
+        {items.map((item) => (
+          <li key={item.path}>
+            <NavLink
+              to={item.path}
+              className={`nav-item nav-item-${sectionId}`}
+              activeClassName="active"
+              isActive={() =>
+                isPathActive(location.pathname, item.path, siblingPaths)
+              }
+              onClick={closeSecondary}
+            >
+              <FontAwesomeIcon icon={item.icon} size="lg" />
+              <span>{item.title}</span>
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    );
+  };
 
   // Close secondary when leaving a multi-item section (e.g. navigating to /home).
   // Do not auto-open on refresh or initial load — only open on section click.

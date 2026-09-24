@@ -214,8 +214,8 @@ const SupportInboxPage: React.FC = () => {
                 </div>
                 <div className="support-ticket-card__subject">{t.subject}</div>
                 <div className="support-ticket-card__meta">
-                  {t.product || "CimmpleFlow"} · {t.tenantName || `Tenant ${t.tenantId}`} ·{" "}
-                  {t.requesterName || "User"}
+                  {t.product || "CimmpleFlow"} · {t.tenantName || `Tenant ${t.tenantId}`}
+                  {t.locationName ? ` · ${t.locationName}` : ""} · {t.requesterName || "User"}
                 </div>
                 <div className="support-ticket-card__meta">{formatWhen(t.updatedAt || t.createdAt)}</div>
               </button>
@@ -236,7 +236,8 @@ const SupportInboxPage: React.FC = () => {
                   </div>
                   <h1>{detail.subject}</h1>
                   <div className="si-muted">
-                    {detail.tenantName || `Tenant ${detail.tenantId}`} ·{" "}
+                    {detail.tenantName || `Tenant ${detail.tenantId}`}
+                    {detail.locationName ? ` · ${detail.locationName}` : ""} ·{" "}
                     {detail.requesterName}
                     {detail.requesterEmail ? ` · ${detail.requesterEmail}` : ""} ·{" "}
                     {detail.category} · {detail.appSource}

@@ -16,7 +16,10 @@ const routePaths = protectedRoutes.map((r) => r.path as string);
 const AccessDenied: React.FC = () => (
   <div style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
     <h2 style={{ color: "#111827", marginBottom: "0.5rem" }}>No access</h2>
-    <p>Your role does not include permission for this page. Contact an administrator if you need access.</p>
+    <p>
+      You don&apos;t have permission to open this page or document. Contact an
+      administrator if you need access.
+    </p>
   </div>
 );
 

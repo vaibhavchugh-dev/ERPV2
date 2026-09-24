@@ -458,7 +458,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading order:", error);
-      toast.error(`Error loading order: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error loading order"));
       setLoading(false);
       setIsHydrating(false);
     }
@@ -2852,8 +2852,21 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
               comments={comments}
               onChange={(next) => {
                 setComments(next);
-                setIsStateChanged(true);
+                if (!(effectiveOrderId > 0)) setIsStateChanged(true);
               }}
+              persistContext={
+                effectiveOrderId > 0
+                  ? {
+                      entityType: "CustomerOrder",
+                      entityId: effectiveOrderId,
+                      entityLabel:
+                        formData.PONumber > 0
+                          ? `Customer Order CO-${formData.PONumber}`
+                          : `Customer Order #${effectiveOrderId}`,
+                      linkPath: `/orders/customer?open=${effectiveOrderId}`,
+                    }
+                  : null
+              }
             />
           </div>
 

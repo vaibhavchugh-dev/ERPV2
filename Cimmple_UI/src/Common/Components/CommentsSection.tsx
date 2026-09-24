@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "react-toastify";
 import { UserManagementService, UserManagement } from "../Services/UserManagementService";
+import { EntityCommentService } from "../Services/EntityCommentService";
+import { getApiErrorMessage } from "../Services/FileUploadHelper";
+import { formatDateTime } from "../Utils/Formatting";
 
 export interface EntityComment {
   id: number;
   text: string;
   createdAt: string;
   createdBy: string;
-  /** Set only for newly added comments this session; stripped on save by API. */
+  /** Set only for newly added comments this session; stripped after persist. */
   mentionedUserIds?: number[];
 }
 
@@ -14,6 +18,14 @@ export interface MentionUserOption {
   userId: number;
   label: string;
   email?: string;
+}
+
+/** When entityId > 0, add/delete persist immediately without document Save. */
+export interface CommentPersistContext {
+  entityType: string;
+  entityId: number;
+  entityLabel: string;
+  linkPath: string;
 }
 
 interface CommentsSectionProps {
@@ -24,7 +36,12 @@ interface CommentsSectionProps {
   /** Optional: list before composer (job order style). Default composer-first. */
   listFirst?: boolean;
   disabled?: boolean;
+  /** Saved document context — enables immediate comment persist + mention notify. */
+  persistContext?: CommentPersistContext | null;
 }
+
+const stripMentionIds = (list: EntityComment[]): EntityComment[] =>
+  list.map(({ mentionedUserIds: _m, ...rest }) => rest);
 
 const CommentsSection: React.FC<CommentsSectionProps> = ({
   comments,
@@ -32,6 +49,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
   allowDelete = true,
   listFirst = false,
   disabled = false,
+  persistContext = null,
 }) => {
   const [draft, setDraft] = useState("");
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -40,8 +58,11 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
   const [users, setUsers] = useState<MentionUserOption[]>([]);
   const [pendingMentions, setPendingMentions] = useState<MentionUserOption[]>([]);
   const [highlightIndex, setHighlightIndex] = useState(0);
+  const [saving, setSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nextIdRef = useRef(1);
+
+  const canPersist = !!(persistContext && persistContext.entityId > 0);
 
   useEffect(() => {
     const maxId = comments.reduce((m, c) => Math.max(m, c.id || 0), 0);
@@ -90,6 +111,23 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
       )
       .slice(0, 8);
   }, [users, mentionQuery]);
+
+  const persistComments = useCallback(
+    async (next: EntityComment[]) => {
+      if (!persistContext || persistContext.entityId <= 0) return false;
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      await EntityCommentService.Save({
+        tenantId: Number(storage?.tenantID || 0),
+        entityType: persistContext.entityType,
+        entityId: persistContext.entityId,
+        entityLabel: persistContext.entityLabel,
+        linkPath: persistContext.linkPath,
+        comments: next,
+      });
+      return true;
+    },
+    [persistContext]
+  );
 
   const updateMentionState = useCallback((value: string, caret: number) => {
     const before = value.slice(0, caret);
@@ -140,9 +178,9 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
     });
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const text = draft.trim();
-    if (!text || disabled) return;
+    if (!text || disabled || saving) return;
 
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const mentionedUserIds = pendingMentions
@@ -157,23 +195,59 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
       ...(mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
     };
 
-    onChange([...comments, newComment]);
+    const previous = comments;
+    const next = [...comments, newComment];
+    onChange(next);
     setDraft("");
     setPendingMentions([]);
     setMentionOpen(false);
+
+    if (!canPersist) return;
+
+    setSaving(true);
+    try {
+      await persistComments(next);
+      onChange(stripMentionIds(next));
+    } catch (error) {
+      onChange(previous);
+      setDraft(text);
+      setPendingMentions(pendingMentions);
+      toast.error(getApiErrorMessage(error, "Failed to save comment"));
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (id: number) => {
-    if (disabled || !allowDelete) return;
-    onChange(comments.filter((c) => c.id !== id));
+  const handleDelete = async (id: number) => {
+    if (disabled || !allowDelete || saving) return;
+    const previous = comments;
+    const next = comments.filter((c) => c.id !== id);
+    onChange(next);
+
+    if (!canPersist) return;
+
+    setSaving(true);
+    try {
+      await persistComments(next);
+      onChange(stripMentionIds(next));
+    } catch (error) {
+      onChange(previous);
+      toast.error(getApiErrorMessage(error, "Failed to delete comment"));
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const helperText = canPersist
+    ? "Comments save immediately. Mentions notify when you add. Ctrl/Cmd+Enter to add."
+    : "Save the document first to keep comments. Ctrl/Cmd+Enter to add.";
 
   const composer = (
     <div style={{ marginBottom: listFirst ? 0 : "1.5rem", position: "relative" }}>
       <textarea
         ref={textareaRef}
         className="form-input"
-        disabled={disabled}
+        disabled={disabled || saving}
         style={{
           width: "100%",
           minHeight: listFirst ? 72 : 100,
@@ -183,7 +257,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
           marginBottom: "0.75rem",
           boxSizing: "border-box",
         }}
-        placeholder='Add a comment… Type @ to mention someone'
+        placeholder="Add a comment… Type @ to mention someone"
         value={draft}
         onChange={(e) => {
           const value = e.target.value;
@@ -194,7 +268,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
           if (!mentionOpen || filteredUsers.length === 0) {
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
               e.preventDefault();
-              handleAdd();
+              void handleAdd();
             }
             return;
           }
@@ -257,24 +331,22 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
       )}
       <button
         type="button"
-        onClick={handleAdd}
-        disabled={disabled || !draft.trim()}
+        onClick={() => void handleAdd()}
+        disabled={disabled || saving || !draft.trim()}
         style={{
           padding: "0.5rem 1rem",
-          backgroundColor: disabled || !draft.trim() ? "#a5b4fc" : "#6366f1",
+          backgroundColor: disabled || saving || !draft.trim() ? "#a5b4fc" : "#6366f1",
           color: "white",
           border: "none",
           borderRadius: "0.375rem",
           fontSize: "0.875rem",
           fontWeight: 500,
-          cursor: disabled || !draft.trim() ? "not-allowed" : "pointer",
+          cursor: disabled || saving || !draft.trim() ? "not-allowed" : "pointer",
         }}
       >
-        Add Comment
+        {saving ? "Saving…" : "Add Comment"}
       </button>
-      <div style={{ marginTop: 6, fontSize: "0.75rem", color: "#9ca3af" }}>
-        Mentions notify on Save. Ctrl/Cmd+Enter to add.
-      </div>
+      <div style={{ marginTop: 6, fontSize: "0.75rem", color: "#9ca3af" }}>{helperText}</div>
     </div>
   );
 
@@ -309,7 +381,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
                     {comment.text}
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                    {comment.createdBy} - {new Date(comment.createdAt).toLocaleString()}
+                    {comment.createdBy} - {formatDateTime(comment.createdAt)}
                   </div>
                 </>
               ) : (
@@ -327,20 +399,21 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
                         {comment.createdBy}
                       </div>
                       <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                        {new Date(comment.createdAt).toLocaleString()}
+                        {formatDateTime(comment.createdAt)}
                       </div>
                     </div>
                     {allowDelete && !disabled && (
                       <button
                         type="button"
-                        onClick={() => handleDelete(comment.id)}
+                        onClick={() => void handleDelete(comment.id)}
+                        disabled={saving}
                         style={{
                           padding: "0.25rem 0.5rem",
                           backgroundColor: "#ef4444",
                           color: "white",
                           border: "none",
                           borderRadius: "0.25rem",
-                          cursor: "pointer",
+                          cursor: saving ? "not-allowed" : "pointer",
                           fontSize: "0.75rem",
                         }}
                       >

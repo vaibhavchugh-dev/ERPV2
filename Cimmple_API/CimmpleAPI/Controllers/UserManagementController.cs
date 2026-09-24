@@ -34,12 +34,33 @@ namespace CimmpleAPI.Controllers
 
         // GET: api/UserManagement/GetUsers
         [HttpGet("GetUsers")]
-        public async Task<IActionResult> GetUsers(int tenantId, string? searchTerm = null, string? status = null, int pageNumber = 1, int pageSize = 10)
+        public async Task<IActionResult> GetUsers(
+            int tenantId,
+            string? searchTerm = null,
+            string? status = null,
+            int pageNumber = 1,
+            int pageSize = 10,
+            int? locationId = null)
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                    return forbid!;
+
                 var query = _context.UserDetails.Where(u => u.TenantID == tenantId
                     && (u.VendorId == null || u.VendorId == 0));
+
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    var mappedUserIds = _context.UserMapping
+                        .Where(m => m.locationId == loc)
+                        .Select(m => m.userId);
+                    query = query.Where(u =>
+                        u.DefaultLocationId == loc
+                        || u.CanAccessAllLocations
+                        || mappedUserIds.Contains(u.User_UniqueID));
+                }
 
                 // Apply filters
                 if (!string.IsNullOrEmpty(searchTerm))

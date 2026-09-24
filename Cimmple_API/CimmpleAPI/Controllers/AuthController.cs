@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
@@ -5,6 +8,7 @@ using CimmpleAPI.Services.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace CimmpleAPI.Controllers
 {
@@ -14,11 +18,19 @@ namespace CimmpleAPI.Controllers
     {
         private readonly IAuthService _authService;
         private readonly CimmpleDbContext _db;
+        private readonly IJwtTokenService _jwt;
+        private readonly TokenConfigOptions _tokenConfig;
 
-        public AuthController(IAuthService authService, CimmpleDbContext db)
+        public AuthController(
+            IAuthService authService,
+            CimmpleDbContext db,
+            IJwtTokenService jwt,
+            IOptions<TokenConfigOptions> tokenConfig)
         {
             _authService = authService;
             _db = db;
+            _jwt = jwt;
+            _tokenConfig = tokenConfig.Value;
         }
         [AllowAnonymous]
         [HttpPost("Login")]
@@ -77,6 +89,80 @@ namespace CimmpleAPI.Controllers
             }
 
             return Ok(response);
+        }
+
+        /// <summary>
+        /// Mint a short-lived JWT for a Flow tenant/location (CimmplePay → PostJournal).
+        /// Authenticated with shared IntegrationClientId/Secret from TokenConfig — not a static user JWT.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("IntegrationToken")]
+        public async Task<IActionResult> IntegrationToken([FromBody] IntegrationTokenRequest? request)
+        {
+            if (string.IsNullOrWhiteSpace(_tokenConfig.IntegrationClientId)
+                || string.IsNullOrWhiteSpace(_tokenConfig.IntegrationClientSecret))
+            {
+                return StatusCode(503, new { message = "Integration auth is not configured on this server." });
+            }
+
+            if (request == null
+                || string.IsNullOrWhiteSpace(request.ClientId)
+                || string.IsNullOrWhiteSpace(request.ClientSecret)
+                || request.TenantId <= 0
+                || request.LocationId <= 0)
+            {
+                return BadRequest(new { message = "clientId, clientSecret, tenantId, and locationId are required." });
+            }
+
+            if (!FixedTimeEquals(request.ClientId.Trim(), _tokenConfig.IntegrationClientId.Trim())
+                || !FixedTimeEquals(request.ClientSecret, _tokenConfig.IntegrationClientSecret))
+            {
+                return Unauthorized(new { message = "Invalid client credentials." });
+            }
+
+            var location = await _db.Locations.AsNoTracking()
+                .FirstOrDefaultAsync(l => l.LocationId == request.LocationId && l.TenantId == request.TenantId);
+            if (location == null)
+            {
+                return BadRequest(new { message = "Location was not found for this tenant." });
+            }
+
+            var minutes = _tokenConfig.IntegrationTokenMinutes > 0
+                ? _tokenConfig.IntegrationTokenMinutes
+                : 10;
+
+            var claims = new List<Claim>
+            {
+                new(ClaimTypes.NameIdentifier, "0"),
+                new("userId", "0"),
+                new("tenantId", request.TenantId.ToString()),
+                new(ClaimTypes.Name, "cimmplepay-integration"),
+                new("userName", "cimmplepay-integration"),
+                new("portalType", "integration"),
+                new("canAccessAllLocations", "false"),
+                new("defaultLocationId", request.LocationId.ToString()),
+                new("locationIds", request.LocationId.ToString())
+            };
+
+            var (accessToken, expiresAtUtc) = _jwt.CreateAccessToken(claims, minutes);
+            return Ok(new IntegrationTokenResponse
+            {
+                AccessToken = accessToken,
+                ExpiresAtUtc = expiresAtUtc
+            });
+        }
+
+        private static bool FixedTimeEquals(string a, string b)
+        {
+            var aBytes = Encoding.UTF8.GetBytes(a);
+            var bBytes = Encoding.UTF8.GetBytes(b);
+            if (aBytes.Length != bBytes.Length)
+            {
+                // Still compare to avoid short-circuit timing on length when possible
+                return CryptographicOperations.FixedTimeEquals(aBytes, aBytes) & false;
+            }
+
+            return CryptographicOperations.FixedTimeEquals(aBytes, bBytes);
         }
 
         [Authorize]
