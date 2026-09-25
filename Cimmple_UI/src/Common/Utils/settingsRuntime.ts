@@ -32,6 +32,7 @@ export const applyRuntimeSettings = (settings: SystemSettings | null | undefined
     storage.enableInAppNotifications = settings.enableInAppNotifications;
     storage.defaultPageSize = settings.defaultPageSize;
     storage.dateFormat = settings.dateFormat;
+    storage.timeFormat = settings.timeFormat;
     storage.timezone = settings.timezone;
     storage.defaultCurrency = settings.defaultCurrency;
     storage.currencySymbol = settings.currencySymbol;

@@ -80,11 +80,12 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
 
   const handleEdit = (role: Role) => {
     setEditingRole(role);
+    const reset = (role.resetPwd || "N").toUpperCase();
     setFormData({
       roleName: role.name || "",
       description: role.description || "",
-      orderNo: (role as any).orderNo || 0,
-      resetPwd: "N"
+      orderNo: role.orderNo || 0,
+      resetPwd: reset === "Y" || reset === "YES" ? "Y" : "N"
     });
     setShowForm(true);
   };

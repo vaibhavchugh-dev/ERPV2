@@ -52,9 +52,6 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     primaryContact: "",
     dob: "",
     ssn: "",
-    isSalesAgent: 0,
-    allowPTO: 0,
-    allowPerformance: 0,
     sendWelcomeEmail: 0,
     createDate: new Date()
   });
@@ -175,9 +172,6 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
         tenantID,
         status: userData.status,
         role: userData.role,
-        isSalesAgent: userData.isSalesAgent === 1,
-        allowPTO: userData.allowPTO === 1,
-        allowPerformance: userData.allowPerformance === 1,
         terminationReason: userData.terminationReason
       };
 
@@ -345,54 +339,19 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
         </div>
       )}
 
-      <h3>Permissions</h3>
-      <div className="form-row">
-        <div className="form-group full-width">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={userData.isSalesAgent === 1}
-              onChange={(e) => handleInputChange("isSalesAgent", e.target.checked ? 1 : 0)}
-            />
-            Sales Agent
-          </label>
-        </div>
+      <div style={{ marginTop: '1.5rem', padding: '0.75rem', backgroundColor: '#fef3c7', borderRadius: '0.375rem', fontSize: '0.875rem', color: '#92400e' }}>
+        <strong>Note:</strong> Role permissions are managed via Manage Role / Manage Permissions. Password reset is available from the User Management list.
       </div>
     </div>
   );
 
   const renderSecurityTab = () => (
     <div className="form-section">
-      <h3>Security & Permissions</h3>
+      <h3>Security &amp; Permissions</h3>
 
-      <div className="form-row">
-        <div className="form-group full-width">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={userData.allowPTO === 1}
-              onChange={(e) => handleInputChange("allowPTO", e.target.checked ? 1 : 0)}
-            />
-            Allow PTO Tracking
-          </label>
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-group full-width">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={userData.allowPerformance === 1}
-              onChange={(e) => handleInputChange("allowPerformance", e.target.checked ? 1 : 0)}
-            />
-            Allow Performance Tracking
-          </label>
-        </div>
-      </div>
-
-      <div style={{ marginTop: '1.5rem', padding: '0.75rem', backgroundColor: '#fef3c7', borderRadius: '0.375rem', fontSize: '0.875rem', color: '#92400e' }}>
-        <strong>Note:</strong> Password reset can be performed from the main User Management page using the "Reset Password" button.
+      <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: '#fef3c7', borderRadius: '0.375rem', fontSize: '0.875rem', color: '#92400e' }}>
+        <strong>Note:</strong> Password reset can be performed from the main User Management page using the &quot;Reset Password&quot; button.
+        Module access is controlled by the user&apos;s assigned role permissions.
       </div>
     </div>
   );

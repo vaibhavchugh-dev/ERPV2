@@ -1,9 +1,15 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { toast } from "react-toastify";
 import { DocumentService, DocumentCategory } from "../../Common/Services/DocumentService";
+import {
+  DEFAULT_UPLOAD_EXTENSIONS,
+  validateSelectedFiles,
+} from "../../Common/Services/FileUploadHelper";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTimes, faUpload, faFile, faPlus } from "@fortawesome/free-solid-svg-icons";
 import "./DocumentUploadModal.scss";
+
+const DOC_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 interface DocumentUploadModalProps {
   categories: DocumentCategory[];
@@ -38,14 +44,23 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  const fileAcceptAttr = useMemo(
+    () => DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(","),
+    []
+  );
+
   const handleFileSelect = (selectedFile: File) => {
-    if (selectedFile.size > 50 * 1024 * 1024) {
-      toast.error("File size exceeds 50MB limit");
-      return;
+    const { valid, errors } = validateSelectedFiles([selectedFile], {
+      acceptedExtensions: DEFAULT_UPLOAD_EXTENSIONS,
+      maxFileSizeBytes: DOC_MAX_UPLOAD_BYTES,
+    });
+    if (errors.length > 0) {
+      toast.error(errors[0]);
     }
-    setFile(selectedFile);
+    if (valid.length === 0) return;
+    setFile(valid[0]);
     if (!documentName) {
-      setDocumentName(selectedFile.name);
+      setDocumentName(valid[0].name);
     }
   };
 
@@ -157,6 +172,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
             <input
               ref={fileInputRef}
               type="file"
+              accept={fileAcceptAttr}
               onChange={handleFileInputChange}
               style={{ display: "none" }}
             />
@@ -183,7 +199,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
               <div className="drop-zone-content">
                 <FontAwesomeIcon icon={faUpload} size="3x" />
                 <p>Drag and drop a file here, or click to select</p>
-                <p className="hint">Maximum file size: 50MB</p>
+                <p className="hint">Maximum file size: 50MB. Allowed: PDF, Office, images, email.</p>
               </div>
             )}
           </div>

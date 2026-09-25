@@ -40,9 +40,6 @@ export interface UserDetail {
   primaryContact?: string;
   dob?: string;
   ssn?: string;
-  isSalesAgent?: number;
-  allowPTO?: number;
-  allowPerformance?: number;
   sendWelcomeEmail?: number;
   createDate?: Date;
 }
@@ -56,9 +53,6 @@ export interface UpdateUserRequest {
   // Account Management Fields Only
   status?: string;
   role?: number;
-  isSalesAgent: boolean;
-  allowPTO: boolean;
-  allowPerformance: boolean;
   terminationReason?: string;
   // Note: Profile data (name, email, phone, address) should be managed via Employee Master
 }
@@ -74,6 +68,8 @@ export interface Role {
   id: number;
   name?: string;
   description?: string;
+  orderNo?: number;
+  resetPwd?: string;
 }
 
 export interface Permission {

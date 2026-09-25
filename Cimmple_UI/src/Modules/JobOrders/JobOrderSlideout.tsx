@@ -52,6 +52,8 @@ import {
   getPendingFiles,
   revokeLocalAttachmentUrls,
   getApiErrorMessage,
+  isApiForbidden,
+  clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -106,6 +108,26 @@ const formatInventoryQty = (n: number | undefined, show: boolean): string => {
   if (!show || typeof n !== "number" || Number.isNaN(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
+
+/** Clearer UX when delete is blocked because finished goods remain on hand. */
+const JOB_FG_DELETE_BLOCK_MESSAGE =
+  "Cannot delete while finished goods remain in inventory. Reopen the job to reverse stock first.";
+
+function normalizeJobDeletionImpact(impact: DeletionImpactResult): DeletionImpactResult {
+  if (impact.canDelete) return impact;
+  const reasons = impact.blockingReasons || [];
+  const hasFgBlock = reasons.some(
+    (r) => /finished goods/i.test(r) || /reverse stock/i.test(r)
+  );
+  if (!hasFgBlock) return impact;
+  const otherReasons = reasons.filter(
+    (r) => !/finished goods/i.test(r) && !/reverse stock/i.test(r)
+  );
+  return {
+    ...impact,
+    blockingReasons: [JOB_FG_DELETE_BLOCK_MESSAGE, ...otherReasons],
+  };
+}
 
 const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   jobOrderId,
@@ -923,6 +945,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     } catch (error: any) {
       console.error("Error loading job order:", error);
       toast.error(getApiErrorMessage(error, "Error loading job order"));
+      if (isApiForbidden(error)) {
+        clearOpenQueryFromUrl();
+        onClose();
+        return;
+      }
     } finally {
       setLoading(false);
       setInitialLoading(false);
@@ -1051,7 +1078,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     try {
       const response = await JobOrderService.CheckJobOrderDeletionImpact(jobOrderId);
       const impact = response.result as DeletionImpactResult;
-      setDeletionImpact(impact);
+      setDeletionImpact(normalizeJobDeletionImpact(impact));
     } catch (error: any) {
       console.error("Error refreshing deletion impact:", error);
       toast.error(`Error refreshing deletion impact: ${error.message || "Unknown error"}`);
@@ -1063,7 +1090,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     try {
       const response = await JobOrderService.CheckJobOrderDeletionImpact(jobOrderId);
       const impact = response.result as DeletionImpactResult;
-      setDeletionImpact(impact);
+      setDeletionImpact(normalizeJobDeletionImpact(impact));
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("Error checking deletion impact:", error);

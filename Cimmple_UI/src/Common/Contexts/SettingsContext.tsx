@@ -132,7 +132,10 @@ export const useSettingsSafe = (): SystemSettings => {
       storage.defaultCurrency ||
       storage.currencySymbol ||
       storage.locale ||
-      storage.decimalPlaces != null
+      storage.decimalPlaces != null ||
+      storage.dateFormat ||
+      storage.timeFormat ||
+      storage.timezone
     ) {
       const tenantId = storage.tenantID || 1;
       return {
@@ -141,6 +144,9 @@ export const useSettingsSafe = (): SystemSettings => {
         currencySymbol: storage.currencySymbol || '$',
         locale: storage.locale || 'en-US',
         decimalPlaces: storage.decimalPlaces ?? 2,
+        dateFormat: storage.dateFormat || 'M/d/yyyy',
+        timeFormat: storage.timeFormat || '12',
+        timezone: storage.timezone || 'America/New_York',
       };
     }
   } catch {

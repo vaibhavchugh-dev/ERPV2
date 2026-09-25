@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using CimmpleAPI.Data;
+using CimmpleAPI.Data.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace CimmpleAPI.Services
@@ -16,7 +17,8 @@ namespace CimmpleAPI.Services
             CimmpleDbContext context,
             int tenantId,
             (DateTime startDate, DateTime endDate) dateFilter,
-            int? locationId = null)
+            int? locationId = null,
+            IReadOnlyList<int>? restrictToLocationIds = null)
         {
             var rangeStart = dateFilter.startDate.Date;
             var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
@@ -29,9 +31,12 @@ namespace CimmpleAPI.Services
                             t.TransactionDate <= rangeEnd)
                 .ToList();
 
-            if (locationId.HasValue)
+            var allowedLocations = locationId.HasValue
+                ? new List<int> { locationId.Value }
+                : restrictToLocationIds?.ToList();
+
+            if (allowedLocations != null)
             {
-                var locId = locationId.Value;
                 var customerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var allCustomerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var customerInvoices = context.InvoiceMaster
@@ -46,7 +51,7 @@ namespace CimmpleAPI.Services
                             context.CustomerOrder.Any(co =>
                                 co.OrderID == id.OrderId &&
                                 co.Tenantid == tenantId &&
-                                co.locationId == locId))
+                                allowedLocations.Contains(co.locationId)))
                     })
                     .ToList();
                 foreach (var invoice in customerInvoices)
@@ -74,7 +79,7 @@ namespace CimmpleAPI.Services
                         allVendorNumbers.Add(invoice.InvoiceNo.Trim());
                     if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
                         allVendorNumbers.Add(invoice.prefixinvoiceno.Trim());
-                    if (invoice.locationId == locId)
+                    if (allowedLocations.Contains(invoice.locationId))
                     {
                         if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
                             vendorNumbers.Add(invoice.InvoiceNo.Trim());
@@ -83,18 +88,25 @@ namespace CimmpleAPI.Services
                     }
                 }
 
-                paymentRows = paymentRows.Where(t =>
+                if (allowedLocations.Count == 0)
                 {
-                    var number = t.invoiceNo?.Trim() ?? "";
-                    var isCustomerPayment = t.isCustomer == 1;
-                    var selected = isCustomerPayment ? customerNumbers : vendorNumbers;
-                    var all = isCustomerPayment ? allCustomerNumbers : allVendorNumbers;
-                    if (selected.Contains(number))
-                        return true;
-                    if (all.Contains(number))
-                        return false;
-                    return t.locationId == locId;
-                }).ToList();
+                    paymentRows = new List<Transactions>();
+                }
+                else
+                {
+                    paymentRows = paymentRows.Where(t =>
+                    {
+                        var number = t.invoiceNo?.Trim() ?? "";
+                        var isCustomerPayment = t.isCustomer == 1;
+                        var selected = isCustomerPayment ? customerNumbers : vendorNumbers;
+                        var all = isCustomerPayment ? allCustomerNumbers : allVendorNumbers;
+                        if (selected.Contains(number))
+                            return true;
+                        if (all.Contains(number))
+                            return false;
+                        return allowedLocations.Contains(t.locationId);
+                    }).ToList();
+                }
             }
 
             var cashIn = paymentRows
@@ -118,16 +130,18 @@ namespace CimmpleAPI.Services
                                  EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                  (t.invoiceNo == im.PrefixInvoiceNo ||
                                   t.invoiceNo == im.InvoiceNo.ToString())));
-            if (locationId.HasValue)
+            if (allowedLocations != null)
             {
-                var locId = locationId.Value;
-                customerFallback = customerFallback.Where(im =>
-                    context.InvoiceDetail.Any(id =>
-                        id.InvoiceId == im.Id &&
-                        context.CustomerOrder.Any(co =>
-                            co.OrderID == id.OrderId &&
-                            co.Tenantid == tenantId &&
-                            co.locationId == locId)));
+                if (allowedLocations.Count == 0)
+                    customerFallback = customerFallback.Where(_ => false);
+                else
+                    customerFallback = customerFallback.Where(im =>
+                        context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                allowedLocations.Contains(co.locationId))));
             }
             cashIn += customerFallback.Sum(im => (decimal?)(im.PaidAmount > 0 ? im.PaidAmount : im.TotalAmount)) ?? 0;
 
@@ -144,8 +158,12 @@ namespace CimmpleAPI.Services
                                   EF.Functions.Like(t.TransactionType, "%Payment%") &&
                                   (t.invoiceNo == vim.prefixinvoiceno ||
                                    t.invoiceNo == vim.InvoiceNo)));
-            if (locationId.HasValue)
-                vendorFallback = vendorFallback.Where(vim => vim.locationId == locationId.Value);
+            if (allowedLocations != null)
+            {
+                vendorFallback = allowedLocations.Count == 0
+                    ? vendorFallback.Where(_ => false)
+                    : vendorFallback.Where(vim => allowedLocations.Contains(vim.locationId));
+            }
             cashOut += vendorFallback.Sum(vim => (decimal?)(vim.PaidAmount > 0 ? vim.PaidAmount : vim.TotalAmount)) ?? 0;
 
             return (cashIn, cashOut);

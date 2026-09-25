@@ -16,6 +16,20 @@ namespace CimmpleAPI.Services
             return string.IsNullOrWhiteSpace(url) ? null : url;
         }
 
+        /// <summary>
+        /// Returns true when the configured public UI base URL looks unusable for emails
+        /// (missing or localhost) outside Development.
+        /// </summary>
+        public static bool IsPublicAppBaseUrlMisconfigured(IConfiguration? configuration, string? environmentName)
+        {
+            var baseUrl = ResolveAppBaseUrl(configuration);
+            if (string.IsNullOrWhiteSpace(baseUrl)) return true;
+            if (string.Equals(environmentName, "Development", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+                || baseUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static async Task<(bool queued, string? error)> TryQueueEmployeeWelcomeAsync(
             EmailOutboxService outbox,
             int tenantId,
@@ -31,6 +45,13 @@ namespace CimmpleAPI.Services
 
             var baseUrl = ResolveAppBaseUrl(configuration);
             var loginUrl = string.IsNullOrEmpty(baseUrl) ? "/login" : $"{baseUrl}/login";
+            if (string.IsNullOrEmpty(baseUrl) || baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine(
+                    "[IdentityEmail] Warning: App:PublicAppBaseUrl is missing or localhost; " +
+                    "password/welcome email links will not work for remote recipients. " +
+                    "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).");
+            }
             var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
             var safeUser = WebUtility.HtmlEncode(userName ?? "");
             var safePwd = WebUtility.HtmlEncode(temporaryPassword ?? "");
@@ -69,6 +90,13 @@ namespace CimmpleAPI.Services
 
             var baseUrl = ResolveAppBaseUrl(configuration);
             var loginUrl = string.IsNullOrEmpty(baseUrl) ? "/login" : $"{baseUrl}/login";
+            if (string.IsNullOrEmpty(baseUrl) || baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine(
+                    "[IdentityEmail] Warning: App:PublicAppBaseUrl is missing or localhost; " +
+                    "password-reset email links will not work for remote recipients. " +
+                    "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).");
+            }
             var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
             var safeUser = WebUtility.HtmlEncode(userName ?? "");
             var safeLogin = WebUtility.HtmlEncode(loginUrl);

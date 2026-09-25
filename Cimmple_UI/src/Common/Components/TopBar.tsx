@@ -33,7 +33,7 @@ import NotifyUserDialog from "./NotifyUserDialog";
 import ContactSupportDialog from "./ContactSupportDialog";
 import ConversationPanel from "./ConversationPanel";
 import { stripMentionTokensForPreview, navigateToMentionDocument } from "../Utils/chatMentions";
-import { formatDateTime } from "../Utils/Formatting";
+import { useFormatting } from "../Hooks/useFormatting";
 import "./TopBar.scss";
 
 const NOTIFICATION_POLL_MS = 45000;
@@ -53,7 +53,8 @@ const TopBar: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
   const { locationId: currentLocationId, setLocationId } = useActiveLocation();
-  
+  const { formatDateTime } = useFormatting();
+
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [accountModal, setAccountModal] = useState<UserAccountModalKind>(null);
   const [locationMenuOpen, setLocationMenuOpen] = useState(false);

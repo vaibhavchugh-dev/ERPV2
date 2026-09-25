@@ -22,10 +22,24 @@ namespace CimmpleAPI.Controllers
         private readonly DocumentStorageService _storageService;
         private const long MaxFileSize = 50 * 1024 * 1024; // 50MB
 
+        // Mirrors FileUploadHelper.DEFAULT_UPLOAD_EXTENSIONS (FE allowlist)
+        private static readonly string[] AllowedUploadExtensions = new[]
+        {
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".rtf",
+            ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+            ".tif", ".msg", ".eml"
+        };
+
         public DocumentsController(CimmpleDbContext context, DocumentStorageService storageService)
         {
             _context = context;
             _storageService = storageService;
+        }
+
+        private static bool IsAllowedUploadExtension(string? fileName, out string extension)
+        {
+            extension = Path.GetExtension(fileName ?? string.Empty).ToLowerInvariant();
+            return !string.IsNullOrEmpty(extension) && AllowedUploadExtensions.Contains(extension);
         }
 
         // GET: api/documents
@@ -309,6 +323,11 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Document name is required" });
                 }
 
+                if (!IsAllowedUploadExtension(file.FileName, out var extension))
+                {
+                    return BadRequest(new { error = $"Invalid file type '{extension}'. Allowed types: {string.Join(", ", AllowedUploadExtensions)}" });
+                }
+
                 // Parse boolean from string (form data sends booleans as strings)
                 bool requiresVersionControlBool = false;
                 if (!string.IsNullOrEmpty(requiresVersionControl))
@@ -492,6 +511,11 @@ namespace CimmpleAPI.Controllers
                 if (file == null || file.Length == 0)
                 {
                     return BadRequest(new { error = "File is required" });
+                }
+
+                if (!IsAllowedUploadExtension(file.FileName, out var extension))
+                {
+                    return BadRequest(new { error = $"Invalid file type '{extension}'. Allowed types: {string.Join(", ", AllowedUploadExtensions)}" });
                 }
 
                 if (file.Length > MaxFileSize)

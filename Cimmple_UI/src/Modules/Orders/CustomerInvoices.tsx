@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { faEye, faPrint, faEnvelope, faCreditCard, faBan, faFileInvoice, faCalendar, faDollarSign } from "@fortawesome/free-solid-svg-icons";
@@ -393,7 +393,14 @@ const CustomerInvoices: React.FC = () => {
 
   useEffect(() => {
     loadInvoices();
-  }, [filters, locationIdParam]);
+  }, [
+    filters.status,
+    filters.customerId,
+    filters.dateRange,
+    filters.startDate,
+    filters.endDate,
+    locationIdParam,
+  ]);
 
   // Handle URL parameter to open invoice / seed search (from reports drill-down)
   useEffect(() => {
@@ -437,13 +444,6 @@ const CustomerInvoices: React.FC = () => {
     }
   }, [location.search, history, location.pathname, location.state]);
 
-  const handleListSearchChange = useCallback((term: string) => {
-    setFilters((prev) => {
-      if (prev.searchTerm === term) return prev;
-      return { ...prev, searchTerm: term };
-    });
-  }, []);
-
   // Listen for custom event from global search
   useEffect(() => {
     const handleOpenEntity = (event: CustomEvent) => {
@@ -464,7 +464,7 @@ const CustomerInvoices: React.FC = () => {
     try {
       const result = await CustomerInvoicesService.GetAllInvoices(
         filters.status,
-        filters.searchTerm,
+        undefined,
         filters.customerId,
         filters.dateRange,
         locationIdParam,
@@ -820,7 +820,6 @@ const CustomerInvoices: React.FC = () => {
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
         initialSearchTerm={filters.searchTerm}
-        onSearchChange={handleListSearchChange}
         minSearchLength={2}
         filters={[
           masterListFilter,

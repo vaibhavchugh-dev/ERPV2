@@ -38,7 +38,7 @@ namespace CimmpleAPI.Controllers
                 if (tid <= 0)
                     return BadRequest(new { error = "Tenant id is required." });
 
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 take = Math.Clamp(take, 1, 500);
@@ -49,6 +49,13 @@ namespace CimmpleAPI.Controllers
 
                 if (filterLocationId.HasValue)
                     query = query.Where(p => p.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(p => false)
+                        : query.Where(p => allowed.Contains(p.LocationId));
+                }
 
                 if (!string.IsNullOrWhiteSpace(source))
                     query = query.Where(p => p.Source == source.Trim());

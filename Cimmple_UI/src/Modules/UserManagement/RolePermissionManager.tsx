@@ -142,14 +142,20 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
               <button
                 className="btn btn-sm btn-warning"
                 onClick={async () => {
-                  if (!window.confirm(`This will clear all ${allPermissions.length} existing permissions and role assignments, then reseed with updated permissions. Continue?`)) {
+                  if (!window.confirm(
+                    `This will clear all ${allPermissions.length} permission definitions and ALL role assignments (Admin, Shop, Supervisor, etc.), then reseed the permission list.\n\n` +
+                    `Roles will have no permissions until you reassign them. Non-admin users will only see Dashboard until permissions are restored.\n\nContinue?`
+                  )) {
                     return;
                   }
                   try {
                     console.log('[Clear and Reseed] Clicked - Current permissions:', allPermissions?.length || 0);
                     toast.info('Clearing existing permissions and reseeding...');
                     const result = await UserManagementService.SeedPermissions(true);
-                    toast.success(result.message || 'Permissions cleared and reseeded successfully');
+                    toast.success(
+                      result.message ||
+                        'Permissions cleared and reseeded. Reassign permissions to each role — users only have Dashboard until then.'
+                    );
                     await loadData(); // Reload after seeding
                   } catch (error: any) {
                     console.error('Error clearing and reseeding permissions:', error);
@@ -172,7 +178,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                   zIndex: 1000,
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                 }}
-                title={`Clear ${allPermissions?.length || 0} existing permissions and reseed`}
+                title={`Clear ${allPermissions?.length || 0} existing permissions and all role assignments, then reseed`}
               >
                 🔄 Clear & Reseed
               </button>
@@ -264,17 +270,24 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                   </p>
                   <p style={{ color: '#92400e', fontSize: '0.75rem', marginBottom: '0.75rem' }}>
                     To update permissions to match the current menu structure, use the "🔄 Clear & Reseed" button in the header.
+                    This wipes all role assignments — reassign permissions afterward or non-admin users will only see Dashboard.
                   </p>
                   <button
                     className="btn btn-warning"
                     onClick={async () => {
-                      if (!window.confirm(`This will clear all ${allPermissions.length} existing permissions and role assignments, then reseed with updated permissions. Continue?`)) {
+                      if (!window.confirm(
+                        `This will clear all ${allPermissions.length} permission definitions and ALL role assignments, then reseed.\n\n` +
+                        `Non-admin users will only see Dashboard until permissions are reassigned. Continue?`
+                      )) {
                         return;
                       }
                       try {
                         toast.info('Clearing existing permissions and reseeding...');
                         const result = await UserManagementService.SeedPermissions(true);
-                        toast.success(result.message || 'Permissions cleared and reseeded successfully');
+                        toast.success(
+                          result.message ||
+                            'Permissions cleared and reseeded. Reassign permissions to each role — users only have Dashboard until then.'
+                        );
                         await loadData(); // Reload after seeding
                       } catch (error: any) {
                         console.error('Error clearing and reseeding permissions:', error);

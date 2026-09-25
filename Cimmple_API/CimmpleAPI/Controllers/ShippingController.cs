@@ -396,7 +396,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 // Build base query
@@ -421,6 +421,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     shipmentsQuery = shipmentsQuery.Where(x => x.order.locationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    shipmentsQuery = allowed.Count == 0
+                        ? shipmentsQuery.Where(x => false)
+                        : shipmentsQuery.Where(x => allowed.Contains(x.order.locationId));
                 }
 
                 // Apply filters

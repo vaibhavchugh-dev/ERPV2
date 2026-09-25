@@ -26,7 +26,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
@@ -38,6 +38,13 @@ namespace CimmpleAPI.Controllers
                 if (filterLocationId.HasValue)
                 {
                     query = query.Where(b => b.locationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(b => false)
+                        : query.Where(b => allowed.Contains(b.locationId));
                 }
 
                 var bankRows = query

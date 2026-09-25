@@ -53,7 +53,7 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Custom date range requires valid CustomStartDate and CustomEndDate (yyyy-MM-dd)." });
                 }
 
-                if (!TryResolveListLocationFilter(request.LocationId, out var reportLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(request.LocationId, out var reportLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var dateFilter = GetDateRangeFilter(dateRange, request);
@@ -65,129 +65,129 @@ namespace CimmpleAPI.Controllers
                     // Sales & Revenue
                     case "sales-performance":
                         reportData = SalesReportsService.BuildSalesPerformance(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "sales-trends":
                         reportData = SalesReportsService.BuildSalesTrends(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "product-revenue":
                         reportData = SalesReportsService.BuildProductRevenue(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "quotation-conversion":
                         reportData = SalesReportsService.BuildQuotationConversion(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "revenue-by-location":
                         reportData = SalesReportsService.BuildRevenueByLocation(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     // Operations
                     case "job-status-dashboard":
                         reportData = JobOrderStatusReportService.Build(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "job-completion-time":
                         reportData = OperationsReportsService.BuildJobCompletionTime(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "on-time-delivery":
                         reportData = OperationsReportsService.BuildOnTimeDelivery(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "production-efficiency":
                         reportData = OperationsReportsService.BuildProductionEfficiency(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "workstation-utilization":
                         reportData = OperationsReportsService.BuildWorkstationUtilization(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "process-performance":
                         reportData = OperationsReportsService.BuildProcessPerformance(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     // Purchasing
                     case "vendor-performance":
                         reportData = PurchasingReportsService.BuildVendorPerformance(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "purchase-trends":
                         reportData = PurchasingReportsService.BuildPurchaseTrends(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "vendor-cost-analysis":
                         reportData = PurchasingReportsService.BuildVendorCostAnalysis(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "material-cost-trends":
                         reportData = PurchasingReportsService.BuildMaterialCostTrends(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "vendor-delivery":
                         reportData = PurchasingReportsService.BuildVendorDelivery(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     // Inventory
                     case "inventory-valuation":
                         reportData = InventoryReportsService.BuildInventoryValuation(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "stock-movement":
                         reportData = InventoryReportsService.BuildStockMovement(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "material-usage":
                         reportData = InventoryReportsService.BuildMaterialUsage(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "inventory-turnover":
                         reportData = InventoryReportsService.BuildInventoryTurnover(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     // Quality
                     case "ncr-trends":
                         reportData = QualityReportsService.BuildNcrTrends(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "defect-rate":
                         reportData = QualityReportsService.BuildDefectRate(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "quality-cost":
                         reportData = QualityReportsService.BuildQualityCost(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "root-cause-analysis":
                         reportData = QualityReportsService.BuildRootCauseAnalysis(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     // Customer
                     case "customer-profitability":
                         reportData = CustomerReportsService.BuildCustomerProfitability(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "customer-lifetime-value":
                         reportData = CustomerReportsService.BuildCustomerLifetimeValue(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "customer-order-history":
                         reportData = CustomerReportsService.BuildCustomerOrderHistory(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "top-customers":
                         reportData = CustomerReportsService.BuildTopCustomers(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
                     case "customer-payment-behavior":
                         reportData = CustomerReportsService.BuildCustomerPaymentBehavior(
-                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId);
+                            _context, tenantId, dateFilter.startDate, dateFilter.endDate, reportLocationId, restrictToLocationIds);
                         break;
 
                     default:

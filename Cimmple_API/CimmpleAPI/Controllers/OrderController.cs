@@ -4518,7 +4518,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 Console.WriteLine($"GetAllVendorInvoices called - TenantId: {tenantId}, Status: {status}, DateRange: {dateRange}, StartDate: {startDate}, EndDate: {endDate}");
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 // Get real vendor invoices from database
@@ -4528,6 +4528,13 @@ namespace CimmpleAPI.Controllers
 
                 if (filterLocationId.HasValue)
                     invoicesQuery = invoicesQuery.Where(i => i.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    invoicesQuery = allowed.Count == 0
+                        ? invoicesQuery.Where(i => false)
+                        : invoicesQuery.Where(i => allowed.Contains(i.locationId));
+                }
 
                 var invoices = await invoicesQuery
                     .Join(_context.VendorInvoiceDetail,

@@ -45,7 +45,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 Console.WriteLine($"GetPaymentDashboardMetrics called - TenantId: {tenantId}, DateRange: {dateRange}, LocationId: {filterLocationId}");
@@ -53,13 +53,13 @@ namespace CimmpleAPI.Controllers
                 var dateFilter = GetDateRangeFilter(dateRange);
 
                 // Calculate Accounts Receivable metrics
-                var arMetrics = CalculateAccountsReceivableMetrics(tenantId, dateFilter, filterLocationId);
+                var arMetrics = CalculateAccountsReceivableMetrics(tenantId, dateFilter, filterLocationId, restrictToLocationIds);
 
                 // Calculate Accounts Payable metrics
-                var apMetrics = CalculateAccountsPayableMetrics(tenantId, dateFilter, filterLocationId);
+                var apMetrics = CalculateAccountsPayableMetrics(tenantId, dateFilter, filterLocationId, restrictToLocationIds);
 
                 // Calculate Cash Flow metrics
-                var cashFlowMetrics = CashFlowMetricsCalculator.Calculate(_context, tenantId, dateFilter, filterLocationId);
+                var cashFlowMetrics = CashFlowMetricsCalculator.Calculate(_context, tenantId, dateFilter, filterLocationId, restrictToLocationIds);
 
                 var dashboardData = new
                 {
@@ -97,7 +97,7 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}, DateRange: {dateRange}, LocationId: {filterLocationId}");
@@ -114,9 +114,15 @@ namespace CimmpleAPI.Controllers
                 var allVendorInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var locationVendorInvoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+                List<int>? scopeLocations = null;
                 if (filterLocationId.HasValue)
+                    scopeLocations = new List<int> { filterLocationId.Value };
+                else if (restrictToLocationIds != null)
+                    scopeLocations = restrictToLocationIds.ToList();
+
+                if (scopeLocations != null)
                 {
-                    var locId = filterLocationId.Value;
+                    var allowed = scopeLocations;
                     var customerInvoices = _context.InvoiceMaster
                         .Where(im => im.TenantId == tenantId)
                         .Select(im => new
@@ -124,12 +130,12 @@ namespace CimmpleAPI.Controllers
                             im.Id,
                             im.InvoiceNo,
                             im.PrefixInvoiceNo,
-                            AtLocation = _context.InvoiceDetail.Any(id =>
+                            AtLocation = allowed.Count > 0 && _context.InvoiceDetail.Any(id =>
                                 id.InvoiceId == im.Id &&
                                 _context.CustomerOrder.Any(co =>
                                     co.OrderID == id.OrderId &&
                                     co.Tenantid == tenantId &&
-                                    co.locationId == locId))
+                                    allowed.Contains(co.locationId)))
                         })
                         .ToList();
                     foreach (var invoice in customerInvoices)
@@ -155,7 +161,7 @@ namespace CimmpleAPI.Controllers
                             allVendorInvoiceNos.Add(invoice.InvoiceNo.Trim());
                         if (!string.IsNullOrWhiteSpace(invoice.prefixinvoiceno))
                             allVendorInvoiceNos.Add(invoice.prefixinvoiceno.Trim());
-                        if (invoice.locationId == locId)
+                        if (allowed.Contains(invoice.locationId))
                         {
                             if (!string.IsNullOrWhiteSpace(invoice.InvoiceNo))
                                 locationVendorInvoiceNos.Add(invoice.InvoiceNo.Trim());
@@ -167,7 +173,7 @@ namespace CimmpleAPI.Controllers
 
                 bool PaymentMatchesLocation(Transactions transaction, bool customer)
                 {
-                    if (!filterLocationId.HasValue)
+                    if (scopeLocations == null)
                         return true;
 
                     var invoiceNo = transaction.invoiceNo?.Trim() ?? "";
@@ -177,7 +183,7 @@ namespace CimmpleAPI.Controllers
                         return true;
                     if (all.Contains(invoiceNo))
                         return false;
-                    return transaction.locationId == filterLocationId.Value;
+                    return scopeLocations.Contains(transaction.locationId);
                 }
 
                 // 1. Recent customer payments (from Transactions table)
@@ -233,6 +239,19 @@ namespace CimmpleAPI.Controllers
                                 co.OrderID == id.OrderId &&
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    customerInvoiceFallbackQuery = allowed.Count == 0
+                        ? customerInvoiceFallbackQuery.Where(_ => false)
+                        : customerInvoiceFallbackQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
                 }
 
                 var customerInvoiceFallbackPayments = customerInvoiceFallbackQuery
@@ -297,6 +316,13 @@ namespace CimmpleAPI.Controllers
                                        t.invoiceNo == vim.InvoiceNo)));
                 if (filterLocationId.HasValue)
                     vendorInvoiceFallbackQuery = vendorInvoiceFallbackQuery.Where(vim => vim.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    vendorInvoiceFallbackQuery = allowed.Count == 0
+                        ? vendorInvoiceFallbackQuery.Where(_ => false)
+                        : vendorInvoiceFallbackQuery.Where(vim => allowed.Contains(vim.locationId));
+                }
 
                 var vendorInvoiceFallbackPayments = vendorInvoiceFallbackQuery
                     .OrderByDescending(vim => vim.Paydate)
@@ -335,6 +361,19 @@ namespace CimmpleAPI.Controllers
                                 co.OrderID == id.OrderId &&
                                 co.Tenantid == tenantId &&
                                 co.locationId == locId)));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    recentInvoicesQuery = allowed.Count == 0
+                        ? recentInvoicesQuery.Where(_ => false)
+                        : recentInvoicesQuery.Where(im =>
+                            _context.InvoiceDetail.Any(id =>
+                                id.InvoiceId == im.Id &&
+                                _context.CustomerOrder.Any(co =>
+                                    co.OrderID == id.OrderId &&
+                                    co.Tenantid == tenantId &&
+                                    allowed.Contains(co.locationId))));
                 }
 
                 var recentInvoices = recentInvoicesQuery
@@ -376,6 +415,13 @@ namespace CimmpleAPI.Controllers
                 {
                     recentVendorInvoicesQuery = recentVendorInvoicesQuery
                         .Where(vim => vim.locationId == filterLocationId.Value);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    recentVendorInvoicesQuery = allowed.Count == 0
+                        ? recentVendorInvoicesQuery.Where(_ => false)
+                        : recentVendorInvoicesQuery.Where(vim => allowed.Contains(vim.locationId));
                 }
 
                 var recentVendorInvoices = recentVendorInvoicesQuery
@@ -1378,7 +1424,8 @@ namespace CimmpleAPI.Controllers
         private (decimal totalReceivables, decimal overdueReceivables, decimal receivablesDueThisWeek) CalculateAccountsReceivableMetrics(
             int tenantId,
             (DateTime startDate, DateTime endDate) dateFilter,
-            int? locationId = null)
+            int? locationId = null,
+            IReadOnlyList<int>? restrictToLocationIds = null)
         {
             // Outstanding AR: exclude voided; use remaining balance due (supports partial payments).
             var invoiceQuery = _context.InvoiceMaster
@@ -1394,6 +1441,19 @@ namespace CimmpleAPI.Controllers
                             co.OrderID == id.OrderId &&
                             co.Tenantid == tenantId &&
                             co.locationId == locId)));
+            }
+            else if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                invoiceQuery = allowed.Count == 0
+                    ? invoiceQuery.Where(_ => false)
+                    : invoiceQuery.Where(im =>
+                        _context.InvoiceDetail.Any(id =>
+                            id.InvoiceId == im.Id &&
+                            _context.CustomerOrder.Any(co =>
+                                co.OrderID == id.OrderId &&
+                                co.Tenantid == tenantId &&
+                                allowed.Contains(co.locationId))));
             }
 
             var openBalances = invoiceQuery
@@ -1428,7 +1488,8 @@ namespace CimmpleAPI.Controllers
         private (decimal totalPayables, decimal overduePayables, decimal payablesDueThisWeek) CalculateAccountsPayableMetrics(
             int tenantId,
             (DateTime startDate, DateTime endDate) dateFilter,
-            int? locationId = null)
+            int? locationId = null,
+            IReadOnlyList<int>? restrictToLocationIds = null)
         {
             // Outstanding AP: exclude paid/voided; use remaining balance due.
             var vendorInvoiceQuery = _context.VendorInvoiceMaster
@@ -1438,6 +1499,13 @@ namespace CimmpleAPI.Controllers
                              vim.voideddate == null);
             if (locationId.HasValue)
                 vendorInvoiceQuery = vendorInvoiceQuery.Where(vim => vim.locationId == locationId.Value);
+            else if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                vendorInvoiceQuery = allowed.Count == 0
+                    ? vendorInvoiceQuery.Where(_ => false)
+                    : vendorInvoiceQuery.Where(vim => allowed.Contains(vim.locationId));
+            }
 
             var openBalances = vendorInvoiceQuery
                 .ToList()

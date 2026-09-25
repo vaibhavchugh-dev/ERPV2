@@ -232,19 +232,26 @@ export class AuthService {
     }
   }
 
+  /** Paths allowed when a non-admin role has no permissions assigned (deny-by-default). */
+  private static readonly EMPTY_PERM_ALLOWED_PATHS = new Set(["/home", "/"]);
+
   public static hasPermissionForPath(path: string): boolean {
     // Administrators always see the full app until fine-grained RBAC is fully assigned
     if (AuthService.isAdminSession()) return true;
 
-    const perms = AuthService.getPermissions();
-    // No permissions configured for this role → allow (avoid locking users out during rollout)
-    if (!perms.length) return true;
-
     const normalized = path.replace(/\/$/, "") || "/";
+    const perms = AuthService.getPermissions();
+
+    // No permissions assigned → deny all modules; Dashboard only
+    if (!perms.length) {
+      return AuthService.EMPTY_PERM_ALLOWED_PATHS.has(normalized);
+    }
+
+    // Exact URL match only so sibling routes (e.g. /quality vs /quality/ncr-codes) stay independent
     return perms.some((p) => {
       if (!p.url) return false;
       const url = p.url.replace(/\/$/, "") || "/";
-      return url === normalized || normalized.startsWith(url + "/");
+      return url === normalized;
     });
   }
 
@@ -254,6 +261,10 @@ export class AuthService {
       if (AuthService.hasPermissionForPath(path)) {
         return path;
       }
+    }
+    // Empty permissions → land on dashboard
+    if (!AuthService.getPermissions().length) {
+      return "/home";
     }
     // Role has permissions, but none match known routes — use first permission URL if any
     const firstPermUrl = AuthService.getPermissions().find((p) => !!p.url)?.url;

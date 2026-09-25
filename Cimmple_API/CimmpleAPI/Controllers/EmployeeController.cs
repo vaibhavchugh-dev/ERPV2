@@ -49,7 +49,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid))
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
                 var usersQuery = _context.UserDetails
@@ -65,6 +65,24 @@ namespace CimmpleAPI.Controllers
                         u.DefaultLocationId == loc
                         || u.CanAccessAllLocations
                         || mappedUserIds.Contains(u.User_UniqueID));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    if (allowed.Count == 0)
+                    {
+                        usersQuery = usersQuery.Where(u => false);
+                    }
+                    else
+                    {
+                        var mappedUserIds = _context.UserMapping
+                            .Where(m => allowed.Contains(m.locationId))
+                            .Select(m => m.userId);
+                        usersQuery = usersQuery.Where(u =>
+                            (u.DefaultLocationId.HasValue && allowed.Contains(u.DefaultLocationId.Value))
+                            || u.CanAccessAllLocations
+                            || mappedUserIds.Contains(u.User_UniqueID));
+                    }
                 }
 
                 var users = usersQuery

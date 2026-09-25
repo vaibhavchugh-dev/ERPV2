@@ -5,13 +5,8 @@ import {
   SupportTicketDetail,
   SupportTicketListItem,
 } from "../Common/Services/SupportTicketService";
-import { formatDateTime } from "../Common/Utils/Formatting";
+import { useFormatting } from "../Common/Hooks/useFormatting";
 import "./SupportInbox.scss";
-
-function formatWhen(iso?: string | null): string {
-  if (!iso) return "—";
-  return formatDateTime(iso) || iso;
-}
 
 function statusClass(status: string): string {
   const s = (status || "").toLowerCase();
@@ -21,6 +16,11 @@ function statusClass(status: string): string {
 }
 
 const SupportInboxPage: React.FC = () => {
+  const { formatDateTime } = useFormatting();
+  const formatWhen = (iso?: string | null) => {
+    if (!iso) return "—";
+    return formatDateTime(iso) || iso;
+  };
   const user = SupportStaffAuth.getUser();
   const [products, setProducts] = useState<string[]>(user?.products || ["CimmpleFlow"]);
   const [product, setProduct] = useState("all");

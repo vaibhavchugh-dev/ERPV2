@@ -94,7 +94,11 @@ const DeletionImpactDialog: React.FC<DeletionImpactDialogProps> = ({
               <div className="alert-icon">⚠️</div>
               <div className="alert-content">
                 <strong>Cannot Delete {entityName}</strong>
-                <p>The following dependencies prevent deletion:</p>
+                {impact.blockingDependencies && impact.blockingDependencies.length > 0 ? (
+                  <p>The following dependencies prevent deletion:</p>
+                ) : (
+                  <p>Deletion is blocked for the following reason:</p>
+                )}
                 
                 {impact.blockingDependencies && impact.blockingDependencies.length > 0 ? (
                   <div className="blocking-dependencies">
