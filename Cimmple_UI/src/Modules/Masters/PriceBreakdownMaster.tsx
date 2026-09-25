@@ -3,6 +3,8 @@ import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import { PriceBreakdownService, PriceBreakdownMaster, PriceBreakdownMasterReq } from "../../Common/Services/PriceBreakdownService";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 interface EditablePriceBreakdown extends PriceBreakdownMaster {
@@ -278,6 +280,17 @@ const PriceBreakdownMasterComponent: React.FC = () => {
     return undefined;
   };
 
+  const {
+    pageItems: pagedPriceBreakdowns,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(priceBreakdowns, []);
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -333,7 +346,9 @@ const PriceBreakdownMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                priceBreakdowns.map((priceBreakdown, index) => (
+                pagedPriceBreakdowns.map((priceBreakdown, pageIdx) => {
+                  const index = startIndex + pageIdx;
+                  return (
                   <tr key={priceBreakdown.id || `new-${index}`}>
                     {visibleColumns.map((column) => (
                       <td
@@ -344,12 +359,23 @@ const PriceBreakdownMasterComponent: React.FC = () => {
                       </td>
                     ))}
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {/* Footer with Save/Discard buttons */}
       {isStateChanged && (

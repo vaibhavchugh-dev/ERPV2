@@ -71,7 +71,8 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
     results.ncrReports.length +
     results.users.length +
     (results.employees?.length || 0) +
-    results.documents.length;
+    results.documents.length +
+    (results.journalEntries?.length || 0);
 
   if (loading) {
     return (
@@ -194,6 +195,8 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
           docParts.push(`v${result.currentVersionNumber}`);
         }
         return docParts.join(' • ');
+      case 'journalEntry':
+        return `${result.referenceNumber || ''}${result.description ? ` • ${result.description}` : ''}${result.status ? ` • ${result.status}` : ''}`;
       case 'product':
         return result.description || result.unit || 'Finished part';
       case 'rawMaterial':
@@ -502,6 +505,18 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
             <span>Documents ({results.documents.length})</span>
           </div>
           {results.documents.map(result => renderResultItem(result, faFile))}
+        </div>
+      )}
+
+      {results.journalEntries && results.journalEntries.length > 0 && (
+        <div className="search-results-section" key="journalentries-section">
+          <div className="results-section-header">
+            <div className="section-header-icon" key="journalentries-icon" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1rem', height: '1rem' }}>
+              <FontAwesomeIcon icon={faClipboardList} />
+            </div>
+            <span>Journal Entries ({results.journalEntries.length})</span>
+          </div>
+          {results.journalEntries.map(result => renderResultItem(result, faClipboardList))}
         </div>
       )}
 

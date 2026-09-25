@@ -6,6 +6,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProductMasterSlideout from "./ProductMasterSlideout";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -185,6 +187,17 @@ const ProductMasterComponent: React.FC = () => {
     return 0;
   });
 
+  const {
+    pageItems: pagedProducts,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedProducts, [searchTerm, sortColumn, sortDirection]);
+
   const getSortIcon = (column: keyof ProductMaster) => {
     if (sortColumn !== column) {
       return <span className="sort-icon inactive">⇅</span>;
@@ -329,7 +342,7 @@ const ProductMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedProducts.map((product, index) => (
+                pagedProducts.map((product, index) => (
                   <tr key={`${product.partNo}-${index}`} onClick={() => handleRowClick(product)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(product, column.key)}</td>
@@ -341,6 +354,16 @@ const ProductMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <ProductMasterSlideout

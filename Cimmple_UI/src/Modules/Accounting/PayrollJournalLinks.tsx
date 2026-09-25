@@ -7,6 +7,7 @@ import MasterListPage, {
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import PayrollJournalsHelp from "./PayrollJournalsHelp";
+import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./JournalEntries.scss";
 
 type PayrollLinkRow = {
@@ -411,9 +412,17 @@ const PayrollJournalLinks: React.FC = () => {
           "status",
         ]}
         matchRowSearch={(row, q) =>
-          String(row.id).includes(q) ||
-          String(row.journalEntryId).includes(q) ||
-          String(row.paymentJournalEntryId || "").includes(q) ||
+          matchJeNumber(
+            q,
+            row.id,
+            row.journalEntryId,
+            row.paymentJournalEntryId,
+            row.taxRemittanceJournalEntryId
+          ) ||
+          matchAmountValue(q, row.totalDebits) ||
+          matchDateValue(q, row.payDate) ||
+          matchDateValue(q, row.payPeriodStart) ||
+          matchDateValue(q, row.payPeriodEnd) ||
           (row.referenceNumber || "").toLowerCase().includes(q) ||
           (row.description || "").toLowerCase().includes(q) ||
           (row.source || "").toLowerCase().includes(q) ||

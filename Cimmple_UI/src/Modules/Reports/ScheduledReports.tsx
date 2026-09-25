@@ -156,7 +156,7 @@ const ScheduledReports: React.FC = () => {
                 <th>Filters</th>
                 <th>Schedule</th>
                 <th>Recipients</th>
-                <th>Last run</th>
+                <th title="Time the report was generated and email was queued (not inbox delivery)">Last queued</th>
                 <th>Next run</th>
                 <th>Status</th>
                 <th />
@@ -193,10 +193,17 @@ const ScheduledReports: React.FC = () => {
                       {item.lastRunStatus && (
                         <div
                           className={`sr-status ${
-                            item.lastRunStatus === "Success" ? "ok" : "err"
+                            item.lastRunStatus === "Failed" ? "err" : "ok"
                           }`}
+                          title={
+                            item.lastRunStatus === "Queued"
+                              ? "Report generated and email queued; delivery may take a short time via SMTP"
+                              : undefined
+                          }
                         >
-                          {item.lastRunStatus}
+                          {item.lastRunStatus === "Queued"
+                            ? "Queued (sending)"
+                            : item.lastRunStatus}
                           {item.lastRunError ? `: ${item.lastRunError}` : ""}
                         </div>
                       )}

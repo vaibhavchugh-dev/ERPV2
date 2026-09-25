@@ -3,6 +3,7 @@ import { Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { AuthService } from "../Common/Services/AuthService";
+import PasswordInput from "../Common/Components/PasswordInput";
 import "../Login/Login.scss";
 
 export const VendorLogin: React.FC = () => {
@@ -96,8 +97,8 @@ export const VendorLogin: React.FC = () => {
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Password</Form.Label>
-              <Form.Control
-                type="password"
+              <PasswordInput
+                className="form-control"
                 placeholder="Enter password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

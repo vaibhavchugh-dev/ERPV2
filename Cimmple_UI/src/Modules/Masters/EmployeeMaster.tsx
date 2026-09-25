@@ -7,6 +7,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import EmployeeMasterSlideout from "./EmployeeMasterSlideout";
 import EmployeeMasterImportModal from "./EmployeeMasterImportModal";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -159,14 +161,18 @@ const EmployeeMasterComponent: React.FC = () => {
   };
 
   const filteredEmployees = employees.filter((employee) => {
+    const term = searchTerm.toLowerCase();
+    const fullName = `${employee.firstName || ""} ${employee.lastName || ""}`.trim().toLowerCase();
     const matchesSearch =
-      employee.empCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.firstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.userName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.roleName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      employee.locationName?.toLowerCase().includes(searchTerm.toLowerCase());
+      !term ||
+      fullName.includes(term) ||
+      employee.empCode?.toLowerCase().includes(term) ||
+      employee.firstName?.toLowerCase().includes(term) ||
+      employee.lastName?.toLowerCase().includes(term) ||
+      employee.userName?.toLowerCase().includes(term) ||
+      employee.email?.toLowerCase().includes(term) ||
+      employee.roleName?.toLowerCase().includes(term) ||
+      employee.locationName?.toLowerCase().includes(term);
 
     if (filterValue === "all") {
       return matchesSearch;
@@ -202,6 +208,17 @@ const EmployeeMasterComponent: React.FC = () => {
     if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
     return 0;
   });
+
+  const {
+    pageItems: pagedEmployees,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedEmployees, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof EmployeeMaster) => {
     if (sortColumn !== column) {
@@ -414,7 +431,7 @@ const EmployeeMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedEmployees.map((employee) => (
+                pagedEmployees.map((employee) => (
                   <tr key={employee.user_UniqueID} onClick={() => handleRowClick(employee)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(employee, column.key)}</td>
@@ -426,6 +443,16 @@ const EmployeeMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <EmployeeMasterSlideout

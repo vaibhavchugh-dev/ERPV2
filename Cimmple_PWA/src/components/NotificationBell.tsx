@@ -5,22 +5,9 @@ import {
   NotificationService,
   mapNotificationLinkToPwa,
 } from "../services/notificationService";
+import { formatRelativeTime, HEADER_DROPDOWN_PANEL_CLASS } from "../utils/relativeTime";
 
 const POLL_MS = 45_000;
-
-function formatRelative(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const diffSec = Math.round((Date.now() - d.getTime()) / 1000);
-    if (diffSec < 60) return "just now";
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
-}
 
 function BellIcon({ className }: { className?: string }) {
   return (
@@ -38,6 +25,7 @@ export function NotificationBell() {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [panelTop, setPanelTop] = useState(56);
 
   const hasItemsRef = useRef(false);
   useEffect(() => {
@@ -85,6 +73,11 @@ export function NotificationBell() {
   useEffect(() => {
     if (!open) return;
     void loadList();
+    const btn = panelRef.current?.querySelector("button");
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      setPanelTop(Math.round(rect.bottom + 8));
+    }
     const onPointer = (e: MouseEvent | TouchEvent) => {
       const el = panelRef.current;
       if (el && e.target instanceof Node && !el.contains(e.target)) {
@@ -151,7 +144,7 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className={HEADER_DROPDOWN_PANEL_CLASS} style={{ top: panelTop }}>
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
             <div className="text-sm font-bold text-slate-900 dark:text-white">Notifications</div>
             {unreadCount > 0 && (
@@ -183,8 +176,8 @@ export function NotificationBell() {
                     <div className="min-w-0 text-sm font-bold text-slate-900 dark:text-white">
                       {item.title}
                     </div>
-                    <div className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      {formatRelative(item.createdAt)}
+                    <div className="shrink-0 text-[10px] font-semibold tracking-wide text-slate-400">
+                      {formatRelativeTime(item.createdAt)}
                     </div>
                   </div>
                   {item.body && (

@@ -30,6 +30,55 @@ namespace CimmpleAPI.Services
                 || baseUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Absolute login URL for emails, or null when PublicAppBaseUrl is missing
+        /// (never emit relative /login — email clients cannot resolve it).
+        /// </summary>
+        public static string? ResolveLoginUrl(IConfiguration? configuration, string path = "/login")
+        {
+            var baseUrl = ResolveAppBaseUrl(configuration);
+            if (string.IsNullOrEmpty(baseUrl))
+                return null;
+            var normalizedPath = string.IsNullOrWhiteSpace(path)
+                ? "/login"
+                : (path.StartsWith("/") ? path : "/" + path);
+            return $"{baseUrl}{normalizedPath}";
+        }
+
+        public static string? GetPublicAppBaseUrlWarning(IConfiguration? configuration)
+        {
+            var baseUrl = ResolveAppBaseUrl(configuration);
+            if (string.IsNullOrEmpty(baseUrl))
+            {
+                return "App:PublicAppBaseUrl is not configured; the email was sent without a sign-in link. " +
+                       "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).";
+            }
+            if (baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+                || baseUrl.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+            {
+                return "App:PublicAppBaseUrl points to localhost; remote recipients cannot use the sign-in link. " +
+                       "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).";
+            }
+            return null;
+        }
+
+        private static void LogBaseUrlWarning(IConfiguration? configuration)
+        {
+            var warning = GetPublicAppBaseUrlWarning(configuration);
+            if (warning != null)
+                Console.WriteLine($"[IdentityEmail] Warning: {warning}");
+        }
+
+        private static string BuildSignInHtml(string? loginUrl)
+        {
+            if (string.IsNullOrEmpty(loginUrl))
+            {
+                return "<p>Sign in using the Cimmple application URL provided by your administrator.</p>";
+            }
+            var safeLogin = WebUtility.HtmlEncode(loginUrl);
+            return $"<p><a href=\"{safeLogin}\">Sign in</a></p>";
+        }
+
         public static async Task<(bool queued, string? error)> TryQueueEmployeeWelcomeAsync(
             EmailOutboxService outbox,
             int tenantId,
@@ -43,26 +92,18 @@ namespace CimmpleAPI.Services
             if (string.IsNullOrWhiteSpace(toEmail))
                 return (false, "Employee email is missing.");
 
-            var baseUrl = ResolveAppBaseUrl(configuration);
-            var loginUrl = string.IsNullOrEmpty(baseUrl) ? "/login" : $"{baseUrl}/login";
-            if (string.IsNullOrEmpty(baseUrl) || baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine(
-                    "[IdentityEmail] Warning: App:PublicAppBaseUrl is missing or localhost; " +
-                    "password/welcome email links will not work for remote recipients. " +
-                    "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).");
-            }
+            LogBaseUrlWarning(configuration);
+            var loginUrl = ResolveLoginUrl(configuration, "/login");
             var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
             var safeUser = WebUtility.HtmlEncode(userName ?? "");
             var safePwd = WebUtility.HtmlEncode(temporaryPassword ?? "");
-            var safeLogin = WebUtility.HtmlEncode(loginUrl);
 
             var body =
                 $"<p>Hello {safeName},</p>" +
                 "<p>Your Cimmple account has been created. You can sign in with:</p>" +
                 $"<p><strong>Username:</strong> {safeUser}<br/>" +
                 $"<strong>Temporary password:</strong> {safePwd}</p>" +
-                $"<p><a href=\"{safeLogin}\">Sign in</a></p>" +
+                BuildSignInHtml(loginUrl) +
                 "<p>Please keep this message secure and change your password after signing in if prompted.</p>";
 
             return await outbox.EnqueueAsync(tenantId, new MailRequest
@@ -88,18 +129,10 @@ namespace CimmpleAPI.Services
             if (string.IsNullOrWhiteSpace(toEmail))
                 return (false, "User email is missing.");
 
-            var baseUrl = ResolveAppBaseUrl(configuration);
-            var loginUrl = string.IsNullOrEmpty(baseUrl) ? "/login" : $"{baseUrl}/login";
-            if (string.IsNullOrEmpty(baseUrl) || baseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine(
-                    "[IdentityEmail] Warning: App:PublicAppBaseUrl is missing or localhost; " +
-                    "password-reset email links will not work for remote recipients. " +
-                    "Set App__PublicAppBaseUrl to the public UI URL (e.g. https://v2.cimmple.net).");
-            }
+            LogBaseUrlWarning(configuration);
+            var loginUrl = ResolveLoginUrl(configuration, "/login");
             var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
             var safeUser = WebUtility.HtmlEncode(userName ?? "");
-            var safeLogin = WebUtility.HtmlEncode(loginUrl);
 
             string body;
             if (includePassword)
@@ -110,16 +143,25 @@ namespace CimmpleAPI.Services
                     "<p>An administrator reset your Cimmple password. Sign in with:</p>" +
                     $"<p><strong>Username:</strong> {safeUser}<br/>" +
                     $"<strong>Temporary password:</strong> {safePwd}</p>" +
-                    $"<p><a href=\"{safeLogin}\">Sign in</a></p>" +
+                    BuildSignInHtml(loginUrl) +
                     "<p>You will be required to change this password on next login.</p>";
+            }
+            else if (!string.IsNullOrEmpty(loginUrl))
+            {
+                var safeLogin = WebUtility.HtmlEncode(loginUrl);
+                body =
+                    $"<p>Hello {safeName},</p>" +
+                    "<p>An administrator reset your Cimmple password. " +
+                    "Please contact your administrator for the temporary password, then " +
+                    $"<a href=\"{safeLogin}\">sign in</a> and change it when prompted.</p>" +
+                    $"<p><strong>Username:</strong> {safeUser}</p>";
             }
             else
             {
                 body =
                     $"<p>Hello {safeName},</p>" +
                     "<p>An administrator reset your Cimmple password. " +
-                    "Please contact your administrator for the temporary password, then " +
-                    $"<a href=\"{safeLogin}\">sign in</a> and change it when prompted.</p>" +
+                    "Please contact your administrator for the temporary password, then sign in using the Cimmple application URL and change it when prompted.</p>" +
                     $"<p><strong>Username:</strong> {safeUser}</p>";
             }
 
@@ -146,22 +188,21 @@ namespace CimmpleAPI.Services
             if (string.IsNullOrWhiteSpace(toEmail))
                 return (false, "Vendor email is missing.");
 
-            var baseUrl = ResolveAppBaseUrl(configuration);
-            var loginUrl = string.IsNullOrEmpty(baseUrl) ? "/vendor/login" : $"{baseUrl}/vendor/login";
+            LogBaseUrlWarning(configuration);
+            var loginUrl = ResolveLoginUrl(configuration, "/vendor/login");
             var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(vendorName) ? "there" : vendorName.Trim());
             var safeCode = WebUtility.HtmlEncode(vendorCode ?? "");
             var safeUser = WebUtility.HtmlEncode(portalUserName ?? "");
             var safePwd = WebUtility.HtmlEncode(temporaryPassword ?? "");
-            var safeLogin = WebUtility.HtmlEncode(loginUrl);
 
             var body =
                 $"<p>Hello {safeName},</p>" +
                 "<p>Your Cimmple vendor portal access is ready. Sign in at the vendor portal with:</p>" +
                 $"<p><strong>Vendor code:</strong> {safeCode}<br/>" +
                 $"<strong>Username:</strong> {safeUser}<br/>" +
-                $"<strong>Password:</strong> {safePwd}</p>" +
-                $"<p><a href=\"{safeLogin}\">Open vendor portal</a></p>" +
-                "<p>Please keep these credentials secure.</p>";
+                $"<strong>Temporary password:</strong> {safePwd}</p>" +
+                BuildSignInHtml(loginUrl) +
+                "<p>Please change your password after signing in if prompted.</p>";
 
             return await outbox.EnqueueAsync(tenantId, new MailRequest
             {

@@ -6,6 +6,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import VendorMasterSlideout from "./VendorMasterSlideout";
 import VendorMasterImportModal from "./VendorMasterImportModal";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -162,6 +164,17 @@ const VendorMasterComponent: React.FC = () => {
     if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
     return 0;
   });
+
+  const {
+    pageItems: pagedVendors,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedVendors, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof VendorMaster) => {
     if (sortColumn !== column) {
@@ -327,7 +340,7 @@ const VendorMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedVendors.map((vendor) => (
+                pagedVendors.map((vendor) => (
                   <tr key={vendor.vendor_id} onClick={() => handleRowClick(vendor)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(vendor, column.key)}</td>
@@ -339,6 +352,16 @@ const VendorMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <VendorMasterSlideout

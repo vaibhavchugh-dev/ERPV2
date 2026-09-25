@@ -3,6 +3,7 @@ import { Form, Button } from "react-bootstrap";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { SupportStaffAuth } from "./SupportStaffAuth";
+import PasswordInput from "../Common/Components/PasswordInput";
 import "../Login/Login.scss";
 
 export const SupportStaffLogin: React.FC = () => {
@@ -77,8 +78,8 @@ export const SupportStaffLogin: React.FC = () => {
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Password</Form.Label>
-              <Form.Control
-                type="password"
+              <PasswordInput
+                className="form-control"
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

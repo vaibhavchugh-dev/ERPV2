@@ -9,6 +9,7 @@ import MasterListPage from "../../Common/Components/MasterListPage/MasterListPag
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
+import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./VendorQuotations.scss";
 
 const VendorQuotations: React.FC = () => {
@@ -347,6 +348,8 @@ const VendorQuotations: React.FC = () => {
           const quotation = row as VendorQuotationMaster;
           const num = Number(quotation.quotationNumber ?? 0);
           if (matchDisplayDocNumber(q, num, ["vq#", "vq", "vo#", "vo"])) return true;
+          if (matchAmountValue(q, quotation.totalAmount)) return true;
+          if (matchDateValue(q, quotation.orderDate)) return true;
           const hay = [quotation.vendorName, quotation.vendorCode, quotation.status]
             .filter(Boolean)
             .join(" ")

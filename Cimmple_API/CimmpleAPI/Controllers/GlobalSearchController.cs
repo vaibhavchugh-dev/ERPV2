@@ -52,7 +52,8 @@ namespace CimmpleAPI.Controllers
                         ncrReports = new List<object>(),
                         users = new List<object>(),
                         employees = new List<object>(),
-                        documents = new List<object>()
+                        documents = new List<object>(),
+                        journalEntries = new List<object>()
                     });
                 }
 
@@ -83,7 +84,8 @@ namespace CimmpleAPI.Controllers
                     ncrReports = await SearchNCRReports(searchTerm, tenantId, limit),
                     users = await SearchUsers(searchTerm, tenantId, limit),
                     employees = await SearchEmployees(searchTerm, tenantId, limit),
-                    documents = await SearchDocuments(searchTerm, tenantId, limit)
+                    documents = await SearchDocuments(searchTerm, tenantId, limit),
+                    journalEntries = await SearchJournalEntries(searchTerm, tenantId, limit)
                 };
 
                 return Ok(results);
@@ -974,7 +976,8 @@ namespace CimmpleAPI.Controllers
             var employees = await _context.UserDetails
                 .Where(u => u.TenantID == tenantId &&
                     (u.VendorId == null || u.VendorId == 0) &&
-                    ((u.FirstName != null && u.FirstName.ToLower().Contains(searchTerm)) ||
+                    (((u.FirstName ?? "") + " " + (u.LastName ?? "")).ToLower().Contains(searchTerm) ||
+                     (u.FirstName != null && u.FirstName.ToLower().Contains(searchTerm)) ||
                      (u.LastName != null && u.LastName.ToLower().Contains(searchTerm)) ||
                      (u.Email != null && u.Email.ToLower().Contains(searchTerm)) ||
                      (u.UserName != null && u.UserName.ToLower().Contains(searchTerm)) ||
@@ -996,12 +999,14 @@ namespace CimmpleAPI.Controllers
             return employees.Cast<object>().ToList();
         }
 
-        // User Search Method
+        // User Search Method (aligned with User Management: exclude vendor-portal users)
         private async Task<List<object>> SearchUsers(string searchTerm, int tenantId, int limit)
         {
             var users = await _context.UserDetails
                 .Where(u => u.TenantID == tenantId &&
-                    ((u.FirstName != null && u.FirstName.ToLower().Contains(searchTerm)) ||
+                    (u.VendorId == null || u.VendorId == 0) &&
+                    (((u.FirstName ?? "") + " " + (u.LastName ?? "")).ToLower().Contains(searchTerm) ||
+                     (u.FirstName != null && u.FirstName.ToLower().Contains(searchTerm)) ||
                      (u.LastName != null && u.LastName.ToLower().Contains(searchTerm)) ||
                      (u.Email != null && u.Email.ToLower().Contains(searchTerm)) ||
                      (u.UserName != null && u.UserName.ToLower().Contains(searchTerm)) ||
@@ -1021,6 +1026,52 @@ namespace CimmpleAPI.Controllers
                 .ToListAsync();
 
             return users.Cast<object>().ToList();
+        }
+
+        // Journal Entry Search Method
+        private async Task<List<object>> SearchJournalEntries(string searchTerm, int tenantId, int limit)
+        {
+            var stripped = searchTerm
+                .Replace("je#", "")
+                .Replace("je #", "")
+                .Replace("je", "")
+                .Replace("#", "")
+                .Trim();
+            bool isNumeric = int.TryParse(stripped, out int jeId);
+
+            var query = _context.JournalEntries.Where(j => j.TenantId == tenantId);
+
+            if (isNumeric)
+            {
+                query = query.Where(j =>
+                    j.Id == jeId ||
+                    j.Id.ToString().Contains(stripped) ||
+                    (j.ReferenceNumber != null && j.ReferenceNumber.ToLower().Contains(searchTerm)) ||
+                    (j.Description != null && j.Description.ToLower().Contains(searchTerm)));
+            }
+            else
+            {
+                query = query.Where(j =>
+                    (j.ReferenceNumber != null && j.ReferenceNumber.ToLower().Contains(searchTerm)) ||
+                    (j.Description != null && j.Description.ToLower().Contains(searchTerm)));
+            }
+
+            var entries = await query
+                .OrderByDescending(j => j.EntryDate)
+                .Take(limit)
+                .Select(j => new
+                {
+                    id = j.Id,
+                    type = "journalEntry",
+                    displayNumber = "JE #" + j.Id,
+                    referenceNumber = j.ReferenceNumber ?? "",
+                    description = j.Description ?? "",
+                    entryDate = j.EntryDate,
+                    status = j.ReversedByJournalEntryId != null ? "Reversed" : "Posted"
+                })
+                .ToListAsync();
+
+            return entries.Cast<object>().ToList();
         }
 
         // Document Search Method

@@ -113,6 +113,9 @@ const CustomerShipments: React.FC = () => {
       return;
     }
 
+    const toastId = toast.info("Generating shipment PDF… this may take a moment.", {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateShipment(shipment.id);
       const url = window.URL.createObjectURL(blob);
@@ -123,10 +126,18 @@ const CustomerShipments: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success("Shipment PDF generated successfully");
+      toast.update(toastId, {
+        render: "Shipment PDF generated successfully",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error("Error generating shipment PDF:", error);
-      toast.error(error.response?.data?.error || "Failed to generate shipment PDF");
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate shipment PDF",
+        type: "error",
+        autoClose: 5000,
+      });
     }
   };
 

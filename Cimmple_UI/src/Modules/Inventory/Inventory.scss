@@ -109,6 +109,17 @@
   letter-spacing: 0.05em;
 }
 
+.inventory-table thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.inventory-table thead th.sortable:hover {
+  color: #111827;
+  background: #f3f4f6;
+}
+
 .inventory-table tbody tr:hover {
   background: #f9fafb;
 }

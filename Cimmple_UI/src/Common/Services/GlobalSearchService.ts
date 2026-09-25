@@ -5,7 +5,7 @@ export interface SearchResult {
   type: 'customer' | 'vendor' | 'product' | 'rawMaterial' | 'order' | 'invoice' | 'jobOrder' | 'quotation' |
         'bank' | 'workstation' | 'location' | 'process' | 'jobTemplate' | 'priceBreakdown' | 
         'creditCard' | 'chartOfAccount' | 'vendorOrder' | 'vendorInvoice' | 
-        'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'employee' | 'document';
+        'vendorReceiving' | 'vendorQuotation' | 'shipment' | 'ncrReport' | 'user' | 'employee' | 'document' | 'journalEntry';
   name?: string;
   code?: string;
   email?: string;
@@ -15,6 +15,7 @@ export interface SearchResult {
   customerName?: string;
   customerPoNumber?: string;
   invoiceNumber?: string;
+  invoiceNo?: string;
   jobOrderNumber?: number;
   quotationNumber?: number;
   partNo?: string;
@@ -55,6 +56,8 @@ export interface SearchResult {
   receivedDate?: string;
   receivedQty?: number;
   reportedDate?: string;
+  referenceNumber?: string;
+  entryDate?: string;
   // Document fields
   documentNumber?: string;
   categoryName?: string;
@@ -89,6 +92,7 @@ export interface GlobalSearchResults {
   users: SearchResult[];
   employees: SearchResult[];
   documents: SearchResult[];
+  journalEntries: SearchResult[];
 }
 
 const emptyResults = (): GlobalSearchResults => ({
@@ -117,6 +121,7 @@ const emptyResults = (): GlobalSearchResults => ({
   users: [],
   employees: [],
   documents: [],
+  journalEntries: [],
 });
 
 export class GlobalSearchService {
@@ -223,6 +228,8 @@ export class GlobalSearchService {
         return `/masters/employee?open=${result.id}`;
       case 'document':
         return `/documents?open=${result.id}`;
+      case 'journalEntry':
+        return `/accounts/journal-entries?id=${result.id}`;
       default:
         return '/home';
     }
@@ -264,7 +271,7 @@ export class GlobalSearchService {
       case 'vendorOrder':
         return result.displayNumber || `VO#${result.orderNumber}`;
       case 'vendorInvoice':
-        return result.invoiceNumber || '';
+        return result.invoiceNumber || result.invoiceNo || result.displayNumber || '';
       case 'vendorReceiving':
         return `Receiving #${result.id}`;
       case 'vendorQuotation':
@@ -281,11 +288,8 @@ export class GlobalSearchService {
           : `${result.firstName || ''} ${result.lastName || ''}`.trim() || result.userName || '';
       case 'document':
         return result.documentNumber || result.name || '';
-      case 'product':
-      case 'rawMaterial':
-        return result.partNo
-          ? `${result.partNo}${result.partName || result.name ? ` — ${result.partName || result.name}` : ''}`
-          : (result.partName || result.name || '');
+      case 'journalEntry':
+        return result.displayNumber || `JE #${result.id}`;
       default:
         return '';
     }

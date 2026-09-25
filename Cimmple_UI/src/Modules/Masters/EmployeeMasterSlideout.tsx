@@ -10,6 +10,7 @@ import { LocationService, LocationMaster } from "../../Common/Services/LocationS
 import { COUNTRIES, US_STATES } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import PasswordInput from "../../Common/Components/PasswordInput";
 import "./CustomerMasterSlideout.scss";
 
 interface EmployeeMasterSlideoutProps {
@@ -811,8 +812,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                             <span className="required"> *</span>
                           )}
                         </label>
-                        <input
-                          type="password"
+                        <PasswordInput
                           id="loginPassword"
                           name="loginPassword"
                           className={`form-input ${errors.loginPassword ? "error" : ""}`}
@@ -839,8 +839,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                             <span className="required"> *</span>
                           )}
                         </label>
-                        <input
-                          type="password"
+                        <PasswordInput
                           id="loginPasswordConfirm"
                           name="loginPasswordConfirm"
                           className={`form-input ${errors.loginPasswordConfirm ? "error" : ""}`}

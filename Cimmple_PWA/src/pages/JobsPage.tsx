@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
+import { WorkingSiteSelect } from "../components/WorkingSiteSelect";
 import {
   JobOrderListItem,
   JobOrderService,
@@ -207,6 +209,7 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
 
 /* ─── Main page ──────────────────────────────────────────────── */
 export function JobsPage() {
+  const { locationId } = useAuth();
   const [jobs, setJobs] = useState<JobOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -234,7 +237,7 @@ export function JobsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locationId]);
 
   useEffect(() => { void loadJobs(); }, [loadJobs]);
 
@@ -279,10 +282,10 @@ export function JobsPage() {
     });
 
     filtered.sort((a, b) => {
-      const pa = a.jobPriority ?? 0;
-      const pb = b.jobPriority ?? 0;
-      if (pa !== pb) return pb - pa;
-      return (a.dueDate || "").localeCompare(b.dueDate || "");
+      // Latest job orders first (match ERP JO list)
+      const idDiff = (b.jobOrderID || 0) - (a.jobOrderID || 0);
+      if (idDiff !== 0) return idDiff;
+      return (b.orderDate || "").localeCompare(a.orderDate || "");
     });
 
     return { visible: filtered, stats: { total, inProgress, completed } };
@@ -303,7 +306,7 @@ export function JobsPage() {
           </button>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Jobs</h1>
-            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">Cimmple Shop Floor</p>
+            <WorkingSiteSelect className="mt-0.5" />
           </div>
         </div>
         <div className="flex items-center gap-2">

@@ -9,6 +9,7 @@ import MasterListPage from "../../Common/Components/MasterListPage/MasterListPag
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
+import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./CustomerQuotations.scss";
 
 const CustomerQuotations: React.FC = () => {
@@ -256,8 +257,17 @@ const CustomerQuotations: React.FC = () => {
         matchRowSearch={(row, q) => {
           const quotation = row as QuotationMaster;
           const num = Number(quotation.quotationNumber ?? 0);
-          if (matchDisplayDocNumber(q, num, ["cq#", "cq", "co#", "co"])) return true;
-          const hay = [quotation.customerName, quotation.customerCode, quotation.status]
+          if (matchDisplayDocNumber(q, num, ["cq#", "cq"])) return true;
+          const convertedNum = Number(quotation.convertedOrderNumber ?? 0);
+          if (convertedNum > 0 && matchDisplayDocNumber(q, convertedNum, ["co#", "co"])) return true;
+          if (matchAmountValue(q, quotation.totalAmount)) return true;
+          if (matchDateValue(q, quotation.orderDate)) return true;
+          const hay = [
+            quotation.customerName,
+            quotation.customerCode,
+            quotation.status,
+            quotation.convertedOrderNumber,
+          ]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();

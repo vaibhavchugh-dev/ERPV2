@@ -6,6 +6,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
 import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -152,6 +154,17 @@ const WorkstationMasterComponent: React.FC = () => {
     if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
     return 0;
   });
+
+  const {
+    pageItems: pagedWorkstations,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedWorkstations, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof WorkstationMaster) => {
     if (sortColumn !== column) {
@@ -307,7 +320,7 @@ const WorkstationMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedWorkstations.map((workstation) => (
+                pagedWorkstations.map((workstation) => (
                   <tr key={workstation.id} onClick={() => handleRowClick(workstation)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(workstation, column.key)}</td>
@@ -319,6 +332,16 @@ const WorkstationMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <WorkstationMasterSlideout

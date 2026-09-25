@@ -141,6 +141,22 @@ const Inventory: React.FC = () => {
   const [itemMovements, setItemMovements] = useState<InventoryTransaction[] | null>(null);
   const [historyBalance, setHistoryBalance] = useState<InventoryBalance | null>(null);
   const movementsSectionRef = useRef<HTMLDivElement>(null);
+  const [sortColumn, setSortColumn] = useState<string>("locationName");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortIndicator = (column: string) => {
+    if (sortColumn !== column) return " ⇅";
+    return sortDirection === "asc" ? " ↑" : " ↓";
+  };
 
   // Seed search from report drill-down: ?search=
   useEffect(() => {
@@ -301,14 +317,36 @@ const Inventory: React.FC = () => {
     })
     .slice()
     .sort((a, b) => {
-      const loc = (a.locationName || "").localeCompare(b.locationName || "");
-      if (loc !== 0) return loc;
+      const dir = sortDirection === "asc" ? 1 : -1;
+      const getVal = (row: InventoryBalance): string | number => {
+        switch (sortColumn) {
+          case "partNo":
+            return (row.productPartNo || row.rawMaterialPartNo || "").toLowerCase();
+          case "partName":
+            return (row.productName || row.rawMaterialName || "").toLowerCase();
+          case "locationName":
+            return (row.locationName || "").toLowerCase();
+          case "quantityOnHand":
+            return row.quantityOnHand ?? 0;
+          case "quantityReserved":
+            return row.quantityReserved ?? 0;
+          case "quantityAvailable":
+            return row.quantityAvailable ?? 0;
+          case "reorderPoint":
+            return row.reorderPoint ?? Number.NEGATIVE_INFINITY;
+          case "type":
+            return row.productId ? "product" : row.isRemnant ? "remnant" : "raw";
+          default:
+            return (row.locationName || "").toLowerCase();
+        }
+      };
+      const aVal = getVal(a);
+      const bVal = getVal(b);
+      if (aVal < bVal) return -1 * dir;
+      if (aVal > bVal) return 1 * dir;
+      // Stable secondary sort by family/part
       const fam = familyKey(a).localeCompare(familyKey(b));
       if (fam !== 0) return fam;
-      if (!!a.isRemnant !== !!b.isRemnant) return a.isRemnant ? -1 : 1;
-      const aLen = a.lengthMm ?? Number.POSITIVE_INFINITY;
-      const bLen = b.lengthMm ?? Number.POSITIVE_INFINITY;
-      if (aLen !== bLen) return aLen - bLen;
       return (a.rawMaterialPartNo || a.productPartNo || "").localeCompare(
         b.rawMaterialPartNo || b.productPartNo || ""
       );
@@ -448,14 +486,30 @@ const Inventory: React.FC = () => {
           <table className="inventory-table">
             <thead>
               <tr>
-                <th>Part No</th>
-                <th>Part Name</th>
-                <th>Location</th>
-                <th className="text-right">On Hand</th>
-                <th className="text-right">Reserved</th>
-                <th className="text-right">Available</th>
-                <th className="text-right">Reorder Point</th>
-                <th>Type</th>
+                <th className="sortable" onClick={() => handleSort("partNo")}>
+                  Part No{sortIndicator("partNo")}
+                </th>
+                <th className="sortable" onClick={() => handleSort("partName")}>
+                  Part Name{sortIndicator("partName")}
+                </th>
+                <th className="sortable" onClick={() => handleSort("locationName")}>
+                  Location{sortIndicator("locationName")}
+                </th>
+                <th className="text-right sortable" onClick={() => handleSort("quantityOnHand")}>
+                  On Hand{sortIndicator("quantityOnHand")}
+                </th>
+                <th className="text-right sortable" onClick={() => handleSort("quantityReserved")}>
+                  Reserved{sortIndicator("quantityReserved")}
+                </th>
+                <th className="text-right sortable" onClick={() => handleSort("quantityAvailable")}>
+                  Available{sortIndicator("quantityAvailable")}
+                </th>
+                <th className="text-right sortable" onClick={() => handleSort("reorderPoint")}>
+                  Reorder Point{sortIndicator("reorderPoint")}
+                </th>
+                <th className="sortable" onClick={() => handleSort("type")}>
+                  Type{sortIndicator("type")}
+                </th>
                 <th className="actions-col">Actions</th>
               </tr>
             </thead>

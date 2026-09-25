@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
+import { WorkingSiteSelect } from "../components/WorkingSiteSelect";
 import { AuthService } from "../services/authService";
 import api from "../services/apiClient";
 
@@ -124,6 +125,19 @@ export function ProfilePage() {
           <span className="block h-2 w-2 rounded-full bg-emerald-500" />
           Online
         </p>
+      </div>
+
+      {/* Working site */}
+      <div className="mb-5">
+        <h3 className="mb-3 text-[0.75rem] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-300">
+          Working site
+        </h3>
+        <div className="card p-4">
+          <p className="mb-2 text-sm text-slate-500 dark:text-slate-300">
+            Job lists and floor views are filtered by this site.
+          </p>
+          <WorkingSiteSelect className="w-full [&_select]:max-w-none [&_select]:w-full [&_select]:h-11" />
+        </div>
       </div>
 
       {/* Employee Information */}

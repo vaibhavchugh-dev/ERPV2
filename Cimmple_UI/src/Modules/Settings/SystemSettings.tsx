@@ -10,6 +10,7 @@ import { useSettings } from "../../Common/Contexts/SettingsContext";
 import { toastAlwaysSuccess } from "../../Common/Utils/settingsRuntime";
 import { getDefaultSystemSettings, SYSTEM_TIMEZONE_OPTIONS } from "../../Common/Utils/defaultSystemSettings";
 import { deriveCurrencySymbol } from "../../Common/Utils/Formatting";
+import PasswordInput from "../../Common/Components/PasswordInput";
 import { useHistory } from "react-router-dom";
 import "./SystemSettings.scss";
 
@@ -1165,8 +1166,7 @@ const SystemSettingsComponent: React.FC = () => {
                       <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
                         SMTP Password
                       </label>
-                      <input
-                        type="password"
+                      <PasswordInput
                         value={settings.smtpPassword}
                         onChange={(e) => updateSetting('smtpPassword', e.target.value)}
                         placeholder={settings.hasSmtpPassword ? '•••••••• (saved — leave blank to keep)' : 'Enter SMTP password'}

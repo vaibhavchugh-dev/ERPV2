@@ -10,6 +10,7 @@ import {
   normalizeJobPriority,
 } from "../../Common/Constants/jobPriorities";
 import JobOrderSlideout from "./JobOrderSlideout";
+import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./JobOrders.scss";
@@ -22,6 +23,8 @@ const JobOrders: React.FC = () => {
   const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
+  const [showCustomerOrderSlideout, setShowCustomerOrderSlideout] = useState(false);
+  const [selectedCustomerOrderId, setSelectedCustomerOrderId] = useState<number>(0);
   const [headerPreview, setHeaderPreview] = useState<{
     jobOrderNumber?: number;
     customerOrderId?: number;
@@ -256,7 +259,8 @@ const JobOrders: React.FC = () => {
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                history.push(`/orders/customer?open=${orderId}`);
+                setSelectedCustomerOrderId(Number(orderId));
+                setShowCustomerOrderSlideout(true);
               }}
               title="Click to view customer order"
             >
@@ -404,6 +408,16 @@ const JobOrders: React.FC = () => {
           headerPreview={headerPreview || undefined}
           onClose={handleCloseSlideout}
           onSaved={loadJobOrders}
+        />
+      )}
+
+      {showCustomerOrderSlideout && (
+        <CustomerOrderSlideout
+          orderId={selectedCustomerOrderId}
+          onClose={() => {
+            setShowCustomerOrderSlideout(false);
+            setSelectedCustomerOrderId(0);
+          }}
         />
       )}
     </div>

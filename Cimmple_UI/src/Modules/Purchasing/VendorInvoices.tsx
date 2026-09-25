@@ -933,7 +933,7 @@ const VendorInvoices: React.FC = () => {
         onAdd={handleNewInvoice}
         addButtonLabel="New Invoice"
         searchPlaceholder="Search by invoice #, vendor, or order #..."
-        searchFields={["invoiceNo", "vendorName", "vendorCode", "orderNumber"]}
+        searchFields={["invoiceNo", "vendorName", "vendorCode", "orderNumber", "totalAmount", "invoiceDate", "dueDate", "amountDue"]}
         filters={[
           masterListFilter,
           {

@@ -7,6 +7,7 @@ import VendorOrderSlideout from "./VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
+import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
@@ -202,22 +203,33 @@ const VendorOrders: React.FC = () => {
       sortable: true,
       align: "left" as const,
       render: (value: any, row: any) => {
-        // Get quotationNo from value (column key) or row object
         const quotationNo = value !== undefined && value !== null ? value : (row?.quotationNo !== undefined && row?.quotationNo !== null ? row.quotationNo : "");
-        
-        // Debug log for troubleshooting
-        if (row?.orderID === 1000 || row?.orderNumber === 1000) {
-          console.log("[VendorOrders] Quotation # debug for order:", {
-            orderID: row?.orderID,
-            orderNumber: row?.orderNumber,
-            value,
-            rowQuotationNo: row?.quotationNo,
-            finalQuotationNo: quotationNo
-          });
-        }
-        
-        // Check if quotationNo is a non-empty string
+        const quotationId = Number(row?.quotationId || 0);
+
         if (quotationNo && typeof quotationNo === 'string' && quotationNo.trim() !== "") {
+          if (quotationId > 0) {
+            return (
+              <button
+                type="button"
+                className="link-button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  history.push(`/quotations/vendor?open=${quotationId}`);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#6366f1',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  fontWeight: 500,
+                  padding: 0,
+                }}
+              >
+                {quotationNo}
+              </button>
+            );
+          }
           return <span style={{ color: "#6366f1", fontWeight: 500 }}>{quotationNo}</span>;
         }
         return <span style={{ color: "#9ca3af" }}>-</span>;
@@ -302,7 +314,9 @@ const VendorOrders: React.FC = () => {
           const order = row as VendorOrderMaster;
           const num = Number(order.orderNumber ?? 0);
           if (matchDisplayDocNumber(q, num, ["vo#", "vo", "vq#", "vq"])) return true;
-          const hay = [order.vendorName, order.vendorCode, order.status]
+          if (matchAmountValue(q, order.totalAmount)) return true;
+          if (matchDateValue(q, order.orderDate)) return true;
+          const hay = [order.vendorName, order.vendorCode, order.status, order.quotationNo]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();

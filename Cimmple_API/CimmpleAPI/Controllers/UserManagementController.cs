@@ -361,6 +361,9 @@ namespace CimmpleAPI.Controllers
                     emailMessage = emailOk
                         ? $"Temporary password email queued for {user.Email}."
                         : $"Password was reset, but email failed: {emailError}";
+                    var urlWarning = IdentityEmailService.GetPublicAppBaseUrlWarning(_configuration);
+                    if (emailOk && urlWarning != null)
+                        emailMessage += " " + urlWarning;
                 }
                 else if (resetDto.EmailTemporaryPassword)
                 {
@@ -570,7 +573,20 @@ namespace CimmpleAPI.Controllers
                 await _context.PermissionMaster.AddRangeAsync(permissionsToSeed);
                 await _context.SaveChangesAsync();
 
-                return Ok(new { message = $"Successfully seeded {permissionsToSeed.Count} permissions", count = permissionsToSeed.Count });
+                var assignment = await AssignDefaultRolePermissionsAsync();
+                var assignMsg = assignment.adminRoles > 0 || assignment.nonAdminRoles > 0
+                    ? $" Assigned defaults: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
+                    : "";
+
+                return Ok(new
+                {
+                    message = $"Successfully seeded {permissionsToSeed.Count} permissions.{assignMsg}",
+                    count = permissionsToSeed.Count,
+                    clearExisting,
+                    adminRolesAssigned = assignment.adminRoles,
+                    nonAdminRolesAssigned = assignment.nonAdminRoles,
+                    permissionAssignments = assignment.assignments
+                });
             }
             catch (Exception ex)
             {
@@ -582,6 +598,86 @@ namespace CimmpleAPI.Controllers
                 }
                 return StatusCode(500, new { message = "Error seeding permissions", error = ex.Message, details = ex.InnerException?.Message });
             }
+        }
+
+        /// <summary>
+        /// After a full seed/clear: Admin roles get every permission; all other roles get Dashboard only.
+        /// </summary>
+        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsAsync()
+        {
+            var allPermissions = await _context.PermissionMaster.AsNoTracking().ToListAsync();
+            if (allPermissions.Count == 0)
+                return (0, 0, 0);
+
+            var dashboard = allPermissions.FirstOrDefault(p =>
+                string.Equals(p.Url, "/home", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p.PermissionName, "Dashboard", StringComparison.OrdinalIgnoreCase));
+
+            var roles = await _context.UserRole.AsNoTracking().ToListAsync();
+            if (roles.Count == 0)
+                return (0, 0, 0);
+
+            // Replace any leftover assignments for these roles with the defaults.
+            var roleIds = roles.Select(r => r.RoleID).ToList();
+            var existing = await _context.PermissionRole
+                .Where(pr => roleIds.Contains(pr.RoleId))
+                .ToListAsync();
+            if (existing.Count > 0)
+            {
+                _context.PermissionRole.RemoveRange(existing);
+                await _context.SaveChangesAsync();
+            }
+
+            var toAdd = new List<PermissionRole>();
+            var adminRoles = 0;
+            var nonAdminRoles = 0;
+
+            foreach (var role in roles)
+            {
+                var tenantId = role.TenantId;
+                if (IsAdminRoleName(role.RoleName, role.RoleTag))
+                {
+                    adminRoles++;
+                    foreach (var perm in allPermissions)
+                    {
+                        toAdd.Add(new PermissionRole
+                        {
+                            RoleId = role.RoleID,
+                            TenantId = tenantId,
+                            PermissionId = perm.PermissionId
+                        });
+                    }
+                }
+                else if (dashboard != null)
+                {
+                    nonAdminRoles++;
+                    toAdd.Add(new PermissionRole
+                    {
+                        RoleId = role.RoleID,
+                        TenantId = tenantId,
+                        PermissionId = dashboard.PermissionId
+                    });
+                }
+            }
+
+            if (toAdd.Count > 0)
+            {
+                await _context.PermissionRole.AddRangeAsync(toAdd);
+                await _context.SaveChangesAsync();
+            }
+
+            return (adminRoles, nonAdminRoles, toAdd.Count);
+        }
+
+        private static bool IsAdminRoleName(string? roleName, string? roleTag)
+        {
+            static bool Match(string? value) =>
+                !string.IsNullOrEmpty(value)
+                && (value.Contains("admin", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
+
+            return Match(roleName) || Match(roleTag);
         }
 
         // POST: api/UserManagement/AssignPermissionsToRole

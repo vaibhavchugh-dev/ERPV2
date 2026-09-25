@@ -166,6 +166,10 @@ export class AuthService {
   }
 
   public static setLocationId(locationId: number) {
-    localStorage.setItem("locationId", String(locationId));
+    if (locationId > 0) {
+      localStorage.setItem("locationId", String(locationId));
+    } else {
+      localStorage.removeItem("locationId");
+    }
   }
 }

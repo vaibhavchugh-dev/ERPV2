@@ -10,6 +10,7 @@ import {
   validatePasswordAgainstPolicy,
 } from "../Common/Utils/passwordPolicy";
 import { getCachedSettings } from "../Common/Utils/settingsRuntime";
+import PasswordInput from "../Common/Components/PasswordInput";
 import "./Login.scss";
 
 export const ChangePassword: React.FC = () => {
@@ -93,20 +94,22 @@ export const ChangePassword: React.FC = () => {
           <Form className="login-form" onSubmit={handleSubmit}>
             <Form.Group className="mb-3">
               <Form.Label>Current password</Form.Label>
-              <Form.Control
-                type="password"
+              <PasswordInput
+                className="form-control"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 required
+                autoComplete="current-password"
               />
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>New password</Form.Label>
-              <Form.Control
-                type="password"
+              <PasswordInput
+                className="form-control"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
+                autoComplete="new-password"
               />
               <Form.Text className="text-muted">
                 Must include {passwordHints.join(", ")}.
@@ -114,11 +117,12 @@ export const ChangePassword: React.FC = () => {
             </Form.Group>
             <Form.Group className="mb-3">
               <Form.Label>Confirm new password</Form.Label>
-              <Form.Control
-                type="password"
+              <PasswordInput
+                className="form-control"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
+                autoComplete="new-password"
               />
             </Form.Group>
             <Button
