@@ -65,6 +65,7 @@ builder.Services.AddCors(c =>
             .WithOrigins(
                 "https://erp.cimmple.net",
                 "http://erp.cimmple.net",
+                "https://punch.cimmple.net",
                 "https://api.v2.cimmple.net",
                 "http://api.v2.cimmple.net",
                 "http://localhost:3000",
