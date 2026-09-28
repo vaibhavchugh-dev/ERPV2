@@ -20,6 +20,8 @@ import {
   picklistSelectValue,
   normalizeUnitForSave,
 } from "../../Common/Constants/unitsOfMeasure";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 import "./RawMaterialMaster.scss";
 import "../Inventory/Inventory.scss";
@@ -484,6 +486,17 @@ const RawMaterialMaster: React.FC = () => {
         .some((value) => String(value).toLowerCase().includes(term));
     });
   }, [materials, searchTerm, showInactive]);
+
+  const {
+    pageItems: pagedMaterials,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(filteredMaterials, [searchTerm, showInactive]);
 
   const parentOptions = useMemo(() => {
     const id = form.id;
@@ -1208,7 +1221,7 @@ const RawMaterialMaster: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredMaterials.map((material) => (
+                pagedMaterials.map((material) => (
                   <tr key={material.id}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(material, column.key)}</td>
@@ -1220,6 +1233,16 @@ const RawMaterialMaster: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
     </div>
   );
 };

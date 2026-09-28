@@ -188,7 +188,6 @@ namespace CimmpleAPI.Controllers
                 var revenueThisMonthQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
                                !im.IsVoided &&
-                               im.PaymentDate != null &&
                                im.InvoiceDate >= dateFilter.startDate &&
                                im.InvoiceDate <= dateFilter.endDate);
                 if (filterLocationId.HasValue)
@@ -526,9 +525,10 @@ namespace CimmpleAPI.Controllers
                 var days = period == "7days" ? 7 : period == "30days" ? 30 : 90;
                 var startDate = DateTime.Now.AddDays(-days).Date;
 
+                // Billed revenue: non-voided customer invoices by invoice date (aligned with Sales reports)
                 var revenueQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
-                               im.PaymentDate != null &&
+                               !im.IsVoided &&
                                im.InvoiceDate >= startDate);
                 if (filterLocationId.HasValue)
                 {
@@ -573,9 +573,10 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
+                // Billed expenses: non-voided vendor invoices by invoice date (match revenue basis)
                 var expenseQuery = _context.VendorInvoiceMaster
                     .Where(vim => vim.TenantId == tenantId &&
-                                 (vim.isPaid == 1 || vim.Paydate != null) &&
+                                 vim.voideddate == null &&
                                  vim.InvoiceDate >= startDate);
                 if (filterLocationId.HasValue)
                     expenseQuery = expenseQuery.Where(vim => vim.locationId == filterLocationId.Value);
@@ -1011,7 +1012,7 @@ namespace CimmpleAPI.Controllers
 
                 var topCustomersQuery = _context.InvoiceMaster
                     .Where(im => im.TenantId == tenantId &&
-                               im.PaymentDate != null &&
+                               !im.IsVoided &&
                                im.InvoiceDate >= dateFilter.startDate &&
                                im.InvoiceDate <= dateFilter.endDate)
                     .Join(_context.InvoiceDetail,

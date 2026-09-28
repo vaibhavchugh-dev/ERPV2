@@ -10,6 +10,7 @@ import {
 import { CategoryService, CategoryType } from "../../Common/Services/CategoryService";
 import { CategoryTagList } from "../../Common/Components/CategoryTagInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
+import { useSettingsSafe } from "../../Common/Contexts/SettingsContext";
 import JobTemplateMasterSlideout from "./JobTemplateMasterSlideout";
 import "./CustomerMaster.scss";
 import "./JobTemplateMaster.scss";
@@ -42,6 +43,7 @@ const formatDate = (value?: string | null): string => {
 const JobTemplateMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const settings = useSettingsSafe();
 
   const [templates, setTemplates] = useState<JobTemplate[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -63,7 +65,11 @@ const JobTemplateMasterComponent: React.FC = () => {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const pageSize = settings?.defaultPageSize || 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize]);
 
   const {
     hiddenColumns,
@@ -510,19 +516,6 @@ const JobTemplateMasterComponent: React.FC = () => {
               : `Showing ${firstRow} to ${lastRow} of ${totalCount} entries`}
           </span>
           <div className="pagination-controls">
-            <select
-              className="pagination-size"
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(parseInt(e.target.value, 10));
-                setPage(1);
-              }}
-            >
-              <option value={10}>10 / page</option>
-              <option value={25}>25 / page</option>
-              <option value={50}>50 / page</option>
-              <option value={100}>100 / page</option>
-            </select>
             <button
               type="button"
               className="pagination-button"

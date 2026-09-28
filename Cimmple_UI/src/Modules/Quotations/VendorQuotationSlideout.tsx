@@ -832,6 +832,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       toast.error("Please ensure the quotation has a vendor and at least one line item before printing");
       return;
     }
+    const toastId = toast.info("Generating Vendor Quotation PDF… this may take a moment.", {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateVendorQuotation(quotationId);
       const url = window.URL.createObjectURL(blob);
@@ -842,10 +845,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success('Vendor quotation PDF generated successfully');
+      toast.update(toastId, {
+        render: "Vendor quotation PDF generated successfully",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error('Error generating vendor quotation PDF:', error);
-      toast.error(error.response?.data?.error || 'Failed to generate vendor quotation PDF');
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate vendor quotation PDF",
+        type: "error",
+        autoClose: 5000,
+      });
     }
   };
 

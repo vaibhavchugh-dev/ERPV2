@@ -92,7 +92,7 @@ namespace CimmpleAPI.Services
                     return (false, error);
                 }
 
-                await MarkSuccessAsync(schedule);
+                await MarkQueuedAsync(schedule);
                 return (true, null);
             }
             catch (Exception ex)
@@ -103,11 +103,12 @@ namespace CimmpleAPI.Services
             }
         }
 
-        private async Task MarkSuccessAsync(ReportSchedule schedule)
+        private async Task MarkQueuedAsync(ReportSchedule schedule)
         {
             var now = DateTime.UtcNow;
             schedule.LastRunUtc = now;
-            schedule.LastRunStatus = "Success";
+            // Queued = report generated and email accepted by outbox (not necessarily delivered yet).
+            schedule.LastRunStatus = "Queued";
             schedule.LastRunError = null;
             schedule.NextRunUtc = ReportScheduleTiming.ComputeNextRunUtc(schedule, now);
             schedule.UpdatedUtc = now;

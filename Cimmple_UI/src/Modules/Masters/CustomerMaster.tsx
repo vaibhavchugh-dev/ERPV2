@@ -6,6 +6,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import CustomerMasterSlideout from "./CustomerMasterSlideout";
 import CustomerMasterImportModal from "./CustomerMasterImportModal";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -177,6 +179,17 @@ const CustomerMasterComponent: React.FC = () => {
     return 0;
   });
 
+  const {
+    pageItems: pagedCustomers,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedCustomers, [searchTerm, filterValue, sortColumn, sortDirection]);
+
   const getSortIcon = (column: keyof CustomerMaster) => {
     if (sortColumn !== column) {
       return <span className="sort-icon inactive">⇅</span>;
@@ -341,7 +354,7 @@ const CustomerMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedCustomers.map((customer) => (
+                pagedCustomers.map((customer) => (
                   <tr key={customer.customer_id} onClick={() => handleRowClick(customer)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(customer, column.key)}</td>
@@ -353,6 +366,16 @@ const CustomerMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <CustomerMasterSlideout

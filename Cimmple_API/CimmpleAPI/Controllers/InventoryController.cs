@@ -30,6 +30,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
                 var query = _context.InventoryBalance
                     .Include(b => b.Product)
                     .Include(b => b.RawMaterial)
@@ -37,8 +40,15 @@ namespace CimmpleAPI.Controllers
                     .Include(b => b.Location)
                     .Where(b => b.Tenantid == tenantId);
 
-                if (locationId.HasValue)
-                    query = query.Where(b => b.LocationId == locationId.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(b => b.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(b => allowed.Contains(b.LocationId));
+                }
                 if (productId.HasValue)
                     query = query.Where(b => b.ProductId == productId.Value);
                 if (rawMaterialId.HasValue)
@@ -107,6 +117,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
                 var query = _context.InventoryTransaction
                     .Include(t => t.TransactionType)
                     .Include(t => t.Product)
@@ -119,8 +132,15 @@ namespace CimmpleAPI.Controllers
                     query = query.Where(t => t.ProductId == productId.Value);
                 if (rawMaterialId.HasValue)
                     query = query.Where(t => t.RawMaterialId == rawMaterialId.Value);
-                if (locationId.HasValue)
-                    query = query.Where(t => t.LocationId == locationId.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(t => t.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(t => allowed.Contains(t.LocationId));
+                }
                 if (fromDate.HasValue)
                     query = query.Where(t => t.TransactionDate >= fromDate.Value);
                 if (toDate.HasValue)
@@ -232,6 +252,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (request.LocationId > 0 && !CanAccessLocation(request.LocationId))
+                    return StatusCode(403, new { message = "You don't have access to this location." });
+
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
@@ -269,6 +292,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (request.LocationId > 0 && !CanAccessLocation(request.LocationId))
+                    return StatusCode(403, new { message = "You don't have access to this location." });
+
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, null);
@@ -368,14 +394,24 @@ namespace CimmpleAPI.Controllers
                 if (tenantId <= 0)
                     tenantId = GetTenantId();
 
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
                 var query = _context.InventoryReservation
                     .Include(r => r.Product)
                     .Include(r => r.RawMaterial)
                     .Include(r => r.Location)
                     .Where(r => r.Tenantid == tenantId && r.Quantity > 0);
 
-                if (locationId.HasValue)
-                    query = query.Where(r => r.LocationId == locationId.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(r => r.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(r => allowed.Contains(r.LocationId));
+                }
                 if (productId.HasValue)
                     query = query.Where(r => r.ProductId == productId.Value);
                 if (rawMaterialId.HasValue)
@@ -438,14 +474,24 @@ namespace CimmpleAPI.Controllers
                 if (!productId.HasValue && !rawMaterialId.HasValue)
                     return Ok(new { result = Array.Empty<object>() });
 
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
                 var query =
                     from b in _context.InventoryLotBalance.AsNoTracking()
                     join l in _context.InventoryLot.AsNoTracking() on b.LotId equals l.Id
                     where b.Tenantid == tenantId && b.QuantityOnHand > 0
                     select new { b, l };
 
-                if (locationId.HasValue && locationId.Value > 0)
-                    query = query.Where(x => x.b.LocationId == locationId.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(x => x.b.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(x => allowed.Contains(x.b.LocationId));
+                }
                 if (productId.HasValue)
                     query = query.Where(x => x.l.ProductId == productId);
                 else
@@ -477,6 +523,10 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if ((request.FromLocationId > 0 && !CanAccessLocation(request.FromLocationId))
+                    || (request.ToLocationId > 0 && !CanAccessLocation(request.ToLocationId)))
+                    return StatusCode(403, new { message = "You don't have access to this location." });
+
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, "Transfer");
@@ -508,6 +558,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (request.LocationId > 0 && !CanAccessLocation(request.LocationId))
+                    return StatusCode(403, new { message = "You don't have access to this location." });
+
                 var tenantId = request.TenantId > 0 ? request.TenantId : GetTenantId();
                 var createdBy = request.CreatedBy ?? GetUserId();
                 var (refType, refId) = NormalizeDocumentReference(request.ReferenceType, request.ReferenceId, "Adjustment");
@@ -552,6 +605,9 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
                 var query = _context.InventoryBalance
                     .Include(b => b.Product)
                     .Include(b => b.RawMaterial)
@@ -563,8 +619,15 @@ namespace CimmpleAPI.Controllers
                         && b.QuantityOnHand <= (b.ReorderPoint
                             ?? (b.RawMaterial != null ? b.RawMaterial.ReorderPoint : null)
                             ?? b.Product!.ReorderPoint));
-                if (locationId.HasValue && locationId.Value > 0)
-                    query = query.Where(b => b.LocationId == locationId.Value);
+                if (filterLocationId.HasValue)
+                    query = query.Where(b => b.LocationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(b => allowed.Contains(b.LocationId));
+                }
 
                 var alerts = await query
                     .Select(b => new

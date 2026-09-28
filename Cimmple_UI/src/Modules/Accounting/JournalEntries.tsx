@@ -10,6 +10,7 @@ import MasterListPage, {
   ColumnConfig,
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./JournalEntries.scss";
 
 type LineDraft = {
@@ -383,7 +384,14 @@ const JournalEntries: React.FC = () => {
         addButtonLabel="New entry"
         onRowClick={(row) => void openDetail(row.id)}
         searchPlaceholder="Search JE #, reference, description…"
-        searchFields={["id", "referenceNumber", "description", "statusLabel"]}
+        matchRowSearch={(row, q) =>
+          matchJeNumber(q, row.id) ||
+          matchAmountValue(q, row.totalAmount) ||
+          matchDateValue(q, row.entryDate) ||
+          (row.referenceNumber || "").toLowerCase().includes(q) ||
+          (row.description || "").toLowerCase().includes(q) ||
+          (row.statusLabel || "").toLowerCase().includes(q)
+        }
         getRowId={(row) => row.id}
         columnPreferenceKey="journalEntries.hiddenColumns"
         filters={[masterListFilter]}

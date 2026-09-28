@@ -867,6 +867,9 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       toast.error("Please ensure the order has a vendor and at least one line item before printing");
       return;
     }
+    const toastId = toast.info("Generating Vendor Order PDF… this may take a moment.", {
+      autoClose: false,
+    });
     try {
       const blob = await PdfService.GenerateVendorOrder(orderId);
       const url = window.URL.createObjectURL(blob);
@@ -877,10 +880,18 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast.success('Vendor order PDF generated successfully');
+      toast.update(toastId, {
+        render: "Vendor order PDF generated successfully",
+        type: "success",
+        autoClose: 3000,
+      });
     } catch (error: any) {
       console.error('Error generating vendor order PDF:', error);
-      toast.error(error.response?.data?.error || 'Failed to generate vendor order PDF');
+      toast.update(toastId, {
+        render: error.response?.data?.error || "Failed to generate vendor order PDF",
+        type: "error",
+        autoClose: 5000,
+      });
     }
   };
 

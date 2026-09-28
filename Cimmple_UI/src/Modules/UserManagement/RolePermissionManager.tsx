@@ -143,8 +143,8 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                 className="btn btn-sm btn-warning"
                 onClick={async () => {
                   if (!window.confirm(
-                    `This will clear all ${allPermissions.length} permission definitions and ALL role assignments (Admin, Shop, Supervisor, etc.), then reseed the permission list.\n\n` +
-                    `Roles will have no permissions until you reassign them. Non-admin users will only see Dashboard until permissions are restored.\n\nContinue?`
+                    `This will clear all ${allPermissions.length} permission definitions and ALL role assignments, then reseed.\n\n` +
+                    `Admin roles will get all permissions; other roles will get Dashboard only.\n\nContinue?`
                   )) {
                     return;
                   }
@@ -154,7 +154,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                     const result = await UserManagementService.SeedPermissions(true);
                     toast.success(
                       result.message ||
-                        'Permissions cleared and reseeded. Reassign permissions to each role — users only have Dashboard until then.'
+                        'Permissions cleared and reseeded. Admin roles have all permissions; other roles have Dashboard only.'
                     );
                     await loadData(); // Reload after seeding
                   } catch (error: any) {
@@ -178,7 +178,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                   zIndex: 1000,
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                 }}
-                title={`Clear ${allPermissions?.length || 0} existing permissions and all role assignments, then reseed`}
+                title={`Clear ${allPermissions?.length || 0} existing permissions and reseed with Admin=all / others=Dashboard`}
               >
                 🔄 Clear & Reseed
               </button>
@@ -270,14 +270,14 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                   </p>
                   <p style={{ color: '#92400e', fontSize: '0.75rem', marginBottom: '0.75rem' }}>
                     To update permissions to match the current menu structure, use the "🔄 Clear & Reseed" button in the header.
-                    This wipes all role assignments — reassign permissions afterward or non-admin users will only see Dashboard.
+                    Admin roles will get all permissions; other roles will get Dashboard only.
                   </p>
                   <button
                     className="btn btn-warning"
                     onClick={async () => {
                       if (!window.confirm(
                         `This will clear all ${allPermissions.length} permission definitions and ALL role assignments, then reseed.\n\n` +
-                        `Non-admin users will only see Dashboard until permissions are reassigned. Continue?`
+                        `Admin roles will get all permissions; other roles will get Dashboard only. Continue?`
                       )) {
                         return;
                       }
@@ -286,7 +286,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                         const result = await UserManagementService.SeedPermissions(true);
                         toast.success(
                           result.message ||
-                            'Permissions cleared and reseeded. Reassign permissions to each role — users only have Dashboard until then.'
+                            'Permissions cleared and reseeded. Admin roles have all permissions; other roles have Dashboard only.'
                         );
                         await loadData(); // Reload after seeding
                       } catch (error: any) {

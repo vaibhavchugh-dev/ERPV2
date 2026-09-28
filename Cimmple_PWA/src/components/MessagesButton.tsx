@@ -6,23 +6,9 @@ import {
   ConversationThread,
 } from "../services/conversationService";
 import { parseMentionParts, stripMentionTokensForPreview } from "../utils/chatMentions";
+import { formatRelativeTime, HEADER_DROPDOWN_PANEL_CLASS } from "../utils/relativeTime";
 
 const POLL_MS = 45_000;
-
-function formatRelative(iso?: string | null): string {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const diffSec = Math.round((Date.now() - d.getTime()) / 1000);
-    if (diffSec < 60) return "just now";
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
-}
 
 function CommentsIcon({ className }: { className?: string }) {
   return (
@@ -46,6 +32,7 @@ export function MessagesButton() {
   const panelRef = useRef<HTMLDivElement>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
   const hasItemsRef = useRef(false);
+  const [panelTop, setPanelTop] = useState(56);
 
   useEffect(() => {
     hasItemsRef.current = items.length > 0;
@@ -107,6 +94,11 @@ export function MessagesButton() {
   useEffect(() => {
     if (!open) return;
     void refresh({ showLoading: true });
+    const btn = panelRef.current?.querySelector("button");
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      setPanelTop(Math.round(rect.bottom + 8));
+    }
     const onPointer = (e: MouseEvent | TouchEvent) => {
       if (chatId) return;
       const el = panelRef.current;
@@ -130,7 +122,6 @@ export function MessagesButton() {
     }
   }, [chatId, loadChat]);
 
-  // Poll open chat so new replies appear without closing
   useEffect(() => {
     if (chatId == null) return;
     const CHAT_POLL_MS = 5000;
@@ -216,7 +207,7 @@ export function MessagesButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className={HEADER_DROPDOWN_PANEL_CLASS} style={{ top: panelTop }}>
           <div className="border-b border-slate-100 px-4 py-3 dark:border-slate-800">
             <div className="text-sm font-bold text-slate-900 dark:text-white">Messages</div>
           </div>
@@ -239,8 +230,8 @@ export function MessagesButton() {
                     <div className="min-w-0 text-sm font-bold text-slate-900 dark:text-white">
                       {item.otherUserName || "Conversation"}
                     </div>
-                    <div className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      {formatRelative(item.lastMessageAt)}
+                    <div className="shrink-0 text-[10px] font-semibold tracking-wide text-slate-400">
+                      {formatRelativeTime(item.lastMessageAt)}
                     </div>
                   </div>
                   {(item.subject || item.lastMessagePreview) && (

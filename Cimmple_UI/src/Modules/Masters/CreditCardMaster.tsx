@@ -5,6 +5,8 @@ import { CreditCardService, CreditCardMaster } from "../../Common/Services/Credi
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import CreditCardMasterSlideout from "./CreditCardMasterSlideout";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -154,6 +156,17 @@ const CreditCardMasterComponent: React.FC = () => {
     if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
     return 0;
   });
+
+  const {
+    pageItems: pagedCreditCards,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedCreditCards, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof CreditCardMaster) => {
     if (sortColumn !== column) {
@@ -310,7 +323,7 @@ const CreditCardMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedCreditCards.map((creditCard) => (
+                pagedCreditCards.map((creditCard) => (
                   <tr key={creditCard.id} onClick={() => handleRowClick(creditCard)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(creditCard, column.key)}</td>
@@ -322,6 +335,16 @@ const CreditCardMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <CreditCardMasterSlideout

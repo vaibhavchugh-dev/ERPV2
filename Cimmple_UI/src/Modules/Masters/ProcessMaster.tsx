@@ -6,6 +6,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import ProcessMasterSlideout from "./ProcessMasterSlideout";
 import ProcessMasterImportModal from "./ProcessMasterImportModal";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -148,6 +150,17 @@ const ProcessMasterComponent: React.FC = () => {
     if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
     return 0;
   });
+
+  const {
+    pageItems: pagedProcesses,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedProcesses, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof ProcessMaster) => {
     if (sortColumn !== column) {
@@ -322,7 +335,7 @@ const ProcessMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedProcesses.map((process) => (
+                pagedProcesses.map((process) => (
                   <tr key={process.id} onClick={() => handleRowClick(process)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(process, column.key)}</td>
@@ -334,6 +347,16 @@ const ProcessMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <ProcessMasterSlideout

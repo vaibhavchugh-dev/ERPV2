@@ -9,7 +9,7 @@ namespace CimmpleAPI.Services
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<EmailOutboxHostedService> _logger;
-        private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
 
         public EmailOutboxHostedService(
             IServiceScopeFactory scopeFactory,

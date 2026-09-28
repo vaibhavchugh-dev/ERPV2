@@ -6,6 +6,8 @@ import { AuthService } from "../../Common/Services/AuthService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import LocationMasterSlideout from "./LocationMasterSlideout";
+import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
 const COLUMNS: ColumnDefinition[] = [
@@ -174,6 +176,17 @@ const LocationMasterComponent: React.FC = () => {
     return 0;
   });
 
+  const {
+    pageItems: pagedLocations,
+    currentPage,
+    setCurrentPage,
+    totalPages,
+    startIndex,
+    endIndex,
+    total,
+    showControls,
+  } = useClientPagination(sortedLocations, [searchTerm, filterValue, sortColumn, sortDirection]);
+
   const getSortIcon = (column: keyof LocationMaster) => {
     if (sortColumn !== column) {
       return <span className="sort-icon inactive">⇅</span>;
@@ -341,7 +354,7 @@ const LocationMasterComponent: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedLocations.map((location) => (
+                pagedLocations.map((location) => (
                   <tr key={location.locationId} onClick={() => handleRowClick(location)}>
                     {visibleColumns.map((column) => (
                       <td
@@ -368,6 +381,16 @@ const LocationMasterComponent: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <ClientPagination
+        startIndex={startIndex}
+        endIndex={endIndex}
+        total={total}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+        showControls={showControls}
+      />
 
       {showSlideout && (
         <LocationMasterSlideout

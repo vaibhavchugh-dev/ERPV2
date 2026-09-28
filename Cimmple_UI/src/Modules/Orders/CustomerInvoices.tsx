@@ -594,10 +594,14 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterType]: value
-    }));
+    setFilters(prev => {
+      const next = { ...prev, [filterType]: value };
+      if (filterType === 'dateRange' && value !== 'Custom') {
+        next.startDate = '';
+        next.endDate = '';
+      }
+      return next;
+    });
   };
 
   const columns = [
@@ -818,7 +822,7 @@ const CustomerInvoices: React.FC = () => {
         loading={loading}
         enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
-        searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode"]}
+        searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode", "totalAmount", "invoiceDate", "dueDate", "amountDue"]}
         initialSearchTerm={filters.searchTerm}
         minSearchLength={2}
         filters={[
@@ -836,6 +840,51 @@ const CustomerInvoices: React.FC = () => {
             onChange: (value) => handleFilterChange('dateRange', value)
           }
         ]}
+        extraFilters={
+          filters.dateRange === 'Custom' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
+                <input
+                  type="date"
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.startDate || ''}
+                  onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>To:</label>
+                <input
+                  type="date"
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.endDate || ''}
+                  onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                />
+              </div>
+              {(filters.startDate || filters.endDate) && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, startDate: '', endDate: '' }))}
+                  title="Clear custom dates"
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#f3f4f6',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.8125rem',
+                    cursor: 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          ) : undefined
+        }
         emptyMessage="No customer invoices found"
       />
 
