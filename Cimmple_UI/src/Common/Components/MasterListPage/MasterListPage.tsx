@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsSafe } from "../../Contexts/SettingsContext";
 import ColumnChooser from "../ColumnChooser";
 import { useColumnChooser } from "../../Hooks/useColumnChooser";
+import { matchFieldValue } from "../../Utils/listSearchMatch";
 import "./MasterListPage.scss";
 
 // Column configuration
@@ -68,7 +69,7 @@ export interface MasterListPageProps<T = any> {
   emptyMessage?: string;
   getRowId?: (row: T) => number | string; // Function to get unique ID for row
   customActionButtons?: CustomActionButton[]; // Custom action buttons
-  enablePagination?: boolean; // Enable pagination (default: false for backward compatibility)
+  enablePagination?: boolean; // Enable pagination (default: true — uses System Settings defaultPageSize)
   pageSize?: number; // Override default page size from settings
   /** Unique localStorage key for hidden columns. Defaults from title. */
   columnPreferenceKey?: string;
@@ -100,7 +101,7 @@ const MasterListPage = <T extends Record<string, any>>({
   emptyMessage = "No data available",
   getRowId,
   customActionButtons = [],
-  enablePagination = false,
+  enablePagination = true,
   pageSize,
   columnPreferenceKey,
   defaultHiddenColumns = [],
@@ -200,18 +201,18 @@ const MasterListPage = <T extends Record<string, any>>({
       return matchRowSearch(row, searchLower);
     }
 
-    // If searchFields specified, only search those
+    // If searchFields specified, only search those (amount/date aware)
     if (searchFields.length > 0) {
       return searchFields.some((field) => {
         const value = row[field as keyof T];
-        return value?.toString().toLowerCase().includes(searchLower);
+        return matchFieldValue(searchLower, value);
       });
     }
 
-    // Otherwise search all columns
+    // Otherwise search all columns (amount/date aware)
     return columns.some((col) => {
       const value = row[col.key as keyof T];
-      return value?.toString().toLowerCase().includes(searchLower);
+      return matchFieldValue(searchLower, value);
     });
   });
 

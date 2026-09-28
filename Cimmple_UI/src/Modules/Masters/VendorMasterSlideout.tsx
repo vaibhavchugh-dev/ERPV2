@@ -11,6 +11,7 @@ import { getDefaultSystemSettings } from "../../Common/Utils/defaultSystemSettin
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import PasswordInput from "../../Common/Components/PasswordInput";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
 interface VendorMasterSlideoutProps {
@@ -959,8 +960,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                           <span className="required"> *</span>
                         )}
                       </label>
-                      <input
-                        type="password"
+                      <PasswordInput
                         id="portalPassword"
                         name="portalPassword"
                         className={`form-input ${errors.portalPassword ? "error" : ""}`}
@@ -1000,8 +1000,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                           <span className="required"> *</span>
                         )}
                       </label>
-                      <input
-                        type="password"
+                      <PasswordInput
                         id="portalPasswordConfirm"
                         name="portalPasswordConfirm"
                         className={`form-input ${errors.portalPasswordConfirm ? "error" : ""}`}

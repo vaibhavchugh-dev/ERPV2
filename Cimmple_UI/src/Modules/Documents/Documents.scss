@@ -413,6 +413,30 @@
             font-size: 0.875rem;
             color: #374151;
 
+            .document-number-cell {
+              display: inline-flex;
+              align-items: center;
+              gap: 0.5rem;
+              flex-wrap: wrap;
+
+              .number-value {
+                font-family: monospace;
+                color: #1f2937;
+              }
+
+              .auto-badge {
+                display: inline-block;
+                font-size: 0.7rem;
+                line-height: 1;
+                padding: 0.2rem 0.4rem;
+                background-color: #e5e7eb;
+                color: #6b7280;
+                border-radius: 0.25rem;
+                font-weight: 500;
+                white-space: nowrap;
+              }
+            }
+
             .document-name-cell {
               display: flex;
               align-items: center;

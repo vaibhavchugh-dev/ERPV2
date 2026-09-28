@@ -219,12 +219,16 @@ namespace CimmpleAPI.Controllers
 
                 if (isNew)
                 {
-                    // Check for duplicate Account No / Routing Number
+                    // Check for duplicate Account No / Routing Number (skip blank values)
+                    var requestAccountNo = (request.AccountNo ?? "").Trim();
+                    var requestRouting = (request.RoutingNumber ?? "").Trim();
                     var duplicate = _context.BankMaster
                         .Any(b => b.TenantId == request.TenantID &&
                                  b.locationId == request.locationId &&
-                                 (b.RoutingNumber == request.RoutingNumber || 
-                                  b.AccountNo == request.AccountNo));
+                                 (
+                                   (!string.IsNullOrWhiteSpace(requestAccountNo) && b.AccountNo == request.AccountNo) ||
+                                   (!string.IsNullOrWhiteSpace(requestRouting) && b.RoutingNumber == request.RoutingNumber)
+                                 ));
 
                     if (duplicate)
                     {
@@ -255,15 +259,19 @@ namespace CimmpleAPI.Controllers
                 {
                     bank = existingBank;
 
-                    // Check for duplicate Account No / Routing Number (excluding current bank)
+                    // Check for duplicate Account No / Routing Number (excluding current bank; skip blank values)
                     if (bank.AccountNo != request.AccountNo || bank.RoutingNumber != request.RoutingNumber)
                     {
+                        var requestAccountNo = (request.AccountNo ?? "").Trim();
+                        var requestRouting = (request.RoutingNumber ?? "").Trim();
                         var duplicate = _context.BankMaster
                             .Any(b => b.Id != request.Id &&
                                      b.TenantId == request.TenantID &&
                                      b.locationId == request.locationId &&
-                                     (b.RoutingNumber == request.RoutingNumber || 
-                                      b.AccountNo == request.AccountNo));
+                                     (
+                                       (!string.IsNullOrWhiteSpace(requestAccountNo) && b.AccountNo == request.AccountNo) ||
+                                       (!string.IsNullOrWhiteSpace(requestRouting) && b.RoutingNumber == request.RoutingNumber)
+                                     ));
 
                         if (duplicate)
                         {

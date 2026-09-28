@@ -415,7 +415,7 @@ const Dashboard: React.FC = () => {
         {/* Revenue & Expenses Trend - Row 2, Col 1 */}
         <div className="dashboard-widget chart-widget-left chart-widget-row-2">
           <div className="widget-header">
-            <h3>Revenue & Expenses Trend</h3>
+            <h3 title="Billed (invoiced) amounts by date — aligned with Sales reports">Revenue & Expenses Trend</h3>
             <select
               className="widget-period-select"
               value={revenuePeriod}

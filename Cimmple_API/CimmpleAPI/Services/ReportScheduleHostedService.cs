@@ -10,7 +10,7 @@ namespace CimmpleAPI.Services
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<ReportScheduleHostedService> _logger;
-        private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
 
         public ReportScheduleHostedService(
             IServiceScopeFactory scopeFactory,

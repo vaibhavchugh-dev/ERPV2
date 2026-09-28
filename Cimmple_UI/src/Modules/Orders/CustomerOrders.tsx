@@ -8,6 +8,7 @@ import MasterListPage from "../../Common/Components/MasterListPage/MasterListPag
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
+import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./CustomerOrders.scss";
 
 const CustomerOrders: React.FC = () => {
@@ -165,7 +166,34 @@ const CustomerOrders: React.FC = () => {
       key: "quotationNo",
       label: "Quotation #",
       sortable: true,
-      render: (value: any) => value || "-",
+      render: (value: any, row: OrderMaster) => {
+        const quotationNo = value || row?.quotationNo || "";
+        const quotationId = Number(row?.quotationId || 0);
+        if (quotationNo && quotationId > 0) {
+          return (
+            <button
+              type="button"
+              className="link-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                history.push(`/quotations/customer?open=${quotationId}`);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6366f1",
+                cursor: "pointer",
+                textDecoration: "underline",
+                fontWeight: 500,
+                padding: 0,
+              }}
+            >
+              {quotationNo}
+            </button>
+          );
+        }
+        return quotationNo || "-";
+      },
     },
     {
       key: "orderDate",
@@ -229,6 +257,8 @@ const CustomerOrders: React.FC = () => {
           const order = row as OrderMaster;
           const num = Number(order.orderNumber ?? 0);
           if (matchDisplayDocNumber(q, num, ["co#", "co", "cq#", "cq"])) return true;
+          if (matchAmountValue(q, order.totalAmount)) return true;
+          if (matchDateValue(q, order.orderDate)) return true;
           const hay = [order.customerName, order.customerCode, order.quotationNo, order.status]
             .filter(Boolean)
             .join(" ")
