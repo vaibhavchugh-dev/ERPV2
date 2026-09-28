@@ -331,7 +331,6 @@ namespace CimmpleAPI.Services
             };
 
             byte[]? attachmentBytes = null;
-            string? attachmentContentType = null;
 
             if (attachment != null && attachment.Length > 0)
             {
@@ -348,10 +347,6 @@ namespace CimmpleAPI.Services
                     result.Error = "Attachment is empty.";
                     return result;
                 }
-
-                attachmentContentType = string.IsNullOrWhiteSpace(attachment.ContentType)
-                    ? ModuleFileStorage.GetContentType(safeName)
-                    : attachment.ContentType;
 
                 var fileInfo = ModuleFileStorage.CreateFileInfo(
                     tenantId,
@@ -374,28 +369,9 @@ namespace CimmpleAPI.Services
             _context.SupportTickets.Add(ticket);
             await _context.SaveChangesAsync();
 
+            // Receiving is Staff Inbox (/support) only — no email to contact@.
             result.TicketId = ticket.Id;
-
-            var user = await _context.UserDetails.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.User_UniqueID == userId && u.TenantID == tenantId);
-
-            var displayName = BuildDisplayName(user, username);
-            var userEmail = user?.Email?.Trim();
-
-            var (queued, emailError) = await QueueNewTicketEmailAsync(
-                ticket,
-                displayName,
-                userEmail,
-                attachmentBytes,
-                attachmentContentType);
-
-            ticket.EmailQueued = queued;
-            ticket.EmailError = Truncate(emailError, 500);
-            ticket.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            result.EmailQueued = queued;
-            result.EmailError = emailError;
+            result.EmailQueued = false;
             return result;
         }
 
@@ -461,14 +437,9 @@ namespace CimmpleAPI.Services
             ticket.LastMessageAt = now;
             await _context.SaveChangesAsync();
 
-            var (queued, emailError) = await QueueFollowUpToSupportAsync(ticket, displayName, user?.Email, text);
-            message.EmailQueued = queued;
-            message.EmailError = Truncate(emailError, 500);
-            await _context.SaveChangesAsync();
-
+            // Receiving is Staff Inbox (/support) only — no email to contact@.
             result.MessageId = message.Id;
-            result.EmailQueued = queued;
-            result.EmailError = emailError;
+            result.EmailQueued = false;
             return result;
         }
 
@@ -767,72 +738,6 @@ namespace CimmpleAPI.Services
             };
         }
 
-        private async Task<(bool queued, string? error)> QueueNewTicketEmailAsync(
-            SupportTicket ticket,
-            string displayName,
-            string? userEmail,
-            byte[]? attachmentBytes,
-            string? attachmentContentType)
-        {
-            var supportTo = GetSupportInboxEmail();
-            var subject = $"[Cimmple Support #{ticket.Id}] [{ticket.Product}] {ticket.Category}: {ticket.Subject}";
-            var body = BuildNewTicketEmailBody(ticket, displayName, userEmail);
-
-            var mail = new MailRequest
-            {
-                To = supportTo,
-                Subject = subject,
-                Body = body,
-                IsHtml = true
-            };
-
-            if (attachmentBytes is { Length: > 0 } && !string.IsNullOrWhiteSpace(ticket.AttachmentFileName))
-            {
-                mail.Attachments.Add(new EmailAttachment
-                {
-                    FileName = ticket.AttachmentFileName!,
-                    Content = attachmentBytes,
-                    ContentType = attachmentContentType
-                });
-            }
-
-            return await _emailOutbox.EnqueueAsync(ticket.TenantId, mail, skipNotificationGate: true);
-        }
-
-        private async Task<(bool queued, string? error)> QueueFollowUpToSupportAsync(
-            SupportTicket ticket,
-            string displayName,
-            string? userEmail,
-            string messageBody)
-        {
-            var supportTo = GetSupportInboxEmail();
-            var subject = $"[Cimmple Support #{ticket.Id}] Client follow-up: {ticket.Subject}";
-            var sb = new StringBuilder();
-            sb.Append("<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#111;\">");
-            sb.Append("<h2 style=\"margin:0 0 12px;\">Client follow-up</h2>");
-            sb.Append("<p>Ticket #").Append(ticket.Id)
-                .Append(" · ").Append(WebUtility.HtmlEncode(ticket.Product))
-                .Append(" · Tenant ").Append(ticket.TenantId).Append("</p>");
-            sb.Append("<p>From: ").Append(WebUtility.HtmlEncode(displayName));
-            if (!string.IsNullOrWhiteSpace(userEmail))
-                sb.Append(" &lt;").Append(WebUtility.HtmlEncode(userEmail)).Append("&gt;");
-            sb.Append("</p>");
-            sb.Append("<pre style=\"white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px;\">");
-            sb.Append(WebUtility.HtmlEncode(messageBody));
-            sb.Append("</pre></body></html>");
-
-            return await _emailOutbox.EnqueueAsync(
-                ticket.TenantId,
-                new MailRequest
-                {
-                    To = supportTo,
-                    Subject = subject,
-                    Body = sb.ToString(),
-                    IsHtml = true
-                },
-                skipNotificationGate: true);
-        }
-
         private async Task<(bool queued, string? error)> QueueStaffReplyToClientAsync(
             SupportTicket ticket,
             string staffName,
@@ -865,65 +770,6 @@ namespace CimmpleAPI.Services
                     IsHtml = true
                 },
                 skipNotificationGate: true);
-        }
-
-        private string GetSupportInboxEmail()
-        {
-            var supportTo = _configuration["Support:Email"]?.Trim();
-            return string.IsNullOrWhiteSpace(supportTo) ? "contact@cimmple.com" : supportTo;
-        }
-
-        private string BuildNewTicketEmailBody(SupportTicket ticket, string displayName, string? userEmail)
-        {
-            var sb = new StringBuilder();
-            sb.Append("<html><body style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#111;\">");
-            sb.Append("<h2 style=\"margin:0 0 12px;\">New support request</h2>");
-            sb.Append("<table cellpadding=\"6\" cellspacing=\"0\" style=\"border-collapse:collapse;\">");
-            AppendRow(sb, "Ticket", $"#{ticket.Id}");
-            AppendRow(sb, "Product", WebUtility.HtmlEncode(ticket.Product));
-            AppendRow(sb, "Category", ticket.Category);
-            AppendRow(sb, "Status", ticket.Status);
-            AppendRow(sb, "Subject", ticket.Subject);
-            AppendRow(sb, "Tenant", ticket.TenantId.ToString());
-            AppendRow(sb, "User", $"{WebUtility.HtmlEncode(displayName)} (id {ticket.CreatedByUserId})");
-            if (!string.IsNullOrWhiteSpace(userEmail))
-                AppendRow(sb, "User email", WebUtility.HtmlEncode(userEmail));
-            AppendRow(sb, "App", ticket.AppSource);
-            if (!string.IsNullOrWhiteSpace(ticket.AppVersion))
-                AppendRow(sb, "Version", WebUtility.HtmlEncode(ticket.AppVersion));
-            if (ticket.LocationId.HasValue)
-            {
-                var locName = _context.Locations.AsNoTracking()
-                    .Where(l => l.LocationId == ticket.LocationId.Value)
-                    .Select(l => l.Name)
-                    .FirstOrDefault();
-                AppendRow(sb, "Location",
-                    string.IsNullOrWhiteSpace(locName)
-                        ? ticket.LocationId.Value.ToString()
-                        : $"{locName} (#{ticket.LocationId.Value})");
-            }
-            if (!string.IsNullOrWhiteSpace(ticket.EntityType) || ticket.EntityId.HasValue)
-                AppendRow(sb, "Entity", $"{WebUtility.HtmlEncode(ticket.EntityType ?? "")} #{ticket.EntityId}");
-            if (!string.IsNullOrWhiteSpace(ticket.LinkPath))
-                AppendRow(sb, "Path", WebUtility.HtmlEncode(ticket.LinkPath));
-            if (!string.IsNullOrWhiteSpace(ticket.AttachmentFileName))
-                AppendRow(sb, "Attachment", WebUtility.HtmlEncode(ticket.AttachmentFileName));
-            AppendRow(sb, "Created (UTC)", ticket.CreatedAt.ToString("u"));
-            sb.Append("</table>");
-            sb.Append("<h3 style=\"margin:18px 0 8px;\">Description</h3>");
-            sb.Append("<pre style=\"white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px;\">");
-            sb.Append(WebUtility.HtmlEncode(ticket.Description));
-            sb.Append("</pre></body></html>");
-            return sb.ToString();
-        }
-
-        private static void AppendRow(StringBuilder sb, string label, string value)
-        {
-            sb.Append("<tr><td style=\"font-weight:600;vertical-align:top;color:#475569;\">")
-                .Append(WebUtility.HtmlEncode(label))
-                .Append("</td><td>")
-                .Append(value)
-                .Append("</td></tr>");
         }
 
         private string NormalizeProduct(string? product)

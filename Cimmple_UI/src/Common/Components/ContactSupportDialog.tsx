@@ -5,6 +5,8 @@ import {
   faPaperPlane,
   faTimes,
   faArrowLeft,
+  faPlus,
+  faListUl,
 } from "@fortawesome/free-solid-svg-icons";
 import { toast } from "react-toastify";
 import {
@@ -165,13 +167,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
       });
 
       if (result.ticketId > 0) {
-        if (result.emailError) {
-          toast.warning(
-            `Request #${result.ticketId} saved. Email notify: ${result.emailError}`
-          );
-        } else {
-          toast.success(`Support request #${result.ticketId} submitted.`);
-        }
+        toast.success(`Support request #${result.ticketId} submitted.`);
         setSubject("");
         setDescription("");
         setAttachment(null);
@@ -219,11 +215,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
     try {
       const result = await SupportTicketService.Reply(selected.id, followUp.trim());
       if (result.messageId > 0) {
-        if (result.emailError) {
-          toast.warning(`Reply saved. Email: ${result.emailError}`);
-        } else {
-          toast.success("Follow-up sent.");
-        }
+        toast.success("Follow-up sent.");
         setFollowUp("");
         await openTicket(selected.id);
       } else {
@@ -275,6 +267,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
               setTab("new");
             }}
           >
+            <FontAwesomeIcon icon={faPlus} />
             New request
           </button>
           <button
@@ -287,6 +280,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
               setTab("mine");
             }}
           >
+            <FontAwesomeIcon icon={faListUl} />
             My requests
             {tickets.some((t) => t.hasUnread) && (
               <span className="support-tab-badge">
@@ -304,19 +298,31 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
                 context automatically.
               </p>
 
-              <label>
-                Category
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as SupportCategory)}
+              <div className="support-field">
+                <span className="support-field__label" id="support-category-label">
+                  Category
+                </span>
+                <div
+                  className="support-category-chips"
+                  role="radiogroup"
+                  aria-labelledby="support-category-label"
                 >
                   {SUPPORT_CATEGORIES.map((c) => (
-                    <option key={c.value} value={c.value}>
+                    <button
+                      key={c.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={category === c.value}
+                      className={`support-category-chip ${
+                        category === c.value ? "is-selected" : ""
+                      }`}
+                      onClick={() => setCategory(c.value)}
+                    >
                       {c.label}
-                    </option>
+                    </button>
                   ))}
-                </select>
-              </label>
+                </div>
+              </div>
 
               <label>
                 Subject
