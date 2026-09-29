@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSettingsSafe } from "../Contexts/SettingsContext";
+import { PAGE_SIZE_OPTIONS, useListPageSize } from "./useListPageSize";
 
 /**
  * Client-side pagination for custom master tables (Customer/Vendor/Employee, etc.).
- * Page size follows System Settings defaultPageSize.
+ * Page size defaults to System Settings defaultPageSize; users can change it in the footer.
  */
 export function useClientPagination<T>(items: T[], resetDeps: unknown[] = []) {
   const settings = useSettingsSafe();
-  const pageSize = settings?.defaultPageSize || 10;
+  const [pageSize, setPageSize] = useListPageSize(settings?.defaultPageSize || 10);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -33,7 +34,9 @@ export function useClientPagination<T>(items: T[], resetDeps: unknown[] = []) {
     startIndex,
     endIndex,
     pageSize,
+    setPageSize,
     total,
-    showControls: total > pageSize,
+    // Keep the footer visible after enlarging the page size so users can shrink it again.
+    showControls: total > Math.min(pageSize, PAGE_SIZE_OPTIONS[0]),
   };
 }

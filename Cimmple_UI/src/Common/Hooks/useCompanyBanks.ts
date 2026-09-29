@@ -2,13 +2,17 @@ import { useState, useEffect, useCallback } from "react";
 import { BankService, BankMaster } from "../Services/BankService";
 import { useActiveLocation } from "./useActiveLocation";
 
+export function maskAccountNumber(account?: string | null): string {
+  const value = (account || "").trim();
+  if (!value) return "";
+  return value.length > 4 ? `••••${value.slice(-4)}` : value;
+}
+
 export function getBankDisplayName(bank: BankMaster): string {
   const name = bank.nickName || bank.bankName || "Bank";
   const account = bank.lastAccountNo || bank.accountNo;
   if (account) {
-    const masked =
-      account.length > 4 ? `••••${account.slice(-4)}` : account;
-    return `${name} (${masked})`;
+    return `${name} (${maskAccountNumber(account)})`;
   }
   return name;
 }

@@ -30,8 +30,13 @@ export const stripDocNumberQuery = (
   return q.replace(/^#/, "").replace(/\s/g, "");
 };
 
+const hasDocPrefix = (searchLower: string, prefixes: string[]): boolean =>
+  prefixes.some((p) => searchLower.startsWith(p.toLowerCase()));
+
 /**
  * True when the search matches raw stored number, display number, or prefixed label.
+ * Prefixed queries ("CQ#1005", "cq 10") match the display number from the start only,
+ * so "CQ#1005" does not also hit CQ#11005 or CQ#21005.
  */
 export const matchDisplayDocNumber = (
   searchLower: string,
@@ -41,14 +46,22 @@ export const matchDisplayDocNumber = (
   const q = (searchLower || "").trim().toLowerCase();
   if (!q) return true;
   const raw = Number(rawNumber) || 0;
+  if (raw <= 0) return false;
   const display = toDisplayDocNumber(raw);
+  const stripped = stripDocNumberQuery(q, prefixes);
+
+  if (hasDocPrefix(q, prefixes)) {
+    if (!stripped) return true;
+    if (!/^\d+$/.test(stripped)) return false;
+    return String(display).startsWith(stripped);
+  }
+
+  const needle = stripped || q;
   const labels = prefixes.map((p) =>
     formatPrefixedDocNumber(p, raw).toLowerCase()
   );
-  const stripped = stripDocNumberQuery(q, prefixes);
-  const needle = stripped || q;
   return (
-    labels.some((f) => f.includes(q) || f.includes(needle)) ||
+    labels.some((f) => f.includes(needle)) ||
     String(raw).includes(needle) ||
     String(display).includes(needle)
   );

@@ -365,7 +365,7 @@ const JobOrders: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All" },
+              { value: "all", label: "All Statuses" },
               { value: "Draft", label: "Draft" },
               { value: "In Progress", label: "In Progress" },
               { value: "Partially Shipped", label: "Partially Shipped" },
@@ -379,7 +379,7 @@ const JobOrders: React.FC = () => {
           {
             label: "Priority",
             options: [
-              { value: "all", label: "All" },
+              { value: "all", label: "All Priorities" },
               ...JOB_PRIORITY_OPTIONS.map((opt) => ({
                 value: String(opt.value),
                 label: opt.label,
@@ -391,7 +391,7 @@ const JobOrders: React.FC = () => {
           {
             label: "Material",
             options: [
-              { value: "all", label: "All" },
+              { value: "all", label: "All Material" },
               { value: "short", label: "Short material" },
             ],
             value: materialFilter,

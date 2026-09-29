@@ -289,6 +289,8 @@ const PriceBreakdownMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(priceBreakdowns, []);
 
   if (loading) {
@@ -375,6 +377,8 @@ const PriceBreakdownMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {/* Footer with Save/Discard buttons */}

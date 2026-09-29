@@ -121,10 +121,9 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
                 key={opt.value}
                 type="button"
                 onClick={() => setLocalStatus(opt.value)}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                  localStatus === opt.value
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                aria-pressed={localStatus === opt.value}
+                className={`filter-chip ${
+                  localStatus === opt.value ? "filter-chip-on" : "filter-chip-off"
                 }`}
               >
                 {opt.label}
@@ -140,10 +139,9 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
             <button
               type="button"
               onClick={() => setLocalPriority("all")}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-                localPriority === "all"
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              aria-pressed={localPriority === "all"}
+              className={`filter-chip ${
+                localPriority === "all" ? "filter-chip-on" : "filter-chip-off"
               }`}
             >
               All
@@ -152,16 +150,21 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
               const active = localPriority === String(opt.value);
               const colors =
                 opt.value === 2
-                  ? active ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"
+                  ? active
+                    ? "bg-red-600 text-white dark:ring-2 dark:ring-red-300/60"
+                    : "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-950/70"
                   : opt.value === 1
-                  ? active ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                  : active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200";
+                  ? active
+                    ? "bg-amber-500 text-white dark:ring-2 dark:ring-amber-200/60"
+                    : "bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-300 dark:hover:bg-amber-950/70"
+                  : active ? "filter-chip-on" : "filter-chip-off";
               return (
                 <button
                   key={opt.value}
                   type="button"
                   onClick={() => setLocalPriority(String(opt.value))}
-                  className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${colors}`}
+                  aria-pressed={active}
+                  className={`filter-chip ${colors}`}
                 >
                   {opt.label}
                 </button>
@@ -175,10 +178,11 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
           <button
             type="button"
             onClick={() => setLocalShort(!localShort)}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
+            aria-pressed={localShort}
+            className={`filter-chip ${
               localShort
-                ? "bg-red-600 text-white"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                ? "bg-red-600 text-white dark:ring-2 dark:ring-red-300/60"
+                : "filter-chip-off"
             }`}
           >
             Short material
@@ -190,14 +194,14 @@ function JobFilterSheet({ open, statusFilter, priorityFilter, shortMaterialOnly,
           <button
             type="button"
             onClick={() => { setLocalStatus("all"); setLocalPriority("all"); setLocalShort(false); onApply("all", "all", false); }}
-            className="flex-1 rounded-2xl border border-slate-200 bg-white py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className="flex-1 rounded-2xl border border-slate-200 bg-white py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
           >
             Clear
           </button>
           <button
             type="button"
             onClick={() => onApply(localStatus, localPriority, localShort)}
-            className="flex-1 rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800"
+            className="flex-1 rounded-2xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
           >
             Apply
           </button>

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
+import ClientPagination from "../../Common/Components/ClientPagination";
+import { PAGE_SIZE_OPTIONS, useListPageSize } from "../../Common/Hooks/useListPageSize";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import {
   JobTemplateService,
@@ -65,7 +67,7 @@ const JobTemplateMasterComponent: React.FC = () => {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
   const [page, setPage] = useState(1);
-  const pageSize = settings?.defaultPageSize || 10;
+  const [pageSize, setPageSize] = useListPageSize(settings?.defaultPageSize || 10);
 
   useEffect(() => {
     setPage(1);
@@ -508,36 +510,20 @@ const JobTemplateMasterComponent: React.FC = () => {
             </tbody>
           </table>
         </div>
-
-        <div className="table-pagination">
-          <span className="pagination-summary">
-            {totalCount === 0
-              ? "No entries"
-              : `Showing ${firstRow} to ${lastRow} of ${totalCount} entries`}
-          </span>
-          <div className="pagination-controls">
-            <button
-              type="button"
-              className="pagination-button"
-              onClick={() => setPage(Math.max(1, page - 1))}
-              disabled={page <= 1 || loading}
-            >
-              Previous
-            </button>
-            <span className="pagination-page">
-              Page {totalPages === 0 ? 0 : page} of {totalPages}
-            </span>
-            <button
-              type="button"
-              className="pagination-button"
-              onClick={() => setPage(page + 1)}
-              disabled={page >= totalPages || loading}
-            >
-              Next
-            </button>
-          </div>
-        </div>
       </div>
+
+      <ClientPagination
+        startIndex={Math.max(0, firstRow - 1)}
+        endIndex={lastRow}
+        total={totalCount}
+        currentPage={page}
+        totalPages={Math.max(1, totalPages)}
+        onPageChange={setPage}
+        showControls={totalCount > Math.min(pageSize, PAGE_SIZE_OPTIONS[0])}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
+        disabled={loading}
+      />
 
       {showSlideout && (
         <JobTemplateMasterSlideout

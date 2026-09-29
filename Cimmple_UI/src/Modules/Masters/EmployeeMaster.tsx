@@ -218,6 +218,8 @@ const EmployeeMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedEmployees, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof EmployeeMaster) => {
@@ -452,6 +454,8 @@ const EmployeeMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (

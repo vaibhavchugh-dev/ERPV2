@@ -11,6 +11,7 @@ import {
   getTenantId,
 } from "../../Common/Services/InventoryService";
 import { LocationService } from "../../Common/Services/LocationService";
+import { AuthService } from "../../Common/Services/AuthService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import StockMovementModal from "./StockMovementModal";
@@ -207,14 +208,19 @@ const Inventory: React.FC = () => {
       setAlerts(alertsResult || []);
       setMovements(historyResult || []);
       setReservations(reservationResult || []);
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      const allowedIds = new Set(AuthService.getAllowedLocations().map((l) => l.locationId));
       setLocations(
-        (locationsResult || []).map((l: any) => ({
-          locationId: l.locationId,
-          name: l.name || l.code || "",
-        }))
+        (locationsResult || [])
+          .filter((l: any) => storage?.canAccessAllLocations || allowedIds.has(l.locationId))
+          .map((l: any) => ({
+            locationId: l.locationId,
+            name: l.name || l.code || "",
+          }))
       );
     } catch (error: any) {
-      toast.error(`Error loading inventory: ${error.message || "Unknown error"}`);
+      const serverMessage = error?.response?.data?.message || error?.response?.data?.error;
+      toast.error(`Error loading inventory: ${serverMessage || error.message || "Unknown error"}`);
       setBalances([]);
       setAlerts([]);
       setMovements([]);

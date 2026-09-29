@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import { VendorOrderService, VendorOrderMaster } from "../../Common/Services/VendorOrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import VendorOrderSlideout from "./VendorOrderSlideout";
+import VendorQuotationSlideout from "../Quotations/VendorQuotationSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
@@ -18,6 +19,8 @@ const VendorOrders: React.FC = () => {
   const [orders, setOrders] = useState<VendorOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
+  const [showQuotationSlideout, setShowQuotationSlideout] = useState(false);
+  const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [seedSearch, setSeedSearch] = useState("");
@@ -214,8 +217,10 @@ const VendorOrders: React.FC = () => {
                 className="link-button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  history.push(`/quotations/vendor?open=${quotationId}`);
+                  setSelectedQuotationId(quotationId);
+                  setShowQuotationSlideout(true);
                 }}
+                title="Click to view quotation"
                 style={{
                   background: 'none',
                   border: 'none',
@@ -313,7 +318,7 @@ const VendorOrders: React.FC = () => {
         matchRowSearch={(row, q) => {
           const order = row as VendorOrderMaster;
           const num = Number(order.orderNumber ?? 0);
-          if (matchDisplayDocNumber(q, num, ["vo#", "vo", "vq#", "vq"])) return true;
+          if (matchDisplayDocNumber(q, num, ["vo#", "vo"])) return true;
           if (matchAmountValue(q, order.totalAmount)) return true;
           if (matchDateValue(q, order.orderDate)) return true;
           const hay = [order.vendorName, order.vendorCode, order.status, order.quotationNo]
@@ -330,6 +335,20 @@ const VendorOrders: React.FC = () => {
           orderId={selectedOrderId}
           onClose={handleCloseSlideout}
           onSaved={(id) => setSelectedOrderId(id)}
+        />
+      )}
+
+      {showQuotationSlideout && (
+        <VendorQuotationSlideout
+          quotationId={selectedQuotationId}
+          onClose={(refreshList?: boolean) => {
+            setShowQuotationSlideout(false);
+            setSelectedQuotationId(0);
+            if (refreshList) {
+              loadOrders();
+            }
+          }}
+          onSaved={(id) => setSelectedQuotationId(id)}
         />
       )}
     </div>

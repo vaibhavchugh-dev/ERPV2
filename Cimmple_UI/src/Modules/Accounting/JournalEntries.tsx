@@ -10,6 +10,7 @@ import MasterListPage, {
   ColumnConfig,
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./JournalEntries.scss";
 
@@ -431,13 +432,12 @@ const JournalEntries: React.FC = () => {
               >
                 From
               </label>
-              <input
+              <DateFilterInput
                 id="je-from"
-                type="date"
                 className="filter-select"
                 style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
                 value={filterStart}
-                onChange={(e) => setFilterStart(e.target.value)}
+                onCommit={setFilterStart}
               />
             </div>
             <div
@@ -449,13 +449,12 @@ const JournalEntries: React.FC = () => {
               >
                 To
               </label>
-              <input
+              <DateFilterInput
                 id="je-to"
-                type="date"
                 className="filter-select"
                 style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
                 value={filterEnd}
-                onChange={(e) => setFilterEnd(e.target.value)}
+                onCommit={setFilterEnd}
               />
             </div>
           </div>

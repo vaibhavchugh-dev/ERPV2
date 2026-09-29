@@ -347,7 +347,9 @@ const VendorQuotations: React.FC = () => {
         matchRowSearch={(row, q) => {
           const quotation = row as VendorQuotationMaster;
           const num = Number(quotation.quotationNumber ?? 0);
-          if (matchDisplayDocNumber(q, num, ["vq#", "vq", "vo#", "vo"])) return true;
+          if (matchDisplayDocNumber(q, num, ["vq#", "vq"])) return true;
+          const convertedNum = Number(quotation.convertedOrderNumber ?? 0);
+          if (convertedNum > 0 && matchDisplayDocNumber(q, convertedNum, ["vo#", "vo"])) return true;
           if (matchAmountValue(q, quotation.totalAmount)) return true;
           if (matchDateValue(q, quotation.orderDate)) return true;
           const hay = [quotation.vendorName, quotation.vendorCode, quotation.status]

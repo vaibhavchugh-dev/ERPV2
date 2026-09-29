@@ -120,6 +120,22 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const revenueExpenseChartData = React.useMemo(() => {
+    if (!revenueTrends) return [];
+    const byDate = new Map<string, { date: string; revenue: number; expenses: number }>();
+    for (const r of revenueTrends.revenue || []) {
+      const row = byDate.get(r.date) || { date: r.date, revenue: 0, expenses: 0 };
+      row.revenue += r.revenue || 0;
+      byDate.set(r.date, row);
+    }
+    for (const e of revenueTrends.expenses || []) {
+      const row = byDate.get(e.date) || { date: e.date, revenue: 0, expenses: 0 };
+      row.expenses += e.expenses || 0;
+      byDate.set(e.date, row);
+    }
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [revenueTrends]);
+
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
     const now = new Date();
@@ -427,13 +443,9 @@ const Dashboard: React.FC = () => {
             </select>
           </div>
           <div className="widget-content">
-            {revenueTrends && revenueTrends.revenue.length > 0 ? (
+            {revenueExpenseChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={revenueTrends.revenue.map((r, i) => ({
-                  date: r.date,
-                  revenue: r.revenue,
-                  expenses: revenueTrends.expenses.find(e => e.date === r.date)?.expenses || 0
-                }))}>
+                <LineChart data={revenueExpenseChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />
@@ -444,7 +456,7 @@ const Dashboard: React.FC = () => {
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="widget-empty">No revenue data available</div>
+              <div className="widget-empty">No revenue or expense data available</div>
             )}
           </div>
         </div>

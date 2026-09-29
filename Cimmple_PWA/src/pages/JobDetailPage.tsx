@@ -22,6 +22,8 @@ import {
   ProgressState,
   toElapsedFields,
 } from "../services/jobOrderService";
+import { PdfService } from "../services/pdfService";
+import { formatTenantDateTime, loadTenantDisplaySettings } from "../services/tenantSettings";
 import { formatJobNumber } from "../utils/formatJobNumber";
 
 const JOB_STATUS_OPTIONS = [
@@ -57,6 +59,7 @@ type TrackingDialog =
   | { type: "pause"; stepId: number }
   | { type: "complete"; stepId: number }
   | { type: "reopen"; stepId: number }
+  | { type: "reopenJob"; stepId: number }
   | { type: "stepNote"; stepId: number }
   | { type: "completeJob" }
   | { type: "disableTrack" }
@@ -119,7 +122,19 @@ export function JobDetailPage() {
   const [enableJobTracking, setEnableJobTracking] = useState(false);
   const enableJobTrackingRef = useRef(false);
   const [stepSheetOpen, setStepSheetOpen] = useState(false);
+  const [, setTenantSettingsLoaded] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadTenantDisplaySettings().then(() => {
+      if (!cancelled) setTenantSettingsLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     enableJobTrackingRef.current = enableJobTracking;
@@ -407,6 +422,19 @@ export function JobDetailPage() {
       requestCompleteJob();
       return;
     }
+    // The API re-derives Completed while every operation is complete, so reopening
+    // the job has to reopen an operation (same as Flow's per-step Reopen).
+    const steps = stepsRef.current;
+    if (
+      normalizeJobStatus(jobRef.current.Status) === "Completed" &&
+      newStatus !== "Cancelled" &&
+      steps.length > 0 &&
+      steps.every((s) => isStepCompleted(s))
+    ) {
+      const lastStep = [...steps].sort((a, b) => a.sequence - b.sequence)[steps.length - 1];
+      setTrackingDialog({ type: "reopenJob", stepId: lastStep.id });
+      return;
+    }
     await persistJobOrder({ Status: newStatus }, { successMessage: "Job status updated" });
   };
 
@@ -681,9 +709,32 @@ export function JobDetailPage() {
     }
   };
 
+  const handlePrintJob = async () => {
+    const current = jobRef.current;
+    if (!current?.JobOrderID || printing) return;
+    setActionError("");
+    setPrinting(true);
+    try {
+      const label = formatJobNumber(
+        current.JobOrderNumber || current.JobNumber || current.JobOrderID
+      ).replace("#", "");
+      await PdfService.printJobOrder(current.JobOrderID, label);
+    } catch (err: unknown) {
+      setActionError((err as { message?: string })?.message || "Failed to generate job order PDF");
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const requestReopenStep = (stepId: number) => {
+    setTrackingDialog({ type: "reopen", stepId });
+  };
+
   const confirmReopenStep = async () => {
     const stepId =
-      trackingDialog?.type === "reopen" ? trackingDialog.stepId : undefined;
+      trackingDialog?.type === "reopen" || trackingDialog?.type === "reopenJob"
+        ? trackingDialog.stepId
+        : undefined;
     setTrackingDialog(null);
     if (stepId == null || saving) return;
 
@@ -905,6 +956,28 @@ export function JobDetailPage() {
           </div>
         </div>
 
+        <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          className="inline-flex min-h-tap w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          disabled={printing}
+          onClick={() => void handlePrintJob()}
+          aria-label="Print job order"
+          title="Print / save job order as PDF"
+        >
+          {printing ? (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M7 9V3h10v6M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M7 14h10v7H7z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </button>
         <div className="relative shrink-0">
           <select
             className={`min-h-tap appearance-none rounded-xl border bg-white py-2 pl-3 pr-8 text-sm font-bold shadow-sm outline-none dark:bg-slate-800 ${isActiveJobStatus(job.Status)
@@ -931,6 +1004,7 @@ export function JobDetailPage() {
               <path d="M6 15l6 6 6-6" />
             </svg>
           </span>
+        </div>
         </div>
       </header>
 
@@ -1393,18 +1467,34 @@ export function JobDetailPage() {
                     </svg>
                     Resume
                   </button>
-                  <button
-                    type="button"
-                    className="min-h-tap bg-black text-white font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-                    disabled={saving || isStepCompleted(selectedStep)}
-                    onClick={() => requestCompleteStep(selectedStep.id)}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M9 12l2 2 4-4" />
-                    </svg>
-                    Complete
-                  </button>
+                  {isStepCompleted(selectedStep) ? (
+                    <button
+                      type="button"
+                      className="min-h-tap bg-amber-500 text-white font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-amber-600 transition-colors disabled:opacity-50"
+                      disabled={saving}
+                      onClick={() => requestReopenStep(selectedStep.id)}
+                      title="Reopen completed operation"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 12a9 9 0 1 0 3-6.7" />
+                        <path d="M3 4v5h5" />
+                      </svg>
+                      Reopen
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="min-h-tap bg-black text-white font-extrabold text-base py-3.5 px-4 rounded-2xl flex items-center justify-center gap-2 shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                      disabled={saving}
+                      onClick={() => requestCompleteStep(selectedStep.id)}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M9 12l2 2 4-4" />
+                      </svg>
+                      Complete
+                    </button>
+                  )}
                 </div>
 
                 {selectedStep.pauseReason && !isStepCompleted(selectedStep) && (
@@ -1864,6 +1954,41 @@ export function JobDetailPage() {
               </>
             )}
 
+            {trackingDialog.type === "reopenJob" && (() => {
+              const reopenStep = stepsRef.current.find((s) => s.id === trackingDialog.stepId);
+              return (
+                <>
+                  <h4 className="mb-1 text-lg font-bold text-slate-900 dark:text-white">Reopen job?</h4>
+                  <p className="mb-4 text-sm text-slate-500 dark:text-slate-300">
+                    A job stays Completed while all operations are complete. Reopening sets
+                    {reopenStep
+                      ? ` Step ${reopenStep.sequence}: ${reopenStep.processName} `
+                      : " the last operation "}
+                    back to pending and moves the job to In Progress. Finished goods still on hand
+                    for this job are reversed from inventory.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={saving}
+                      onClick={closeTrackingDialog}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={saving}
+                      onClick={() => void confirmReopenStep()}
+                    >
+                      Reopen job
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+
             {trackingDialog.type === "stepNote" && (() => {
               const dialogStep = stepsRef.current.find(
                 (s) => s.id === trackingDialog.stepId
@@ -1887,9 +2012,7 @@ export function JobDetailPage() {
                           <div className="font-semibold text-slate-800 dark:text-slate-100">{n.text}</div>
                           <div className="mt-1 text-[0.7rem] font-semibold text-slate-400 dark:text-slate-300">
                             {n.createdBy}
-                            {n.createdAt
-                              ? ` · ${new Date(n.createdAt).toLocaleString()}`
-                              : ""}
+                            {n.createdAt ? ` · ${formatTenantDateTime(n.createdAt)}` : ""}
                           </div>
                         </div>
                       ))}

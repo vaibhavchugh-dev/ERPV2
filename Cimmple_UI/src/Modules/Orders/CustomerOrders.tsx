@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import { OrderService, OrderMaster } from "../../Common/Services/OrderService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
+import CustomerQuotationSlideout from "../Quotations/CustomerQuotationSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
@@ -20,6 +21,8 @@ const CustomerOrders: React.FC = () => {
   const [orders, setOrders] = useState<OrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
+  const [showQuotationSlideout, setShowQuotationSlideout] = useState(false);
+  const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [seedSearch, setSeedSearch] = useState("");
@@ -176,8 +179,10 @@ const CustomerOrders: React.FC = () => {
               className="link-button"
               onClick={(e) => {
                 e.stopPropagation();
-                history.push(`/quotations/customer?open=${quotationId}`);
+                setSelectedQuotationId(quotationId);
+                setShowQuotationSlideout(true);
               }}
+              title="Click to view quotation"
               style={{
                 background: "none",
                 border: "none",
@@ -256,7 +261,7 @@ const CustomerOrders: React.FC = () => {
         matchRowSearch={(row, q) => {
           const order = row as OrderMaster;
           const num = Number(order.orderNumber ?? 0);
-          if (matchDisplayDocNumber(q, num, ["co#", "co", "cq#", "cq"])) return true;
+          if (matchDisplayDocNumber(q, num, ["co#", "co"])) return true;
           if (matchAmountValue(q, order.totalAmount)) return true;
           if (matchDateValue(q, order.orderDate)) return true;
           const hay = [order.customerName, order.customerCode, order.quotationNo, order.status]
@@ -273,6 +278,20 @@ const CustomerOrders: React.FC = () => {
           orderId={selectedOrderId}
           onClose={handleCloseSlideout}
           onSaved={(id) => setSelectedOrderId(id)}
+        />
+      )}
+
+      {showQuotationSlideout && (
+        <CustomerQuotationSlideout
+          quotationId={selectedQuotationId}
+          onClose={(refreshList?: boolean) => {
+            setShowQuotationSlideout(false);
+            setSelectedQuotationId(0);
+            if (refreshList) {
+              loadOrders();
+            }
+          }}
+          onSaved={(id) => setSelectedQuotationId(id)}
         />
       )}
     </div>
