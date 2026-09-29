@@ -1,6 +1,7 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AuthService } from "../../services/authService";
+import { PdfService } from "../../services/pdfService";
 import {
   JobOrderListItem,
   JobOrderRoutingStep,
@@ -25,11 +26,74 @@ import {
   RootCauseCategory,
 } from "../../services/qualityService";
 import { formatJobNumber } from "../../utils/formatJobNumber";
+import { prepareImageForUpload } from "../../utils/prepareImageForUpload";
 import { NcrStoredPhotoImg } from "./NcrStoredPhotoImg";
 
 const MAX_PHOTOS = 10;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const PHOTO_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"];
+const PHOTO_EXT_RE = /\.(jpe?g|png|gif|webp|bmp)$/i;
+const OK_MSG_TIMEOUT_MS = 4000;
+
+function PendingPhotoThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-dashed border-slate-300 dark:border-slate-600">
+      {url && <img src={url} alt={file.name} className="h-24 w-full object-cover" />}
+      <span className="absolute bottom-1 left-1 rounded-full bg-slate-900/75 px-2 py-0.5 text-[10px] font-bold text-white">
+        Pending
+      </span>
+      <button
+        type="button"
+        aria-label={`Remove ${file.name}`}
+        className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-white"
+        onClick={onRemove}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function PageBanner({
+  tone,
+  message,
+  onDismiss,
+}: {
+  tone: "error" | "ok" | "warn";
+  message: string;
+  onDismiss: () => void;
+}) {
+  const toneClass =
+    tone === "error"
+      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/90 dark:text-red-200"
+      : tone === "ok"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200"
+        : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/90 dark:text-amber-200";
+  return (
+    <div
+      className={`pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold shadow-[0_8px_24px_rgba(15,23,42,0.14)] ${toneClass}`}
+      role={tone === "error" ? "alert" : "status"}
+      aria-live={tone === "error" ? "assertive" : "polite"}
+    >
+      <span className="min-w-0 flex-1 break-words">{message}</span>
+      <button
+        type="button"
+        aria-label="Dismiss message"
+        className="-mr-1 -mt-0.5 shrink-0 rounded-full px-1.5 text-lg leading-none opacity-70 hover:opacity-100"
+        onClick={onDismiss}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 const STATUS_OPTIONS: { value: NCRStatus; label: string }[] = [
   { value: "Open", label: "Open" },
@@ -64,6 +128,16 @@ export function NcrFormPage() {
   const [okMsg, setOkMsg] = useState("");
   const [photoWarn, setPhotoWarn] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!okMsg) return;
+    const t = window.setTimeout(() => setOkMsg(""), OK_MSG_TIMEOUT_MS);
+    return () => window.clearTimeout(t);
+  }, [okMsg]);
 
   const fromJobOrderId = Number(searchParams.get("jobOrderId") || 0);
   const fromStepId = Number(searchParams.get("stepId") || 0);
@@ -290,30 +364,44 @@ export function NcrFormPage() {
     }));
   };
 
-  const handleFileChange = (files: FileList | null) => {
+  const photoCount = (ncr.photos?.length || 0) + pendingFiles.length;
+  const photoLimitReached = photoCount >= MAX_PHOTOS;
+
+  const handleFileChange = async (input: HTMLInputElement) => {
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = "";
+    if (!files.length) return;
+
     setPhotoWarn("");
-    if (!files?.length) {
-      setPendingFiles([]);
-      return;
+    setPreparingPhotos(true);
+    try {
+      const next: File[] = [];
+      let warn = "";
+      for (const raw of files) {
+        if (!raw.type.startsWith("image/") && !PHOTO_EXT_RE.test(raw.name)) {
+          warn = "Only image files are allowed (JPEG, PNG, GIF, WebP, BMP)";
+          continue;
+        }
+        if (photoCount + next.length >= MAX_PHOTOS) {
+          warn = `Maximum ${MAX_PHOTOS} photos per NCR`;
+          break;
+        }
+        const file = await prepareImageForUpload(raw);
+        if (!PHOTO_TYPES.includes(file.type) && !PHOTO_EXT_RE.test(file.name)) {
+          warn = `"${raw.name}" is not a supported format (JPEG, PNG, GIF, WebP, BMP)`;
+          continue;
+        }
+        if (file.size > MAX_PHOTO_BYTES) {
+          warn = "Each photo must be 8MB or smaller";
+          continue;
+        }
+        next.push(file);
+      }
+      if (warn) setPhotoWarn(warn);
+      if (next.length) setPendingFiles((prev) => [...prev, ...next]);
+    } finally {
+      setPreparingPhotos(false);
     }
-    const existing = ncr.photos?.length || 0;
-    const next: File[] = [];
-    for (const file of Array.from(files)) {
-      if (!PHOTO_TYPES.includes(file.type) && !file.type.startsWith("image/")) {
-        setPhotoWarn("Only image files are allowed (JPEG, PNG, GIF, WebP, BMP)");
-        continue;
-      }
-      if (file.size > MAX_PHOTO_BYTES) {
-        setPhotoWarn("Each photo must be 8MB or smaller");
-        continue;
-      }
-      if (existing + next.length >= MAX_PHOTOS) {
-        setPhotoWarn(`Maximum ${MAX_PHOTOS} photos`);
-        break;
-      }
-      next.push(file);
-    }
-    setPendingFiles(next);
   };
 
   const linkNcrToJobStep = async (created: NonConformanceReport) => {
@@ -463,12 +551,8 @@ export function NcrFormPage() {
 
       if (pendingFiles.length && savedId > 0) {
         try {
-          const urls = await QualityService.uploadNCRPhotos(savedId, pendingFiles);
-          if (urls.length) {
-            const merged = [...(ncr.photos || []), ...urls];
-            await QualityService.updateNCR(savedId, { photos: merged });
-            setNcr((prev) => ({ ...prev, photos: merged }));
-          }
+          const savedPhotos = await QualityService.uploadNCRPhotos(savedId, pendingFiles);
+          setNcr((prev) => ({ ...prev, photos: savedPhotos }));
           setPendingFiles([]);
         } catch (photoErr: unknown) {
           const ax = photoErr as { message?: string };
@@ -493,6 +577,19 @@ export function NcrFormPage() {
       setError(ax?.message || "Error saving NCR");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrint = async () => {
+    if (ncrId <= 0 || printing) return;
+    setError("");
+    setPrinting(true);
+    try {
+      await PdfService.printNcr(ncrId, ncr.ncrNumber);
+    } catch (err: unknown) {
+      setError((err as { message?: string })?.message || "Failed to generate NCR PDF");
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -533,7 +630,7 @@ export function NcrFormPage() {
           />
         </svg>
       </Link>
-      <div>
+      <div className="min-w-0 flex-1">
         <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           {ncrId > 0 ? "Edit NCR" : "Create NCR"}
         </h1>
@@ -541,6 +638,25 @@ export function NcrFormPage() {
           {loading ? "Non-Conformance Report" : ncr.ncrNumber || "Non-Conformance Report"}
         </p>
       </div>
+      {ncrId > 0 && !loading && (
+        <button
+          type="button"
+          className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-white px-3.5 text-sm font-extrabold text-slate-700 shadow-sm hover:bg-slate-100 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          disabled={printing || saving}
+          onClick={() => void handlePrint()}
+          title="Print / save NCR as PDF"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M7 9V3h10v6M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M7 14h10v7H7z"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {printing ? "Preparing…" : "Print"}
+        </button>
+      )}
     </header>
   );
 
@@ -582,25 +698,22 @@ export function NcrFormPage() {
     <div className="pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
       {pageHeader}
 
-      {error && (
+      {(error || okMsg || photoWarn) && (
         <div
-          className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
-          role="alert"
+          className="pointer-events-none fixed inset-x-0 z-40 px-4"
+          style={{ top: "max(0.75rem, env(safe-area-inset-top))" }}
         >
-          {error}
-        </div>
-      )}
-      {okMsg && (
-        <div
-          className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
-          role="status"
-        >
-          {okMsg}
-        </div>
-      )}
-      {photoWarn && (
-        <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-          {photoWarn}
+          <div className="mx-auto flex max-w-[600px] flex-col gap-2">
+            {error && (
+              <PageBanner tone="error" message={error} onDismiss={() => setError("")} />
+            )}
+            {okMsg && (
+              <PageBanner tone="ok" message={okMsg} onDismiss={() => setOkMsg("")} />
+            )}
+            {photoWarn && (
+              <PageBanner tone="warn" message={photoWarn} onDismiss={() => setPhotoWarn("")} />
+            )}
+          </div>
         </div>
       )}
 
@@ -943,22 +1056,89 @@ export function NcrFormPage() {
               rows={2}
             />
           </label>
-          <label className="field">
-            <span className="mb-1 block text-sm font-bold text-slate-500">
-              Photo Attachments
-            </span>
-            <input
-              className="field-input py-2.5 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-1.5 file:text-xs file:font-bold file:text-white shadow-sm"
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/*"
-              multiple
-              capture="environment"
-              onChange={(e) => handleFileChange(e.target.files)}
-            />
-            {pendingFiles.length > 0 && (
-              <span className="mt-1 block text-xs font-semibold text-slate-500">
-                {pendingFiles.length} file(s) will upload on save
+          <div className="field">
+            <span className="mb-1 flex items-baseline justify-between text-sm font-bold text-slate-500">
+              <span>Photo Attachments</span>
+              <span className="text-xs font-semibold text-slate-400">
+                {photoCount}/{MAX_PHOTOS}
               </span>
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn min-h-12 gap-2 rounded-2xl border border-slate-200 bg-white text-sm font-extrabold text-slate-800 shadow-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                disabled={photoLimitReached || preparingPhotos}
+                onClick={() => cameraInputRef.current?.click()}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="12" cy="13.5" r="3.5" stroke="currentColor" strokeWidth="2" />
+                </svg>
+                Take photo
+              </button>
+              <button
+                type="button"
+                className="btn min-h-12 gap-2 rounded-2xl border border-slate-200 bg-white text-sm font-extrabold text-slate-800 shadow-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                disabled={photoLimitReached || preparingPhotos}
+                onClick={() => galleryInputRef.current?.click()}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="2" />
+                  <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" />
+                  <path
+                    d="m21 16-5-5-8 8"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Choose from device
+              </button>
+            </div>
+            <input
+              ref={cameraInputRef}
+              className="hidden"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={(e) => void handleFileChange(e.currentTarget)}
+            />
+            <input
+              ref={galleryInputRef}
+              className="hidden"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => void handleFileChange(e.currentTarget)}
+            />
+            {preparingPhotos && (
+              <span className="mt-2 block text-xs font-semibold text-slate-500">
+                Preparing photos…
+              </span>
+            )}
+            {pendingFiles.length > 0 && (
+              <>
+                <span className="mt-2 block text-xs font-semibold text-slate-500">
+                  {pendingFiles.length} photo(s) will upload on save
+                </span>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {pendingFiles.map((file, index) => (
+                    <PendingPhotoThumb
+                      key={`${file.name}-${file.lastModified}-${index}`}
+                      file={file}
+                      onRemove={() =>
+                        setPendingFiles((prev) => prev.filter((_, i) => i !== index))
+                      }
+                    />
+                  ))}
+                </div>
+              </>
             )}
             {(ncr.photos?.length || 0) > 0 && (
               <div className="mt-3 grid grid-cols-3 gap-2">
@@ -988,7 +1168,7 @@ export function NcrFormPage() {
                 ))}
               </div>
             )}
-          </label>
+          </div>
         </section>
 
         {/* Workflow */}

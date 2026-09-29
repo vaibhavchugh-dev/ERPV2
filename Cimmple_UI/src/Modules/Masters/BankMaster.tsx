@@ -5,6 +5,7 @@ import MasterListPage, { ColumnConfig } from "../../Common/Components/MasterList
 import BankMasterSlideout from "./BankMasterSlideout";
 import { BankService, BankMaster } from "../../Common/Services/BankService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { maskAccountNumber } from "../../Common/Hooks/useCompanyBanks";
 
 const BankMasterComponent: React.FC = () => {
   const location = useLocation();
@@ -36,6 +37,7 @@ const BankMasterComponent: React.FC = () => {
       label: "Account No",
       sortable: true,
       locked: true,
+      render: (value) => maskAccountNumber(value),
     },
     {
       key: "bankName",

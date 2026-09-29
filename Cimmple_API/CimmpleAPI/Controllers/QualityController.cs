@@ -24,6 +24,16 @@ namespace CimmpleAPI.Controllers
         {
             ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"
         };
+        private static readonly Dictionary<string, string> PhotoExtensionByContentType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["image/jpeg"] = ".jpg",
+            ["image/jpg"] = ".jpg",
+            ["image/pjpeg"] = ".jpg",
+            ["image/png"] = ".png",
+            ["image/gif"] = ".gif",
+            ["image/webp"] = ".webp",
+            ["image/bmp"] = ".bmp",
+        };
         private const long MaxPhotoSizeBytes = 8 * 1024 * 1024;
         private const int MaxPhotosPerNcr = 10;
 
@@ -1819,10 +1829,16 @@ END");
                         continue;
                     }
 
-                    var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+                    var extension = Path.GetExtension(file.FileName ?? "").ToLowerInvariant();
+                    if (!AllowedPhotoExtensions.Contains(extension)
+                        && PhotoExtensionByContentType.TryGetValue(file.ContentType ?? "", out var mappedExtension))
+                    {
+                        extension = mappedExtension;
+                    }
                     if (!AllowedPhotoExtensions.Contains(extension))
                     {
-                        return BadRequest(new { error = new { message = $"Invalid file type '{extension}'" } });
+                        var label = string.IsNullOrEmpty(extension) ? file.ContentType : extension;
+                        return BadRequest(new { error = new { message = $"Invalid file type '{label}'. Allowed: JPG, PNG, GIF, WebP, BMP." } });
                     }
 
                     if (file.Length > MaxPhotoSizeBytes)

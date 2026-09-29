@@ -157,6 +157,7 @@ export interface NCRFilters {
   jobOrderId?: number;
   dateFrom?: string;
   dateTo?: string;
+  locationId?: number;
   tenantId: number;
 }
 
@@ -274,11 +275,17 @@ export class QualityService {
 
   static async uploadNCRPhotos(ncrId: number, files: File[]): Promise<string[]> {
     const formData = new FormData();
-    files.forEach((file) => formData.append("files", file));
-    const response = await api.post(`/Quality/UploadNCRPhotos/${ncrId}`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return response.data.result || [];
+    files.forEach((file) => formData.append("files", file, file.name));
+    try {
+      const response = await api.post(`/Quality/UploadNCRPhotos/${ncrId}`, formData);
+      return response.data.result || [];
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 413) {
+        throw new Error("Photos are too large to upload. Try fewer photos at a time.");
+      }
+      throw new Error(getApiErrorMessage(error, "Failed to upload photos"));
+    }
   }
 }
 

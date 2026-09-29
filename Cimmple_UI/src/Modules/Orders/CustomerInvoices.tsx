@@ -11,6 +11,7 @@ import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CustomerOrderSlideout from "./CustomerOrderSlideout";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
+import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -845,22 +846,20 @@ const CustomerInvoices: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                 <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
-                <input
-                  type="date"
+                <DateFilterInput
                   className="filter-select"
                   style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
                   value={filters.startDate || ''}
-                  onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                  onCommit={(value) => setFilters(prev => ({ ...prev, startDate: value }))}
                 />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                 <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>To:</label>
-                <input
-                  type="date"
+                <DateFilterInput
                   className="filter-select"
                   style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
                   value={filters.endDate || ''}
-                  onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                  onCommit={(value) => setFilters(prev => ({ ...prev, endDate: value }))}
                 />
               </div>
               {(filters.startDate || filters.endDate) && (

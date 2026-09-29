@@ -10,6 +10,7 @@ import { validateEmail, validatePhone, validateZipCode } from "../../Common/Util
 import { Utils } from "../../Common/Utilis";
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { maskAccountNumber } from "../../Common/Hooks/useCompanyBanks";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
 interface BankMasterSlideoutProps {
@@ -57,6 +58,8 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string }>>([]);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+  const [showAccountNo, setShowAccountNo] = useState(false);
+  const isAccountNoMasked = bankId > 0 && !showAccountNo && !!formData.AccountNo;
 
   const loadCOAAccounts = async () => {
     try {
@@ -564,10 +567,32 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
                     name="AccountNo"
                     className={`form-input ${errors.AccountNo ? 'error' : ''}`}
                     placeholder="Enter account number"
-                    value={formData.AccountNo}
+                    value={isAccountNoMasked ? maskAccountNumber(formData.AccountNo) : formData.AccountNo}
                     onChange={(e) => handleInputChange("AccountNo", e.target.value)}
+                    readOnly={isAccountNoMasked}
+                    autoComplete="off"
                     required
                   />
+                  {bankId > 0 && formData.AccountNo && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAccountNo((v) => !v)}
+                      aria-label={showAccountNo ? "Hide account number" : "Show account number"}
+                      style={{
+                        border: "none",
+                        borderLeft: "1px solid #e5e7eb",
+                        background: "#f9fafb",
+                        color: "#6366f1",
+                        padding: "0 0.75rem",
+                        fontSize: "0.8125rem",
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        borderRadius: "0 0.5rem 0.5rem 0",
+                      }}
+                    >
+                      {showAccountNo ? "Hide" : "Show"}
+                    </button>
+                  )}
                 </div>
                 {errors.AccountNo && <span className="error-message">{errors.AccountNo}</span>}
               </div>

@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsSafe } from "../../Contexts/SettingsContext";
 import ColumnChooser from "../ColumnChooser";
+import ClientPagination from "../ClientPagination";
 import { useColumnChooser } from "../../Hooks/useColumnChooser";
+import { PAGE_SIZE_OPTIONS, useListPageSize } from "../../Hooks/useListPageSize";
 import { matchFieldValue } from "../../Utils/listSearchMatch";
 import "./MasterListPage.scss";
 
@@ -168,8 +170,11 @@ const MasterListPage = <T extends Record<string, any>>({
     [columns, visibleColumns]
   );
 
-  // Determine page size: prop override > settings > default (10)
-  const effectivePageSize = pageSize || (enablePagination ? settings?.defaultPageSize || 10 : data.length);
+  // Page size: user's footer choice > prop override > settings > default (10)
+  const [userPageSize, setUserPageSize] = useListPageSize(
+    pageSize || settings?.defaultPageSize || 10
+  );
+  const effectivePageSize = enablePagination ? userPageSize : data.length;
 
   useEffect(() => {
     setCurrentPage(1);
@@ -347,6 +352,8 @@ const MasterListPage = <T extends Record<string, any>>({
               value={filter.value}
               onChange={(e) => filter.onChange(e.target.value)}
               className="filter-select"
+              aria-label={filter.label}
+              title={filter.label}
             >
               {filter.options.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -420,31 +427,18 @@ const MasterListPage = <T extends Record<string, any>>({
       </div>
 
       {/* Pagination Controls */}
-      {enablePagination && totalPages > 1 && (
-        <div className="pagination-controls">
-          <div className="pagination-info">
-            Showing {startIndex + 1} to {Math.min(endIndex, sortedData.length)} of {sortedData.length} entries
-          </div>
-          <div className="pagination-buttons">
-            <button
-              className="pagination-btn"
-              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-            >
-              Previous
-            </button>
-            <span className="pagination-page-info">
-              Page {currentPage} of {totalPages}
-            </span>
-            <button
-              className="pagination-btn"
-              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-            >
-              Next
-            </button>
-          </div>
-        </div>
+      {enablePagination && (
+        <ClientPagination
+          startIndex={startIndex}
+          endIndex={Math.min(endIndex, sortedData.length)}
+          total={sortedData.length}
+          currentPage={currentPage}
+          totalPages={Math.max(1, totalPages)}
+          onPageChange={setCurrentPage}
+          showControls={sortedData.length > Math.min(effectivePageSize, PAGE_SIZE_OPTIONS[0])}
+          pageSize={effectivePageSize}
+          onPageSizeChange={setUserPageSize}
+        />
       )}
     </div>
   );

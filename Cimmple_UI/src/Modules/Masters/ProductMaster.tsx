@@ -196,6 +196,8 @@ const ProductMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedProducts, [searchTerm, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof ProductMaster) => {
@@ -363,6 +365,8 @@ const ProductMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (

@@ -174,6 +174,8 @@ const VendorMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedVendors, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof VendorMaster) => {
@@ -361,6 +363,8 @@ const VendorMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (

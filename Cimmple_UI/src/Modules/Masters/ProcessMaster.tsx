@@ -160,6 +160,8 @@ const ProcessMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedProcesses, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof ProcessMaster) => {
@@ -356,6 +358,8 @@ const ProcessMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (

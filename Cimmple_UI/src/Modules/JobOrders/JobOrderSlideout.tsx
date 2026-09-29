@@ -64,7 +64,7 @@ import {
   InventoryReservation,
   RawMaterial,
 } from "../../Common/Services/InventoryService";
-import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { formatDateOnlyFromApi, formatDateTime } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -4488,7 +4488,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                           <div className="jo-step-note-text">{n.text}</div>
                           <div className="jo-step-note-meta">
                             {n.createdBy} ·{" "}
-                            {n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
+                            {n.createdAt ? formatDateTime(n.createdAt) : ""}
                           </div>
                         </div>
                       ))}

@@ -7,6 +7,7 @@ import MasterListPage, {
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import PayrollJournalsHelp from "./PayrollJournalsHelp";
+import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./JournalEntries.scss";
 
@@ -495,13 +496,12 @@ const PayrollJournalLinks: React.FC = () => {
               >
                 From
               </label>
-              <input
+              <DateFilterInput
                 id="payroll-from"
-                type="date"
                 className="filter-select"
                 style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
                 value={filterStart}
-                onChange={(e) => setFilterStart(e.target.value)}
+                onCommit={setFilterStart}
               />
             </div>
             <div
@@ -517,13 +517,12 @@ const PayrollJournalLinks: React.FC = () => {
               >
                 To
               </label>
-              <input
+              <DateFilterInput
                 id="payroll-to"
-                type="date"
                 className="filter-select"
                 style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
                 value={filterEnd}
-                onChange={(e) => setFilterEnd(e.target.value)}
+                onCommit={setFilterEnd}
               />
             </div>
           </div>

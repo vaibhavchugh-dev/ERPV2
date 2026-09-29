@@ -496,6 +496,8 @@ const RawMaterialMaster: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(filteredMaterials, [searchTerm, showInactive]);
 
   const parentOptions = useMemo(() => {
@@ -1242,6 +1244,8 @@ const RawMaterialMaster: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
     </div>
   );

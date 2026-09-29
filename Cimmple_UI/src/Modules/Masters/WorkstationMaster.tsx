@@ -164,6 +164,8 @@ const WorkstationMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedWorkstations, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof WorkstationMaster) => {
@@ -341,6 +343,8 @@ const WorkstationMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (

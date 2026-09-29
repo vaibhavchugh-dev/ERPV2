@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../../auth/AuthContext";
 import { MessagesButton } from "../../components/MessagesButton";
 import { NotificationBell } from "../../components/NotificationBell";
+import { WorkingSiteSelect } from "../../components/WorkingSiteSelect";
 import { AuthService } from "../../services/authService";
 import {
   formatNcrStatus,
@@ -88,11 +90,8 @@ function PillGroup({
             key={opt.value}
             type="button"
             onClick={() => onChange(opt.value)}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition ${
-              value === opt.value
-                ? "bg-slate-900 text-white"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-            }`}
+            aria-pressed={value === opt.value}
+            className={`filter-chip ${value === opt.value ? "filter-chip-on" : "filter-chip-off"}`}
           >
             {opt.label}
           </button>
@@ -192,7 +191,23 @@ function getStatusBadgeStyle(stat: string | undefined) {
 }
 
 /* ─── Main page ──────────────────────────────────────────────── */
+/** Same rules as API GetNCRStats, applied to the site-filtered list. */
+function computeNcrStats(list: NonConformanceReport[]) {
+  const now = Date.now();
+  return {
+    totalNCRs: list.length,
+    openNCRs: list.filter((n) => n.status === "Open" || n.status === "Under_Investigation").length,
+    criticalNCRs: list.filter((n) => n.severity === "Critical").length,
+    overdueNCRs: list.filter((n) => {
+      if (!n.dueDate || n.status === "Closed") return false;
+      const due = new Date(n.dueDate).getTime();
+      return !Number.isNaN(due) && due < now;
+    }).length,
+  };
+}
+
 export function QualityListPage() {
+  const { locationId } = useAuth();
   const [ncrs, setNcrs] = useState<NonConformanceReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -210,19 +225,19 @@ export function QualityListPage() {
     setError("");
     try {
       const tenantId = AuthService.getTenantId();
-      const [list, statsResult] = await Promise.all([
-        QualityService.getNCRs({ tenantId }),
-        QualityService.getNCRStats(tenantId),
-      ]);
+      const list = await QualityService.getNCRs({
+        tenantId,
+        ...(locationId > 0 ? { locationId } : {}),
+      });
       setNcrs(list);
-      setStats(statsResult);
+      setStats(computeNcrStats(list));
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { error?: { message?: string }; message?: string } }; message?: string };
       setError(ax?.response?.data?.error?.message || ax?.response?.data?.message || ax?.message || "Failed to load NCRs");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [locationId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -264,7 +279,7 @@ export function QualityListPage() {
           </button>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Quality</h1>
-            <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">Cimmple Shop Floor</p>
+            <WorkingSiteSelect className="mt-0.5" />
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -299,7 +314,7 @@ export function QualityListPage() {
           <input
             type="text"
             placeholder="Search NCR, part, job..."
-            className="w-full h-11 rounded-2xl border-none bg-[#f4f6f8] pl-10 pr-4 text-xs font-semibold text-slate-700 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-400 dark:focus:ring-blue-600"
+            className="w-full h-11 rounded-2xl border-none bg-[#f0f3f7] pl-10 pr-4 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-400 dark:focus:ring-blue-600"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -307,7 +322,7 @@ export function QualityListPage() {
         <button
           type="button"
           onClick={() => setFilterOpen(true)}
-          className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#f4f6f8] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#f0f3f7] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="4" y1="6" x2="20" y2="6" />

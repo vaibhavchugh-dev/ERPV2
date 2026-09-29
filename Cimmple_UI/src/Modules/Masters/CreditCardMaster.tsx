@@ -166,6 +166,8 @@ const CreditCardMasterComponent: React.FC = () => {
     endIndex,
     total,
     showControls,
+    pageSize,
+    setPageSize,
   } = useClientPagination(sortedCreditCards, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof CreditCardMaster) => {
@@ -344,6 +346,8 @@ const CreditCardMasterComponent: React.FC = () => {
         totalPages={totalPages}
         onPageChange={setCurrentPage}
         showControls={showControls}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
       />
 
       {showSlideout && (
