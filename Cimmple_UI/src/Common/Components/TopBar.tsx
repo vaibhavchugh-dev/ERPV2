@@ -16,6 +16,7 @@ import {
   faEnvelope,
   faComments,
   faHeadset,
+  faQuestion,
 } from "@fortawesome/free-solid-svg-icons";
 import { User } from "../Services/User";
 import { GlobalSearchService, SearchResult, GlobalSearchResults } from "../Services/GlobalSearchService";
@@ -63,6 +64,7 @@ const TopBar: React.FC = () => {
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [supportInitialTicketId, setSupportInitialTicketId] = useState<number | null>(null);
+  const [supportInitialTab, setSupportInitialTab] = useState<"new" | "mine">("new");
   const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [openConversationId, setOpenConversationId] = useState<number | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -361,6 +363,12 @@ const TopBar: React.FC = () => {
       // ignore
     }
   }, []);
+
+  const openSupport = () => {
+    setSupportInitialTicketId(null);
+    setSupportInitialTab(supportUnreadCount > 0 ? "mine" : "new");
+    setSupportDialogOpen(true);
+  };
 
   const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     if (!isInAppNotificationsEnabled()) {
@@ -937,8 +945,7 @@ const TopBar: React.FC = () => {
                 className="dropdown-item"
                 onClick={() => {
                   setUserMenuOpen(false);
-                  setSupportInitialTicketId(null);
-                  setSupportDialogOpen(true);
+                  openSupport();
                 }}
               >
                 <FontAwesomeIcon icon={faHeadset} size="sm" />
@@ -976,13 +983,33 @@ const TopBar: React.FC = () => {
         }}
         onContactSupport={() => {
           setAccountModal(null);
-          setSupportDialogOpen(true);
+          openSupport();
         }}
       />
+      {!supportDialogOpen && (
+        <button
+          type="button"
+          className="support-fab"
+          onClick={openSupport}
+          title="Help & support"
+          aria-label={
+            supportUnreadCount > 0
+              ? `Help and support, ${supportUnreadCount} unread`
+              : "Help and support"
+          }
+        >
+          <FontAwesomeIcon icon={faQuestion} />
+          {supportUnreadCount > 0 && (
+            <span className="support-fab__badge">
+              {supportUnreadCount > 99 ? "99+" : supportUnreadCount}
+            </span>
+          )}
+        </button>
+      )}
       <ContactSupportDialog
         open={supportDialogOpen}
         initialTicketId={supportInitialTicketId}
-        initialTab={supportInitialTicketId ? "mine" : "new"}
+        initialTab={supportInitialTicketId ? "mine" : supportInitialTab}
         onClose={() => {
           setSupportDialogOpen(false);
           setSupportInitialTicketId(null);
