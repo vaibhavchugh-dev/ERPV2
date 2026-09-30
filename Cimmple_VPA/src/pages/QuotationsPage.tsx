@@ -14,6 +14,7 @@ import {
   QuotationService,
   VendorQuotationMaster,
 } from "../services/quotationService";
+import { matchAmount, matchDate, parseDateOnly } from "../utils/searchMatch";
 
 function formatQuotationNumber(number: number): string {
   const displayNumber = number < 1000 ? number + 999 : number;
@@ -23,8 +24,8 @@ function formatQuotationNumber(number: number): string {
 function formatDate(dateStr: string): string {
   if (!dateStr) return "—";
   try {
-    const d = new Date(dateStr);
-    if (!Number.isNaN(d.getTime())) {
+    const d = parseDateOnly(dateStr);
+    if (d) {
       return d.toLocaleDateString(undefined, {
         day: "2-digit",
         month: "short",
@@ -66,7 +67,7 @@ function statusBadgeStyle(status: string): { bg: string; text: string; label: st
 }
 
 export function QuotationsPage() {
-  const { vendorCode } = useAuth();
+  const { vendorCode, vendorName } = useAuth();
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -103,9 +104,17 @@ export function QuotationsPage() {
       const num = formatQuotationNumber(item.quotationNumber).toLowerCase();
       const type = (item.quotationType || "").toLowerCase();
       const status = (item.status || "").toLowerCase();
-      return num.includes(q) || type.includes(q) || status.includes(q);
+      return (
+        num.includes(q) ||
+        type.includes(q) ||
+        status.includes(q) ||
+        matchDate(q, item.orderDate, formatDate(item.orderDate)) ||
+        matchAmount(q, item.totalAmount)
+      );
     });
   }, [quotations, searchQuery]);
+
+  const displayVendorName = vendorName || quotations.find((item) => item.vendorName)?.vendorName || "";
 
   return (
     <div>
@@ -118,7 +127,13 @@ export function QuotationsPage() {
             Quotations
           </h1>
           <p className="text-sm font-semibold text-slate-600 dark:text-slate-200">
-            {vendorCode ? `Vendor ${vendorCode}` : "Vendor Portal"}
+            {displayVendorName
+              ? vendorCode
+                ? `${displayVendorName} (${vendorCode})`
+                : displayVendorName
+              : vendorCode
+                ? `Vendor ${vendorCode}`
+                : "Vendor Portal"}
           </p>
         </div>
       </header>
@@ -129,7 +144,7 @@ export function QuotationsPage() {
         </div>
         <input
           type="text"
-          placeholder="Search quotation, type, status..."
+          placeholder="Search quotation, date, amount, status..."
           className="w-full h-11 rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:placeholder:text-slate-400 dark:focus:ring-blue-900/50"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}

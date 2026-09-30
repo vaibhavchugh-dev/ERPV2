@@ -13,6 +13,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   userName: string;
   vendorCode: string;
+  vendorName: string;
   tenantId: number;
   login: (
     vendorCode: string,
@@ -30,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [userName, setUserName] = useState(AuthService.getUserName());
   const [vendorCode, setVendorCode] = useState(AuthService.getVendorCode());
+  const [vendorName, setVendorName] = useState(AuthService.getVendorName());
   const [tenantId, setTenantId] = useState(AuthService.getTenantId());
 
   const login = useCallback(
@@ -42,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .join(" ") || response.user.userName
       );
       setVendorCode(response.user.vendorCode || code);
+      setVendorName(response.user.vendorName || "");
       setTenantId(response.user.tenantId);
     },
     []
@@ -52,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
     setUserName("");
     setVendorCode("");
+    setVendorName("");
     setTenantId(0);
   }, []);
 
@@ -60,11 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       userName,
       vendorCode,
+      vendorName,
       tenantId,
       login,
       logout,
     }),
-    [isAuthenticated, userName, vendorCode, tenantId, login, logout]
+    [isAuthenticated, userName, vendorCode, vendorName, tenantId, login, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

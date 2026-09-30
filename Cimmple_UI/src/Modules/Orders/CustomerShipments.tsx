@@ -359,7 +359,7 @@ const CustomerShipments: React.FC = () => {
         loading={loading}
         enablePagination
         searchPlaceholder="Search by shipment #, order #, customer, or tracking #..."
-        searchFields={["shipmentNo", "orderNumber", "customerName", "customerCode", "trackingNumber", "courier"]}
+        searchFields={["shipmentNo", "orderNumber", "customerName", "customerCode", "trackingNumber", "courier", "shipmentDate"]}
         filters={[
           masterListFilter,
           {

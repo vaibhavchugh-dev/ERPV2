@@ -51,6 +51,8 @@ const statusLabel = (status: AttendanceStatus) => {
   switch (status) {
     case "in":
       return "In";
+    case "onBreak":
+      return "On break";
     case "completed":
       return "Completed";
     case "missingOut":
@@ -65,6 +67,7 @@ const statusLabel = (status: AttendanceStatus) => {
 const statusBadge = (status: AttendanceStatus) => {
   if (status === "completed") return "badge-success";
   if (status === "in") return "badge-success";
+  if (status === "onBreak") return "badge-warning";
   if (status === "missingOut") return "badge-danger";
   return "badge-secondary";
 };
@@ -289,6 +292,27 @@ const AttendanceRegister: React.FC = () => {
       </div>
 
       <div className="page-filters">
+        <div className="search-wrapper">
+          <svg
+            className="search-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+          </svg>
+          <input
+            type="text"
+            placeholder="Search employees..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="search-input"
+          />
+        </div>
         <div className="filter-group">
           <select
             className="filter-select"
@@ -316,15 +340,6 @@ const AttendanceRegister: React.FC = () => {
             onChange={(e) => setToDate(e.target.value)}
           />
         </div>
-        <div className="search-wrapper">
-          <input
-            type="text"
-            placeholder="Search employees..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="search-input"
-          />
-        </div>
         <div className="filter-group">
           <select
             className="filter-select"
@@ -339,6 +354,8 @@ const AttendanceRegister: React.FC = () => {
               </option>
             ))}
           </select>
+        </div>
+        <div className="filter-group">
           <select
             className="filter-select"
             value={statusFilter}
@@ -346,10 +363,13 @@ const AttendanceRegister: React.FC = () => {
           >
             <option value="all">All statuses</option>
             <option value="in">In</option>
+            <option value="onBreak">On break</option>
             <option value="completed">Completed</option>
             <option value="missingOut">Missing out</option>
             <option value="noPunch">No punch</option>
           </select>
+        </div>
+        <div className="filter-group">
           <label className="checkbox-wrapper" style={{ margin: 0, whiteSpace: "nowrap" }}>
             <input
               type="checkbox"

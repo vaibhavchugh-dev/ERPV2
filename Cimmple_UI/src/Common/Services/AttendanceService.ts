@@ -1,6 +1,6 @@
 import Instense from "./Axios-config";
 
-export type AttendanceStatus = "in" | "completed" | "missingOut" | "noPunch";
+export type AttendanceStatus = "in" | "onBreak" | "completed" | "missingOut" | "noPunch";
 
 export interface AttendanceRegisterRow {
   workDate: string;

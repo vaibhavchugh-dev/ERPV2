@@ -266,32 +266,48 @@ export function QualityListPage() {
 
   return (
     <div>
-      <header className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             onClick={() => window.dispatchEvent(new CustomEvent("open-drawer"))}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
           </button>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Quality</h1>
             <WorkingSiteSelect className="mt-0.5" />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <MessagesButton />
           <NotificationBell />
           <button
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="inline-flex min-h-tap items-center rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
+            aria-label="Refresh"
+            title="Refresh"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
           >
-            Refresh
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={loading ? "animate-spin" : undefined}
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
           </button>
         </div>
       </header>

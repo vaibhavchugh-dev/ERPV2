@@ -30,6 +30,39 @@
   margin: 0 auto;
 }
 
+.vendor-search {
+  position: relative;
+  max-width: 420px;
+  margin-bottom: 1.25rem;
+}
+
+.vendor-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 0.875rem;
+  transform: translateY(-50%);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+.vendor-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 2.5rem;
+  padding: 0 0.875rem 0 2.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  background: white;
+  color: #1f2937;
+  font-size: 0.875rem;
+
+  &:focus {
+    outline: none;
+    border-color: #0a7cff;
+    box-shadow: 0 0 0 3px rgba(10, 124, 255, 0.15);
+  }
+}
+
 .vendor-quotation-card {
   background: white;
   border-radius: 0.5rem;

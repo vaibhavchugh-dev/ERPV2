@@ -95,6 +95,11 @@ export const dateSearchHaystack = (value: unknown): string => {
     m.format("MMM D, YYYY"),
     m.format("MMM DD, YYYY"),
     m.format("MMMM D, YYYY"),
+    m.format("MMM YYYY"),
+    m.format("MMMM YYYY"),
+    m.format("MM/YYYY"),
+    m.format("M/YYYY"),
+    m.format("MM-YYYY"),
   ]
     .join(" | ")
     .toLowerCase();

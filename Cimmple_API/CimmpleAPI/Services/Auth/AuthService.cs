@@ -140,6 +140,7 @@ namespace CimmpleAPI.Services.Auth
             {
                 result.response.User.VendorId = vendor.vendor_id;
                 result.response.User.VendorCode = vendor.vendorcode;
+                result.response.User.VendorName = vendor.company_name;
                 vendor.last_login_date = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
             }
@@ -621,14 +622,17 @@ namespace CimmpleAPI.Services.Auth
             }
 
             string? vendorCode = null;
+            string? vendorName = null;
             if (user.VendorId.HasValue && user.VendorId.Value > 0)
             {
                 try
                 {
-                    vendorCode = await _db.VendorMaster
+                    var vendorInfo = await _db.VendorMaster
                         .Where(v => v.vendor_id == user.VendorId.Value && v.Tenantid == user.TenantID)
-                        .Select(v => v.vendorcode)
+                        .Select(v => new { v.vendorcode, v.company_name })
                         .FirstOrDefaultAsync();
+                    vendorCode = vendorInfo?.vendorcode;
+                    vendorName = vendorInfo?.company_name;
                 }
                 catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
                 {
@@ -653,6 +657,7 @@ namespace CimmpleAPI.Services.Auth
                     || string.Equals(roleResetPwd, "Yes", StringComparison.OrdinalIgnoreCase),
                 VendorId = user.VendorId,
                 VendorCode = vendorCode,
+                VendorName = vendorName,
                 PortalType = portalType,
                 Locations = locationClaims,
                 Permissions = permissions
