@@ -405,6 +405,7 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
                     return;
                   }
                   if (e.key === "Escape") {
+                    e.preventDefault();
                     setMentionOpen(false);
                     return;
                   }

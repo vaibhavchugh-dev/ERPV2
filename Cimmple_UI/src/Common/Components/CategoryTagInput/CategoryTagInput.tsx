@@ -191,6 +191,7 @@ const CategoryTagInput: React.FC<CategoryTagInputProps> = ({
                       }
                       onKeyDown={(e) => {
                         if (e.key === "Escape") {
+                          e.preventDefault();
                           setPicker(null);
                         } else if (e.key === "Enter") {
                           e.preventDefault();

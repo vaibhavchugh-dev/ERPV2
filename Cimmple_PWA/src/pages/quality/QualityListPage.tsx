@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { MessagesButton } from "../../components/MessagesButton";
 import { NotificationBell } from "../../components/NotificationBell";
+import { RefreshButton } from "../../components/RefreshButton";
 import { WorkingSiteSelect } from "../../components/WorkingSiteSelect";
 import { AuthService } from "../../services/authService";
 import {
@@ -285,30 +286,7 @@ export function QualityListPage() {
         <div className="flex shrink-0 items-center gap-2">
           <MessagesButton />
           <NotificationBell />
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            aria-label="Refresh"
-            title="Refresh"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={loading ? "animate-spin" : undefined}
-              aria-hidden="true"
-            >
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
-          </button>
+          <RefreshButton onRefresh={() => void load()} loading={loading} />
         </div>
       </header>
 

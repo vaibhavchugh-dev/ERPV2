@@ -2300,7 +2300,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
       setStepMenu(null);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setStepMenu(null);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setStepMenu(null);
+      }
     };
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKeyDown);

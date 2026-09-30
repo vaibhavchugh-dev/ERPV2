@@ -41,7 +41,9 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !loading) onClose();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      if (!loading) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

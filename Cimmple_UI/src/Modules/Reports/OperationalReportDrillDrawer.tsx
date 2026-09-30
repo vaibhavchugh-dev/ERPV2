@@ -91,7 +91,10 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
   useEffect(() => {
     if (!meta) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;

@@ -28,6 +28,7 @@ import { SupportTicketService } from "../Services/SupportTicketService";
 import { isInAppNotificationsEnabled } from "../Utils/settingsRuntime";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import { shouldShowWorkingSiteSwitcher } from "../Utils/workingSiteVisibility";
+import { isAnyOverlayOpen } from "../Utils/escapeToClose";
 import SearchResultsDropdown from "./SearchResultsDropdown";
 import UserAccountModals, { UserAccountModalKind } from "./UserAccountModals";
 import NotifyUserDialog from "./NotifyUserDialog";
@@ -157,15 +158,26 @@ const TopBar: React.FC = () => {
     };
   }, [searchQuery, performSearch]);
 
+  const showSearchResultsRef = useRef(showSearchResults);
+  useEffect(() => {
+    showSearchResultsRef.current = showSearchResults;
+  }, [showSearchResults]);
+
   // Keyboard shortcut (Ctrl+K or Cmd+K)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+      const isK = event.key?.toLowerCase() === 'k' || event.code === 'KeyK';
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && isK) {
         event.preventDefault();
+        if (isAnyOverlayOpen()) return;
         searchInputRef.current?.focus();
         setShowSearchResults(true);
       }
       if (event.key === 'Escape') {
+        const searchActive =
+          document.activeElement === searchInputRef.current || showSearchResultsRef.current;
+        if (!searchActive) return;
+        event.preventDefault();
         setShowSearchResults(false);
         setSearchQuery('');
         searchInputRef.current?.blur();
