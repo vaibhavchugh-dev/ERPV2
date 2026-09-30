@@ -325,6 +325,39 @@
   }
 }
 
+.admin-unlock-input-wrap {
+  position: relative;
+
+  .admin-unlock-input {
+    padding-right: 46px;
+  }
+}
+
+.admin-unlock-eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(237, 241, 255, 0.6);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: #ffffff;
+    background: rgba(123, 138, 245, 0.16);
+    outline: none;
+  }
+}
+
 .admin-unlock-submit {
   width: 100%;
   max-width: 100%;

@@ -28,6 +28,7 @@ export interface AuthUser {
   mustChangePassword: boolean;
   vendorId?: number;
   vendorCode?: string;
+  vendorName?: string;
   portalType: string;
   locations: AuthLocation[];
   permissions: AuthPermission[];
@@ -67,6 +68,7 @@ export class AuthService {
       mustChangePassword: user.mustChangePassword,
       vendorId: user.vendorId || null,
       vendorCode: user.vendorCode || "",
+      vendorName: user.vendorName || "",
       portalType: user.portalType || portal,
       sessionTimeoutMinutes: response.sessionTimeoutMinutes,
       expiresAtUtc: response.expiresAtUtc,

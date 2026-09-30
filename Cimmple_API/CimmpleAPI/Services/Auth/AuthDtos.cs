@@ -72,6 +72,7 @@ namespace CimmpleAPI.Services.Auth
         public bool MustChangePassword { get; set; }
         public int? VendorId { get; set; }
         public string? VendorCode { get; set; }
+        public string? VendorName { get; set; }
         public string PortalType { get; set; } = "erp"; // erp | vendor
         public string? TimeZone { get; set; }
         public List<LocationClaimDto> Locations { get; set; } = new();

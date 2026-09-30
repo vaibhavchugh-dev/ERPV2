@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
 import { QuotationService, VendorQuotationMaster } from "../Common/Services/QuotationService";
+import { matchAmountValue, matchDateValue } from "../Common/Utils/listSearchMatch";
 import VendorQuotationResponse from "./VendorQuotationResponse";
 import "./VendorPortal.scss";
 
@@ -10,12 +11,15 @@ const VendorDashboard: React.FC = () => {
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
   const [showResponseView, setShowResponseView] = useState(false);
   const [vendorCode, setVendorCode] = useState<string>("");
+  const [vendorName, setVendorName] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   useEffect(() => {
     const vendorStorage = localStorage.getItem("vendorStorage");
     if (vendorStorage) {
       const storage = JSON.parse(vendorStorage);
       setVendorCode(storage.vendorCode || "");
+      setVendorName(storage.vendorName || "");
     }
     loadQuotations();
   }, []);
@@ -108,6 +112,30 @@ const VendorDashboard: React.FC = () => {
     return <span className="badge badge-draft">{status}</span>;
   };
 
+  const visibleQuotations = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return quotations;
+    return quotations.filter((quotation) => {
+      const text = [
+        formatQuotationNumber(quotation.quotationNumber),
+        quotation.quotationType === "Service" ? "Service" : "Material",
+        quotation.status || "Draft",
+        formatDate(quotation.orderDate),
+      ]
+        .join(" | ")
+        .toLowerCase();
+      return (
+        text.includes(q) ||
+        matchDateValue(q, quotation.orderDate) ||
+        matchAmountValue(q, quotation.totalAmount)
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotations, searchQuery]);
+
+  const displayVendorName =
+    vendorName || quotations.find((quotation) => quotation.vendorName)?.vendorName || "";
+
   const handleQuotationClick = (quotationId: number) => {
     console.log("Dashboard: Clicking on quotation ID:", quotationId);
     setSelectedQuotationId(quotationId);
@@ -142,7 +170,9 @@ const VendorDashboard: React.FC = () => {
     <>
       <div className="vendor-portal-container">
         <div className="vendor-header">
-          <h1>Vendor Portal - {vendorCode}</h1>
+          <h1>
+            Vendor Portal - {displayVendorName ? `${displayVendorName} (${vendorCode})` : vendorCode}
+          </h1>
           <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "0.5rem 1rem", borderRadius: "0.25rem", cursor: "pointer" }}>
             Logout
           </button>
@@ -156,16 +186,42 @@ const VendorDashboard: React.FC = () => {
             </p>
           </div>
 
-          {quotations.length === 0 ? (
+          {quotations.length > 0 && (
+            <div className="vendor-search">
+              <svg
+                className="vendor-search-icon"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.35-4.35"></path>
+              </svg>
+              <input
+                type="text"
+                className="vendor-search-input"
+                placeholder="Search quotation, date, amount, status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          )}
+
+          {visibleQuotations.length === 0 ? (
             <div style={{ textAlign: "center", padding: "3rem", backgroundColor: "white", borderRadius: "0.5rem" }}>
               <p style={{ color: "#6b7280", fontSize: "1.125rem" }}>No quotations found</p>
               <p style={{ color: "#9ca3af", fontSize: "0.875rem" }}>
-                Quotations sent to you will appear here
+                {quotations.length > 0
+                  ? "No quotations match your search"
+                  : "Quotations sent to you will appear here"}
               </p>
             </div>
           ) : (
             <div>
-              {quotations.map((quotation) => (
+              {visibleQuotations.map((quotation) => (
                 <div
                   key={quotation.orderID}
                   className="vendor-quotation-card"

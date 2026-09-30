@@ -22,17 +22,17 @@ export function WorkingSiteSelect({
     const only = locations[0];
     if (!only) return null;
     return (
-      <div className={`text-xs font-semibold text-slate-500 dark:text-slate-300 ${className}`}>
+      <div className={`truncate text-xs font-semibold text-slate-500 dark:text-slate-300 ${className}`}>
         {only.name || only.code || `Site ${only.locationId}`}
       </div>
     );
   }
 
   return (
-    <label className={`flex items-center gap-2 ${className}`}>
+    <label className={`flex min-w-0 items-center gap-2 ${className}`}>
       <span className="sr-only">Working site</span>
       <select
-        className="h-9 max-w-[11rem] rounded-xl border-none bg-[#f0f3f7] px-3 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100"
+        className="h-9 min-w-0 max-w-[11rem] rounded-xl border-none bg-[#f0f3f7] px-3 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100"
         value={locationId > 0 ? String(locationId) : "0"}
         onChange={(e) => {
           const next = Number(e.target.value) || 0;

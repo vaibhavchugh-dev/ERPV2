@@ -12,6 +12,7 @@ export interface AuthUser {
   mustChangePassword: boolean;
   vendorId?: number;
   vendorCode?: string;
+  vendorName?: string;
   portalType: string;
 }
 
@@ -34,6 +35,7 @@ export interface VendorSessionStorage {
   user_UniqueID: string;
   vendorId: number | null;
   vendorCode: string;
+  vendorName?: string;
   portalType: string;
   sessionTimeoutMinutes: number;
   expiresAtUtc: string;
@@ -49,6 +51,9 @@ export class AuthService {
     const displayName =
       [user.firstName, user.lastName].filter(Boolean).join(" ") || user.userName;
     const vendorCode = user.vendorCode || vendorCodeFallback || "";
+    const previous = AuthService.getStorage();
+    const vendorName =
+      user.vendorName || (previous?.vendorCode === vendorCode ? previous?.vendorName : "") || "";
 
     const storage: VendorSessionStorage = {
       userName: displayName,
@@ -61,6 +66,7 @@ export class AuthService {
       user_UniqueID: String(user.userId),
       vendorId: user.vendorId || null,
       vendorCode,
+      vendorName,
       portalType: user.portalType || "vendor",
       sessionTimeoutMinutes: response.sessionTimeoutMinutes,
       expiresAtUtc: response.expiresAtUtc,
@@ -114,5 +120,9 @@ export class AuthService {
 
   public static getVendorCode(): string {
     return AuthService.getStorage()?.vendorCode || "";
+  }
+
+  public static getVendorName(): string {
+    return AuthService.getStorage()?.vendorName || "";
   }
 }
