@@ -282,6 +282,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
             e.preventDefault();
             insertMention(filteredUsers[highlightIndex]);
           } else if (e.key === "Escape") {
+            e.preventDefault();
             setMentionOpen(false);
           }
         }}

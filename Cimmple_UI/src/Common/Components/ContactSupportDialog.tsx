@@ -98,7 +98,10 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     const prevBodyOverflow = document.body.style.overflow;

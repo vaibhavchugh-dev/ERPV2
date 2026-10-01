@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
+import { RefreshButton } from "../components/RefreshButton";
 import { WorkingSiteSelect } from "../components/WorkingSiteSelect";
 import {
   JobOrderListItem,
@@ -297,25 +298,27 @@ export function JobsPage() {
 
   return (
     <div>
-      <header className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             onClick={() => window.dispatchEvent(new CustomEvent("open-drawer"))}
+            aria-label="Open menu"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
           </button>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-tight dark:text-white">Jobs</h1>
             <WorkingSiteSelect className="mt-0.5" />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <MessagesButton />
           <NotificationBell />
+          <RefreshButton onRefresh={() => void loadJobs()} loading={loading} />
         </div>
       </header>
 

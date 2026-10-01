@@ -35,6 +35,7 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         if (showForm) {
           setShowForm(false);
           setEditingRole(null);

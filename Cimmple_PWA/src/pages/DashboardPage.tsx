@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { BarcodeScannerSheet } from "../components/BarcodeScannerSheet";
 import { MessagesButton } from "../components/MessagesButton";
 import { NotificationBell } from "../components/NotificationBell";
+import { RefreshButton } from "../components/RefreshButton";
 import {
   DashboardAlert,
   DashboardService,
@@ -194,6 +195,13 @@ export function DashboardPage() {
           <div className="flex shrink-0 items-center gap-2">
             <MessagesButton />
             <NotificationBell />
+            <RefreshButton
+              onRefresh={() => {
+                void loadJobs();
+                void loadAlerts();
+              }}
+              loading={loadingJobs || loadingAlerts}
+            />
           </div>
         </header>
 

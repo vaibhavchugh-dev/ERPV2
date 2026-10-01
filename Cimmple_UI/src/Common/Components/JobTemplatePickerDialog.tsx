@@ -47,6 +47,7 @@ const JobTemplatePickerDialog: React.FC<JobTemplatePickerDialogProps> = ({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         onCancel();
       }
     };

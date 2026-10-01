@@ -92,7 +92,10 @@ const UserAccountModals: React.FC<UserAccountModalsProps> = ({
   useEffect(() => {
     if (!kind) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -201,9 +204,9 @@ const UserAccountModals: React.FC<UserAccountModalsProps> = ({
                   <tr>
                     <td>Global search</td>
                     <td>
-                      <kbd>Ctrl</kbd> + <kbd>K</kbd>
+                      <kbd>Ctrl</kbd> + <kbd>K</kbd> (Windows)
                       <span className="shortcut-or"> / </span>
-                      <kbd>⌘</kbd> + <kbd>K</kbd>
+                      <kbd>⌘ Cmd</kbd> + <kbd>K</kbd> (Mac)
                     </td>
                   </tr>
                   <tr>

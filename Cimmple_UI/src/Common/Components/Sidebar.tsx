@@ -295,6 +295,7 @@ const Sidebar: React.FC = () => {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         closeSecondary();
       }
     };

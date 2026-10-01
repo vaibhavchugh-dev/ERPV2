@@ -67,7 +67,7 @@ public static class GlWorkflowService
 
         var banks = db.BankMaster.AsNoTracking()
             .Where(b => b.TenantId == tenantId)
-            .Select(b => new { b.Id, b.BankName, b.NickName, b.status })
+            .Select(b => new { b.Id, b.BankName, b.NickName, b.status, b.locationId })
             .ToList()
             .Where(b =>
             {
@@ -94,9 +94,27 @@ public static class GlWorkflowService
         if (missing.Count == 0)
             return true;
 
+        var missingLocationIds = missing
+            .Select(b => b.locationId)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+        var locationNames = db.Locations.AsNoTracking()
+            .Where(l => l.TenantId == tenantId && missingLocationIds.Contains(l.LocationId))
+            .ToDictionary(l => l.LocationId, l => l.Name);
+
         var names = string.Join(", ",
-            missing.Select(b => string.IsNullOrWhiteSpace(b.NickName) ? b.BankName : b.NickName)
-                .Where(n => !string.IsNullOrWhiteSpace(n))
+            missing
+                .Select(b =>
+                {
+                    var bankName = string.IsNullOrWhiteSpace(b.NickName) ? b.BankName : b.NickName;
+                    if (string.IsNullOrWhiteSpace(bankName))
+                        return null;
+                    return locationNames.TryGetValue(b.locationId, out var locName) && !string.IsNullOrWhiteSpace(locName)
+                        ? $"{bankName} ({locName.Trim()})"
+                        : bankName;
+                })
+                .Where(n => n != null)
                 .Take(8));
         error =
             $"Complete bank reconciliation for period {pk} before closing the books. " +

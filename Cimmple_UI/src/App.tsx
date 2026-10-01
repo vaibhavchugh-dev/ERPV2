@@ -5,6 +5,7 @@ import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
 import { ChangePassword } from "./Login/ChangePassword";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
+import { installGlobalEscapeToClose } from "./Common/Utils/escapeToClose";
 import "./App.scss";
 import moment from "moment-timezone";
 
@@ -27,6 +28,8 @@ const AppContent: React.FC = () => {
     const timezone = settings?.timezone || "America/New_York";
     moment.tz.setDefault(timezone);
   }, [settings?.timezone]);
+
+  React.useEffect(() => installGlobalEscapeToClose(), []);
 
   return (
     <div>
