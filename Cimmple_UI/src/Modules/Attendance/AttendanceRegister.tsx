@@ -11,6 +11,7 @@ import {
 import { EmployeeMaster, EmployeeService } from "../../Common/Services/EmployeeService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
+import { formatTimeOnly, todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
 import "../Masters/CustomerMaster.scss";
 import "../Masters/CustomerMasterSlideout.scss";
 
@@ -29,14 +30,9 @@ const COLUMNS: ColumnDefinition[] = [
 const DEFAULT_HIDDEN_COLUMNS = ["lastMethod", "locationName"];
 const COLUMN_PREFERENCE_KEY = "attendanceRegister.hiddenColumns";
 
-const todayIso = () => new Date().toISOString().substring(0, 10);
+const todayIso = () => todayIsoInTenantTimezone();
 
-const formatTime = (value?: string | null) => {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-};
+const formatTime = (value?: string | null) => formatTimeOnly(value) || "—";
 
 const formatHours = (hours?: number | null) => {
   if (hours == null || Number.isNaN(hours)) return "—";
