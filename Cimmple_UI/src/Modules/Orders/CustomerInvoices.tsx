@@ -392,7 +392,12 @@ const CustomerInvoices: React.FC = () => {
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<CustomerInvoiceSummary | null>(null);
   const [emailInvoiceId, setEmailInvoiceId] = useState<number | null>(null);
 
+  const customRangeIncomplete =
+    filters.dateRange === 'Custom' && (!filters.startDate || !filters.endDate);
+
   useEffect(() => {
+    // A half-entered custom range would load every invoice (no date filter) or reload per field.
+    if (customRangeIncomplete) return;
     loadInvoices();
   }, [
     filters.status,
@@ -862,6 +867,11 @@ const CustomerInvoices: React.FC = () => {
                   onCommit={(value) => setFilters(prev => ({ ...prev, endDate: value }))}
                 />
               </div>
+              {customRangeIncomplete && (
+                <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>
+                  Select both dates to apply
+                </span>
+              )}
               {(filters.startDate || filters.endDate) && (
                 <button
                   type="button"

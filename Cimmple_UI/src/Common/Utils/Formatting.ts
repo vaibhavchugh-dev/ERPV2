@@ -250,6 +250,41 @@ export const formatDateTime = (
 };
 
 /**
+ * Format the time of a UTC instant in the tenant timezone (12/24h per system settings).
+ * Matches the Time Clock (Cimmple_Punch), which shows punches in the tenant timezone.
+ */
+export const formatTimeOnly = (
+  date: string | Date | null | undefined,
+  settings?: SystemSettings | null
+): string => {
+  if (!date) return '';
+  const resolved = resolveSettings(settings);
+  const timezone = resolved?.timezone || 'America/New_York';
+  const format = (resolved?.timeFormat || '12') === '12' ? 'h:mm A' : 'HH:mm';
+  const dateObj =
+    typeof date === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(date.trim())
+      ? moment.utc(date)
+      : moment(date);
+  if (!dateObj.isValid()) return '';
+  try {
+    return dateObj.tz(timezone).format(format);
+  } catch {
+    return dateObj.format(format);
+  }
+};
+
+/** Today's calendar date (YYYY-MM-DD) in the tenant timezone. */
+export const todayIsoInTenantTimezone = (settings?: SystemSettings | null): string => {
+  const resolved = resolveSettings(settings);
+  const timezone = resolved?.timezone || 'America/New_York';
+  try {
+    return moment().tz(timezone).format('YYYY-MM-DD');
+  } catch {
+    return moment().format('YYYY-MM-DD');
+  }
+};
+
+/**
  * Format UTC date/time to timezone using system settings
  * Falls back to defaults if settings not provided
  */
