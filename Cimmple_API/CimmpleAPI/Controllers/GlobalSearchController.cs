@@ -504,7 +504,7 @@ namespace CimmpleAPI.Controllers
                 .Where(b => b.TenantId == tenantId &&
                     (b.BankName != null && b.BankName.ToLower().Contains(searchTerm) ||
                      b.Bankcode != null && b.Bankcode.ToLower().Contains(searchTerm) ||
-                     b.AccountNo != null && b.AccountNo.ToLower().Contains(searchTerm) ||
+                     b.lastAccountNo != null && b.lastAccountNo.ToLower().Contains(searchTerm) ||
                      b.displayname != null && b.displayname.ToLower().Contains(searchTerm)))
                 .Take(limit)
                 .Select(b => new
@@ -513,7 +513,7 @@ namespace CimmpleAPI.Controllers
                     type = "bank",
                     name = b.BankName ?? "",
                     code = b.Bankcode ?? "",
-                    accountNo = b.AccountNo ?? "",
+                    accountNo = b.lastAccountNo ?? "",
                     displayName = b.displayname ?? ""
                 })
                 .ToListAsync();

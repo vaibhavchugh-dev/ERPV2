@@ -1,5 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
@@ -8,12 +10,20 @@ using Microsoft.Extensions.Options;
 
 namespace CimmpleAPI.Services.Auth
 {
+    public static class AuthClaimTypes
+    {
+        public const string SessionId = "sessionId";
+        public const string PasswordChangeRequired = "pwdChangeRequired";
+        public const string LocationIdsTruncated = "locationIdsTruncated";
+    }
+
     public interface IAuthService
     {
         Task<(LoginResponse? response, string? error, int statusCode)> LoginAsync(LoginRequest request, string? ipAddress, string? browser);
         Task<(LoginResponse? response, string? error, int statusCode)> VendorLoginAsync(VendorLoginRequest request, string? ipAddress, string? browser);
         Task<(LoginResponse? response, string? error, int statusCode)> RefreshAsync(string refreshToken);
-        Task LogoutAsync(int userId);
+        Task LogoutAsync(int userId, int? sessionId = null);
+        Task RevokeSessionAsync(string refreshToken);
         Task<AuthUserDto?> GetCurrentUserAsync(int userId);
         Task<(bool ok, string? error)> ChangePasswordAsync(int userId, ChangePasswordRequest request);
         Task<(bool ok, string? error)> ValidateAndApplyPasswordAsync(UserDetail user, string newPassword, SystemSettings settings);
@@ -24,15 +34,25 @@ namespace CimmpleAPI.Services.Auth
 
     public class AuthService : IAuthService
     {
+        private const int MaxLocationIdsInToken = 50;
         private readonly CimmpleDbContext _db;
         private readonly IJwtTokenService _jwt;
         private readonly TokenConfigOptions _tokenOptions;
+        private readonly ISessionValidationService _sessions;
+        private readonly ILogger<AuthService> _logger;
 
-        public AuthService(CimmpleDbContext db, IJwtTokenService jwt, IOptions<TokenConfigOptions> tokenOptions)
+        public AuthService(
+            CimmpleDbContext db,
+            IJwtTokenService jwt,
+            IOptions<TokenConfigOptions> tokenOptions,
+            ISessionValidationService sessions,
+            ILogger<AuthService> logger)
         {
             _db = db;
             _jwt = jwt;
             _tokenOptions = tokenOptions.Value;
+            _sessions = sessions;
+            _logger = logger;
         }
 
         public async Task<(LoginResponse? response, string? error, int statusCode)> LoginAsync(
@@ -63,13 +83,7 @@ namespace CimmpleAPI.Services.Auth
                 return (null, "Multiple accounts found. Please specify tenant.", 400);
             }
 
-            var user = matches[0];
-            if (user.VendorId.HasValue && user.VendorId.Value > 0)
-            {
-                return (null, "This account is for the vendor portal. Please sign in at /vendor/login.", 403);
-            }
-
-            return await AuthenticateUserAsync(user, request.Password, "erp", ipAddress, browser);
+            return await AuthenticateUserAsync(matches[0], request.Password, "erp", ipAddress, browser);
         }
 
         public async Task<(LoginResponse? response, string? error, int statusCode)> VendorLoginAsync(
@@ -155,32 +169,93 @@ namespace CimmpleAPI.Services.Auth
                 return (null, "Refresh token is required", 400);
             }
 
+            if (!TryParseRefreshToken(refreshToken, out var sessionId, out var secret))
+            {
+                return await RefreshLegacyTokenAsync(refreshToken);
+            }
+
+            var session = await _db.UserInfo.FirstOrDefaultAsync(s => s.UserID == sessionId);
+            if (session == null || session.LogInStatus != 1 || !RefreshSecretMatches(session.RefreshTokenHash, secret))
+            {
+                return (null, "Invalid refresh token", 401);
+            }
+
+            var user = await _db.UserDetails.FirstOrDefaultAsync(u => u.User_UniqueID == session.User_UniqueID);
+            if (user == null)
+            {
+                return (null, "Invalid refresh token", 401);
+            }
+
+            var settings = await GetSettingsAsync(user.TenantID);
+            var now = DateTime.UtcNow;
+            if ((session.RefreshExpiresUtc.HasValue && session.RefreshExpiresUtc.Value <= now)
+                || (session.LastRefreshUtc ?? session.LogInTime) + GetRefreshIdleWindow(settings) <= now)
+            {
+                RevokeSession(session);
+                await _db.SaveChangesAsync();
+                return (null, "Session expired. Please sign in again.", 401);
+            }
+
+            var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError != null)
+            {
+                return (null, stateError, stateStatus);
+            }
+
+            ApplyPasswordExpiry(user, settings);
+
+            var newSecret = _jwt.CreateRefreshToken();
+            session.RefreshTokenHash = HashRefreshSecret(newSecret);
+            session.LastRefreshUtc = now;
+
+            var response = await BuildLoginResponseAsync(user, GetPortalType(user), settings, session.UserID, newSecret);
+            await _db.SaveChangesAsync();
+            return (response, null, 200);
+        }
+
+        /// <summary>
+        /// Tokens issued before per-session refresh tokens were stored in UserDetails.UserToken.
+        /// Accept such a token once and convert it into a normal expiring session.
+        /// </summary>
+        private async Task<(LoginResponse? response, string? error, int statusCode)> RefreshLegacyTokenAsync(string refreshToken)
+        {
             var user = await _db.UserDetails.FirstOrDefaultAsync(u => u.UserToken == refreshToken);
             if (user == null)
             {
                 return (null, "Invalid refresh token", 401);
             }
 
-            if (!IsUserActive(user))
+            var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError != null)
             {
-                return (null, "Account is inactive or locked", 403);
+                return (null, stateError, stateStatus);
             }
 
-            if (user.LockoutEndUtc.HasValue && user.LockoutEndUtc.Value > DateTime.UtcNow)
-            {
-                return (null, "Account is locked. Try again later.", 403);
-            }
-
+            user.UserToken = "";
             var settings = await GetSettingsAsync(user.TenantID);
-            var portalType = user.VendorId.HasValue && user.VendorId.Value > 0 ? "vendor" : "erp";
-            var response = await BuildLoginResponseAsync(user, portalType, settings);
-            // Persist rotated refresh token — without this, the next refresh fails and the UI force-logs out.
-            await _db.SaveChangesAsync();
-            return (response, null, 200);
+            ApplyPasswordExpiry(user, settings);
+
+            var response = await CreateSessionWithTokensAsync(user, GetPortalType(user), settings, null);
+            return response == null
+                ? (null, "Sign-in could not be completed. Please try again.", 503)
+                : (response, null, 200);
         }
 
-        public async Task LogoutAsync(int userId)
+        public async Task LogoutAsync(int userId, int? sessionId = null)
         {
+            if (sessionId.HasValue)
+            {
+                var session = await _db.UserInfo
+                    .FirstOrDefaultAsync(s => s.UserID == sessionId.Value && s.User_UniqueID == userId);
+                if (session != null)
+                {
+                    RevokeSession(session);
+                    await _db.SaveChangesAsync();
+                }
+                return;
+            }
+
+            // Access tokens issued before per-session tokens carry no session id: end every session.
             var user = await _db.UserDetails.FirstOrDefaultAsync(u => u.User_UniqueID == userId);
             if (user == null) return;
 
@@ -190,10 +265,36 @@ namespace CimmpleAPI.Services.Auth
                 .ToListAsync();
             foreach (var s in sessions)
             {
-                s.LogInStatus = 0;
+                RevokeSession(s);
             }
 
             await _db.SaveChangesAsync();
+        }
+
+        public async Task RevokeSessionAsync(string refreshToken)
+        {
+            if (string.IsNullOrWhiteSpace(refreshToken))
+            {
+                return;
+            }
+
+            if (TryParseRefreshToken(refreshToken, out var sessionId, out var secret))
+            {
+                var session = await _db.UserInfo.FirstOrDefaultAsync(s => s.UserID == sessionId);
+                if (session != null && RefreshSecretMatches(session.RefreshTokenHash, secret))
+                {
+                    RevokeSession(session);
+                    await _db.SaveChangesAsync();
+                }
+                return;
+            }
+
+            var user = await _db.UserDetails.FirstOrDefaultAsync(u => u.UserToken == refreshToken);
+            if (user != null)
+            {
+                user.UserToken = "";
+                await _db.SaveChangesAsync();
+            }
         }
 
         public async Task<AuthUserDto?> GetCurrentUserAsync(int userId)
@@ -344,31 +445,36 @@ namespace CimmpleAPI.Services.Auth
         private async Task<(LoginResponse? response, string? error, int statusCode)> AuthenticateUserAsync(
             UserDetail user, string password, string portalType, string? ipAddress, string? browser)
         {
-            if (!IsUserActive(user))
-            {
-                return (null, "Account is inactive", 403);
-            }
-
             var settings = await GetSettingsAsync(user.TenantID);
+            var isLocked = user.LockoutEndUtc.HasValue && user.LockoutEndUtc.Value > DateTime.UtcNow;
 
-            if (user.LockoutEndUtc.HasValue && user.LockoutEndUtc.Value > DateTime.UtcNow)
-            {
-                var mins = (int)Math.Ceiling((user.LockoutEndUtc.Value - DateTime.UtcNow).TotalMinutes);
-                return (null, $"Account is locked. Try again in {Math.Max(mins, 1)} minute(s).", 403);
-            }
-
+            // Account state (inactive / locked / vendor) is only disclosed after a correct password.
             if (!PasswordHasher.Verify(password, user.Password, user.PasswordSalt, out var needsUpgrade))
             {
-                try
+                if (!isLocked)
                 {
-                    await RecordFailedLoginAsync(user, settings);
-                }
-                catch
-                {
-                    // Lockout counters must not block a 401
+                    try
+                    {
+                        await RecordFailedLoginAsync(user, settings);
+                    }
+                    catch
+                    {
+                        // Lockout counters must not block a 401
+                    }
                 }
                 await LogLoginAttemptAsync(user.UserName, ipAddress, browser);
                 return (null, "Invalid username or password", 401);
+            }
+
+            var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError != null)
+            {
+                return (null, stateError, stateStatus);
+            }
+
+            if (portalType == "erp" && user.VendorId.HasValue && user.VendorId.Value > 0)
+            {
+                return (null, "This account is for the vendor portal. Please sign in at /vendor/login.", 403);
             }
 
             if (needsUpgrade || !PasswordHasher.IsHashed(user.Password))
@@ -376,7 +482,40 @@ namespace CimmpleAPI.Services.Auth
                 await EnsurePasswordHashedAsync(user, password);
             }
 
-            // Password expiration
+            ApplyPasswordExpiry(user, settings);
+
+            user.FailedLoginCount = 0;
+            user.LockoutEndUtc = null;
+            user.UserToken = "";
+
+            var response = await CreateSessionWithTokensAsync(user, portalType, settings, ipAddress);
+            if (response == null)
+            {
+                return (null, "Sign-in could not be completed. Please try again.", 503);
+            }
+
+            await LogLoginAttemptAsync(user.UserName, ipAddress, browser);
+            return (response, null, 200);
+        }
+
+        private static (string? error, int statusCode) CheckAccountUsable(UserDetail user)
+        {
+            if (!IsUserActive(user))
+            {
+                return ("Account is inactive", 403);
+            }
+
+            if (user.LockoutEndUtc.HasValue && user.LockoutEndUtc.Value > DateTime.UtcNow)
+            {
+                var mins = (int)Math.Ceiling((user.LockoutEndUtc.Value - DateTime.UtcNow).TotalMinutes);
+                return ($"Account is locked. Try again in {Math.Max(mins, 1)} minute(s).", 403);
+            }
+
+            return (null, 200);
+        }
+
+        private static void ApplyPasswordExpiry(UserDetail user, SystemSettings settings)
+        {
             if (settings.PasswordExpirationDays > 0
                 && user.PwdResetDate.HasValue
                 && user.PwdResetDate.Value != default
@@ -384,29 +523,120 @@ namespace CimmpleAPI.Services.Auth
             {
                 user.ChangePassword = "Y";
             }
+        }
 
-            user.FailedLoginCount = 0;
-            user.LockoutEndUtc = null;
-
-            await EnforceConcurrentSessionsAsync(user, settings);
-            await CreateSessionAsync(user, ipAddress);
-            await LogLoginAttemptAsync(user.UserName, ipAddress, browser);
-
-            LoginResponse response;
+        /// <summary>
+        /// Creates the login session row and its tokens. If the first save fails (together with the
+        /// user's lockout/upgrade changes), retries persisting only the session; returns null when the
+        /// refresh token cannot be stored so the caller fails the login instead of issuing a dead session.
+        /// </summary>
+        private async Task<LoginResponse?> CreateSessionWithTokensAsync(
+            UserDetail user, string portalType, SystemSettings settings, string? ipAddress)
+        {
             try
             {
-                response = await BuildLoginResponseAsync(user, portalType, settings);
-                await _db.SaveChangesAsync();
+                return await CreateSessionCoreAsync(user, portalType, settings, ipAddress, enforceSessionLimit: true);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Session/token persist failed (short UserToken column, missing session table, etc.).
-                // Still return a usable JWT so the user can sign in.
+                _logger.LogWarning(ex, "Saving login session failed for user {UserId}; retrying session only.", user.User_UniqueID);
                 _db.ChangeTracker.Clear();
-                response = await BuildLoginResponseAsync(user, portalType, settings);
             }
 
-            return (response, null, 200);
+            try
+            {
+                return await CreateSessionCoreAsync(user, portalType, settings, ipAddress, enforceSessionLimit: false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Login session could not be persisted for user {UserId}.", user.User_UniqueID);
+                _db.ChangeTracker.Clear();
+                return null;
+            }
+        }
+
+        private async Task<LoginResponse> CreateSessionCoreAsync(
+            UserDetail user, string portalType, SystemSettings settings, string? ipAddress, bool enforceSessionLimit)
+        {
+            var now = DateTime.UtcNow;
+            if (enforceSessionLimit)
+            {
+                await EnforceConcurrentSessionsAsync(user, settings, now);
+            }
+
+            var refreshDays = _tokenOptions.RefreshTokenDays > 0 ? _tokenOptions.RefreshTokenDays : 7;
+            var secret = _jwt.CreateRefreshToken();
+            var session = new UserInfo
+            {
+                User_UniqueID = user.User_UniqueID,
+                LogInTime = now,
+                LogInStatus = 1,
+                IPAddress = ipAddress ?? "",
+                TenantId = user.TenantID,
+                RefreshTokenHash = HashRefreshSecret(secret),
+                RefreshExpiresUtc = now.AddDays(refreshDays),
+                LastRefreshUtc = now
+            };
+            _db.UserInfo.Add(session);
+            await _db.SaveChangesAsync();
+
+            return await BuildLoginResponseAsync(user, portalType, settings, session.UserID, secret);
+        }
+
+        private void RevokeSession(UserInfo session)
+        {
+            session.LogInStatus = 0;
+            session.RefreshTokenHash = null;
+            _sessions.Invalidate(session.UserID);
+        }
+
+        /// <summary>
+        /// A session whose refresh token has not been used for this long is treated as abandoned
+        /// (browser closed without logout). The UI refreshes shortly before every access-token expiry
+        /// while the user is not idle, so this only ends sessions that are no longer open.
+        /// </summary>
+        private TimeSpan GetRefreshIdleWindow(SystemSettings settings)
+        {
+            var timeout = settings.SessionTimeoutMinutes > 0 ? settings.SessionTimeoutMinutes : _tokenOptions.AccessTokenMinutes;
+            if (timeout <= 0) timeout = 60;
+            return TimeSpan.FromMinutes(timeout * 2 + 5);
+        }
+
+        private static string GetPortalType(UserDetail user) =>
+            user.VendorId.HasValue && user.VendorId.Value > 0 ? "vendor" : "erp";
+
+        private static bool TryParseRefreshToken(string token, out int sessionId, out string secret)
+        {
+            sessionId = 0;
+            secret = "";
+            var dot = token.IndexOf('.');
+            if (dot <= 0 || dot == token.Length - 1)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(token[..dot], out sessionId) || sessionId <= 0)
+            {
+                return false;
+            }
+
+            secret = token[(dot + 1)..];
+            return true;
+        }
+
+        private static string HashRefreshSecret(string secret) =>
+            Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
+
+        private static bool RefreshSecretMatches(string? storedHash, string secret)
+        {
+            if (string.IsNullOrEmpty(storedHash))
+            {
+                return false;
+            }
+
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(storedHash),
+                Encoding.UTF8.GetBytes(HashRefreshSecret(secret)));
         }
 
         private async Task RecordFailedLoginAsync(UserDetail user, SystemSettings? settings = null)
@@ -424,36 +654,36 @@ namespace CimmpleAPI.Services.Auth
             await _db.SaveChangesAsync();
         }
 
-        private async Task EnforceConcurrentSessionsAsync(UserDetail user, SystemSettings settings)
+        private async Task EnforceConcurrentSessionsAsync(UserDetail user, SystemSettings settings, DateTime now)
         {
-            if (settings.MaxConcurrentSessions <= 0) return;
-
             var active = await _db.UserInfo
                 .Where(s => s.User_UniqueID == user.User_UniqueID && s.LogInStatus == 1)
                 .OrderBy(s => s.LogInTime)
                 .ToListAsync();
 
-            var overflow = active.Count - settings.MaxConcurrentSessions + 1;
-            if (overflow > 0)
+            var live = new List<UserInfo>();
+            foreach (var session in active)
             {
-                foreach (var old in active.Take(overflow))
+                if (session.RefreshExpiresUtc.HasValue && session.RefreshExpiresUtc.Value <= now)
                 {
-                    old.LogInStatus = 0;
+                    RevokeSession(session);
+                }
+                else
+                {
+                    live.Add(session);
                 }
             }
-        }
 
-        private Task CreateSessionAsync(UserDetail user, string? ipAddress)
-        {
-            _db.UserInfo.Add(new UserInfo
+            if (settings.MaxConcurrentSessions <= 0) return;
+
+            var overflow = live.Count - settings.MaxConcurrentSessions + 1;
+            if (overflow > 0)
             {
-                User_UniqueID = user.User_UniqueID,
-                LogInTime = DateTime.UtcNow,
-                LogInStatus = 1,
-                IPAddress = ipAddress ?? "",
-                TenantId = user.TenantID
-            });
-            return Task.CompletedTask;
+                foreach (var old in live.Take(overflow))
+                {
+                    RevokeSession(old);
+                }
+            }
         }
 
         private async Task LogLoginAttemptAsync(string? username, string? ipAddress, string? browser)
@@ -471,14 +701,22 @@ namespace CimmpleAPI.Services.Auth
                     }
                 }
 
-                _db.UserLogin.Add(new UserLogin
+                var entry = _db.UserLogin.Add(new UserLogin
                 {
                     username = username,
                     logintime = DateTime.UtcNow,
                     ipaddress = ipAsInt,
                     browser = browser != null && browser.Length > 250 ? browser[..250] : browser
                 });
-                await _db.SaveChangesAsync();
+                try
+                {
+                    await _db.SaveChangesAsync();
+                }
+                catch
+                {
+                    entry.State = EntityState.Detached;
+                    throw;
+                }
             }
             catch
             {
@@ -486,14 +724,18 @@ namespace CimmpleAPI.Services.Auth
             }
         }
 
-        private async Task<LoginResponse> BuildLoginResponseAsync(UserDetail user, string portalType, SystemSettings settings)
+        private async Task<LoginResponse> BuildLoginResponseAsync(
+            UserDetail user, string portalType, SystemSettings settings, int sessionId, string refreshSecret)
         {
             var authUser = await BuildAuthUserDtoAsync(user, portalType);
             authUser.TimeZone = settings.Timezone;
-            var refresh = _jwt.CreateRefreshToken();
-            user.UserToken = refresh;
+            var refresh = $"{sessionId}.{refreshSecret}";
 
-            var claims = BuildClaims(authUser);
+            // The role-level "Reset Password Required" flag stays a UI prompt; only the user-level flag
+            // (admin reset or password expiry) restricts the token server-side. Vendor portal has no
+            // change-password screen, so vendor tokens are never restricted.
+            var passwordChangeRequired = portalType == "erp" && IsUserChangePasswordFlagSet(user);
+            var claims = BuildClaims(authUser, sessionId, passwordChangeRequired);
             var timeout = settings.SessionTimeoutMinutes > 0 ? settings.SessionTimeoutMinutes : _tokenOptions.AccessTokenMinutes;
             var (accessToken, expires) = _jwt.CreateAccessToken(claims, timeout);
 
@@ -651,8 +893,7 @@ namespace CimmpleAPI.Services.Auth
                 RoleName = roleName,
                 CanAccessAllLocations = canAccessAll,
                 DefaultLocationId = defaultLocationId,
-                MustChangePassword = string.Equals(user.ChangePassword, "Y", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(user.ChangePassword, "Yes", StringComparison.OrdinalIgnoreCase)
+                MustChangePassword = IsUserChangePasswordFlagSet(user)
                     || string.Equals(roleResetPwd, "Y", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(roleResetPwd, "Yes", StringComparison.OrdinalIgnoreCase),
                 VendorId = user.VendorId,
@@ -664,7 +905,11 @@ namespace CimmpleAPI.Services.Auth
             };
         }
 
-        private static List<Claim> BuildClaims(AuthUserDto user)
+        private static bool IsUserChangePasswordFlagSet(UserDetail user) =>
+            string.Equals(user.ChangePassword, "Y", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(user.ChangePassword, "Yes", StringComparison.OrdinalIgnoreCase);
+
+        private static List<Claim> BuildClaims(AuthUserDto user, int sessionId, bool passwordChangeRequired)
         {
             var claims = new List<Claim>
             {
@@ -674,8 +919,14 @@ namespace CimmpleAPI.Services.Auth
                 new(ClaimTypes.Name, user.UserName),
                 new("userName", user.UserName),
                 new("portalType", user.PortalType),
-                new("canAccessAllLocations", user.CanAccessAllLocations ? "true" : "false")
+                new("canAccessAllLocations", user.CanAccessAllLocations ? "true" : "false"),
+                new(AuthClaimTypes.SessionId, sessionId.ToString())
             };
+
+            if (passwordChangeRequired)
+            {
+                claims.Add(new Claim(AuthClaimTypes.PasswordChangeRequired, "true"));
+            }
 
             if (user.RoleId.HasValue)
             {
@@ -693,9 +944,13 @@ namespace CimmpleAPI.Services.Auth
                 claims.Add(new Claim("vendorId", user.VendorId.Value.ToString()));
             }
 
-            // Embed allowed location ids (cap to keep token size reasonable)
-            var locIds = user.Locations.Select(l => l.LocationId).Take(50);
+            // Cap keeps the token small; when truncated the API resolves the full set from UserMapping.
+            var locIds = user.Locations.Select(l => l.LocationId).Take(MaxLocationIdsInToken);
             claims.Add(new Claim("locationIds", string.Join(",", locIds)));
+            if (!user.CanAccessAllLocations && user.Locations.Count > MaxLocationIdsInToken)
+            {
+                claims.Add(new Claim(AuthClaimTypes.LocationIdsTruncated, "true"));
+            }
 
             return claims;
         }

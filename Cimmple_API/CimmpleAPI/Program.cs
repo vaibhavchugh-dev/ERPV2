@@ -101,13 +101,15 @@ builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
 builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 
-// Legacy user repository (UserController login / maintenance helpers)
+// Legacy user repository (UserController helpers)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 
 // Auth services
 builder.Services.Configure<TokenConfigOptions>(builder.Configuration.GetSection(TokenConfigOptions.SectionName));
+builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<ISessionValidationService, SessionValidationService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
 // Configure JWT Authentication
@@ -136,6 +138,33 @@ builder.Services.AddAuthentication(options =>
             IssuerSigningKey = new SymmetricSecurityKey(key),
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+        cfg.Events = new JwtBearerEvents
+        {
+            // Tokens carrying a session id are rejected once that session is logged out or evicted.
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal;
+                if (!int.TryParse(principal?.FindFirst(AuthClaimTypes.SessionId)?.Value, out var sessionId) || sessionId <= 0)
+                {
+                    return;
+                }
+
+                int.TryParse(principal?.FindFirst("userId")?.Value, out var userId);
+                try
+                {
+                    var sessions = context.HttpContext.RequestServices.GetRequiredService<ISessionValidationService>();
+                    if (!await sessions.IsSessionActiveAsync(sessionId, userId))
+                    {
+                        context.Fail("Session has ended.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Refresh still enforces the session; do not lock everyone out on a transient DB error.
+                    Log.Warning(ex, "Session validation failed for session {SessionId}", sessionId);
+                }
+            }
         };
     });
 
@@ -222,34 +251,111 @@ if (args.Length >= 1 &&
 
 var app = builder.Build();
 
+// Per-session refresh-token columns must exist before the first refresh or session check.
+try
+{
+    using var schemaScope = app.Services.CreateScope();
+    await SystemSettingsSchemaService.EnsureLoginSchemaAsync(
+        schemaScope.ServiceProvider.GetRequiredService<CimmpleDbContext>());
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Login schema check at startup failed; it is retried on login and refresh.");
+}
+
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Cimmple API V1");
-    });
 }
 else
+{
+    // Only redirect HTTP to HTTPS in non-development environments
+    app.UseHttpsRedirection();
+}
+
+// Swagger publishes every endpoint; outside Development it must be enabled explicitly (Swagger:Enabled).
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Cimmple API V1");
     });
-    // Only redirect HTTP to HTTPS in non-development environments
-    app.UseHttpsRedirection();
 }
 
 // CORS must be before other middleware, especially before UseAuthentication
 app.UseCors("_CorsPolicy");
 
+app.Use(async (context, next) =>
+{
+    if (MaintenanceMode.IsEnabled(app.Configuration)
+        && context.Request.Path.StartsWithSegments("/api")
+        && !context.Request.Path.StartsWithSegments("/api/User/UnderMaintenance"))
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new { message = MaintenanceMode.ResponseMessage });
+        return;
+    }
+
+    await next();
+});
+
+// Job template drawings are tenant data: they are only served by the authenticated
+// JobTemplate/DownloadJobTemplateAttachment endpoint, never as anonymous static files.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/uploads/jobtemplates", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    await next();
+});
+
 // Enable static files for document downloads
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        // SVG can carry script; never render a stored one in the API origin.
+        if (ctx.File.Name.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers["Content-Disposition"] = "attachment";
+            ctx.Context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+        }
+    }
+});
 
 app.UseAuthentication();
+
+// A token issued while a password change is pending may only be used to change the password.
+var passwordChangeAllowedPaths = new[]
+{
+    "/api/Auth/ChangePassword",
+    "/api/Auth/Logout",
+    "/api/Auth/Me",
+    "/api/Auth/Refresh",
+    "/api/Auth/RevokeSession",
+    "/api/SystemSettings/GetSettings",
+    "/api/User/UnderMaintenance"
+};
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true
+        && string.Equals(context.User.FindFirst(AuthClaimTypes.PasswordChangeRequired)?.Value, "true", StringComparison.OrdinalIgnoreCase)
+        && !passwordChangeAllowedPaths.Any(p => context.Request.Path.Equals(p, StringComparison.OrdinalIgnoreCase)))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await context.Response.WriteAsJsonAsync(new { message = "Password change required", mustChangePassword = true });
+        return;
+    }
+
+    await next();
+});
+
 app.UseAuthorization();
 app.MapControllers();
 

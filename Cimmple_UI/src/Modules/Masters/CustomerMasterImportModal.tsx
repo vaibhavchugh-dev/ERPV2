@@ -12,8 +12,12 @@ import {
   mapCsvRows,
   parseCsv,
 } from "../../Common/Utils/CsvImport";
+import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import { CUSTOMER_TEMPLATE_ROWS } from "./CustomerMasterTemplateData";
 import "./CustomerMasterSlideout.scss";
+
+// Mirrors CustomerController.ParseCustomerStatus.
+const VALID_STATUS_VALUES = ["active", "1", "yes", "true", "inactive", "0", "no", "false"];
 
 interface CustomerMasterImportModalProps {
   onClose: () => void;
@@ -149,6 +153,24 @@ const CustomerMasterImportModal: React.FC<CustomerMasterImportModalProps> = ({
           } else {
             seenCodes.add(customerCode.toLowerCase());
           }
+        }
+
+        const formatChecks: Array<[string | undefined, (v: string) => string, string]> = [
+          [values.Email, validateEmail, "Email"],
+          [values.Phone, validatePhone, "Phone"],
+          [values.Zip, validateZipCode, "Zip"],
+          [values.ShippingZip, validateZipCode, "Shipping Zip"],
+          [values.ContactEmail, validateEmail, "Contact Email"],
+          [values.ContactPhone, validatePhone, "Contact Phone"],
+        ];
+        formatChecks.forEach(([value, validate, label]) => {
+          const v = (value || "").trim();
+          if (v && validate(v)) errors.push(`${label}: ${validate(v)}`);
+        });
+
+        const status = (values.Status || "").trim().toLowerCase();
+        if (status && !VALID_STATUS_VALUES.includes(status)) {
+          errors.push(`Status '${values.Status}' is not valid (use Active or Inactive)`);
         }
 
         return {

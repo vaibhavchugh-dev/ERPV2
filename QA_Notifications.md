@@ -124,40 +124,7 @@ The UI shows CO/CQ/VO/VQ numbers as `PONumber + 999` when `PONumber < 1000` (for
 
 **Recommended Fix:** Always include the selected user in the options, or clear `recipientUserId` when the filter excludes it.
 
----
 
-### BUG-NOTIF-004 — Recipient and @mention pickers only list the first 200 active users
-
-**Severity:** Low. In tenants with more than 200 active users, some users cannot be messaged or mentioned from the UI.
-
-**Status:** Confirmed
-
-**Test Area:** Send / Mentions
-
-**Description:**
-The Notify User dialog, the conversation @-people picker and the comments @-mention list each call `UserManagementService.GetUsers` once with `pageSize: 200`, `status: "Active"`, then filter on the client. The server orders by first name and returns only that page. Users whose first names sort after the 200th active user never appear, and the client-side search cannot find them because it only searches the loaded page.
-
-**Steps to Reproduce:**
-1. In a tenant with more than 200 active users, open "Notify user".
-2. Search for a user whose first name sorts late (for example "Zoe").
-3. The user is not found. The same applies to "@Zoe" in chat and in document comments.
-
-**Expected:** Any active user in the tenant can be found and selected.
-
-**Actual:** Only the first 200 active users alphabetically by first name are selectable.
-
-**Evidence:**
-* Frontend: `Cimmple_UI/src/Common/Components/NotifyUserDialog.tsx` lines 40–45 and 67–78; `Common/Components/ConversationPanel.tsx` lines 127–159; `Common/Components/CommentsSection.tsx` lines 80–83.
-* Backend: `Controllers/UserManagementController.cs` lines 93–105 (`Status` filter, `OrderBy(FirstName)`, `Skip/Take(pageSize)`).
-* Database: `UserDetails`.
-
-**Root Cause:** The pickers load a single fixed page instead of querying the server with the typed search term.
-
-**Business Impact:** Larger tenants cannot reach part of their workforce through in-app messaging or mentions.
-
-**Affected Areas:** Notifications, Conversations and Entity Comments (1.9).
-
-**Recommended Fix:** Pass the typed text as the `search` parameter to `GetUsers` (debounced) instead of filtering a fixed page.
 
 ---
 

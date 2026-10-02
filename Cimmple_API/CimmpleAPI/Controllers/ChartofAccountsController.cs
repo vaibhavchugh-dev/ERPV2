@@ -6,6 +6,10 @@ using CimmpleAPI.Data.Dtos;
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using CimmpleAPI.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace CimmpleAPI.Controllers
 {
@@ -14,10 +18,247 @@ namespace CimmpleAPI.Controllers
     public class ChartofAccountsController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly ILogger<ChartofAccountsController> _logger;
 
-        public ChartofAccountsController(CimmpleDbContext context)
+        private static readonly (PropertyInfo Property, string Label)[] DefaultAccountFields = typeof(AccountingDefaults)
+            .GetProperties()
+            .Where(p => p.PropertyType == typeof(int?) && p.Name.StartsWith("Default") && p.Name.EndsWith("AccountId"))
+            .Select(p => (p, "Default " + Regex.Replace(p.Name["Default".Length..^"AccountId".Length], "(?<!^)([A-Z])", " $1")))
+            .ToArray();
+
+        public ChartofAccountsController(CimmpleDbContext context, ILogger<ChartofAccountsController> logger)
         {
             _context = context;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Chart of Accounts {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
+        }
+
+        /// <summary>Serializes logical group id generation per tenant (ids are max + 1, not identity).</summary>
+        private void LockGroupIds(string kind, int tenantId)
+        {
+            var resource = $"coa-{kind}-{tenantId}";
+            _context.Database.ExecuteSqlInterpolated($"DECLARE @r int; EXEC @r = sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000; IF @r < 0 THROW 50000, 'Could not lock group id generation', 1;");
+        }
+
+        /// <summary>Settings that point at the account: Accounting Setup defaults, banks, credit cards, vendor mappings.</summary>
+        private List<BlockingDependency> GetConfiguredUses(ChartofAccounts account, int tenantId)
+        {
+            var uses = new List<BlockingDependency>();
+            var accountId = account.AccountID;
+            var code = (account.AccountCode ?? "").Trim();
+
+            var defaultLabels = _context.AccountingDefaults.AsNoTracking()
+                .Where(d => d.TenantId == tenantId)
+                .ToList()
+                .SelectMany(d => DefaultAccountFields.Where(f => (int?)f.Property.GetValue(d) == accountId).Select(f => f.Label))
+                .Distinct()
+                .ToList();
+            if (defaultLabels.Any())
+            {
+                uses.Add(new BlockingDependency
+                {
+                    EntityType = "Accounting Setup",
+                    Description = $"This account is set as {string.Join(", ", defaultLabels)} in Accounting Setup",
+                    Items = defaultLabels.Select((label, i) => new DependencyItem { Id = i + 1, Name = label }).ToList()
+                });
+            }
+
+            if (code.Length > 0)
+            {
+                var banks = _context.BankMaster.AsNoTracking()
+                    .Where(b => b.TenantId == tenantId && b.coa != null && b.coa.Trim() == code)
+                    .Select(b => new { b.Id, b.BankName })
+                    .ToList();
+                if (banks.Any())
+                {
+                    uses.Add(new BlockingDependency
+                    {
+                        EntityType = "Banks",
+                        Description = $"This account code is used by {banks.Count} bank(s). Change the account in Bank Master first.",
+                        Items = banks.Take(10).Select(b => new DependencyItem { Id = b.Id, Name = b.BankName ?? $"Bank #{b.Id}" }).ToList()
+                    });
+                }
+
+                var cards = _context.CreditCardMaster.AsNoTracking()
+                    .Where(c => c.TenantId == tenantId && c.COA != null && c.COA.Trim() == code)
+                    .Select(c => new { c.Id, c.NickName })
+                    .ToList();
+                if (cards.Any())
+                {
+                    uses.Add(new BlockingDependency
+                    {
+                        EntityType = "Credit Cards",
+                        Description = $"This account code is used by {cards.Count} credit card(s). Change the account in Credit Card Master first.",
+                        Items = cards.Take(10).Select(c => new DependencyItem { Id = c.Id, Name = string.IsNullOrEmpty(c.NickName) ? $"Credit Card #{c.Id}" : c.NickName }).ToList()
+                    });
+                }
+            }
+
+            var vendorMappings = _context.VendorCOAMapping.AsNoTracking()
+                .Where(m => m.accountid == accountId || m.expenseAccountId == accountId)
+                .Join(_context.VendorMaster.Where(v => v.Tenantid == tenantId), m => m.vendorid, v => v.vendor_id, (m, v) => new { v.vendor_id, v.company_name })
+                .Distinct()
+                .ToList();
+            if (vendorMappings.Any())
+            {
+                uses.Add(new BlockingDependency
+                {
+                    EntityType = "Vendor Account Mappings",
+                    Description = $"This account is the AP or default expense account of {vendorMappings.Count} vendor(s). Change it in Vendor Master first.",
+                    Items = vendorMappings.Take(10).Select(v => new DependencyItem { Id = v.vendor_id, Name = string.IsNullOrEmpty(v.company_name) ? $"Vendor #{v.vendor_id}" : v.company_name }).ToList()
+                });
+            }
+
+            return uses;
+        }
+
+        /// <summary>Posted activity on the account: journal lines, deposits, withdrawals, transactions, transfers, vendor bill lines.</summary>
+        private List<BlockingDependency> GetPostings(int accountId, int tenantId)
+        {
+            var postings = new List<BlockingDependency>();
+
+            var journalIds = _context.JournalEntryFrom.Where(j => j.AccountId == accountId).Select(j => j.JournalEntryId)
+                .Union(_context.JournalEntryTo.Where(j => j.AccountId == accountId).Select(j => j.JournalEntryId))
+                .Join(_context.JournalEntries.Where(je => je.TenantId == tenantId), id => id, je => je.Id, (id, je) => je.Id)
+                .Distinct()
+                .ToList();
+            if (journalIds.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Journal Entries",
+                    Description = $"This account is used in {journalIds.Count} journal entry/entries",
+                    Items = journalIds.Take(10).Select(id => new DependencyItem
+                    {
+                        Id = id,
+                        Name = $"Journal Entry #{id}",
+                        DeleteEndpoint = $"/api/Accounting/DeleteJournalEntry?journalEntryId={id}"
+                    }).ToList()
+                });
+            }
+
+            // Deposits and withdrawals are lines of a bank transaction; removing them means removing that transaction.
+            var deposits = _context.Deposits.AsNoTracking()
+                .Where(d => d.AccountID == accountId && d.TenantID == tenantId)
+                .Select(d => new { d.DepositID, d.TransactionID })
+                .ToList();
+            if (deposits.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Deposits",
+                    Description = $"This account is used in {deposits.Count} deposit(s)",
+                    Items = deposits.Take(10).Select(d => new DependencyItem
+                    {
+                        Id = d.TransactionID,
+                        Name = $"Deposit #{d.DepositID} (Transaction #{d.TransactionID})",
+                        DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={d.TransactionID}"
+                    }).ToList()
+                });
+            }
+
+            var withdrawals = _context.Withdrawals.AsNoTracking()
+                .Where(w => w.AccountID == accountId && w.TenantID == tenantId)
+                .Select(w => new { w.WithdrawalID, w.TransactionID })
+                .ToList();
+            if (withdrawals.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Withdrawals",
+                    Description = $"This account is used in {withdrawals.Count} withdrawal(s)",
+                    Items = withdrawals.Take(10).Select(w => new DependencyItem
+                    {
+                        Id = w.TransactionID,
+                        Name = $"Withdrawal #{w.WithdrawalID} (Transaction #{w.TransactionID})",
+                        DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={w.TransactionID}"
+                    }).ToList()
+                });
+            }
+
+            var transIds = _context.TransCoa.AsNoTracking()
+                .Where(tc => tc.accountid == accountId && tc.Tenantid == tenantId)
+                .Select(tc => tc.Transid)
+                .Distinct()
+                .ToList();
+            if (transIds.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Transactions",
+                    Description = $"This account is linked to {transIds.Count} transaction(s)",
+                    Items = transIds.Take(10).Select(id => new DependencyItem
+                    {
+                        Id = id,
+                        Name = $"Transaction #{id}",
+                        DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={id}"
+                    }).ToList()
+                });
+            }
+
+            var transfers = _context.TransferEntries.AsNoTracking()
+                .Where(t => t.TenantID == tenantId && (t.SourceAccountID == accountId || t.accountidfrom == accountId || t.accountidto == accountId))
+                .Select(t => t.TransferID)
+                .ToList();
+            if (transfers.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Transfers",
+                    Description = $"This account is used in {transfers.Count} transfer(s)",
+                    Items = transfers.Take(10).Select(id => new DependencyItem { Id = id, Name = $"Transfer #{id}" }).ToList()
+                });
+            }
+
+            var vendorInvoices = _context.VendorInvoiceDetail.AsNoTracking()
+                .Where(d => d.accountid == accountId)
+                .Join(_context.VendorInvoiceMaster.Where(m => m.TenantId == tenantId), d => d.InvoiceId, m => m.Id, (d, m) => new { m.Id, m.InvoiceNo })
+                .Distinct()
+                .ToList();
+            if (vendorInvoices.Any())
+            {
+                postings.Add(new BlockingDependency
+                {
+                    EntityType = "Vendor Invoices",
+                    Description = $"This account is used on lines of {vendorInvoices.Count} vendor invoice(s)",
+                    Items = vendorInvoices.Take(10).Select(v => new DependencyItem
+                    {
+                        Id = v.Id,
+                        Name = string.IsNullOrEmpty(v.InvoiceNo) ? $"Vendor Invoice #{v.Id}" : $"Vendor Invoice {v.InvoiceNo}",
+                        DeleteEndpoint = $"/api/VendorInvoice/DeleteVendorInvoice?vendorInvoiceId={v.Id}"
+                    }).ToList()
+                });
+            }
+
+            return postings;
+        }
+
+        private List<BlockingDependency> GetDeleteBlockers(ChartofAccounts account, int tenantId)
+        {
+            AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+            return GetPostings(account.AccountID, tenantId).Concat(GetConfiguredUses(account, tenantId)).ToList();
+        }
+
+        private string? ValidateHierarchy(ChartofAccountReq request)
+        {
+            var tenantId = request.Tenantid;
+            if (request.Groupid.HasValue && !_context.MainGroup.Any(m => m.tenantid == tenantId && m.MainGroupID == request.Groupid.Value))
+                return "The selected Main Group was not found";
+            if (request.Subgroupid.HasValue &&
+                (!request.Groupid.HasValue || !_context.SubGroup.Any(s => s.tenantid == tenantId && s.SubGroupID == request.Subgroupid.Value && s.MainGroupID == request.Groupid.Value)))
+                return "Subgroup 1 does not belong to the selected Main Group";
+            if (request.Subgroupid2.HasValue &&
+                (!request.Subgroupid.HasValue || !_context.SubGroup2.Any(s => s.tenantid == tenantId && s.SubGroup2ID == request.Subgroupid2.Value && s.SubGroupID == request.Subgroupid.Value)))
+                return "Subgroup 2 does not belong to the selected Subgroup 1";
+            if (request.Subgroupid3.HasValue &&
+                (!request.Subgroupid2.HasValue || !_context.SubGroup3.Any(s => s.tenantid == tenantId && s.SubGroup3ID == request.Subgroupid3.Value && s.SubGroup2ID == request.Subgroupid2.Value)))
+                return "Subgroup 3 does not belong to the selected Subgroup 2";
+            return null;
         }
 
         [HttpGet("GetChartofAccounts")]
@@ -44,7 +285,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -83,7 +324,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -110,7 +351,12 @@ namespace CimmpleAPI.Controllers
 
                 ChartofAccounts account;
 
-                if (request.AccountID > 0)
+                var code = request.AccountCode.Trim();
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                using var tx = _context.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+
+                var isNew = request.AccountID <= 0;
+                if (!isNew)
                 {
                     // Update existing account
                     account = _context.ChartofAccounts
@@ -123,16 +369,56 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
-                    // Create new account
                     account = new ChartofAccounts
                     {
                         Tenantid = request.Tenantid
                     };
+                }
+
+                var currentId = account.AccountID;
+                if (_context.ChartofAccounts.Any(a => a.Tenantid == request.Tenantid && a.AccountID != currentId && a.AccountCode.Trim() == code))
+                {
+                    return BadRequest(new { error = $"Account code '{code}' already exists" });
+                }
+
+                var hierarchyChanged = isNew || account.Groupid != request.Groupid || account.Subgroupid != request.Subgroupid
+                    || account.Subgroupid2 != request.Subgroupid2 || account.Subgroupid3 != request.Subgroupid3;
+                if (hierarchyChanged)
+                {
+                    var hierarchyError = ValidateHierarchy(request);
+                    if (hierarchyError != null)
+                    {
+                        return BadRequest(new { error = hierarchyError });
+                    }
+                }
+
+                var oldCode = isNew ? "" : (account.AccountCode ?? "").Trim();
+                if (!isNew)
+                {
+                    if (account.IsActive && request.Status != "Active")
+                    {
+                        var uses = GetConfiguredUses(account, request.Tenantid);
+                        if (uses.Any())
+                        {
+                            return BadRequest(new { error = "This account can't be made inactive while it is used by: " + string.Join("; ", uses.Select(u => u.Description)) });
+                        }
+                    }
+
+                    var oldType = (account.AccountType ?? "").Trim();
+                    var typeChanged = oldType.Length > 0 && !string.Equals(oldType, (request.AccountType ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+                    if (typeChanged && GetPostings(account.AccountID, request.Tenantid).Any())
+                    {
+                        return BadRequest(new { error = "Account type can't be changed because this account already has postings. Create a new account for the new type instead." });
+                    }
+                }
+
+                if (isNew)
+                {
                     _context.ChartofAccounts.Add(account);
                 }
 
                 // Update fields
-                account.AccountCode = request.AccountCode ?? "";
+                account.AccountCode = code;
                 account.AccountName = request.AccountName ?? "";
                 account.AccountType = request.AccountType ?? "";
                 account.IsActive = request.Status == "Active";
@@ -162,18 +448,31 @@ namespace CimmpleAPI.Controllers
                     account.MainGroup = request.MainGroup ?? "";
                 }
 
-                _context.SaveChanges();
+                // Banks and credit cards store the account code, so a code change must carry them along.
+                var linkedBanksUpdated = 0;
+                var linkedCardsUpdated = 0;
+                if (oldCode.Length > 0 && oldCode != code)
+                {
+                    foreach (var bank in _context.BankMaster.Where(b => b.TenantId == request.Tenantid && b.coa != null && b.coa.Trim() == oldCode).ToList())
+                    {
+                        bank.coa = code;
+                        linkedBanksUpdated++;
+                    }
+                    foreach (var card in _context.CreditCardMaster.Where(c => c.TenantId == request.Tenantid && c.COA != null && c.COA.Trim() == oldCode).ToList())
+                    {
+                        card.COA = code;
+                        linkedCardsUpdated++;
+                    }
+                }
 
-                return Ok(new { result = new { id = account.AccountID, message = "Chart of Account saved successfully" } });
+                _context.SaveChanges();
+                tx.Commit();
+
+                return Ok(new { result = new { id = account.AccountID, message = "Chart of Account saved successfully", linkedBanksUpdated, linkedCardsUpdated } });
             }
             catch (Exception ex)
             {
-                var errorMessage = ex.Message;
-                if (ex.InnerException != null)
-                {
-                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
-                }
-                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+                return ServerError(ex, "save");
             }
         }
 
@@ -197,7 +496,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -228,7 +527,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -259,7 +558,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -290,7 +589,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -303,6 +602,9 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "Main Group Name is required" });
                 }
+
+                using var tx = _context.Database.BeginTransaction();
+                LockGroupIds("main", request.Tenantid);
 
                 var existing = _context.MainGroup
                     .Where(m => m.tenantid == request.Tenantid && m.MainGroupName == request.MainGroupName)
@@ -329,12 +631,13 @@ namespace CimmpleAPI.Controllers
 
                 _context.MainGroup.Add(mainGroup);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { mainGroupID = mainGroup.MainGroupID, mainGroupName = mainGroup.MainGroupName } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -352,6 +655,9 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "Main Group ID is required" });
                 }
+
+                using var tx = _context.Database.BeginTransaction();
+                LockGroupIds("sub1", request.Tenantid);
 
                 var existing = _context.SubGroup
                     .Where(s => s.tenantid == request.Tenantid && 
@@ -380,12 +686,13 @@ namespace CimmpleAPI.Controllers
 
                 _context.SubGroup.Add(subGroup);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { subGroupID = subGroup.SubGroupID, subGroupName = subGroup.SubGroupName } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -403,6 +710,9 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "Sub Group ID is required" });
                 }
+
+                using var tx = _context.Database.BeginTransaction();
+                LockGroupIds("sub2", request.Tenantid);
 
                 var existing = _context.SubGroup2
                     .Where(s => s.tenantid == request.Tenantid && 
@@ -431,12 +741,13 @@ namespace CimmpleAPI.Controllers
 
                 _context.SubGroup2.Add(subGroup2);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { subGroup2ID = subGroup2.SubGroup2ID, subGroup2Name = subGroup2.SubGroup2Name } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -480,7 +791,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "chart of accounts request");
             }
         }
 
@@ -497,233 +808,38 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Chart of Account not found" });
                 }
 
+                var blockers = GetDeleteBlockers(account, tenantId);
                 var result = new DeletionImpactResult
                 {
-                    CanDelete = true,
+                    CanDelete = blockers.Count == 0,
                     BlockingReasons = new List<string>(),
-                    BlockingDependencies = new List<BlockingDependency>(),
+                    BlockingDependencies = blockers,
                     WillBeDeleted = new List<ImpactedEntity>(),
                     WillBeAffected = new List<ImpactedEntity>(),
                     Warnings = new List<string>()
                 };
 
-                // Check Deposits
-                var deposits = _context.Deposits
-                    .Where(d => d.AccountID == accountId && d.TenantID == tenantId)
-                    .ToList();
-                if (deposits.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Deposits",
-                        Description = $"This account is used in {deposits.Count} deposit(s)",
-                        Items = deposits.Take(10).Select(d => new DependencyItem
-                        {
-                            Id = d.DepositID,
-                            Name = $"Deposit #{d.DepositID}",
-                            DeleteEndpoint = $"/api/Transaction/DeleteDeposit?depositId={d.DepositID}"
-                        }).ToList()
-                    });
-                }
-
-                // Check Withdrawals
-                var withdrawals = _context.Withdrawals
-                    .Where(w => w.AccountID == accountId && w.TenantID == tenantId)
-                    .ToList();
-                if (withdrawals.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Withdrawals",
-                        Description = $"This account is used in {withdrawals.Count} withdrawal(s)",
-                        Items = withdrawals.Take(10).Select(w => new DependencyItem
-                        {
-                            Id = w.WithdrawalID,
-                            Name = $"Withdrawal #{w.WithdrawalID}",
-                            DeleteEndpoint = $"/api/Transaction/DeleteWithdrawal?withdrawalId={w.WithdrawalID}"
-                        }).ToList()
-                    });
-                }
-
-                // Check JournalEntryFrom
-                var journalFrom = _context.JournalEntryFrom
-                    .Where(j => j.AccountId == accountId)
-                    .Join(_context.JournalEntries.Where(je => je.TenantId == tenantId),
-                          jf => jf.JournalEntryId,
-                          je => je.Id,
-                          (jf, je) => new { jf, je })
-                    .ToList();
-                if (journalFrom.Any())
-                {
-                    result.CanDelete = false;
-                    var uniqueEntries = journalFrom.Select(j => j.je.Id).Distinct().ToList();
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Journal Entries",
-                        Description = $"This account is used in {uniqueEntries.Count} journal entry/entries",
-                        Items = uniqueEntries.Take(10).Select(jeId => new DependencyItem
-                        {
-                            Id = jeId,
-                            Name = $"Journal Entry #{jeId}",
-                            DeleteEndpoint = $"/api/Accounting/DeleteJournalEntry?journalEntryId={jeId}"
-                        }).ToList()
-                    });
-                }
-
-                // Check JournalEntryTo
-                var journalTo = _context.JournalEntryTo
-                    .Where(j => j.AccountId == accountId)
-                    .Join(_context.JournalEntries.Where(je => je.TenantId == tenantId),
-                          jt => jt.JournalEntryId,
-                          je => je.Id,
-                          (jt, je) => new { jt, je })
-                    .ToList();
-                if (journalTo.Any())
-                {
-                    result.CanDelete = false;
-                    var uniqueEntries = journalTo.Select(j => j.je.Id).Distinct().ToList();
-                    var existingDep = result.BlockingDependencies.FirstOrDefault(d => d.EntityType == "Journal Entries");
-                    if (existingDep != null)
-                    {
-                        // Merge with existing journal entries
-                        var existingIds = existingDep.Items.Select(i => i.Id).ToList();
-                        var newIds = uniqueEntries.Where(id => !existingIds.Contains(id)).Take(10 - existingDep.Items.Count).ToList();
-                        existingDep.Items.AddRange(newIds.Select(jeId => new DependencyItem
-                        {
-                            Id = jeId,
-                            Name = $"Journal Entry #{jeId}",
-                            DeleteEndpoint = $"/api/Accounting/DeleteJournalEntry?journalEntryId={jeId}"
-                        }));
-                        existingDep.Description = $"This account is used in {existingIds.Count + newIds.Count} journal entry/entries";
-                    }
-                    else
-                    {
-                        result.BlockingDependencies.Add(new BlockingDependency
-                        {
-                            EntityType = "Journal Entries",
-                            Description = $"This account is used in {uniqueEntries.Count} journal entry/entries",
-                            Items = uniqueEntries.Take(10).Select(jeId => new DependencyItem
-                            {
-                                Id = jeId,
-                                Name = $"Journal Entry #{jeId}",
-                                DeleteEndpoint = $"/api/Accounting/DeleteJournalEntry?journalEntryId={jeId}"
-                            }).ToList()
-                        });
-                    }
-                }
-
-                // Check TransCoa
-                var transCoa = _context.TransCoa
-                    .Where(tc => tc.accountid == accountId && tc.Tenantid == tenantId)
-                    .ToList();
-                if (transCoa.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Transactions",
-                        Description = $"This account is linked to {transCoa.Count} transaction(s)",
-                        Items = transCoa.Take(10).Select(tc => new DependencyItem
-                        {
-                            Id = tc.Transid,
-                            Name = $"Transaction #{tc.Transid}",
-                            DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={tc.Transid}"
-                        }).ToList()
-                    });
-                }
-
-                // Check BankMaster (COA mapping)
-                var banks = _context.BankMaster
-                    .Where(b => !string.IsNullOrEmpty(account.AccountCode) && b.coa == account.AccountCode && b.TenantId == tenantId)
-                    .ToList();
-                if (banks.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Banks",
-                        Description = $"This account code is used by {banks.Count} bank(s)",
-                        Items = banks.Take(10).Select(b => new DependencyItem
-                        {
-                            Id = b.Id,
-                            Name = b.BankName ?? $"Bank #{b.Id}",
-                            DeleteEndpoint = $"/api/Bank/DeleteBank?bankId={b.Id}"
-                        }).ToList()
-                    });
-                }
-
-                // Check CreditCardMaster (COA mapping)
-                // Note: Skip this check if COA column doesn't exist in CreditCardMaster table
-                // The database table may not have this column yet
-                var creditCards = new List<CreditCardMaster>();
-                // Commented out because COA column doesn't exist in CreditCardMaster table
-                // If this column is added in the future, uncomment and use:
-                // creditCards = _context.CreditCardMaster
-                //     .Where(c => !string.IsNullOrEmpty(account.AccountCode) && c.TenantId == tenantId)
-                //     .ToList()
-                //     .Where(c => !string.IsNullOrEmpty(c.COA) && c.COA == account.AccountCode)
-                //     .ToList();
-                if (creditCards.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Credit Cards",
-                        Description = $"This account code is used by {creditCards.Count} credit card(s)",
-                        Items = creditCards.Take(10).Select(c => new DependencyItem
-                        {
-                            Id = c.Id,
-                            Name = c.NickName ?? $"Credit Card #{c.Id}",
-                            DeleteEndpoint = $"/api/CreditCard/DeleteCreditCard?creditCardId={c.Id}"
-                        }).ToList()
-                    });
-                }
-
-                // Check VendorCOAMapping
-                var vendorMappings = _context.VendorCOAMapping
-                    .Where(v => v.accountid == accountId)
-                    .ToList();
-                if (vendorMappings.Any())
-                {
-                    result.WillBeDeleted.Add(new ImpactedEntity
-                    {
-                        EntityType = "Vendor COA Mappings",
-                        Count = vendorMappings.Count,
-                        Description = "Vendor COA mappings will be deleted"
-                    });
-                }
-
-                // Check BankCOAMapping
-                var bankMappings = _context.BankCOAMapping
-                    .Where(b => b.accountid == accountId)
-                    .ToList();
-                if (bankMappings.Any())
+                var bankMappings = _context.BankCOAMapping.Count(b => b.accountid == accountId);
+                if (bankMappings > 0)
                 {
                     result.WillBeDeleted.Add(new ImpactedEntity
                     {
                         EntityType = "Bank COA Mappings",
-                        Count = bankMappings.Count,
+                        Count = bankMappings,
                         Description = "Bank COA mappings will be deleted"
                     });
                 }
 
                 if (!result.CanDelete)
                 {
-                    result.BlockingReasons.Add("This Chart of Account is referenced by transactions, deposits, withdrawals, journal entries, or other entities.");
+                    result.BlockingReasons.Add("This Chart of Account is used by postings or settings. Make it inactive instead, or remove the references listed below first.");
                 }
 
                 return Ok(new { result = result });
             }
             catch (Exception ex)
             {
-                var errorMessage = ex.Message;
-                if (ex.InnerException != null)
-                {
-                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
-                }
-                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+                return ServerError(ex, "deletion impact check");
             }
         }
 
@@ -740,26 +856,32 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Chart of Account not found" });
                 }
 
-                // Delete child records first
-                var vendorMappings = _context.VendorCOAMapping
-                    .Where(v => v.accountid == accountId)
-                    .ToList();
-                _context.VendorCOAMapping.RemoveRange(vendorMappings);
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                using var tx = _context.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+                var blockers = GetDeleteBlockers(account, tenantId);
+                if (blockers.Count > 0)
+                {
+                    return Conflict(new
+                    {
+                        error = "Account is in use and cannot be deleted: " + string.Join(", ", blockers.Select(b => b.EntityType)),
+                        blockingDependencies = blockers
+                    });
+                }
 
                 var bankMappings = _context.BankCOAMapping
                     .Where(b => b.accountid == accountId)
                     .ToList();
                 _context.BankCOAMapping.RemoveRange(bankMappings);
 
-                // Delete the account
                 _context.ChartofAccounts.Remove(account);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { message = "Chart of Account deleted successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "delete");
             }
         }
     }

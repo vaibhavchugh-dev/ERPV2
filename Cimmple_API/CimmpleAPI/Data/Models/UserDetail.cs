@@ -93,6 +93,14 @@ namespace CimmpleAPI.Data.Models
         public int LogInStatus { get; set; }
         public string IPAddress { get; set; }
         public int TenantId { get; set; }
+
+        /// <summary>SHA-256 (base64) of the session's current refresh token; null when revoked.</summary>
+        public string? RefreshTokenHash { get; set; }
+
+        /// <summary>Absolute end of the session (login time + TokenConfig:RefreshTokenDays).</summary>
+        public DateTime? RefreshExpiresUtc { get; set; }
+
+        public DateTime? LastRefreshUtc { get; set; }
     }
 
     public class UserLogin

@@ -100,7 +100,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     ],
   });
 
-  const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
+  const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string; status?: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [isHydrating, setIsHydrating] = useState(orderId > 0);
   const [printing, setPrinting] = useState(false);
@@ -305,7 +305,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         setCustomers(result.map(c => ({
           customer_id: c.customer_id,
           company_name: c.company_name,
-          customercode: c.customercode
+          customercode: c.customercode,
+          status: c.status
         })));
       }
     } catch (error) {
@@ -1710,11 +1711,13 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     required
                   >
                     <option value="0">Select Customer</option>
-                    {customers.map((customer) => (
-                      <option key={customer.customer_id} value={customer.customer_id}>
-                        {customer.company_name} ({customer.customercode})
-                      </option>
-                    ))}
+                    {customers
+                      .filter((customer) => customer.status !== "Inactive" || customer.customer_id === formData.CustomerID)
+                      .map((customer) => (
+                        <option key={customer.customer_id} value={customer.customer_id}>
+                          {customer.company_name} ({customer.customercode}){customer.status === "Inactive" ? " - Inactive" : ""}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 {errors.CustomerID && <span className="error-message">{errors.CustomerID}</span>}

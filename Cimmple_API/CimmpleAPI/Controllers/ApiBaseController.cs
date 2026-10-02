@@ -3,6 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using System.Linq;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
+using CimmpleAPI.Data;
+using CimmpleAPI.Services.Auth;
+using Microsoft.EntityFrameworkCore;
 
 namespace CimmpleAPI.Controllers
 {
@@ -41,8 +44,27 @@ namespace CimmpleAPI.Controllers
                 return fromClaim;
             }
 
+            // Integration tokens represent a machine client, not a user; the header must not pick one.
+            if (IsIntegrationClient())
+            {
+                return null;
+            }
+
             var userIdHeader = Request.Headers["userId"].FirstOrDefault();
             return int.TryParse(userIdHeader, out var userId) ? userId : null;
+        }
+
+        protected bool IsIntegrationClient()
+        {
+            var portal = User?.FindFirst("portalType")?.Value;
+            return string.Equals(portal, "integration", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Login session id from the access token; null for tokens issued before per-session tokens.</summary>
+        protected int? GetSessionId()
+        {
+            var claim = User?.FindFirst(AuthClaimTypes.SessionId)?.Value;
+            return int.TryParse(claim, out var id) && id > 0 ? id : null;
         }
 
         protected bool IsSupportStaff()
@@ -82,6 +104,11 @@ namespace CimmpleAPI.Controllers
 
         protected IReadOnlyList<int> GetAllowedLocationIds()
         {
+            if (string.Equals(User?.FindFirst(AuthClaimTypes.LocationIdsTruncated)?.Value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetAllowedLocationIdsFromDatabase();
+            }
+
             var raw = User?.FindFirst("locationIds")?.Value;
             if (string.IsNullOrWhiteSpace(raw))
             {
@@ -93,6 +120,34 @@ namespace CimmpleAPI.Controllers
                 .Where(id => id > 0)
                 .Distinct()
                 .ToList();
+        }
+
+        private const string AllowedLocationsItemKey = "__allowedLocationIds";
+
+        /// <summary>Same set as login (UserMapping ∩ tenant Locations); cached for the request.</summary>
+        private IReadOnlyList<int> GetAllowedLocationIdsFromDatabase()
+        {
+            if (HttpContext.Items.TryGetValue(AllowedLocationsItemKey, out var cached) && cached is IReadOnlyList<int> list)
+            {
+                return list;
+            }
+
+            var userId = GetUserId();
+            var tenantId = GetTenantId();
+            IReadOnlyList<int> ids = Array.Empty<int>();
+            if (userId.HasValue && tenantId > 0)
+            {
+                var db = HttpContext.RequestServices.GetRequiredService<CimmpleDbContext>();
+                ids = (from m in db.UserMapping.AsNoTracking()
+                       join l in db.Locations.AsNoTracking() on m.locationId equals l.LocationId
+                       where m.userId == userId.Value && l.TenantId == tenantId
+                       select l.LocationId)
+                    .Distinct()
+                    .ToList();
+            }
+
+            HttpContext.Items[AllowedLocationsItemKey] = ids;
+            return ids;
         }
 
         /// <summary>

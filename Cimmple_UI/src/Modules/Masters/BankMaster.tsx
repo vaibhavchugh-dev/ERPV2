@@ -10,7 +10,7 @@ import { maskAccountNumber } from "../../Common/Hooks/useCompanyBanks";
 const BankMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
-  const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { locationIdParam, masterListFilter, sites } = useSiteListFilter();
   const [banks, setBanks] = useState<BankMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedBankId, setSelectedBankId] = useState<number>(0);
@@ -169,6 +169,8 @@ const BankMasterComponent: React.FC = () => {
       {showSlideout && (
         <BankMasterSlideout
           bankId={selectedBankId}
+          sites={sites}
+          defaultLocationId={locationIdParam}
           onClose={handleCloseSlideout}
         />
       )}

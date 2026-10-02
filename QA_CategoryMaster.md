@@ -16,27 +16,7 @@ Severity scale:
 
 ## Confirmed Bugs
 
-### BUG-CAT-001 — "Locked list" category types cannot receive new values, even from Category Master
-**Severity:** Medium. The documented admin workflow for locked lists does not work; admins must temporarily unlock the type to add a value.
-**Status:** Confirmed
-**Test Area:** Business Logic / Validation / CRUD (values)
-**Description:** The Category Type slideout says that when "Allow users to create new values" is off, "values can only be added here, not from the template form". The backend, however, rejects every new value for such a type, regardless of where the request comes from. The Category Master "Add" box is still shown for locked types and always fails.
-**Steps to Reproduce:**
-1. Open `/masters/category`, edit a category type and clear "Allow users to create new values". Save.
-2. Select that type in the left panel; the right panel still shows the "Add a … value" input.
-3. Type a new value and click Add.
-**Expected:** The value is added from Category Master (only the Job Template tag picker is blocked), as the help text says.
-**Actual:** The API returns 400 "New values are not allowed for category type '<name>'" and the toast shows that error.
-**Evidence:**
-* Frontend: `Cimmple_UI/src/Modules/Masters/CategoryTypeSlideout.tsx` lines 195-198 (help text); `Cimmple_UI/src/Modules/Masters/CategoryMaster.tsx` lines 108-137 (`handleAddValue` sends a plain `SaveCategoryValue`, no admin flag) and 291-315 (Add row rendered for every type); `Cimmple_UI/src/Common/Components/CategoryTagInput/CategoryTagInput.tsx` lines 135-139 (tag picker already hides "create" when `allowUserValues` is false).
-* Backend: `Cimmple_API/CimmpleAPI/Controllers/CategoryController.cs` lines 416-421 (new value rejected whenever `!type.AllowUserValues`).
-* Database: `CategoryType.AllowUserValues`.
-**Root Cause:** The server cannot tell an admin request from Category Master apart from a tag-picker request, and applies the "no user values" rule to both.
-**Business Impact:** Controlled vocabularies (the main reason to lock a list) cannot be maintained without unlocking them, which briefly lets any template editor add values.
-**Affected Areas:** Category Master values panel; Job Template categorisation.
-**Recommended Fix:** Distinguish admin maintenance from tag-picker creation (for example a separate admin endpoint or an explicit flag checked against a Category Master permission) and only enforce `AllowUserValues` for the tag-picker path.
 
----
 
 ### BUG-CAT-002 — Renaming a value to an existing name shows "Category renamed" but nothing changes
 **Severity:** Low. Misleading success message; no data is lost.

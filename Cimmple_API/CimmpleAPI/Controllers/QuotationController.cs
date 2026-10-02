@@ -349,6 +349,17 @@ namespace CimmpleAPI.Controllers
                     request.Tenantid = GetTenantId();
                 }
 
+                var currentCustomerId = request.OrderID > 0
+                    ? _context.QuotationOrder.AsNoTracking()
+                        .Where(q => q.OrderID == request.OrderID && q.Tenantid == request.Tenantid)
+                        .Select(q => (int?)q.CustomerID)
+                        .FirstOrDefault()
+                    : null;
+                if (CustomerStatusGuard.BlocksAssignment(_context, request.Tenantid, request.CustomerID, currentCustomerId))
+                {
+                    return BadRequest(new { error = CustomerStatusGuard.InactiveMessage });
+                }
+
                 int createdBy = request.UserId > 0 ? request.UserId : (GetUserId() ?? 0);
                 QuotationOrder quotation;
 

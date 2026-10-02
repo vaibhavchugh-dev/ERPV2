@@ -6,7 +6,7 @@ import {
 } from "../../Common/Services/CreditCardService";
 import { COUNTRIES, US_STATES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
-import { validateEmail, validatePhone, validateZipCode, validateCardNumber, validateCVV, validateExpiryDate } from "../../Common/Utils/validation";
+import { validateEmail, validatePhone, validateZipCode, validateCardNumber, validateExpiryDate } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import "./CustomerMasterSlideout.scss";
 
@@ -14,6 +14,9 @@ interface CreditCardMasterSlideoutProps {
   creditCardId: number;
   onClose: (refreshList?: boolean) => void;
 }
+
+const apiError = (error: any) =>
+  error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
 
 const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
   creditCardId,
@@ -49,6 +52,8 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
   const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string }>>([]);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+  const [lastFourDigits, setLastFourDigits] = useState("");
+  const [savedExpiry, setSavedExpiry] = useState({ month: "", year: "" });
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -92,14 +97,16 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
     try {
       const creditCard = await CreditCardService.GetCreditCardById(creditCardId);
       if (creditCard) {
+        setLastFourDigits(creditCard.LastFourDigits || "");
+        setSavedExpiry({ month: creditCard.ExpiryMonth || "", year: creditCard.ExpiryYear || "" });
         setFormData({
           Id: creditCard.Id,
-          CardNumber: creditCard.CardNumber || "",
+          CardNumber: "",
           CardholderName: creditCard.CardholderName || "",
           CardType: creditCard.CardType || "",
           ExpiryMonth: creditCard.ExpiryMonth || "",
           ExpiryYear: creditCard.ExpiryYear || "",
-          CVV: creditCard.CVV || "",
+          CVV: "",
           BillingStreet: creditCard.BillingStreet || "",
           BillingApartment: creditCard.BillingApartment || "",
           BillingCity: creditCard.BillingCity || "",
@@ -117,11 +124,14 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading credit card:", error);
-      toast.error(`Error loading credit card: ${error.message || "Unknown error"}`);
+      toast.error(`Error loading credit card: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
   };
+
+  const isExpiryChanged = (month: string, year: string) =>
+    creditCardId === 0 || month !== savedExpiry.month || year !== savedExpiry.year;
 
   const handleInputChange = (field: keyof CreditCardMasterReq, value: any) => {
     const updatedFormData = { ...formData, [field]: value };
@@ -173,22 +183,11 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
         }
         return newErrors;
       });
-    } else if (field === "CVV" && value) {
-      const cvvError = validateCVV(value);
-      setErrors((prev) => {
-        const newErrors = { ...prev };
-        if (cvvError) {
-          newErrors.CVV = cvvError;
-        } else {
-          delete newErrors.CVV;
-        }
-        return newErrors;
-      });
     } else if (field === "ExpiryMonth" || field === "ExpiryYear") {
       // Validate expiry date when either month or year changes
       const month = field === "ExpiryMonth" ? value : updatedFormData.ExpiryMonth;
       const year = field === "ExpiryYear" ? value : updatedFormData.ExpiryYear;
-      if (month && year) {
+      if (month && year && isExpiryChanged(month, year)) {
         const expiryError = validateExpiryDate(month, year);
         setErrors((prev) => {
           const newErrors = { ...prev };
@@ -206,7 +205,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
           return newErrors;
         });
       }
-    } else if (field === "Email" || field === "Phone" || field === "BillingZip" || field === "CardNumber" || field === "CVV") {
+    } else if (field === "Email" || field === "Phone" || field === "BillingZip" || field === "CardNumber") {
       setErrors((prev) => {
         const newErrors = { ...prev };
         delete newErrors[field];
@@ -223,7 +222,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       newErrors.CardholderName = "Cardholder name is required";
     }
 
-    // Card Number - required for new cards, validate format if provided
+    // Card Number - entered only when creating; existing cards keep their stored last four digits
     if (creditCardId === 0) {
       if (!formData.CardNumber || formData.CardNumber.trim() === "") {
         newErrors.CardNumber = "Card number is required";
@@ -233,24 +232,11 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
           newErrors.CardNumber = cardError;
         }
       }
-    } else if (formData.CardNumber && formData.CardNumber.trim() !== "") {
-      // Validate format if card number is being updated
-      const cardError = validateCardNumber(formData.CardNumber);
-      if (cardError) {
-        newErrors.CardNumber = cardError;
-      }
     }
 
-    // CVV - validate if provided (for new cards)
-    if (creditCardId === 0 && formData.CVV) {
-      const cvvError = validateCVV(formData.CVV);
-      if (cvvError) {
-        newErrors.CVV = cvvError;
-      }
-    }
-
-    // Expiry Date - validate if both month and year are provided
-    if (formData.ExpiryMonth && formData.ExpiryYear) {
+    // Expiry Date - a past date is only rejected for new cards or when the expiry is changed,
+    // so expired cards can still be deactivated or edited.
+    if (formData.ExpiryMonth && formData.ExpiryYear && isExpiryChanged(formData.ExpiryMonth, formData.ExpiryYear)) {
       const expiryError = validateExpiryDate(formData.ExpiryMonth, formData.ExpiryYear);
       if (expiryError) {
         newErrors.ExpiryDate = expiryError;
@@ -304,7 +290,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error saving credit card:", error);
-      toast.error(`Error saving credit card: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving credit card: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -331,7 +317,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("Error checking deletion impact:", error);
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -348,7 +334,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting credit card:", error);
-      toast.error(`Error deleting credit card: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting credit card: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -374,7 +360,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       await refreshDeletionImpact();
     } catch (error: any) {
       console.error(`Error deleting ${dependencyType}:`, error);
-      toast.error(`Error deleting ${dependencyType}: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting ${dependencyType}: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -414,7 +400,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
       await confirmDeletion();
     } catch (error: any) {
       console.error("Error in delete all:", error);
-      toast.error(`Error deleting dependencies: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting dependencies: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -429,12 +415,15 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
     return { value: month.toString().padStart(2, "0"), label: month.toString().padStart(2, "0") };
   });
 
-  // Year options (current year to 20 years ahead)
+  // Year options (current year to 20 years ahead, plus a stored past year so expired cards still show it)
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 20 }, (_, i) => {
     const year = currentYear + i;
     return { value: year.toString(), label: year.toString() };
   });
+  if (savedExpiry.year && !years.some((y) => y.value === savedExpiry.year)) {
+    years.unshift({ value: savedExpiry.year, label: savedExpiry.year });
+  }
 
   if (loading && creditCardId > 0) {
     return (
@@ -520,6 +509,29 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
                     />
                   </div>
                   {errors.CardNumber && <span className="error-message">{errors.CardNumber}</span>}
+                </div>
+                <div className="form-group"></div>
+              </div>
+            )}
+            {creditCardId > 0 && (
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="CardNumberMasked">Card Number</label>
+                  <div className="input-group">
+                    <div className="input-group-prepend">
+                      <span className="input-group-icon">
+                        {Icons.Document}
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      id="CardNumberMasked"
+                      className="form-input"
+                      value={`**** **** **** ${lastFourDigits || "****"}`}
+                      readOnly
+                      disabled
+                    />
+                  </div>
                 </div>
                 <div className="form-group"></div>
               </div>
@@ -619,9 +631,6 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
               </div>
             </div>
 
-            {creditCardId === 0 && (
-              <>
-
                 <div className="form-row">
                   <div className="form-group">
                     <label htmlFor="ExpiryMonth">
@@ -682,33 +691,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
                     {errors.ExpiryYear && <span className="error-message">{errors.ExpiryYear}</span>}
                     {errors.ExpiryDate && !errors.ExpiryYear && <span className="error-message">{errors.ExpiryDate}</span>}
                   </div>
-                  <div className="form-group">
-                    <label htmlFor="CVV">CVV</label>
-                    <div className={`input-group ${errors.CVV ? 'has-error' : ''}`}>
-                      <div className="input-group-prepend">
-                        <span className="input-group-icon">
-                          {Icons.Document}
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        id="CVV"
-                        name="CVV"
-                        className={`form-input ${errors.CVV ? "error" : ""}`}
-                        placeholder="CVV"
-                        value={formData.CVV}
-                        onChange={(e) => {
-                          const value = e.target.value.replace(/\D/g, "");
-                          handleInputChange("CVV", value);
-                        }}
-                        maxLength={4}
-                      />
-                    </div>
-                    {errors.CVV && <span className="error-message">{errors.CVV}</span>}
-                  </div>
                 </div>
-              </>
-            )}
 
             {/* Billing Address */}
             <div className="form-group">

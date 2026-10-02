@@ -137,12 +137,21 @@ const CategoryMasterComponent: React.FC = () => {
     }
   };
 
-  const handleRenameValue = async (valueId: number, currentName: string, nextName: string) => {
-    const trimmed = nextName.trim();
-    if (!trimmed || trimmed === currentName) return;
+  // The value inputs are uncontrolled, so a refused rename must put the stored name back itself.
+  const handleRenameValue = async (valueId: number, currentName: string, input: HTMLInputElement) => {
+    const trimmed = input.value.trim();
+    if (!trimmed) {
+      input.value = currentName;
+      toast.error("Name cannot be blank");
+      return;
+    }
+    if (trimmed === currentName) {
+      input.value = currentName;
+      return;
+    }
 
     try {
-      await CategoryService.SaveCategoryValue({
+      const saved = await CategoryService.SaveCategoryValue({
         Id: valueId,
         Tenantid: 0,
         CategoryTypeId: selectedTypeId,
@@ -152,10 +161,16 @@ const CategoryMasterComponent: React.FC = () => {
         DisplayOrder: 0,
         IsActive: true,
       });
+      if (saved.existed || saved.id !== valueId) {
+        input.value = currentName;
+        toast.error(`"${trimmed}" already exists in this category`);
+        return;
+      }
       toast.success("Category renamed");
       await loadCategoryTypes(selectedTypeId);
     } catch (error: any) {
       const message = error?.response?.data?.error || error?.message || "Unknown error";
+      input.value = currentName;
       toast.error(message);
       await loadCategoryTypes(selectedTypeId);
     }
@@ -294,6 +309,7 @@ const CategoryMasterComponent: React.FC = () => {
                   type="text"
                   className="category-add-input"
                   placeholder={`Add a ${selectedType.name.toLowerCase()} value...`}
+                  maxLength={150}
                   value={newValueName}
                   onChange={(e) => setNewValueName(e.target.value)}
                   onKeyDown={(e) => {
@@ -327,7 +343,8 @@ const CategoryMasterComponent: React.FC = () => {
                       type="text"
                       className="category-value-input"
                       defaultValue={value.name}
-                      onBlur={(e) => handleRenameValue(value.id, value.name, e.target.value)}
+                      maxLength={150}
+                      onBlur={(e) => handleRenameValue(value.id, value.name, e.currentTarget)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.currentTarget.blur();

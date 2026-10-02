@@ -2,7 +2,7 @@
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |
-| Authentication & Session | 1.1 | BUG-AUTH | Yes | 9 | 11 | 9 |
+| Authentication & Session | 1.1 | BUG-AUTH | Yes | 8 | 11 | 9 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database was changed. Findings that depend on deployed configuration, data or a real browser are listed under **Needs Manual Verification**.
 
@@ -143,46 +143,6 @@ Brute-force attacks against legacy-hashed accounts; vendor users obtaining inter
 
 **Recommended Fix:**
 Remove or disable the legacy endpoint, or route it through `AuthService.LoginAsync`.
-
----
-
-### BUG-AUTH-004 — "Reset Password Required" on a role forces its users to change password on every login and every token refresh
-
-**Severity:** High. Every user in that role is stuck in a change-password loop; the workflow is effectively blocked for the role.
-
-**Status:** Confirmed
-
-**Test Area:** Business logic / Cross-module (Roles)
-
-**Description:**
-`AuthService.BuildAuthUserDtoAsync` sets `MustChangePassword = true` when the user's role has `ResetPwd = Y/Yes`. `ChangePasswordAsync` only clears the user-level `ChangePassword` flag (`"N"`); the role flag stays `Y`. So every subsequent login and every `/Auth/Refresh` returns `mustChangePassword: true` again. The UI (`ProtectedLayout`) then redirects to `/change-password` as soon as the refreshed session is persisted. `ChangePassword.tsx` sets `mustChangePassword = false` in localStorage only, and the next refresh (`persistSession`) overwrites it.
-
-**Steps to Reproduce:**
-1. Roles → edit a role → set **Reset Password Required = Yes** → save.
-2. Log in as a user in that role. You are redirected to Change Password; change it successfully.
-3. Work until the token is refreshed (`SessionKeepAlive`, about 2 minutes before expiry), or log out and back in. You are redirected to Change Password again, indefinitely.
-
-**Expected:**
-After the user changes the password, they are not forced to change it again until the next reset or expiry event.
-
-**Actual:**
-A forced password change on every login and every refresh.
-
-**Evidence:**
-* Frontend: `Modules/UserManagement/RoleManager.tsx` lines 317–326 ("Reset Password Required" Yes/No). `Login/Login.tsx` lines 59–62. `Login/ChangePassword.tsx` line 40 (local flag only). `Common/Services/AuthService.ts` line 68 (`persistSession` writes the server value), lines 304–313 (refresh → `persistSession`). `Common/Components/ProtectedLayout.tsx` lines 31–35.
-* Backend: `Services/Auth/AuthService.cs` lines 514–523 (reads `role.ResetPwd`), 654–657 (MustChangePassword includes the role flag), 224 (`ChangePasswordAsync` only sets `user.ChangePassword = "N"`). `Controllers/UserManagementController.cs` lines 748 and 805–806 (role flag saved as Y/N).
-* Database: `UserRole.ResetPwd = 'Y'` persists; nothing records that the user already complied.
-
-**Root Cause:**
-The role flag is evaluated as a permanent condition rather than as a one-time trigger per user.
-
-**Business Impact:**
-Users in the role cannot work normally. Administrators turning on the option will lock out a whole team.
-
-**Affected Areas:** Authentication, Password Change (1.2), Roles & Permissions (1.4).
-
-**Recommended Fix:**
-Treat the role flag as a trigger: for example, compare it against the user's `PwdResetDate`/`PwdChangeStatus`, or set the user flag when the role flag is turned on and evaluate only the user flag at login.
 
 ---
 
@@ -868,7 +828,7 @@ It also returns the full entity (hash, refresh token, PII) to the caller.
 | Permissions | Yes | Fail (BUG-AUTH-001, 002, 003, 008) |
 | API | Yes | Fail (BUG-AUTH-001, 002, 003, 005) |
 | Database | Yes | Fail (BUG-AUTH-006; potential 012, 020) |
-| Business Logic | Yes | Fail (BUG-AUTH-004, 005, 006, 007) |
+| Business Logic | Yes | Fail (BUG-AUTH-005, 006, 007) |
 | Location | Yes | Pass with potential issues (BUG-AUTH-017, 018) |
 | Tenant | Yes | Potential issues (BUG-AUTH-014, 015, 019); see cross-module concerns |
 | Cross-Module | Yes | Concerns logged below for their root-cause modules |

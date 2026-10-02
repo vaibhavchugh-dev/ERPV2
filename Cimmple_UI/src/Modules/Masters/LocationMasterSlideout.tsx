@@ -13,6 +13,9 @@ import { validateEmail, validatePhone, validateZipCode } from "../../Common/Util
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import "./CustomerMasterSlideout.scss";
 
+const apiError = (error: any) =>
+  error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
+
 interface LocationMasterSlideoutProps {
   locationId: number;
   onClose: (refreshList?: boolean) => void;
@@ -99,7 +102,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error loading location:", error);
-      toast.error(`Error loading location: ${error.message || "Unknown error"}`);
+      toast.error(`Error loading location: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -235,7 +238,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("Error checking deletion impact:", error);
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -252,7 +255,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting location:", error);
-      toast.error(`Error deleting location: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting location: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -267,7 +270,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       setDeletionImpact(impact);
     } catch (error: any) {
       console.error("Error refreshing deletion impact:", error);
-      toast.error(`Error refreshing deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error refreshing deletion impact: ${apiError(error)}`);
     }
   };
 
@@ -299,6 +302,8 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
     try {
       const savePayload: LocationMasterReq = {
         ...formData,
+        // Unit/Suite is stored in Region, so the two must not disagree.
+        Region: formData.Apartment,
         LocType: formData.LocType ?? LOCATION_KIND.BusinessSite,
       };
       delete (savePayload as LocationMasterReq & { ParentName?: string }).ParentName;
@@ -337,14 +342,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
             status: logoError?.response?.status,
             url: logoError?.config?.url
           });
-          // Log the actual server error message
-          const serverError = logoError?.response?.data?.error || logoError?.response?.data?.message || "Unknown error";
-          const innerError = logoError?.response?.data?.innerException || "";
-          console.error("Server error:", serverError);
-          if (innerError) {
-            console.error("Inner exception:", innerError);
-          }
-          toast.warning(`Location saved but logo upload failed: ${serverError}`);
+          toast.warning(`Location saved but logo upload failed: ${apiError(logoError)}`);
         }
       }
 
@@ -357,7 +355,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error saving location:", error);
-      toast.error(`Error saving location: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving location: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -421,9 +419,17 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
       ? allLocations.find((l) => l.locationId === formData.ParentLocationId)
       : undefined;
   const parentLocType = parentForType?.locType ?? LOCATION_KIND.BusinessSite;
+  // An existing row must also stay above its own children (lower type number than every child).
+  const childLocTypes =
+    locationId > 0
+      ? allLocations.filter((l) => l.parentLocationId === locationId).map((l) => l.locType ?? LOCATION_KIND.Bin)
+      : [];
+  const maxTypeForChildren = childLocTypes.length > 0 ? Math.min(...childLocTypes) - 1 : LOCATION_KIND.Bin;
   const allowedChildTypes =
     formData.ParentLocationId != null && formData.ParentLocationId > 0
-      ? Array.from({ length: LOCATION_KIND.Bin - parentLocType }, (_, i) => parentLocType + 1 + i)
+      ? Array.from({ length: LOCATION_KIND.Bin - parentLocType }, (_, i) => parentLocType + 1 + i).filter(
+          (t) => t <= maxTypeForChildren || t === formData.LocType
+        )
       : [];
 
   return (
@@ -688,14 +694,14 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
                     id="Logo"
                     name="Logo"
                     className="form-input"
-                    accept="image/*"
+                    accept="image/png,image/jpeg,image/gif"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        // Validate file type
-                        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/svg+xml'];
+                        // PDF letterheads can only draw raster images.
+                        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
                         if (!allowedTypes.includes(file.type)) {
-                          toast.error("Invalid file type. Please select an image file (jpg, png, gif, svg).");
+                          toast.error("Invalid file type. Please select a jpg, png or gif image.");
                           return;
                         }
                         

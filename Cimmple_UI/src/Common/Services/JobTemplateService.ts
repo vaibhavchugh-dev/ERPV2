@@ -355,6 +355,17 @@ export class JobTemplateService {
     }).then((response) => response.data.result as JobTemplateAttachment);
   };
 
+  /** Attachments are not public files; they are fetched with the user's token. */
+  public static DownloadAttachment = async (attachmentId: number): Promise<Blob> => {
+    const tenantID = resolveTenantId();
+
+    const url = `/JobTemplate/DownloadJobTemplateAttachment`;
+    return Instense.get(url, {
+      params: { attachmentId, tenantId: tenantID },
+      responseType: "blob",
+    }).then((response) => response.data as Blob);
+  };
+
   public static DeleteAttachment = async (
     attachmentId: number
   ): Promise<any> => {

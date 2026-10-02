@@ -271,12 +271,7 @@ public static class GlAccountResolutionService
                 .FirstOrDefault(b => b.Id == bankId.Value && b.TenantId == tenantId);
             if (bank != null && !string.IsNullOrWhiteSpace(bank.coa))
             {
-                if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
-                    IsActiveAccountForTenant(db, tenantId, parsedAccountId))
-                {
-                    return parsedAccountId;
-                }
-
+                // Bank Master stores the account code; an account id is only a legacy fallback.
                 var byCode = db.ChartofAccounts
                     .AsNoTracking()
                     .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == bank.coa.Trim())
@@ -284,6 +279,12 @@ public static class GlAccountResolutionService
                     .FirstOrDefault();
                 if (byCode.HasValue)
                     return byCode;
+
+                if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
+                    IsActiveAccountForTenant(db, tenantId, parsedAccountId))
+                {
+                    return parsedAccountId;
+                }
             }
         }
 

@@ -16,11 +16,13 @@ interface CustomerMasterSlideoutProps {
   onClose: (refreshList?: boolean) => void;
 }
 
+const apiError = (error: any) =>
+  error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
+
 const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   customerId,
   onClose,
 }) => {
-  const handleDismiss = () => onClose(false);
   const [formData, setFormData] = useState<CustomerMasterReq>({
     customer_id: 0,
     company_name: "",
@@ -53,6 +55,13 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   const [contactErrors, setContactErrors] = useState<{ [key: string]: string }>({});
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
+
+  const handleDismiss = () => {
+    if (isStateChanged && !window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+      return;
+    }
+    onClose(false);
+  };
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -151,7 +160,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
         );
       }
     } catch (error: any) {
-      toast.error(`Error loading customer: ${error.message}`);
+      toast.error(`Error loading customer: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -298,25 +307,28 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("Error checking deletion impact:", error);
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
   };
 
   const confirmDeletion = async () => {
-    const canDelete = deletionImpact?.canDelete ?? (deletionImpact as any)?.CanDelete ?? true;
-    if (customerId === 0 || !canDelete) return;
+    if (customerId === 0) return;
 
     setLoading(true);
     try {
       await CustomerService.DeleteCustomer(customerId);
       toast.success("Customer deleted successfully");
       setShowDeletionDialog(false);
+      setDeletionImpact(null);
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting customer:", error);
-      toast.error(`Error deleting customer: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting customer: ${apiError(error)}`);
+      if (error?.response?.status === 409) {
+        await refreshDeletionImpact();
+      }
     } finally {
       setLoading(false);
     }
@@ -324,100 +336,105 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
 
   const refreshDeletionImpact = async () => {
     if (customerId === 0) return;
-    
+
     try {
       const response = await CustomerService.CheckCustomerDeletionImpact(customerId);
       const impact = response.result as DeletionImpactResult;
       setDeletionImpact(impact);
     } catch (error: any) {
       console.error("Error refreshing deletion impact:", error);
-      toast.error(`Error refreshing deletion impact: ${error.message || "Unknown error"}`);
     }
   };
 
-  const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
+  const removeDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string): Promise<boolean> => {
     try {
-      // Extract the service and method from the endpoint
-      if (deleteEndpoint.includes('/Order/DeleteOrder')) {
-        const { OrderService } = await import("../../Common/Services/OrderService");
-        await OrderService.DeleteOrder(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      } else if (deleteEndpoint.includes('/Quotation/DeleteQuotation')) {
-        const { QuotationService } = await import("../../Common/Services/QuotationService");
-        await QuotationService.DeleteQuotation(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      } else if (deleteEndpoint.includes('/Invoice/DeleteInvoice')) {
-        const { InvoiceService } = await import("../../Common/Services/InvoiceService");
-        await InvoiceService.DeleteInvoice(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      } else if (deleteEndpoint.includes('/Shipping/DeleteShipment')) {
+      if (deleteEndpoint?.includes("/Shipping/DeleteShipment")) {
         const { ShippingService } = await import("../../Common/Services/ShippingService");
         await ShippingService.DeleteShipment(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
+      } else if (deleteEndpoint?.includes("/Invoice/DeleteInvoice")) {
+        const { InvoiceService } = await import("../../Common/Services/InvoiceService");
+        await InvoiceService.DeleteInvoice(itemId);
+      } else if (deleteEndpoint?.includes("/JobOrder/DeleteJobOrder")) {
+        const { JobOrderService } = await import("../../Common/Services/JobOrderService");
+        await JobOrderService.DeleteJobOrder(itemId);
+      } else if (deleteEndpoint?.includes("/Order/DeleteOrder")) {
+        const { OrderService } = await import("../../Common/Services/OrderService");
+        await OrderService.DeleteOrder(itemId);
+      } else if (deleteEndpoint?.includes("/Quotation/DeleteQuotation")) {
+        const { QuotationService } = await import("../../Common/Services/QuotationService");
+        await QuotationService.DeleteQuotation(itemId);
+      } else {
+        toast.info(`${dependencyType} cannot be removed from here. Resolve it in its own module first.`);
+        return false;
       }
-      
-      // Refresh impact after deletion
-      await refreshDeletionImpact();
+      toast.success(`${dependencyType} deleted successfully`);
+      return true;
     } catch (error: any) {
       console.error(`Error deleting ${dependencyType}:`, error);
-      toast.error(`Failed to delete ${dependencyType}: ${error.message || "Unknown error"}`);
+      toast.error(`Failed to delete ${dependencyType}: ${apiError(error)}`);
       throw error;
     }
   };
 
+  const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
+    await removeDependency(dependencyType, itemId, deleteEndpoint);
+  };
+
   const handleDeleteAll = async () => {
-    if (!deletionImpact || !deletionImpact.blockingDependencies) {
+    if (!deletionImpact?.blockingDependencies || customerId === 0) return;
+
+    // A blocker without a delete action (e.g. a paid invoice) also blocks its order, so removing the
+    // rest would only partially strip the customer's history without making it deletable.
+    const unremovable = deletionImpact.blockingDependencies
+      .flatMap((d) => d.items)
+      .filter((i) => !i.deleteEndpoint)
+      .map((i) => i.name);
+    if (unremovable.length > 0) {
+      toast.error(`Customer still cannot be deleted. Resolve these in their own modules first: ${unremovable.join(", ")}`);
       return;
     }
 
     setLoading(true);
     try {
-      // Collect all dependencies to delete
-      const dependenciesToDelete: Array<{ type: string; id: number; name: string; endpoint: string }> = [];
-      
-      deletionImpact.blockingDependencies.forEach((dep) => {
-        dep.items.forEach((item) => {
-          dependenciesToDelete.push({
-            type: dep.entityType,
-            id: item.id,
-            name: item.name,
-            endpoint: item.deleteEndpoint
-          });
-        });
-      });
+      let impact: DeletionImpactResult = deletionImpact;
+      // The server lists dependencies leaf-first (shipments, invoices, job orders, orders, quotations),
+      // so deleting in order satisfies each module's own delete rules; re-check until nothing new is removable.
+      const attempted = new Set<string>();
+      for (;;) {
+        const removable = (impact.blockingDependencies || [])
+          .flatMap((dep) => dep.items.map((item) => ({ type: dep.entityType, ...item })))
+          .filter((item) => !!item.deleteEndpoint && !attempted.has(item.deleteEndpoint));
+        if (removable.length === 0) break;
 
-      // Delete all dependencies sequentially
-      for (const dep of dependenciesToDelete) {
-        try {
-          await handleDeleteDependency(dep.type, dep.id, dep.endpoint);
-        } catch (error: any) {
-          console.error(`Error deleting ${dep.name}:`, error);
-          toast.error(`Failed to delete ${dep.name}. Stopping deletion process.`);
-          setLoading(false);
-          // Refresh impact to show current state
-          await refreshDeletionImpact();
-          return;
+        for (const item of removable) {
+          attempted.add(item.deleteEndpoint);
+          try {
+            await removeDependency(item.type, item.id, item.deleteEndpoint);
+          } catch {
+            toast.error(`Failed to delete ${item.name}. Stopping deletion process.`);
+            await refreshDeletionImpact();
+            return;
+          }
         }
+
+        const response = await CustomerService.CheckCustomerDeletionImpact(customerId);
+        impact = response.result as DeletionImpactResult;
+        setDeletionImpact(impact);
       }
 
-      // After all dependencies are deleted, refresh impact
-      const updatedResponse = await CustomerService.CheckCustomerDeletionImpact(customerId);
-      const updatedImpact = updatedResponse.result as DeletionImpactResult;
-
-      if (updatedImpact.canDelete) {
-        // All dependencies deleted, now delete the customer
-        await CustomerService.DeleteCustomer(customerId);
-        toast.success("Customer and all dependencies deleted successfully");
-        setShowDeletionDialog(false);
-        onClose(true);
-      } else {
-        // Still have blocking dependencies, refresh the dialog
-        setDeletionImpact(updatedImpact);
-        toast.warning("Some dependencies could not be deleted. Please review and try again.");
+      if (!impact.canDelete) {
+        toast.error(
+          `Customer still cannot be deleted. Resolve these in their own modules first: ${(impact.blockingDependencies || [])
+            .flatMap((d) => d.items.map((i) => i.name))
+            .join(", ")}`
+        );
+        return;
       }
+
+      await confirmDeletion();
     } catch (error: any) {
       console.error("Error in delete all:", error);
-      toast.error(`Error deleting customer: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting dependencies: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }

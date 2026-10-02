@@ -535,6 +535,17 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Details cannot be null" });
                 }
 
+                var currentCustomerId = request.OrderID > 0
+                    ? _context.CustomerOrder.AsNoTracking()
+                        .Where(o => o.OrderID == request.OrderID && o.Tenantid == request.Tenantid)
+                        .Select(o => (int?)o.CustomerID)
+                        .FirstOrDefault()
+                    : null;
+                if (CustomerStatusGuard.BlocksAssignment(_context, request.Tenantid, request.CustomerID, currentCustomerId))
+                {
+                    return BadRequest(new { error = CustomerStatusGuard.InactiveMessage });
+                }
+
                 // Block creating a second CO from an already-converted CQ
                 if (request.OrderID <= 0 && request.QuotationId.HasValue && request.QuotationId.Value > 0)
                 {
