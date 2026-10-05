@@ -38,9 +38,24 @@ namespace CimmpleAPI.Controllers
                 return BadRequest(new { message = "Username and password are required." });
             }
 
-            var staff = FindStaff(request.Username.Trim(), request.Password);
+            var username = request.Username.Trim();
+            var lockKey = $"{username}|{HttpContext.Connection.RemoteIpAddress}";
+            if (SupportStaffLoginGuard.IsLockedOut(lockKey, out var minutesRemaining))
+            {
+                return StatusCode(429, new
+                {
+                    message = $"Too many failed login attempts. Try again in {minutesRemaining} minute(s)."
+                });
+            }
+
+            var staff = FindStaff(username, request.Password);
             if (staff == null)
+            {
+                SupportStaffLoginGuard.RecordFailure(lockKey);
                 return Unauthorized(new { message = "Invalid username or password." });
+            }
+
+            SupportStaffLoginGuard.ClearFailures(lockKey);
 
             var staffId = StableStaffId(staff.Username);
             var displayName = string.IsNullOrWhiteSpace(staff.DisplayName)
@@ -172,10 +187,43 @@ namespace CimmpleAPI.Controllers
         {
             var section = _configuration.GetSection("Support:Staff");
             var entries = section.Get<List<SupportStaffConfigEntry>>() ?? new List<SupportStaffConfigEntry>();
-            return entries.FirstOrDefault(e =>
-                !string.IsNullOrWhiteSpace(e.Username) &&
-                e.Username.Trim().Equals(username, StringComparison.OrdinalIgnoreCase) &&
-                e.Password == password);
+            foreach (var entry in entries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Username)
+                    || !entry.Username.Trim().Equals(username, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (VerifyStaffPassword(entry, password))
+                {
+                    return entry;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool VerifyStaffPassword(SupportStaffConfigEntry entry, string password)
+        {
+            if (!string.IsNullOrEmpty(entry.PasswordHash))
+            {
+                return PasswordHasher.Verify(password, entry.PasswordHash, null, out _);
+            }
+
+            return FixedTimeEquals(entry.Password ?? "", password);
+        }
+
+        private static bool FixedTimeEquals(string left, string right)
+        {
+            var leftBytes = Encoding.UTF8.GetBytes(left);
+            var rightBytes = Encoding.UTF8.GetBytes(right);
+            if (leftBytes.Length != rightBytes.Length)
+            {
+                return false;
+            }
+
+            return CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
         }
 
         private static int StableStaffId(string username)
@@ -209,7 +257,10 @@ namespace CimmpleAPI.Controllers
         private sealed class SupportStaffConfigEntry
         {
             public string Username { get; set; } = "";
+            /// <summary>Legacy plaintext password (prefer PasswordHash).</summary>
             public string Password { get; set; } = "";
+            /// <summary>PBKDF2 hash from PasswordHasher.HashPassword (store hash only, leave Password empty).</summary>
+            public string? PasswordHash { get; set; }
             public string? DisplayName { get; set; }
         }
     }

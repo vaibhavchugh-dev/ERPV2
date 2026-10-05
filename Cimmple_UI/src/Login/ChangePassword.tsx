@@ -29,6 +29,10 @@ export const ChangePassword: React.FC = () => {
       toast.error(policyError);
       return;
     }
+    if (newPassword === currentPassword) {
+      toast.error("New password must be different from your current password");
+      return;
+    }
     if (newPassword !== confirmPassword) {
       toast.error("New passwords do not match");
       return;

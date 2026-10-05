@@ -3191,6 +3191,14 @@ namespace CimmpleAPI.Controllers
                 if (!string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                if (detail.RawMaterialId.HasValue && detail.RawMaterialId.Value > 0)
+                {
+                    var linkOk = await _context.RawMaterialMaster.AnyAsync(
+                        r => r.Id == detail.RawMaterialId.Value && r.Tenantid == tenantId);
+                    if (linkOk)
+                        continue;
+                }
+
                 var rawMaterialId = await RawMaterialCatalog.EnsureAsync(
                     _context,
                     tenantId,
@@ -3198,7 +3206,8 @@ namespace CimmpleAPI.Controllers
                     detail.PartName,
                     detail.Unit,
                     detail.UnitPrice,
-                    vendorId > 0 ? vendorId : (int?)null);
+                    vendorId > 0 ? vendorId : (int?)null,
+                    reactivateInactive: false);
 
                 if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
                 {
@@ -3965,7 +3974,8 @@ namespace CimmpleAPI.Controllers
                             orderDetail.PartName,
                             orderDetail.Unit,
                             orderDetail.UnitPrice,
-                            order?.VendorID > 0 ? order.VendorID : (int?)null);
+                            order?.VendorID > 0 ? order.VendorID : (int?)null,
+                            reactivateInactive: false);
                         if (ensuredRmId.HasValue && ensuredRmId.Value > 0)
                         {
                             orderDetail.RawMaterialId = ensuredRmId;

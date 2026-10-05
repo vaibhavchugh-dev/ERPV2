@@ -85,7 +85,15 @@ const SystemSettingsComponent: React.FC = () => {
       const tid = storage?.tenantID || 1;
       const locationsData = await LocationService.GetLocations({ tenantid: tid });
       if (locationsData && Array.isArray(locationsData)) {
-        setLocations(locationsData);
+        let list = locationsData;
+        if (!AuthService.isAdminSession()) {
+          const allowed = AuthService.getAllowedLocations();
+          if (allowed.length > 0) {
+            const allowedIds = new Set(allowed.map((loc) => loc.locationId));
+            list = list.filter((loc) => allowedIds.has(loc.locationId));
+          }
+        }
+        setLocations(list);
       }
     } catch (error) {
       console.error('Error loading locations:', error);
@@ -720,8 +728,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="4"
                     value={settings.decimalPlaces}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 2;
-                      updateSetting('decimalPlaces', Math.max(0, Math.min(4, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("decimalPlaces", Math.max(0, Math.min(4, parsed)));
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "decimalPlaces",
+                        Number.isNaN(parsed) ? 2 : Math.max(0, Math.min(4, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',
@@ -793,8 +812,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="20"
                     value={settings.minPasswordLength}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 8;
-                      updateSetting('minPasswordLength', Math.max(6, Math.min(20, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("minPasswordLength", parsed);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "minPasswordLength",
+                        Number.isNaN(parsed) ? 8 : Math.max(6, Math.min(20, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',
@@ -860,8 +890,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="480"
                     value={settings.sessionTimeoutMinutes}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 30;
-                      updateSetting('sessionTimeoutMinutes', Math.max(5, Math.min(480, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("sessionTimeoutMinutes", parsed);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "sessionTimeoutMinutes",
+                        Number.isNaN(parsed) ? 30 : Math.max(5, Math.min(480, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',
@@ -885,8 +926,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="10"
                     value={settings.maxConcurrentSessions}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 3;
-                      updateSetting('maxConcurrentSessions', Math.max(1, Math.min(10, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("maxConcurrentSessions", parsed);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "maxConcurrentSessions",
+                        Number.isNaN(parsed) ? 3 : Math.max(1, Math.min(10, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',
@@ -907,8 +959,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="10"
                     value={settings.failedLoginAttempts}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 5;
-                      updateSetting('failedLoginAttempts', Math.max(3, Math.min(10, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("failedLoginAttempts", parsed);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "failedLoginAttempts",
+                        Number.isNaN(parsed) ? 5 : Math.max(3, Math.min(10, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',
@@ -929,8 +992,19 @@ const SystemSettingsComponent: React.FC = () => {
                     max="1440"
                     value={settings.accountLockoutMinutes}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value) || 15;
-                      updateSetting('accountLockoutMinutes', Math.max(5, Math.min(1440, val)));
+                      const raw = e.target.value;
+                      if (raw === "") return;
+                      const parsed = parseInt(raw, 10);
+                      if (!Number.isNaN(parsed)) {
+                        updateSetting("accountLockoutMinutes", parsed);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      updateSetting(
+                        "accountLockoutMinutes",
+                        Number.isNaN(parsed) ? 15 : Math.max(5, Math.min(1440, parsed))
+                      );
                     }}
                     style={{
                       width: '100%',

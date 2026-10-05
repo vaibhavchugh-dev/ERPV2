@@ -102,13 +102,31 @@ const pickShortestRemnant = (
 const StockMovementModal: React.FC<StockMovementModalProps> = ({
   type,
   balance,
-  balances = [],
+  balances: pageBalances = [],
   fallbackProducts = [],
   locations,
   defaultLocationId = 0,
   onClose,
   onSuccess,
 }) => {
+  const [allLocationBalances, setAllLocationBalances] = useState<InventoryBalance[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await InventoryService.GetBalanceList();
+        if (!cancelled && list) setAllLocationBalances(list);
+      } catch {
+        /* fall back to page-filtered balances */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const balances = allLocationBalances ?? pageBalances;
   const [materialType, setMaterialType] = useState<"product" | "raw">(
     balance?.productId ? "product" : balance?.rawMaterialId ? "raw" : "product"
   );

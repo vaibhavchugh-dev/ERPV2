@@ -489,17 +489,35 @@ END");
 
                 if (filterLocationId.HasValue)
                 {
-                    // NCR site via linked job → customer order location. Unlinked NCRs only under All sites.
-                    sql += @" AND JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
-                        SELECT 1
-                        FROM CimmpleFlow.JobOrderMaster j
-                        INNER JOIN CimmpleFlow.CustomerOrder o
-                            ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
-                        WHERE j.JobOrderID = NonConformanceReports.JobOrderId
-                          AND j.Tenantid = @tenantId
-                          AND o.locationId = @locationId
-                    )";
                     parameters.Add(("@locationId", filterLocationId.Value));
+                    sql += @" AND (
+                        (JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
+                            SELECT 1
+                            FROM CimmpleFlow.JobOrderMaster j
+                            INNER JOIN CimmpleFlow.CustomerOrder o
+                                ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
+                            WHERE j.JobOrderID = NonConformanceReports.JobOrderId
+                              AND j.Tenantid = @tenantId
+                              AND o.locationId = @locationId
+                        ))
+                        OR (
+                            (JobOrderId IS NULL OR JobOrderId <= 0)
+                            AND EXISTS (
+                                SELECT 1
+                                FROM CimmpleFlow.UserDetails ud
+                                WHERE ud.User_UniqueID = NonConformanceReports.ReportedBy
+                                  AND ud.TenantID = @tenantId
+                                  AND (
+                                      ud.CanAccessAllLocations = 1
+                                      OR ud.DefaultLocationId = @locationId
+                                      OR EXISTS (
+                                          SELECT 1 FROM CimmpleFlow.UserMapping um
+                                          WHERE um.userId = ud.User_UniqueID AND um.locationId = @locationId
+                                      )
+                                  )
+                            )
+                        )
+                    )";
                 }
                 else if (restrictToLocationIds != null)
                 {
@@ -510,7 +528,6 @@ END");
                     }
                     else
                     {
-                        // Restricted All-sites: only NCRs linked to jobs at allowed locations (unlinked excluded).
                         var inParams = new List<string>();
                         for (var i = 0; i < allowed.Count; i++)
                         {
@@ -518,14 +535,34 @@ END");
                             inParams.Add(name);
                             parameters.Add((name, allowed[i]));
                         }
-                        sql += $@" AND JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
-                            SELECT 1
-                            FROM CimmpleFlow.JobOrderMaster j
-                            INNER JOIN CimmpleFlow.CustomerOrder o
-                                ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
-                            WHERE j.JobOrderID = NonConformanceReports.JobOrderId
-                              AND j.Tenantid = @tenantId
-                              AND o.locationId IN ({string.Join(", ", inParams)})
+                        var inList = string.Join(", ", inParams);
+                        sql += $@" AND (
+                            (JobOrderId IS NOT NULL AND JobOrderId > 0 AND EXISTS (
+                                SELECT 1
+                                FROM CimmpleFlow.JobOrderMaster j
+                                INNER JOIN CimmpleFlow.CustomerOrder o
+                                    ON o.OrderID = j.CustomerOrderID AND o.Tenantid = j.Tenantid
+                                WHERE j.JobOrderID = NonConformanceReports.JobOrderId
+                                  AND j.Tenantid = @tenantId
+                                  AND o.locationId IN ({inList})
+                            ))
+                            OR (
+                                (JobOrderId IS NULL OR JobOrderId <= 0)
+                                AND EXISTS (
+                                    SELECT 1
+                                    FROM CimmpleFlow.UserDetails ud
+                                    WHERE ud.User_UniqueID = NonConformanceReports.ReportedBy
+                                      AND ud.TenantID = @tenantId
+                                      AND (
+                                          ud.CanAccessAllLocations = 1
+                                          OR (ud.DefaultLocationId IS NOT NULL AND ud.DefaultLocationId IN ({inList}))
+                                          OR EXISTS (
+                                              SELECT 1 FROM CimmpleFlow.UserMapping um
+                                              WHERE um.userId = ud.User_UniqueID AND um.locationId IN ({inList})
+                                          )
+                                      )
+                                )
+                            )
                         )";
                     }
                 }

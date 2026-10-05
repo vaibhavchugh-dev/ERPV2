@@ -35,6 +35,7 @@ import NotifyUserDialog from "./NotifyUserDialog";
 import ContactSupportDialog from "./ContactSupportDialog";
 import ConversationPanel from "./ConversationPanel";
 import { stripMentionTokensForPreview, navigateToMentionDocument } from "../Utils/chatMentions";
+import { GLOBAL_SEARCH_CATEGORY_ORDER } from "../Utils/globalSearchCategories";
 import { useFormatting } from "../Hooks/useFormatting";
 import "./TopBar.scss";
 
@@ -118,7 +119,7 @@ const TopBar: React.FC = () => {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const performSearch = useCallback(async (query: string) => {
-    if (!query || query.trim() === '' || tenantId === 0) {
+    if (!query || query.trim() === '') {
       setSearchResults(GlobalSearchService.emptyResults());
       setSearchLoading(false);
       return;
@@ -448,12 +449,30 @@ const TopBar: React.FC = () => {
   useEffect(() => {
     try {
       const params = new URLSearchParams(location.search || "");
+      let replaced = false;
       const raw = params.get("supportTicket");
       const id = raw ? Number(raw) : 0;
       if (id > 0) {
         setSupportInitialTicketId(id);
         setSupportDialogOpen(true);
         params.delete("supportTicket");
+        replaced = true;
+      }
+
+      const conversationRaw = params.get("conversation");
+      const conversationId = conversationRaw ? Number(conversationRaw) : 0;
+      if (conversationId > 0) {
+        setOpenConversationId(conversationId);
+        setMessagesMenuOpen(true);
+        params.delete("conversation");
+        replaced = true;
+      } else if (params.get("openMessages") === "1") {
+        setMessagesMenuOpen(true);
+        params.delete("openMessages");
+        replaced = true;
+      }
+
+      if (replaced) {
         const next = params.toString();
         history.replace({
           pathname: location.pathname,
@@ -552,13 +571,7 @@ const TopBar: React.FC = () => {
 
   const getFirstResult = (resultsData: GlobalSearchResults = searchResults): SearchResult | null => {
     if (!resultsData) return null;
-    const categories: (keyof GlobalSearchResults)[] = [
-      'customers', 'vendors', 'products', 'rawMaterials', 'orders', 'invoices', 'jobOrders', 'quotations',
-      'vendorOrders', 'vendorInvoices', 'vendorReceiving', 'vendorQuotations', 'banks', 'workstations',
-      'locations', 'processes', 'jobTemplates', 'priceBreakdowns', 'creditCards', 'chartOfAccounts',
-      'shipments', 'ncrReports', 'users', 'employees', 'documents'
-    ];
-    for (const cat of categories) {
+    for (const cat of GLOBAL_SEARCH_CATEGORY_ORDER) {
       const list = resultsData[cat];
       if (list && list.length > 0) {
         return list[0];

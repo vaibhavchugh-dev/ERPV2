@@ -7,6 +7,7 @@ using CimmpleAPI.Data.Dtos;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 
 namespace CimmpleAPI.Controllers
 {
@@ -199,11 +200,11 @@ namespace CimmpleAPI.Controllers
                         _context.UserWorkstationMapping.RemoveRange(existingMappings);
                     }
 
-                    // Add new mappings
+                    // Add new mappings (one row per user)
+                    var seenUserIds = new HashSet<int>();
                     foreach (var mapping in request.UserWorkstationMappings)
                     {
-                        // Skip if userId is 0 or not set
-                        if (mapping.UserId > 0)
+                        if (mapping.UserId > 0 && seenUserIds.Add(mapping.UserId))
                         {
                             var userMapping = new UserWorkstationMapping
                             {
@@ -305,6 +306,20 @@ namespace CimmpleAPI.Controllers
                                 result.Skipped++;
                                 rowResults.Add(rowResult);
                                 continue;
+                            }
+
+                            if (isActive.HasValue && match.IsActive && !isActive.Value)
+                            {
+                                var deactivateBlock = BuildWorkstationDeletionImpact(match.Id, request.TenantID);
+                                if (deactivateBlock.BlockingDependencies.Count > 0)
+                                {
+                                    rowResult.Status = "Error";
+                                    rowResult.Message = deactivateBlock.BlockingReasons.FirstOrDefault()
+                                        ?? "Workstation is still referenced and cannot be deactivated";
+                                    result.Failed++;
+                                    rowResults.Add(rowResult);
+                                    continue;
+                                }
                             }
 
                             match.WorkstationName = name;
@@ -595,20 +610,60 @@ namespace CimmpleAPI.Controllers
 
         private int CountJobOrdersReferencingField(int tenantId, string jsonFieldCamel, int id)
         {
-            var idStr = id.ToString();
-            var patterns = new[]
-            {
-                $"\"{jsonFieldCamel}\":{idStr}",
-                $"\"{jsonFieldCamel}\": {idStr}",
-                $"\"{char.ToUpperInvariant(jsonFieldCamel[0]) + jsonFieldCamel.Substring(1)}\":{idStr}",
-                $"\"{char.ToUpperInvariant(jsonFieldCamel[0]) + jsonFieldCamel.Substring(1)}\": {idStr}"
-            };
             return _context.JobOrderMaster
                 .AsNoTracking()
                 .Where(j => j.Tenantid == tenantId && j.RoutingStepsJson != null && j.RoutingStepsJson != "")
                 .AsEnumerable()
-                .Count(j => patterns.Any(p =>
-                    j.RoutingStepsJson!.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0));
+                .Count(j => RoutingJsonReferencesIntField(j.RoutingStepsJson, jsonFieldCamel, id));
+        }
+
+        private static bool RoutingJsonReferencesIntField(string? json, string fieldCamel, int id)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            var fieldPascal = char.ToUpperInvariant(fieldCamel[0]) + fieldCamel.Substring(1);
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                foreach (var step in doc.RootElement.EnumerateArray())
+                {
+                    if (TryGetStepInt(step, fieldCamel, out var camelId) && camelId == id)
+                    {
+                        return true;
+                    }
+
+                    if (TryGetStepInt(step, fieldPascal, out var pascalId) && pascalId == id)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore malformed routing JSON
+            }
+
+            return false;
+        }
+
+        private static bool TryGetStepInt(JsonElement step, string propertyName, out int value)
+        {
+            value = 0;
+            if (!step.TryGetProperty(propertyName, out var prop) || prop.ValueKind != JsonValueKind.Number)
+            {
+                return false;
+            }
+
+            return prop.TryGetInt32(out value);
         }
     }
 

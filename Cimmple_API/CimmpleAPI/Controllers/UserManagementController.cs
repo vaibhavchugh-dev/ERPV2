@@ -92,7 +92,9 @@ namespace CimmpleAPI.Controllers
 
                 if (!string.IsNullOrEmpty(status))
                 {
-                    query = query.Where(u => u.Status == status);
+                    var statusNorm = status.Trim();
+                    query = query.Where(u =>
+                        u.Status != null && u.Status.ToLower() == statusNorm.ToLower());
                 }
 
                 // Get total count for pagination
@@ -245,21 +247,34 @@ namespace CimmpleAPI.Controllers
                 // User Management focuses on account management only (roles, permissions, status, security)
                 // Profile data (name, email, phone, address) should be managed via Employee Master
                 
-                // Update account management fields only
-                user.Status = userDto.Status;
-                user.Role = userDto.Role;
-                
-                // Update termination info if status is being changed to Inactive
-                if (userDto.Status == "Inactive" && string.IsNullOrEmpty(user.Date_of_termination))
+                if (userDto.Role.HasValue)
                 {
-                    user.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
-                    user.Termination_Reason = userDto.TerminationReason ?? "Deactivated by admin";
+                    user.Role = userDto.Role.Value > 0 ? userDto.Role : null;
                 }
-                else if (userDto.Status == "Active" && !string.IsNullOrEmpty(user.Date_of_termination))
+
+                if (!string.IsNullOrWhiteSpace(userDto.Status))
                 {
-                    // Reactivating user - clear termination info
-                    user.Date_of_termination = null;
-                    user.Termination_Reason = null;
+                    var status = NormalizeAccountStatus(userDto.Status);
+                    user.Status = status;
+
+                    if (IsInactiveAccountStatus(status))
+                    {
+                        if (string.IsNullOrEmpty(user.Date_of_termination))
+                        {
+                            user.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
+                            user.Termination_Reason = userDto.TerminationReason ?? "Deactivated by admin";
+                        }
+                        else if (userDto.TerminationReason != null)
+                        {
+                            user.Termination_Reason = userDto.TerminationReason;
+                        }
+                    }
+                    else
+                    {
+                        // DB columns are non-nullable; match Employee Master clear-on-active behavior.
+                        user.Date_of_termination = "";
+                        user.Termination_Reason = "";
+                    }
                 }
 
                 await _context.SaveChangesAsync();
@@ -486,21 +501,24 @@ namespace CimmpleAPI.Controllers
         // DELETE: api/UserManagement/ClearPermissions
         // This endpoint clears all permissions from PermissionMaster and PermissionRole tables
         [HttpDelete("ClearPermissions")]
-        public async Task<IActionResult> ClearPermissions()
+        public async Task<IActionResult> ClearPermissions([FromQuery] int tenantId = 0)
         {
             try
             {
-                // First, delete all role-permission assignments
-                var rolePermissions = await _context.PermissionRole.ToListAsync();
+                var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
+                if (effectiveTenantId <= 0)
+                {
+                    return BadRequest(new { message = "Tenant id is required" });
+                }
+
+                var rolePermissions = await _context.PermissionRole
+                    .Where(pr => pr.TenantId == effectiveTenantId)
+                    .ToListAsync();
                 _context.PermissionRole.RemoveRange(rolePermissions);
-                
-                // Then, delete all permissions
-                var permissions = await _context.PermissionMaster.ToListAsync();
-                _context.PermissionMaster.RemoveRange(permissions);
                 
                 await _context.SaveChangesAsync();
                 
-                return Ok(new { message = $"Cleared {permissions.Count} permissions and {rolePermissions.Count} role assignments", permissionsCleared = permissions.Count, roleAssignmentsCleared = rolePermissions.Count });
+                return Ok(new { message = $"Cleared {rolePermissions.Count} role permission assignments for tenant {effectiveTenantId}", roleAssignmentsCleared = rolePermissions.Count });
             }
             catch (Exception ex)
             {
@@ -518,37 +536,35 @@ namespace CimmpleAPI.Controllers
         // This endpoint seeds the PermissionMaster table with common permissions
         // Optional query parameter: clearExisting=true to clear existing permissions first
         [HttpPost("SeedPermissions")]
-        public async Task<IActionResult> SeedPermissions([FromQuery(Name = "clearExisting")] bool clearExisting = false)
+        public async Task<IActionResult> SeedPermissions(
+            [FromQuery(Name = "clearExisting")] bool clearExisting = false,
+            [FromQuery] int tenantId = 0)
         {
             try
             {
-                // Log the parameter value for debugging
-                Console.WriteLine($"[SeedPermissions] Received clearExisting parameter: {clearExisting}");
-                
-                // Check if permissions already exist
-                var existingCount = await _context.PermissionMaster.CountAsync();
-                Console.WriteLine($"[SeedPermissions] Existing permissions count: {existingCount}");
-                
-                // Clear existing permissions if requested
-                if (clearExisting && existingCount > 0)
+                var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
+                if (effectiveTenantId <= 0)
                 {
-                    Console.WriteLine($"[SeedPermissions] Clearing {existingCount} existing permissions...");
-                    // First, delete all role-permission assignments
-                    var rolePermissions = await _context.PermissionRole.ToListAsync();
+                    return BadRequest(new { message = "Tenant id is required" });
+                }
+
+                Console.WriteLine($"[SeedPermissions] tenantId={effectiveTenantId}, clearExisting={clearExisting}");
+                
+                var existingCount = await _context.PermissionMaster.CountAsync();
+                
+                if (clearExisting)
+                {
+                    var rolePermissions = await _context.PermissionRole
+                        .Where(pr => pr.TenantId == effectiveTenantId)
+                        .ToListAsync();
                     _context.PermissionRole.RemoveRange(rolePermissions);
-                    Console.WriteLine($"[SeedPermissions] Removed {rolePermissions.Count} role-permission assignments");
-                    
-                    // Then, delete all permissions
-                    var permissions = await _context.PermissionMaster.ToListAsync();
-                    _context.PermissionMaster.RemoveRange(permissions);
-                    
                     await _context.SaveChangesAsync();
-                    Console.WriteLine($"[SeedPermissions] Cleared {permissions.Count} existing permissions");
+                    Console.WriteLine($"[SeedPermissions] Cleared {rolePermissions.Count} assignments for tenant {effectiveTenantId}");
                 }
 
                 var permissionsToSeed = BuildPermissionsToSeed();
 
-                if (existingCount > 0 && !clearExisting)
+                if (existingCount > 0)
                 {
                     var existingUrls = await _context.PermissionMaster
                         .Where(p => p.Url != null)
@@ -558,24 +574,43 @@ namespace CimmpleAPI.Controllers
                         .Where(p => p.Url != null && !existingUrls.Contains(p.Url))
                         .ToList();
 
+                    if (missingPermissions.Count > 0)
+                    {
+                        await _context.PermissionMaster.AddRangeAsync(missingPermissions);
+                        await _context.SaveChangesAsync();
+                        Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
+                    }
+
+                    if (clearExisting)
+                    {
+                        var resetAssignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
+                        return Ok(new
+                        {
+                            message = $"Reset role assignments for tenant {effectiveTenantId}. Added {missingPermissions.Count} missing permission definitions.",
+                            count = existingCount + missingPermissions.Count,
+                            added = missingPermissions.Count,
+                            clearExisting = true,
+                            tenantId = effectiveTenantId,
+                            adminRolesAssigned = resetAssignment.adminRoles,
+                            nonAdminRolesAssigned = resetAssignment.nonAdminRoles,
+                            permissionAssignments = resetAssignment.assignments
+                        });
+                    }
+
                     if (missingPermissions.Count == 0)
                     {
-                        Console.WriteLine($"[SeedPermissions] Permissions exist and no missing entries found");
                         return Ok(new { message = $"Permissions already up to date ({existingCount} records).", count = existingCount, added = 0, clearExisting = false });
                     }
 
-                    await _context.PermissionMaster.AddRangeAsync(missingPermissions);
-                    await _context.SaveChangesAsync();
-                    Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
                     return Ok(new { message = $"Added {missingPermissions.Count} missing permissions", count = existingCount + missingPermissions.Count, added = missingPermissions.Count, clearExisting = false });
                 }
 
                 await _context.PermissionMaster.AddRangeAsync(permissionsToSeed);
                 await _context.SaveChangesAsync();
 
-                var assignment = await AssignDefaultRolePermissionsAsync();
+                var assignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
                 var assignMsg = assignment.adminRoles > 0 || assignment.nonAdminRoles > 0
-                    ? $" Assigned defaults: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
+                    ? $" Assigned defaults for tenant {effectiveTenantId}: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
                     : "";
 
                 return Ok(new
@@ -583,6 +618,7 @@ namespace CimmpleAPI.Controllers
                     message = $"Successfully seeded {permissionsToSeed.Count} permissions.{assignMsg}",
                     count = permissionsToSeed.Count,
                     clearExisting,
+                    tenantId = effectiveTenantId,
                     adminRolesAssigned = assignment.adminRoles,
                     nonAdminRolesAssigned = assignment.nonAdminRoles,
                     permissionAssignments = assignment.assignments
@@ -601,9 +637,9 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// After a full seed/clear: Admin roles get every permission; all other roles get Dashboard only.
+        /// Resets assignments for one tenant: admin roles get every permission; others get Dashboard only.
         /// </summary>
-        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsAsync()
+        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsForTenantAsync(int tenantId)
         {
             var allPermissions = await _context.PermissionMaster.AsNoTracking().ToListAsync();
             if (allPermissions.Count == 0)
@@ -613,14 +649,15 @@ namespace CimmpleAPI.Controllers
                 string.Equals(p.Url, "/home", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(p.PermissionName, "Dashboard", StringComparison.OrdinalIgnoreCase));
 
-            var roles = await _context.UserRole.AsNoTracking().ToListAsync();
+            var roles = await _context.UserRole.AsNoTracking()
+                .Where(r => r.TenantId == tenantId)
+                .ToListAsync();
             if (roles.Count == 0)
                 return (0, 0, 0);
 
-            // Replace any leftover assignments for these roles with the defaults.
             var roleIds = roles.Select(r => r.RoleID).ToList();
             var existing = await _context.PermissionRole
-                .Where(pr => roleIds.Contains(pr.RoleId))
+                .Where(pr => pr.TenantId == tenantId && roleIds.Contains(pr.RoleId))
                 .ToListAsync();
             if (existing.Count > 0)
             {
@@ -634,7 +671,6 @@ namespace CimmpleAPI.Controllers
 
             foreach (var role in roles)
             {
-                var tenantId = role.TenantId;
                 if (IsAdminRoleName(role.RoleName, role.RoleTag))
                 {
                     adminRoles++;
@@ -669,6 +705,21 @@ namespace CimmpleAPI.Controllers
             return (adminRoles, nonAdminRoles, toAdd.Count);
         }
 
+        private static string NormalizeAccountStatus(string status)
+        {
+            var s = status.Trim();
+            if (IsActiveAccountStatus(s)) return "Active";
+            if (IsInactiveAccountStatus(s)) return "Inactive";
+            if (string.Equals(s, "Pending", StringComparison.OrdinalIgnoreCase)) return "Pending";
+            return s;
+        }
+
+        private static bool IsActiveAccountStatus(string? status) =>
+            string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsInactiveAccountStatus(string? status) =>
+            string.Equals(status, "Inactive", StringComparison.OrdinalIgnoreCase);
+
         private static bool IsAdminRoleName(string? roleName, string? roleTag)
         {
             static bool Match(string? value) =>
@@ -677,7 +728,7 @@ namespace CimmpleAPI.Controllers
                     || value.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
 
-            return Match(roleName) || Match(roleTag);
+            return Match(roleName);
         }
 
         // POST: api/UserManagement/AssignPermissionsToRole
@@ -798,7 +849,7 @@ namespace CimmpleAPI.Controllers
 
                 if (!string.IsNullOrEmpty(dto.RoleName))
                     role.RoleName = dto.RoleName;
-                if (!string.IsNullOrEmpty(dto.Description))
+                if (dto.Description != null)
                     role.RoleTag = dto.Description;
                 if (dto.OrderNo.HasValue)
                     role.OrderNo = dto.OrderNo.Value;

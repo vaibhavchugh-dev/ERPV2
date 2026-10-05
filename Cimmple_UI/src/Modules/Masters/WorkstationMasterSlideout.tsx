@@ -241,7 +241,13 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
     }
   };
 
-  const handleDiscard = () => {
+  const handleDismiss = () => {
+    if (isStateChanged) {
+      if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+        onClose();
+      }
+      return;
+    }
     onClose();
   };
 
@@ -259,7 +265,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay" onClick={handleDiscard}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <h2>
@@ -287,7 +293,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
                 </select>
               </div>
             </div>
-            <button className="btn-close" onClick={handleDiscard}>
+            <button className="btn-close" onClick={handleDismiss}>
               ×
             </button>
           </div>
@@ -373,7 +379,15 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
                             style={{ width: '100%', maxWidth: '400px' }}
                           >
                             <option value={0}>Select User</option>
-                            {users.map((user) => (
+                            {users
+                              .filter(
+                                (user) =>
+                                  user.user_UniqueID === mapping.userId
+                                  || !userMappings.some(
+                                    (m, i) => i !== index && m.userId === user.user_UniqueID
+                                  )
+                              )
+                              .map((user) => (
                               <option key={user.user_UniqueID} value={user.user_UniqueID}>
                                 {user.userName}
                               </option>
@@ -430,7 +444,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
             <button
               type="button"
               className="btn-cancel"
-              onClick={handleDiscard}
+              onClick={handleDismiss}
               disabled={loading}
             >
               Cancel

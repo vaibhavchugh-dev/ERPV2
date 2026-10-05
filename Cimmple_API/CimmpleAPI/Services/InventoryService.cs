@@ -332,9 +332,12 @@ namespace CimmpleAPI.Services
             try
             {
                 var balance = await GetOrCreateBalanceAsync(tenantId, productId, rawMaterialId, locationId);
-                balance.QuantityOnHand += quantity;
-                if (balance.QuantityOnHand < 0)
+                var newOnHand = balance.QuantityOnHand + quantity;
+                if (newOnHand < 0)
                     return (false, "Adjustment would result in negative stock");
+                if (newOnHand < balance.QuantityReserved)
+                    return (false, "Adjustment would leave less on hand than the quantity reserved for jobs");
+                balance.QuantityOnHand = newOnHand;
 
                 int? adjustLotId = null;
                 if (quantity > 0)

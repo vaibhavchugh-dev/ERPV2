@@ -40,7 +40,10 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 // Add services to the container
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        options.Filters.Add<CimmpleAPI.Services.Auth.ErpPermissionAuthorizationFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -255,8 +258,9 @@ var app = builder.Build();
 try
 {
     using var schemaScope = app.Services.CreateScope();
-    await SystemSettingsSchemaService.EnsureLoginSchemaAsync(
-        schemaScope.ServiceProvider.GetRequiredService<CimmpleDbContext>());
+    var db = schemaScope.ServiceProvider.GetRequiredService<CimmpleDbContext>();
+    await SystemSettingsSchemaService.EnsureLoginSchemaAsync(db);
+    await EmployeeUserDetailSchemaService.EnsureCountryColumnAsync(db);
 }
 catch (Exception ex)
 {

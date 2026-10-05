@@ -23,7 +23,15 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   vendorId,
   onClose,
 }) => {
-  const handleDismiss = () => onClose(false);
+  const handleDismiss = () => {
+    if (isStateChanged) {
+      if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+        onClose(false);
+      }
+      return;
+    }
+    onClose(false);
+  };
   const [formData, setFormData] = useState<VendorMasterReq>({
     vendor_id: 0,
     company_name: "",
@@ -353,104 +361,9 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting vendor:", error);
-      toast.error(`Error deleting vendor: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const refreshDeletionImpact = async () => {
-    if (vendorId === 0) return;
-    
-    try {
-      const response = await VendorService.CheckVendorDeletionImpact(vendorId);
-      const impact = response.result as DeletionImpactResult;
-      setDeletionImpact(impact);
-    } catch (error: any) {
-      console.error("Error refreshing deletion impact:", error);
-      toast.error(`Error refreshing deletion impact: ${error.message || "Unknown error"}`);
-    }
-  };
-
-  const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
-    try {
-      // Extract the service and method from the endpoint
-      if (deleteEndpoint.includes('/Order/DeleteVendorOrder')) {
-        const { VendorOrderService } = await import("../../Common/Services/VendorOrderService");
-        await VendorOrderService.DeleteVendorOrder(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      } else if (deleteEndpoint.includes('/Quotation/DeleteVendorQuotation')) {
-        const { QuotationService } = await import("../../Common/Services/QuotationService");
-        await QuotationService.DeleteVendorQuotation(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      } else if (deleteEndpoint.includes('/VendorInvoice/DeleteVendorInvoice')) {
-        const { VendorInvoiceService } = await import("../../Common/Services/VendorInvoiceService");
-        await VendorInvoiceService.DeleteVendorInvoice(itemId);
-        toast.success(`${dependencyType} deleted successfully`);
-      }
-      
-      // Refresh impact after deletion
-      await refreshDeletionImpact();
-    } catch (error: any) {
-      console.error(`Error deleting ${dependencyType}:`, error);
-      toast.error(`Failed to delete ${dependencyType}: ${error.message || "Unknown error"}`);
-      throw error;
-    }
-  };
-
-  const handleDeleteAll = async () => {
-    if (!deletionImpact || !deletionImpact.blockingDependencies) {
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Collect all dependencies to delete
-      const dependenciesToDelete: Array<{ type: string; id: number; name: string; endpoint: string }> = [];
-      
-      deletionImpact.blockingDependencies.forEach((dep) => {
-        dep.items.forEach((item) => {
-          dependenciesToDelete.push({
-            type: dep.entityType,
-            id: item.id,
-            name: item.name,
-            endpoint: item.deleteEndpoint
-          });
-        });
-      });
-
-      // Delete all dependencies sequentially
-      for (const dep of dependenciesToDelete) {
-        try {
-          await handleDeleteDependency(dep.type, dep.id, dep.endpoint);
-        } catch (error: any) {
-          console.error(`Error deleting ${dep.name}:`, error);
-          toast.error(`Failed to delete ${dep.name}. Stopping deletion process.`);
-          setLoading(false);
-          // Refresh impact to show current state
-          await refreshDeletionImpact();
-          return;
-        }
-      }
-
-      // After all dependencies are deleted, refresh impact
-      const updatedResponse = await VendorService.CheckVendorDeletionImpact(vendorId);
-      const updatedImpact = updatedResponse.result as DeletionImpactResult;
-
-      if (updatedImpact.canDelete) {
-        // All dependencies deleted, now delete the vendor
-        await VendorService.DeleteVendor(vendorId);
-        toast.success("Vendor and all dependencies deleted successfully");
-        setShowDeletionDialog(false);
-        onClose(true);
-      } else {
-        // Still have blocking dependencies, refresh the dialog
-        setDeletionImpact(updatedImpact);
-        toast.warning("Some dependencies could not be deleted. Please review and try again.");
-      }
-    } catch (error: any) {
-      console.error("Error in delete all:", error);
-      toast.error(`Error deleting vendor: ${error.message || "Unknown error"}`);
+      const apiError =
+        error?.response?.data?.error || error?.message || "Unknown error";
+      toast.error(`Error deleting vendor: ${apiError}`);
     } finally {
       setLoading(false);
     }
@@ -1525,9 +1438,6 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
             setShowDeletionDialog(false);
             setDeletionImpact(null);
           }}
-          onDeleteDependency={handleDeleteDependency}
-          onRefreshImpact={refreshDeletionImpact}
-          onDeleteAll={handleDeleteAll}
           isLoading={loading}
         />
       </div>

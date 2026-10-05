@@ -335,14 +335,15 @@ namespace CimmpleAPI.Services.Auth
             if (!ValidatePasswordAgainstPolicy(newPassword, settings, out var policyError))
                 return (false, policyError);
 
+            if (user.User_UniqueID > 0
+                && !string.IsNullOrEmpty(user.Password)
+                && PasswordHasher.Verify(newPassword, user.Password, user.PasswordSalt, out _))
+            {
+                return (false, "Cannot reuse your current password");
+            }
+
             if (user.User_UniqueID > 0 && settings.PasswordHistoryCount > 0)
             {
-                if (!string.IsNullOrEmpty(user.Password)
-                    && PasswordHasher.Verify(newPassword, user.Password, user.PasswordSalt, out _))
-                {
-                    return (false, "Cannot reuse your current password");
-                }
-
                 var recentHistory = await _db.UserPasswordHistory
                     .Where(h => h.UserId == user.User_UniqueID)
                     .OrderByDescending(h => h.CreatedDate)
@@ -758,7 +759,9 @@ namespace CimmpleAPI.Services.Auth
             {
                 try
                 {
-                    var role = await _db.UserRole.AsNoTracking().FirstOrDefaultAsync(r => r.RoleID == user.Role.Value);
+                    var role = await _db.UserRole.AsNoTracking().FirstOrDefaultAsync(r =>
+                        r.RoleID == user.Role.Value
+                        && (r.TenantId == user.TenantID || r.TenantId == 0));
                     roleName = role?.RoleName;
                     roleTag = role?.RoleTag;
                     roleResetPwd = role?.ResetPwd;
@@ -963,7 +966,7 @@ namespace CimmpleAPI.Services.Auth
                     || value.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
 
-            return Match(roleName) || Match(roleTag);
+            return Match(roleName);
         }
 
         private static bool IsUserActive(UserDetail user)

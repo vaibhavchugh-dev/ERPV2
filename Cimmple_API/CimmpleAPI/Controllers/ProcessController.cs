@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 
 namespace CimmpleAPI.Controllers
 {
@@ -174,8 +175,16 @@ namespace CimmpleAPI.Controllers
                     var newStatus = request.Status == "Active" ? 1 : (request.Status == "Inactive" ? 0 : process.status);
                     if (process.status == 1 && newStatus == 0)
                     {
+                        if (process.IsSystem)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "This is a protected system process and cannot be deactivated."
+                            });
+                        }
+
                         var deactivateImpact = BuildProcessDeletionImpact(process);
-                        if (deactivateImpact.BlockingDependencies.Count > 0 || process.IsSystem)
+                        if (deactivateImpact.BlockingDependencies.Count > 0)
                         {
                             return BadRequest(new
                             {
@@ -334,10 +343,16 @@ namespace CimmpleAPI.Controllers
                         if (!string.IsNullOrEmpty(workstationName))
                         {
                             var ws = workstations.FirstOrDefault(w =>
+                                w.IsActive &&
                                 string.Equals(w.WorkstationName, workstationName, StringComparison.OrdinalIgnoreCase));
                             if (ws == null)
                             {
-                                rowResult.Warning = $"Workstation '{workstationName}' not found, default workstation left blank";
+                                var inactive = workstations.FirstOrDefault(w =>
+                                    !w.IsActive &&
+                                    string.Equals(w.WorkstationName, workstationName, StringComparison.OrdinalIgnoreCase));
+                                rowResult.Warning = inactive != null
+                                    ? $"Workstation '{workstationName}' is inactive, default workstation left blank"
+                                    : $"Workstation '{workstationName}' not found, default workstation left blank";
                             }
                             else
                             {
@@ -363,13 +378,41 @@ namespace CimmpleAPI.Controllers
                                 continue;
                             }
 
+                            var newStatus = status ?? match.status;
+                            if (match.status == 1 && newStatus == 0)
+                            {
+                                if (match.IsSystem)
+                                {
+                                    rowResult.Status = "Error";
+                                    rowResult.Message = "This is a protected system process and cannot be deactivated.";
+                                    result.Failed++;
+                                    rowResults.Add(rowResult);
+                                    continue;
+                                }
+
+                                var deactivateImpact = BuildProcessDeletionImpact(match);
+                                if (deactivateImpact.BlockingDependencies.Count > 0)
+                                {
+                                    rowResult.Status = "Error";
+                                    rowResult.Message = deactivateImpact.BlockingReasons.FirstOrDefault()
+                                        ?? "Process is still referenced and cannot be deactivated";
+                                    result.Failed++;
+                                    rowResults.Add(rowResult);
+                                    continue;
+                                }
+                            }
+
                             match.ProcessCode = string.IsNullOrEmpty(processCode) ? match.ProcessCode : processCode;
                             match.ProcessName = processName;
-                            match.PDescription = row.Description?.Trim() ?? match.PDescription ?? "";
-                            match.ledgercode = row.LedgerCode?.Trim() ?? match.ledgercode ?? "";
+                            match.PDescription = string.IsNullOrWhiteSpace(row.Description)
+                                ? match.PDescription ?? ""
+                                : row.Description.Trim();
+                            match.ledgercode = string.IsNullOrWhiteSpace(row.LedgerCode)
+                                ? match.ledgercode ?? ""
+                                : row.LedgerCode.Trim();
                             match.ProcessCategory = category ?? match.ProcessCategory;
                             match.isFixed = isOutside ?? match.isFixed ?? 0;
-                            match.status = status ?? match.status;
+                            match.status = newStatus;
                             if (estimatedTime.HasValue) match.DefaultEstimatedTimeMinutes = estimatedTime;
                             if (workstationId.HasValue) match.DefaultWorkstationId = workstationId;
                             if (cost.HasValue) match.StandardCostPerHour = cost;
@@ -581,20 +624,53 @@ namespace CimmpleAPI.Controllers
 
         private int CountJobOrdersReferencingProcess(int tenantId, int processId)
         {
-            var idStr = processId.ToString();
-            var patterns = new[]
-            {
-                $"\"processId\":{idStr}",
-                $"\"processId\": {idStr}",
-                $"\"ProcessId\":{idStr}",
-                $"\"ProcessId\": {idStr}"
-            };
             return _context.JobOrderMaster
                 .AsNoTracking()
                 .Where(j => j.Tenantid == tenantId && j.RoutingStepsJson != null && j.RoutingStepsJson != "")
                 .AsEnumerable()
-                .Count(j => patterns.Any(p =>
-                    j.RoutingStepsJson!.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0));
+                .Count(j => RoutingJsonReferencesProcessId(j.RoutingStepsJson, processId));
+        }
+
+        private static bool RoutingJsonReferencesProcessId(string? json, int processId)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                foreach (var step in doc.RootElement.EnumerateArray())
+                {
+                    if (step.TryGetProperty("processId", out var camel)
+                        && camel.ValueKind == JsonValueKind.Number
+                        && camel.TryGetInt32(out var camelId)
+                        && camelId == processId)
+                    {
+                        return true;
+                    }
+
+                    if (step.TryGetProperty("ProcessId", out var pascal)
+                        && pascal.ValueKind == JsonValueKind.Number
+                        && pascal.TryGetInt32(out var pascalId)
+                        && pascalId == processId)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore malformed routing JSON
+            }
+
+            return false;
         }
 
         private string? ValidateUniqueness(int tenantId, int processId, string processName, string? processCode)

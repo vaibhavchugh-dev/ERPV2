@@ -30,65 +30,65 @@ namespace CimmpleAPI.Controllers
                 // Filter out entries where PartNo is empty or contains Job Number patterns
                 // Job Numbers typically start with '#JO' or 'JO#' - these should not be in PartNo field
                 // Note: '#JO1006, JO#1005' is a Job Number, not a Part Number
-                var partsFromOrders = _context.CustomerOrderDetails
-                    .Where(d => d.Tenantid == tenantid 
+                var partsFromOrders = (
+                    from d in _context.CustomerOrderDetails
+                    join o in _context.CustomerOrder on d.OrderID equals o.OrderID
+                    where d.Tenantid == tenantid
+                        && o.Tenantid == tenantid
                         && !string.IsNullOrEmpty(d.PartNo)
                         && !d.PartNo.Contains("#JO")
-                        && !d.PartNo.Contains("JO#"))
-                    .GroupBy(d => new 
-                    { 
-                        PartNo = (d.PartNo ?? "").Trim(), 
-                        partname = (d.partname ?? "").Trim(), 
-                        Unit = (d.Unit ?? "").Trim() 
-                    })
-                    .Select(g => new
+                        && !d.PartNo.Contains("JO#")
+                    group new { d, o } by new
+                    {
+                        PartNo = (d.PartNo ?? "").Trim(),
+                        partname = (d.partname ?? "").Trim(),
+                        Unit = (d.Unit ?? "").Trim()
+                    }
+                    into g
+                    select new
                     {
                         partNo = g.Key.PartNo,
                         partName = g.Key.partname,
                         unit = g.Key.Unit,
-                        totalQtyOrdered = g.Sum(d => d.QtyOrdered),
-                        // Average price: sum of all prices divided by count
-                        avgUnitPrice = g.Average(d => d.UnitPrice),
-                        // Min price: lowest UnitPrice value across all order lines for this part
-                        minUnitPrice = g.Min(d => d.UnitPrice),
-                        // Max price: highest UnitPrice value across all order lines for this part
-                        maxUnitPrice = g.Max(d => d.UnitPrice),
+                        totalQtyOrdered = g.Sum(x => x.d.QtyOrdered),
+                        avgUnitPrice = g.Average(x => x.d.UnitPrice),
+                        minUnitPrice = g.Min(x => x.d.UnitPrice),
+                        maxUnitPrice = g.Max(x => x.d.UnitPrice),
                         orderCount = g.Count(),
-                        firstOrderDate = g.Min(d => d.DueDate),
-                        lastOrderDate = g.Max(d => d.DueDate),
-                        // Get the most recent productid if available
-                        productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault()
+                        firstOrderDate = g.Min(x => x.o.OrderDate),
+                        lastOrderDate = g.Max(x => x.o.OrderDate),
+                        productId = g.Where(x => x.d.productid.HasValue).Select(x => x.d.productid).FirstOrDefault()
                     })
                     .OrderBy(p => p.partNo)
                     .ThenBy(p => p.partName)
                     .ToList();
 
-                // Also get parts from QuotationOrderDetails for completeness
-                // Filter out entries where PartNo is empty or contains Job Number patterns
-                var partsFromQuotations = _context.QuotationOrderDetails
-                    .Where(d => d.Tenantid == tenantid 
+                var partsFromQuotations = (
+                    from d in _context.QuotationOrderDetails
+                    join q in _context.QuotationOrder on d.OrderID equals q.OrderID
+                    where d.Tenantid == tenantid
+                        && q.Tenantid == tenantid
                         && !string.IsNullOrEmpty(d.PartNo)
                         && !d.PartNo.Contains("#JO")
-                        && !d.PartNo.Contains("JO#"))
-                    .GroupBy(d => new 
-                    { 
-                        PartNo = (d.PartNo ?? "").Trim(), 
-                        partname = (d.partname ?? "").Trim(), 
-                        Unit = (d.Unit ?? "").Trim() 
-                    })
-                    .Select(g => new
+                        && !d.PartNo.Contains("JO#")
+                    group new { d, q } by new
+                    {
+                        PartNo = (d.PartNo ?? "").Trim(),
+                        partname = (d.partname ?? "").Trim(),
+                        Unit = (d.Unit ?? "").Trim()
+                    }
+                    into g
+                    select new
                     {
                         partNo = g.Key.PartNo,
                         partName = g.Key.partname,
                         unit = g.Key.Unit,
-                        totalQtyOrdered = g.Sum(d => d.QtyOrdered),
-                        avgUnitPrice = g.Average(d => d.UnitPrice),
-                        minUnitPrice = g.Min(d => d.UnitPrice),
-                        maxUnitPrice = g.Max(d => d.UnitPrice),
-                        orderCount = g.Count(),
-                        firstOrderDate = g.Min(d => d.DueDate),
-                        lastOrderDate = g.Max(d => d.DueDate),
-                        productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault()
+                        totalQtyQuoted = g.Sum(x => x.d.QtyOrdered),
+                        avgUnitPrice = g.Average(x => x.d.UnitPrice),
+                        minUnitPrice = g.Min(x => x.d.UnitPrice),
+                        maxUnitPrice = g.Max(x => x.d.UnitPrice),
+                        quotationCount = g.Count(),
+                        productId = g.Where(x => x.d.productid.HasValue).Select(x => x.d.productid).FirstOrDefault()
                     })
                     .ToList();
 
@@ -135,14 +135,14 @@ namespace CimmpleAPI.Controllers
                             partName = part.partName,
                             unit = part.unit,
                             totalQtyOrdered = 0,
-                            totalQtyQuoted = part.totalQtyOrdered,
+                            totalQtyQuoted = part.totalQtyQuoted,
                             avgUnitPrice = part.avgUnitPrice,
                             minUnitPrice = part.minUnitPrice,
                             maxUnitPrice = part.maxUnitPrice,
                             orderCount = 0,
-                            quotationCount = part.orderCount,
-                            firstOrderDate = part.firstOrderDate,
-                            lastOrderDate = part.lastOrderDate,
+                            quotationCount = part.quotationCount,
+                            firstOrderDate = (DateTime?)null,
+                            lastOrderDate = (DateTime?)null,
                             productId = part.productId
                         };
                     }
@@ -150,7 +150,7 @@ namespace CimmpleAPI.Controllers
                     {
                         // Merge: part exists in both orders and quotations — keep qty streams separate
                         var existing = allParts[key];
-                        var totalCount = existing.orderCount + part.orderCount;
+                        var totalCount = existing.orderCount + part.quotationCount;
                         
                         allParts[key] = new
                         {
@@ -158,17 +158,14 @@ namespace CimmpleAPI.Controllers
                             partName = part.partName,
                             unit = part.unit,
                             totalQtyOrdered = existing.totalQtyOrdered,
-                            totalQtyQuoted = part.totalQtyOrdered,
-                            // Weighted average: combine averages from orders and quotations
-                            avgUnitPrice = totalCount > 0 ? (existing.avgUnitPrice * existing.orderCount + part.avgUnitPrice * part.orderCount) / totalCount : existing.avgUnitPrice,
-                            // Min price: find the absolute minimum across both orders and quotations
+                            totalQtyQuoted = part.totalQtyQuoted,
+                            avgUnitPrice = totalCount > 0 ? (existing.avgUnitPrice * existing.orderCount + part.avgUnitPrice * part.quotationCount) / totalCount : existing.avgUnitPrice,
                             minUnitPrice = Math.Min(existing.minUnitPrice, part.minUnitPrice),
-                            // Max price: find the absolute maximum across both orders and quotations
                             maxUnitPrice = Math.Max(existing.maxUnitPrice, part.maxUnitPrice),
                             orderCount = existing.orderCount,
-                            quotationCount = part.orderCount,
-                            firstOrderDate = existing.firstOrderDate < part.firstOrderDate ? existing.firstOrderDate : part.firstOrderDate,
-                            lastOrderDate = existing.lastOrderDate > part.lastOrderDate ? existing.lastOrderDate : part.lastOrderDate,
+                            quotationCount = part.quotationCount,
+                            firstOrderDate = existing.firstOrderDate,
+                            lastOrderDate = existing.lastOrderDate,
                             productId = existing.productId ?? part.productId
                         };
                     }
@@ -243,6 +240,8 @@ namespace CimmpleAPI.Controllers
                     .AsEnumerable()
                     .FirstOrDefault(p => (p.partno ?? "").Trim() == partNoTrimmed);
 
+                var aggregatedPart = BuildAggregatedPartDetail(tenantId, partNoTrimmed);
+
                 if (productMaster != null)
                 {
                     var productData = new
@@ -258,187 +257,19 @@ namespace CimmpleAPI.Controllers
                         sourcingType = string.IsNullOrWhiteSpace(productMaster.SourcingType) ? "Make" : productMaster.SourcingType,
                         reorderPoint = productMaster.ReorderPoint,
                         reorderQuantity = productMaster.ReorderQuantity,
-                        source = "ProductMaster"
+                        source = "ProductMaster",
+                        avgUnitPrice = aggregatedPart?.avgUnitPrice,
+                        minUnitPrice = aggregatedPart?.minUnitPrice,
+                        maxUnitPrice = aggregatedPart?.maxUnitPrice,
+                        customers = aggregatedPart?.customers
                     };
 
                     return Ok(new { result = productData });
                 }
 
-                // If not found in ProductMaster, get aggregated data from CustomerOrderDetails
-                // Apply same filtering as GetProductsFromOrders (exclude Job Number patterns, trim for comparison)
-                var partDetails = _context.CustomerOrderDetails
-                    .Where(d => d.Tenantid == tenantId 
-                        && !string.IsNullOrEmpty(d.PartNo)
-                        && !d.PartNo.Contains("#JO")
-                        && !d.PartNo.Contains("JO#"))
-                    .AsEnumerable()
-                    .Where(d => (d.PartNo ?? "").Trim() == partNoTrimmed)
-                    .ToList();
-
-                if (partDetails.Any())
+                if (aggregatedPart != null)
                 {
-                    var orderIds = partDetails.Select(d => d.OrderID).Distinct().ToList();
-                    var orders = _context.CustomerOrder
-                        .Where(o => orderIds.Contains(o.OrderID) && o.Tenantid == tenantId)
-                        .ToList();
-
-                    var partFromOrders = partDetails
-                        .GroupBy(d => new 
-                        { 
-                            PartNo = (d.PartNo ?? "").Trim(), 
-                            partname = (d.partname ?? "").Trim(), 
-                            Unit = (d.Unit ?? "").Trim() 
-                        })
-                        .Select(g => new
-                        {
-                            partNo = g.Key.PartNo,
-                            partName = g.Key.partname,
-                            unit = g.Key.Unit,
-                            avgUnitPrice = g.Average(d => d.UnitPrice),
-                            minUnitPrice = g.Min(d => d.UnitPrice),
-                            maxUnitPrice = g.Max(d => d.UnitPrice),
-                            productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault(),
-                            source = "CustomerOrders",
-                            customers = g.Select(d => d.OrderID)
-                                .Distinct()
-                                .Select(orderId => {
-                                    var order = orders.FirstOrDefault(o => o.OrderID == orderId);
-                                    if (order != null)
-                                    {
-                                        var orderDetails = partDetails.Where(pd => pd.OrderID == orderId);
-                                        return new
-                                        {
-                                            customerId = order.CustomerID,
-                                            customerName = order.CustomerName ?? "",
-                                            customerCode = order.customercode ?? "",
-                                            orderId = order.OrderID,
-                                            orderNumber = order.PONumber,
-                                            orderDate = order.OrderDate,
-                                            totalQty = orderDetails.Sum(pd => pd.QtyOrdered),
-                                            avgPrice = orderDetails.Average(pd => pd.UnitPrice)
-                                        };
-                                    }
-                                    return null;
-                                })
-                                .Where(c => c != null)
-                                .GroupBy(c => c.customerId)
-                                .Select(cg => {
-                                    var firstCustomer = cg.First();
-                                    return new
-                                    {
-                                        customerId = cg.Key,
-                                        customerName = firstCustomer.customerName,
-                                        customerCode = firstCustomer.customerCode,
-                                        orderCount = cg.Count(),
-                                        totalQty = cg.Sum(c => c.totalQty),
-                                        avgPrice = cg.Average(c => c.avgPrice),
-                                        lastOrderDate = cg.Max(c => c.orderDate),
-                                        orders = cg.Select(c => new
-                                        {
-                                            orderId = c.orderId,
-                                            orderNumber = c.orderNumber,
-                                            orderDate = c.orderDate,
-                                            qty = c.totalQty,
-                                            price = c.avgPrice
-                                        }).ToList()
-                                    };
-                                })
-                                .ToList()
-                        })
-                        .FirstOrDefault();
-
-                    if (partFromOrders != null)
-                    {
-                        return Ok(new { result = partFromOrders });
-                    }
-                }
-
-                // Also check QuotationOrderDetails
-                var quotationDetails = _context.QuotationOrderDetails
-                    .Where(d => d.Tenantid == tenantId 
-                        && !string.IsNullOrEmpty(d.PartNo)
-                        && !d.PartNo.Contains("#JO")
-                        && !d.PartNo.Contains("JO#"))
-                    .AsEnumerable()
-                    .Where(d => (d.PartNo ?? "").Trim() == partNoTrimmed)
-                    .ToList();
-
-                if (quotationDetails.Any())
-                {
-                    var quotationIds = quotationDetails.Select(d => d.OrderID).Distinct().ToList();
-                    var quotations = _context.QuotationOrder
-                        .Where(q => quotationIds.Contains(q.OrderID) && q.Tenantid == tenantId)
-                        .ToList();
-
-                    var partFromQuotations = quotationDetails
-                        .GroupBy(d => new 
-                        { 
-                            PartNo = (d.PartNo ?? "").Trim(), 
-                            partname = (d.partname ?? "").Trim(), 
-                            Unit = (d.Unit ?? "").Trim() 
-                        })
-                        .Select(g => new
-                        {
-                            partNo = g.Key.PartNo,
-                            partName = g.Key.partname,
-                            unit = g.Key.Unit,
-                            avgUnitPrice = g.Average(d => d.UnitPrice),
-                            minUnitPrice = g.Min(d => d.UnitPrice),
-                            maxUnitPrice = g.Max(d => d.UnitPrice),
-                            productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault(),
-                            source = "Quotations",
-                            customers = g.Select(d => d.OrderID)
-                                .Distinct()
-                                .Select(quotationId => {
-                                    var quotation = quotations.FirstOrDefault(q => q.OrderID == quotationId);
-                                    if (quotation != null)
-                                    {
-                                        var quotDetails = quotationDetails.Where(qd => qd.OrderID == quotationId);
-                                        return new
-                                        {
-                                            customerId = quotation.CustomerID,
-                                            customerName = quotation.CustomerName ?? "",
-                                            customerCode = quotation.customercode ?? "",
-                                            quotationId = quotation.OrderID,
-                                            quotationNumber = quotation.PONumber,
-                                            quotationDate = quotation.OrderDate,
-                                            totalQty = quotDetails.Sum(qd => qd.QtyOrdered),
-                                            avgPrice = quotDetails.Average(qd => qd.UnitPrice)
-                                        };
-                                    }
-                                    return null;
-                                })
-                                .Where(c => c != null)
-                                .GroupBy(c => c.customerId)
-                                .Select(cg => {
-                                    var firstCustomer = cg.First();
-                                    return new
-                                    {
-                                        customerId = cg.Key,
-                                        customerName = firstCustomer.customerName,
-                                        customerCode = firstCustomer.customerCode,
-                                        quotationCount = cg.Count(),
-                                        totalQty = cg.Sum(c => c.totalQty),
-                                        avgPrice = cg.Average(c => c.avgPrice),
-                                        lastQuotationDate = cg.Max(c => c.quotationDate),
-                                        quotations = cg.Select(c => new
-                                        {
-                                            quotationId = c.quotationId,
-                                            quotationNumber = c.quotationNumber,
-                                            quotationDate = c.quotationDate,
-                                            qty = c.totalQty,
-                                            price = c.avgPrice
-                                        }).ToList()
-                                    };
-                                })
-                                .ToList()
-                        })
-                        .FirstOrDefault();
-
-                    if (partFromQuotations != null)
-                    {
-                        return Ok(new { result = partFromQuotations });
-                    }
+                    return Ok(new { result = aggregatedPart });
                 }
 
                 return NotFound(new { error = $"Product with part number '{partNoTrimmed}' not found" });
@@ -1156,6 +987,188 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message });
             }
+        }
+
+        private dynamic? BuildAggregatedPartDetail(int tenantId, string partNoTrimmed)
+        {
+            var partDetails = _context.CustomerOrderDetails
+                .Where(d => d.Tenantid == tenantId
+                    && !string.IsNullOrEmpty(d.PartNo)
+                    && !d.PartNo.Contains("#JO")
+                    && !d.PartNo.Contains("JO#"))
+                .AsEnumerable()
+                .Where(d => (d.PartNo ?? "").Trim() == partNoTrimmed)
+                .ToList();
+
+            if (partDetails.Any())
+            {
+                var orderIds = partDetails.Select(d => d.OrderID).Distinct().ToList();
+                var orders = _context.CustomerOrder
+                    .Where(o => orderIds.Contains(o.OrderID) && o.Tenantid == tenantId)
+                    .ToList();
+
+                var partFromOrders = partDetails
+                    .GroupBy(d => new
+                    {
+                        PartNo = (d.PartNo ?? "").Trim(),
+                        partname = (d.partname ?? "").Trim(),
+                        Unit = (d.Unit ?? "").Trim()
+                    })
+                    .Select(g => new
+                    {
+                        partNo = g.Key.PartNo,
+                        partName = g.Key.partname,
+                        unit = g.Key.Unit,
+                        avgUnitPrice = g.Average(d => d.UnitPrice),
+                        minUnitPrice = g.Min(d => d.UnitPrice),
+                        maxUnitPrice = g.Max(d => d.UnitPrice),
+                        productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault(),
+                        source = "CustomerOrders",
+                        customers = g.Select(d => d.OrderID)
+                            .Distinct()
+                            .Select(orderId =>
+                            {
+                                var order = orders.FirstOrDefault(o => o.OrderID == orderId);
+                                if (order == null)
+                                {
+                                    return null;
+                                }
+
+                                var orderDetails = partDetails.Where(pd => pd.OrderID == orderId);
+                                return new
+                                {
+                                    customerId = order.CustomerID,
+                                    customerName = order.CustomerName ?? "",
+                                    customerCode = order.customercode ?? "",
+                                    orderId = order.OrderID,
+                                    orderNumber = order.PONumber,
+                                    orderDate = order.OrderDate,
+                                    totalQty = orderDetails.Sum(pd => pd.QtyOrdered),
+                                    avgPrice = orderDetails.Average(pd => pd.UnitPrice)
+                                };
+                            })
+                            .Where(c => c != null)
+                            .GroupBy(c => c!.customerId)
+                            .Select(cg =>
+                            {
+                                var firstCustomer = cg.First()!;
+                                return new
+                                {
+                                    customerId = cg.Key,
+                                    customerName = firstCustomer.customerName,
+                                    customerCode = firstCustomer.customerCode,
+                                    orderCount = cg.Count(),
+                                    totalQty = cg.Sum(c => c!.totalQty),
+                                    avgPrice = cg.Average(c => c!.avgPrice),
+                                    lastOrderDate = cg.Max(c => c!.orderDate),
+                                    orders = cg.Select(c => new
+                                    {
+                                        orderId = c!.orderId,
+                                        orderNumber = c.orderNumber,
+                                        orderDate = c.orderDate,
+                                        qty = c.totalQty,
+                                        price = c.avgPrice
+                                    }).ToList()
+                                };
+                            })
+                            .ToList()
+                    })
+                    .FirstOrDefault();
+
+                if (partFromOrders != null)
+                {
+                    return partFromOrders;
+                }
+            }
+
+            var quotationDetails = _context.QuotationOrderDetails
+                .Where(d => d.Tenantid == tenantId
+                    && !string.IsNullOrEmpty(d.PartNo)
+                    && !d.PartNo.Contains("#JO")
+                    && !d.PartNo.Contains("JO#"))
+                .AsEnumerable()
+                .Where(d => (d.PartNo ?? "").Trim() == partNoTrimmed)
+                .ToList();
+
+            if (!quotationDetails.Any())
+            {
+                return null;
+            }
+
+            var quotationIds = quotationDetails.Select(d => d.OrderID).Distinct().ToList();
+            var quotations = _context.QuotationOrder
+                .Where(q => quotationIds.Contains(q.OrderID) && q.Tenantid == tenantId)
+                .ToList();
+
+            var partFromQuotations = quotationDetails
+                .GroupBy(d => new
+                {
+                    PartNo = (d.PartNo ?? "").Trim(),
+                    partname = (d.partname ?? "").Trim(),
+                    Unit = (d.Unit ?? "").Trim()
+                })
+                .Select(g => new
+                {
+                    partNo = g.Key.PartNo,
+                    partName = g.Key.partname,
+                    unit = g.Key.Unit,
+                    avgUnitPrice = g.Average(d => d.UnitPrice),
+                    minUnitPrice = g.Min(d => d.UnitPrice),
+                    maxUnitPrice = g.Max(d => d.UnitPrice),
+                    productId = g.Where(d => d.productid.HasValue).Select(d => d.productid).FirstOrDefault(),
+                    source = "Quotations",
+                    customers = g.Select(d => d.OrderID)
+                        .Distinct()
+                        .Select(quotationId =>
+                        {
+                            var quotation = quotations.FirstOrDefault(q => q.OrderID == quotationId);
+                            if (quotation == null)
+                            {
+                                return null;
+                            }
+
+                            var quotDetails = quotationDetails.Where(qd => qd.OrderID == quotationId);
+                            return new
+                            {
+                                customerId = quotation.CustomerID,
+                                customerName = quotation.CustomerName ?? "",
+                                customerCode = quotation.customercode ?? "",
+                                quotationId = quotation.OrderID,
+                                quotationNumber = quotation.PONumber,
+                                quotationDate = quotation.OrderDate,
+                                totalQty = quotDetails.Sum(qd => qd.QtyOrdered),
+                                avgPrice = quotDetails.Average(qd => qd.UnitPrice)
+                            };
+                        })
+                        .Where(c => c != null)
+                        .GroupBy(c => c!.customerId)
+                        .Select(cg =>
+                        {
+                            var firstCustomer = cg.First()!;
+                            return new
+                            {
+                                customerId = cg.Key,
+                                customerName = firstCustomer.customerName,
+                                customerCode = firstCustomer.customerCode,
+                                quotationCount = cg.Count(),
+                                totalQty = cg.Sum(c => c!.totalQty),
+                                avgPrice = cg.Average(c => c!.avgPrice),
+                                lastQuotationDate = cg.Max(c => c!.quotationDate),
+                                quotations = cg.Select(c => new
+                                {
+                                    quotationId = c!.quotationId,
+                                    quotationNumber = c.quotationNumber,
+                                    quotationDate = c.quotationDate,
+                                    qty = c.totalQty,
+                                    price = c.avgPrice
+                                }).ToList()
+                            };
+                        })
+                        .ToList()
+                })
+                .FirstOrDefault();
+
+            return partFromQuotations;
         }
     }
 

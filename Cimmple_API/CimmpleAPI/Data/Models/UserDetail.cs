@@ -47,6 +47,7 @@ namespace CimmpleAPI.Data.Models
         public string? City { get; set; }
         public string? State { get; set; }
         public string? Zip { get; set; }
+        public string? Country { get; set; }
         public string? Street { get; set; }
         public string? PrimaryMethod { get; set; }
         public int? VendorId { get; set; }

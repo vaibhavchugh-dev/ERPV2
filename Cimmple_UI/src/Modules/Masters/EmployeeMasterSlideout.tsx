@@ -7,6 +7,7 @@ import {
   Role,
 } from "../../Common/Services/EmployeeService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
+import { AuthService } from "../../Common/Services/AuthService";
 import { COUNTRIES, US_STATES } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
@@ -126,7 +127,15 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       const tenantID = storage?.tenantID || 0;
       const result = await LocationService.GetLocations({ tenantid: tenantID });
       if (result && Array.isArray(result)) {
-        setLocations(result);
+        let list = result;
+        if (!AuthService.isAdminSession()) {
+          const allowed = AuthService.getAllowedLocations();
+          if (allowed.length > 0) {
+            const allowedIds = new Set(allowed.map((loc) => loc.locationId));
+            list = result.filter((loc) => allowedIds.has(loc.locationId));
+          }
+        }
+        setLocations(list);
       }
     } catch (error: any) {
       console.error("Error loading locations:", error);
@@ -331,8 +340,8 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
           DefaultLocationId: employee.DefaultLocationId,
           CanAccessAllLocations: !!employee.CanAccessAllLocations,
           TenantID: employee.TenantID,
-          DOB: employee.DOB,
-          SSN: employee.SSN,
+          DOB: "",
+          SSN: "",
           UserName: employee.UserName && employee.UserName.trim() !== "" ? employee.UserName : "",
         });
 
@@ -586,6 +595,10 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       submitData.EmpCode = (submitData.EmpCode || "").trim();
       delete submitData.HasPassword;
       delete submitData.CanLogin;
+      if (employeeId > 0) {
+        delete (submitData as any).DOB;
+        delete (submitData as any).SSN;
+      }
       if (loginAccessEnabled) {
         const existingUserName = (formData.UserName || "").trim();
         // Only auto-generate username for new employees / first-time login enablement.
@@ -650,7 +663,13 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     }
   };
 
-  const handleDiscard = () => {
+  const handleDismiss = () => {
+    if (isStateChanged) {
+      if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
+        onClose();
+      }
+      return;
+    }
     onClose();
   };
 
@@ -668,7 +687,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay" onClick={handleDiscard}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <div className="form-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -746,7 +765,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                 </select>
               </div>
             </div>
-            <button className="btn-close" onClick={handleDiscard}>
+            <button className="btn-close" onClick={handleDismiss}>
               ×
             </button>
           </div>
@@ -1002,29 +1021,31 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                     Choose where this employee can work, then pick their starting location at sign-in.
                   </p>
 
-                  <label htmlFor="CanAccessAllLocations" className="location-access-mode">
-                    <input
-                      id="CanAccessAllLocations"
-                      type="checkbox"
-                      checked={!!formData.CanAccessAllLocations}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setFormData((prev) => {
-                          const nextDefault =
-                            checked && !prev.DefaultLocationId && locations.length > 0
-                              ? locations[0].locationId
-                              : prev.DefaultLocationId;
-                          return {
-                            ...prev,
-                            CanAccessAllLocations: checked,
-                            DefaultLocationId: nextDefault,
-                          };
-                        });
-                        setIsStateChanged(true);
-                      }}
-                    />
-                    <span>Can work at all locations</span>
-                  </label>
+                  {AuthService.isAdminSession() && (
+                    <label htmlFor="CanAccessAllLocations" className="location-access-mode">
+                      <input
+                        id="CanAccessAllLocations"
+                        type="checkbox"
+                        checked={!!formData.CanAccessAllLocations}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFormData((prev) => {
+                            const nextDefault =
+                              checked && !prev.DefaultLocationId && locations.length > 0
+                                ? locations[0].locationId
+                                : prev.DefaultLocationId;
+                            return {
+                              ...prev,
+                              CanAccessAllLocations: checked,
+                              DefaultLocationId: nextDefault,
+                            };
+                          });
+                          setIsStateChanged(true);
+                        }}
+                      />
+                      <span>Can work at all locations</span>
+                    </label>
+                  )}
 
                   {!formData.CanAccessAllLocations && (
                     <div className="form-group">
@@ -1499,7 +1520,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                 <button
                   type="button"
                   className="btn-cancel"
-                  onClick={handleDiscard}
+                  onClick={handleDismiss}
                   disabled={loading}
                 >
                   Cancel

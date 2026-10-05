@@ -23,6 +23,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { SearchResult, GlobalSearchResults, GlobalSearchService } from '../Services/GlobalSearchService';
 import { formatCurrency } from '../Utils/Formatting';
+import { maskAccountNumber } from '../Hooks/useCompanyBanks';
 import './SearchResultsDropdown.scss';
 
 interface SearchResultsDropdownProps {
@@ -157,7 +158,7 @@ const SearchResultsDropdown: React.FC<SearchResultsDropdownProps> = ({
       case 'quotation':
         return `${result.customerName || ''}${formatAmount(result.totalAmount)}`;
       case 'bank':
-        return `${result.code || ''}${result.accountNo ? ` • ${result.accountNo}` : ''}`;
+        return `${result.code || ''}${result.accountNo ? ` • ${maskAccountNumber(result.accountNo)}` : ''}`;
       case 'workstation':
         return result.isActive ? 'Active' : 'Inactive';
       case 'location':

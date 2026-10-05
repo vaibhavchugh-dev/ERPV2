@@ -61,6 +61,20 @@ export const ProtectedLayout: React.FC = () => {
               }}
             />
           ))}
+          <Route
+            exact
+            path="/messages"
+            render={({ location }) => {
+              const params = new URLSearchParams(location.search || "");
+              const open = params.get("open");
+              const conversationId = open ? Number(open) : 0;
+              const search =
+                conversationId > 0
+                  ? `?conversation=${conversationId}`
+                  : "?openMessages=1";
+              return <Redirect to={{ pathname: landingPath, search }} />;
+            }}
+          />
           <Route exact path="/" render={() => <Redirect to={landingPath} />} />
         </Switch>
       </React.Suspense>
