@@ -87,6 +87,7 @@ Instense.interceptors.request.use((config) => {
     requestUrl.includes("/Auth/Login") ||
     requestUrl.includes("/Auth/VendorLogin") ||
     requestUrl.includes("/Auth/Refresh") ||
+    requestUrl.includes("/Auth/RevokeSession") ||
     requestUrl.includes("/Auth/BootstrapPassword") ||
     requestUrl.includes("/SupportStaff/Login");
 
@@ -135,10 +136,31 @@ Instense.interceptors.response.use(
       (original.url.includes("/Auth/Login") ||
         original.url.includes("/Auth/VendorLogin") ||
         original.url.includes("/Auth/Refresh") ||
+        original.url.includes("/Auth/RevokeSession") ||
         original.url.includes("/Auth/BootstrapPassword") ||
         original.url.includes("/SupportStaff/Login"));
 
-    const isSupportPath = (window.location.pathname || "").startsWith("/support");
+    const currentPath = window.location.pathname || "";
+    const isSupportPath = currentPath.startsWith("/support");
+
+    if (
+      status === 403 &&
+      error?.response?.data?.mustChangePassword === true &&
+      !isSupportPath &&
+      !currentPath.startsWith("/vendor")
+    ) {
+      try {
+        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+        storage.mustChangePassword = true;
+        localStorage.setItem("storage", JSON.stringify(storage));
+      } catch {
+        // ignore malformed storage
+      }
+      if (currentPath !== "/change-password") {
+        window.location.href = "/change-password";
+      }
+      return Promise.reject(error);
+    }
 
     if (
       status === 401 &&

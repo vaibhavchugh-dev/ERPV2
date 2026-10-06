@@ -4,6 +4,7 @@ import { UserManagementService, UserManagement } from "../Services/UserManagemen
 import { EntityCommentService } from "../Services/EntityCommentService";
 import { getApiErrorMessage } from "../Services/FileUploadHelper";
 import { formatDateTime } from "../Utils/Formatting";
+import { AuthService } from "../Services/AuthService";
 
 export interface EntityComment {
   id: number;
@@ -63,6 +64,26 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
   const nextIdRef = useRef(1);
 
   const canPersist = !!(persistContext && persistContext.entityId > 0);
+
+  const commentActorLabels = useMemo(() => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const labels: string[] = [];
+    const userName = (storage?.userName as string | undefined)?.trim();
+    if (userName) labels.push(userName.toLowerCase());
+    const fullName = `${storage?.firstName || ""} ${storage?.lastName || ""}`.trim();
+    if (fullName) labels.push(fullName.toLowerCase());
+    return labels;
+  }, []);
+
+  const canDeleteComment = useCallback(
+    (comment: EntityComment) => {
+      if (!allowDelete || disabled) return false;
+      if (AuthService.isAdminSession()) return true;
+      const by = (comment.createdBy || "").trim().toLowerCase();
+      return by.length > 0 && commentActorLabels.includes(by);
+    },
+    [allowDelete, disabled, commentActorLabels]
+  );
 
   useEffect(() => {
     const maxId = comments.reduce((m, c) => Math.max(m, c.id || 0), 0);
@@ -403,7 +424,7 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
                         {formatDateTime(comment.createdAt)}
                       </div>
                     </div>
-                    {allowDelete && !disabled && (
+                    {canDeleteComment(comment) && (
                       <button
                         type="button"
                         onClick={() => void handleDelete(comment.id)}

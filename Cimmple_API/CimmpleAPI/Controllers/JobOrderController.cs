@@ -182,6 +182,15 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Job order not found" });
                 }
 
+                var orderLocationId = _context.CustomerOrder
+                    .Where(o => o.OrderID == jobOrder.CustomerOrderID && o.Tenantid == tenantId)
+                    .Select(o => (int?)o.locationId)
+                    .FirstOrDefault();
+                if (orderLocationId is > 0 && !CanAccessLocation(orderLocationId.Value))
+                {
+                    return StatusCode(403, new { message = "You do not have access to this job order's site." });
+                }
+
                 // Deserialize attachments and comments
                 List<JobOrderAttachmentDto> attachments = null;
                 if (!string.IsNullOrEmpty(jobOrder.AttachmentsJson))
@@ -818,7 +827,7 @@ namespace CimmpleAPI.Controllers
 
                     var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
                     var displayName = Path.GetFileName(file.FileName);
-                    var blobName = $"{nextFileUniqueNo}{ext}";
+                    var blobName = $"{jobOrderId}/{Guid.NewGuid():N}{ext}";
 
                     var fileInfo = ModuleFileStorage.CreateFileInfo(
                         tenantId,
@@ -967,6 +976,42 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private async Task DeleteAllJobAttachmentBlobsAsync(JobOrderMaster jobOrder, int tenantId)
+        {
+            if (string.IsNullOrEmpty(jobOrder.AttachmentsJson))
+                return;
+
+            List<JobOrderAttachmentDto>? attachments;
+            try
+            {
+                attachments = JsonSerializer.Deserialize<List<JobOrderAttachmentDto>>(
+                    jobOrder.AttachmentsJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch
+            {
+                return;
+            }
+
+            if (attachments == null || attachments.Count == 0)
+                return;
+
+            foreach (var attachment in attachments)
+            {
+                var blobName = !string.IsNullOrEmpty(attachment.UploadFile)
+                    ? attachment.UploadFile
+                    : attachment.FileUrl;
+                if (string.IsNullOrEmpty(blobName))
+                    continue;
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobOrdersFolder,
+                    blobName);
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+            }
+        }
+
         private async Task ProcessDeletedJobOrderAttachments(
             JobOrderMaster jobOrder,
             int tenantId,
@@ -1045,6 +1090,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await _inventoryService.ReleaseOpenReservationsForJobInTransactionAsync(tenantId, jobOrderId);
+                await DeleteAllJobAttachmentBlobsAsync(jobOrder, tenantId);
                 _context.JobOrderMaster.Remove(jobOrder);
                 _context.SaveChanges();
 
@@ -1535,8 +1581,19 @@ namespace CimmpleAPI.Controllers
             string previousStatus,
             JobOrderReq request)
         {
-            var nowCompleted = IsCompletedStatus(job.Status);
-            var wasCompleted = IsCompletedStatus(previousStatus);
+            static bool IsShippingStatus(string? status) =>
+                string.Equals(status, "Shipped", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status, "Partially Shipped", StringComparison.OrdinalIgnoreCase);
+
+            var allStepsCompleted = request.RoutingSteps != null
+                                    && request.RoutingSteps.Count > 0
+                                    && request.RoutingSteps.All(s =>
+                                        string.Equals(s.status, "Completed", StringComparison.OrdinalIgnoreCase));
+
+            var nowCompleted = IsCompletedStatus(job.Status)
+                               || (allStepsCompleted && IsShippingStatus(job.Status));
+            var wasCompleted = IsCompletedStatus(previousStatus)
+                               || IsShippingStatus(previousStatus);
             var stepsReopenedUnderShip =
                 !wasCompleted
                 && !nowCompleted
@@ -1644,9 +1701,7 @@ namespace CimmpleAPI.Controllers
             var onHand = await _inventoryService.GetOnHandAsync(
                 tenantId, reverseProductId.Value, reverseLocationId.Value);
             var toReverse = Math.Max(0m, netQty - shippedQty);
-            if (toReverse <= 0 && onHand > 0)
-                toReverse = Math.Min(netQty, onHand);
-            else if (toReverse > 0 && onHand >= 0)
+            if (toReverse > 0 && onHand >= 0)
                 toReverse = Math.Min(toReverse, onHand > 0 ? onHand : toReverse);
 
             if (toReverse <= 0)

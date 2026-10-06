@@ -90,7 +90,7 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
         }
         const result = await WorkstationService.GetWorkstations({ tenantid: tenantID });
         if (result && Array.isArray(result)) {
-          setWorkstations(result.filter((w) => w.isActive !== false));
+          setWorkstations(result);
         }
         setWorkstationsLoaded(true);
       } catch (error) {
@@ -108,14 +108,15 @@ const ProcessMasterImportModal: React.FC<ProcessMasterImportModalProps> = ({
       previewRows.map((row) => {
         const warnings: string[] = [];
         const workstationName = row.DefaultWorkstationName?.trim();
-        if (
-          workstationsLoaded &&
-          workstationName &&
-          !workstations.some(
+        if (workstationsLoaded && workstationName) {
+          const ws = workstations.find(
             (w) => w.workstationName?.toLowerCase() === workstationName.toLowerCase()
-          )
-        ) {
-          warnings.push(`Workstation "${workstationName}" not found, will be left blank`);
+          );
+          if (!ws) {
+            warnings.push(`Workstation "${workstationName}" not found, will be left blank`);
+          } else if (ws.isActive === false) {
+            warnings.push(`Workstation "${workstationName}" is inactive, default workstation left blank`);
+          }
         }
         return { ...row, _warnings: warnings };
       }),

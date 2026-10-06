@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
   JobTemplateService,
@@ -9,6 +10,14 @@ import {
   JOB_TEMPLATE_ATTACHMENT_TYPES,
   JOB_TEMPLATE_INSPECTION_TYPES,
 } from "../../Common/Services/JobTemplateService";
+import AttachmentUploadSection, {
+  ModuleAttachment,
+} from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, {
+  DocumentViewerFile,
+} from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
+import { triggerBrowserDownload } from "../../Common/Services/FileUploadHelper";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import {
   WorkstationService,
@@ -90,11 +99,16 @@ const emptyForm = (): JobTemplateReq => ({
   IsSystem: false,
 });
 
-const formatBytes = (bytes: number): string => {
-  if (!bytes) return "0 KB";
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
+const JOB_TEMPLATE_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const toModuleAttachment = (a: JobTemplateAttachment): ModuleAttachment => ({
+  id: a.id,
+  name: a.fileName,
+  size: a.fileSize,
+  fileUniqueno: a.id,
+  contentType: a.contentType,
+  fileCode: a.attachmentType,
+});
 
 const toNumberOrNull = (value: string): number | null =>
   value === "" ? null : parseFloat(value);
@@ -112,22 +126,32 @@ const catalogItemLabel = (
   return extra ? `${label} (${extra})` : label;
 };
 
+const apiError = (error: any) =>
+  error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
+
 const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
-  jobTemplateId,
-  onClose,
+  jobTemplateId: initialTemplateId,
+  onClose: closeSlideout,
 }) => {
+  // A newly created template stays open (to add attachments), so the id can change after mount.
+  const [jobTemplateId, setJobTemplateId] = useState(initialTemplateId);
+  const [listChanged, setListChanged] = useState(false);
+  const onClose = (refreshList?: boolean) => closeSlideout(refreshList || listChanged);
   const [formData, setFormData] = useState<JobTemplateReq>(emptyForm());
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>([]);
-  const [attachments, setAttachments] = useState<JobTemplateAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
 
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [uploadType, setUploadType] = useState<string>("Drawing");
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -136,15 +160,16 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
 
   useEffect(() => {
+    setJobTemplateId(initialTemplateId);
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     setFormData((prev) => ({ ...prev, Tenantid: storage?.tenantID || 0 }));
 
     loadLookups();
 
-    if (jobTemplateId > 0) {
-      loadTemplate();
+    if (initialTemplateId > 0) {
+      loadTemplate(initialTemplateId);
     }
-  }, [jobTemplateId]);
+  }, [initialTemplateId]);
 
   const loadLookups = async () => {
     try {
@@ -162,11 +187,12 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         InventoryService.GetRawMaterials(),
       ]);
 
+      // Inactive entries are kept so a template that still references one can show it.
       if (processList && Array.isArray(processList)) {
-        setProcesses(processList.filter((p) => p.status !== 0));
+        setProcesses(processList);
       }
       if (workstationList && Array.isArray(workstationList)) {
-        setWorkstations(workstationList.filter((w) => w.isActive !== false));
+        setWorkstations(workstationList);
       }
       setCategoryTypes((types || []).filter((t) => t.isActive));
       setProducts(
@@ -181,7 +207,6 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       );
       setRawMaterials(
         (rawList || [])
-          .filter((rm) => rm.isActive !== false)
           .slice()
           .sort((a, b) => {
             const aRem = a.isRemnant ? 1 : 0;
@@ -195,20 +220,92 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
     }
   };
 
-  const loadTemplate = async () => {
+  const loadTemplate = async (id: number) => {
     setLoading(true);
     try {
-      const template = await JobTemplateService.GetJobTemplateById(jobTemplateId);
+      const template = await JobTemplateService.GetJobTemplateById(id);
       if (template) {
         setFormData({ ...emptyForm(), ...template });
-        setAttachments(template.Attachments || []);
+        setAttachments((template.Attachments || []).map(toModuleAttachment));
       }
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error loading job template:", error);
-      toast.error(`Error loading job template: ${error.message || "Unknown error"}`);
+      toast.error(`Error loading job template: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
+  };
+
+  // ---- Lookup options (active items, plus an inactive one the row already uses) ----
+
+  const isProcessActive = (p: ProcessMaster) => p.status !== 0;
+  const isWorkstationActive = (w: WorkstationMaster) => w.isActive !== false;
+  const isRawMaterialActive = (rm: RawMaterial) => rm.isActive !== false;
+
+  const processLabel = (p: ProcessMaster) =>
+    p.processCode ? `${p.processCode} — ${p.processName}` : p.processName;
+
+  const renderProcessOptions = (selectedId?: number | null, fallbackName?: string) => {
+    const selected = selectedId ? processes.find((p) => p.id === selectedId) : undefined;
+    return (
+      <>
+        {processes
+          .filter((p) => isProcessActive(p) || p.id === selectedId)
+          .map((p) => (
+            <option key={p.id} value={p.id}>
+              {isProcessActive(p) ? processLabel(p) : `${processLabel(p)} (Inactive)`}
+            </option>
+          ))}
+        {selectedId && !selected && (
+          <option value={selectedId}>{`${fallbackName || `Process #${selectedId}`} (Inactive)`}</option>
+        )}
+      </>
+    );
+  };
+
+  const renderWorkstationOptions = (selectedId?: number | null, fallbackName?: string) => {
+    const selected = selectedId ? workstations.find((w) => w.id === selectedId) : undefined;
+    return (
+      <>
+        {workstations
+          .filter((w) => isWorkstationActive(w) || w.id === selectedId)
+          .map((w) => (
+            <option key={w.id} value={w.id}>
+              {isWorkstationActive(w) ? w.workstationName : `${w.workstationName} (Inactive)`}
+            </option>
+          ))}
+        {selectedId && !selected && (
+          <option value={selectedId}>{`${fallbackName || `Workstation #${selectedId}`} (Inactive)`}</option>
+        )}
+      </>
+    );
+  };
+
+  const renderRawMaterialOptions = (line: JobTemplateMaterial) => {
+    const selectedId = line.RawMaterialId;
+    const selected = selectedId ? rawMaterials.find((rm) => rm.id === selectedId) : undefined;
+    return (
+      <>
+        {rawMaterials
+          .filter((rm) => isRawMaterialActive(rm) || rm.id === selectedId)
+          .map((rm) => (
+            <option key={rm.id} value={rm.id}>
+              {catalogItemLabel(
+                rm.partNo,
+                rm.partName,
+                [rm.isRemnant ? "remnant" : "", isRawMaterialActive(rm) ? "" : "Inactive"]
+                  .filter(Boolean)
+                  .join(", ") || undefined
+              )}
+            </option>
+          ))}
+        {selectedId && !selected && (
+          <option value={selectedId}>
+            {catalogItemLabel(line.RawMaterialPartNo, line.RawMaterialName, "Inactive")}
+          </option>
+        )}
+      </>
+    );
   };
 
   const handleInputChange = (field: keyof JobTemplateReq, value: any) => {
@@ -447,38 +544,137 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
   // ---- Attachments ----
 
-  const handleUpload = async (file: File | undefined) => {
-    if (!file) return;
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
+  };
 
-    setUploading(true);
-    try {
-      const uploaded = await JobTemplateService.UploadAttachment(
-        jobTemplateId,
-        uploadType,
-        file
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
+
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
+      }
+      const attachmentId = Number(file.id);
+      if (!attachmentId || attachmentId <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno ?? attachmentId },
+        async () => {
+          const blob = await JobTemplateService.DownloadAttachment(attachmentId);
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno ?? attachmentId,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType: file.contentType || blob.type,
+            blobUrl,
+            ownsUrl: true,
+          };
+        }
       );
-      setAttachments((prev) => [...prev, uploaded]);
-      toast.success("Attachment uploaded");
-    } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || "Unknown error";
-      toast.error(`Error uploading attachment: ${message}`);
-    } finally {
-      setUploading(false);
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    []
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      const attachmentId = Number(file.id);
+      if (file.localUrl || !attachmentId || attachmentId <= 0) {
+        return;
+      }
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno ?? attachmentId,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {});
+    },
+    [loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno ?? match.id,
+    });
+    if (cached?.blobUrl) {
+      triggerBrowserDownload(cached.blobUrl, match.name);
+      return;
     }
+
+    const blob = await JobTemplateService.DownloadAttachment(match.id);
+    const blobUrl = URL.createObjectURL(blob);
+    triggerBrowserDownload(blobUrl, match.name);
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   };
 
-  const handleDeleteAttachment = async (attachmentId: number) => {
-    if (!window.confirm("Remove this attachment?")) return;
-
-    try {
-      await JobTemplateService.DeleteAttachment(attachmentId);
-      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-      toast.success("Attachment removed");
-    } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || "Unknown error";
-      toast.error(`Error removing attachment: ${message}`);
-    }
-  };
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+    };
+  }, []);
 
   // ---- Validation & save ----
 
@@ -510,6 +706,19 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       newErrors.Operations = "At least one operation is required";
     }
 
+    const isNegative = (value?: number | null) => value != null && value < 0;
+
+    if (
+      [
+        formData.EstimatedSetupTimeMinutes,
+        formData.EstimatedCycleTimeMinutes,
+        formData.EstimatedLabourTimeMinutes,
+        formData.EstimatedMachineTimeMinutes,
+      ].some(isNegative)
+    ) {
+      newErrors.Estimates = "Estimated times must be 0 or more";
+    }
+
     const seenSequences = new Set<number>();
     formData.Operations.forEach((operation, index) => {
       if (!operation.ProcessId || operation.ProcessId <= 0) {
@@ -518,15 +727,34 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
         newOperationErrors[index] = "Sequence must be positive";
       } else if (seenSequences.has(operation.SequenceNumber)) {
         newOperationErrors[index] = `Sequence ${operation.SequenceNumber} is duplicated`;
+      } else if (isNegative(operation.SetupTimeMinutes) || isNegative(operation.CycleTimeMinutes)) {
+        newOperationErrors[index] = "Setup and cycle times must be 0 or more";
       }
       seenSequences.add(operation.SequenceNumber);
     });
+
+    const badMaterial = (formData.Materials || []).findIndex(
+      (line) =>
+        !(line.ProductId && line.ProductId > 0) && !(line.RawMaterialId && line.RawMaterialId > 0)
+    );
+    const badQuantity = (formData.Materials || []).findIndex(
+      (line) => !(Number(line.Quantity) > 0)
+    );
+    if (badMaterial >= 0) {
+      newErrors.Materials = `Material line ${badMaterial + 1}: select a raw material or product`;
+    } else if (badQuantity >= 0) {
+      newErrors.Materials = `Material line ${badQuantity + 1}: quantity must be greater than 0`;
+    }
 
     setErrors(newErrors);
     setOperationErrors(newOperationErrors);
 
     if (newErrors.TemplateCode || newErrors.TemplateName || newErrors.Revision || newErrors.EffectiveTo) {
       setActiveTab("general");
+    } else if (newErrors.Estimates) {
+      setActiveTab("manufacturing");
+    } else if (newErrors.Materials) {
+      setActiveTab("material");
     } else if (newErrors.Operations || Object.keys(newOperationErrors).length > 0) {
       setActiveTab("operations");
     }
@@ -564,14 +792,18 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       if (jobTemplateId === 0 && saved?.id) {
         // Attachments need a persisted template, so keep the form open on the
         // Attachments tab rather than making the user reopen the record.
+        setListChanged(true);
+        setJobTemplateId(saved.id);
+        await loadTemplate(saved.id);
+        setActiveTab("attachments");
         toast.info("You can now attach drawings and documents to this template");
+        return;
       }
 
       onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error saving job template:", error);
-      const message = error?.response?.data?.error || error?.message || "Unknown error";
-      toast.error(`Error saving job template: ${message}`);
+      toast.error(`Error saving job template: ${apiError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -613,7 +845,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error checking deletion impact:", error);
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${apiError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -630,7 +862,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error deleting job template:", error);
-      toast.error(`Error deleting job template: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting job template: ${apiError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -660,6 +892,8 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   };
 
   const handleCancel = () => {
+    closeDocumentViewer();
+    documentCacheRef.current.clear();
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
         onClose();
@@ -686,6 +920,52 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
   return (
     <div className="slideout-overlay" onClick={handleCancel}>
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div
         className="form-card"
         style={{ maxWidth: "1100px", width: "95vw" }}
@@ -698,7 +978,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
           </button>
         </div>
 
-        <form className="airframe-form" onSubmit={handleSubmit}>
+        <form className="airframe-form" onSubmit={handleSubmit} noValidate>
           <div className="form-tabs">
             <div className="form-tabs-left">
               {TABS.map((tab) => (
@@ -940,11 +1220,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                     }
                   >
                     <option value="">Select process...</option>
-                    {processes.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.processCode ? `${p.processCode} — ${p.processName}` : p.processName}
-                      </option>
-                    ))}
+                    {renderProcessOptions(formData.PrimaryProcessId)}
                   </select>
                 </div>
               </div>
@@ -966,11 +1242,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                     }
                   >
                     <option value="">Select workstation...</option>
-                    {workstations.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.workstationName}
-                      </option>
-                    ))}
+                    {renderWorkstationOptions(formData.WorkstationId)}
                   </select>
                 </div>
               </div>
@@ -1075,6 +1347,11 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                 </div>
               </div>
             </div>
+            {errors.Estimates && (
+              <span className="error-message" style={{ display: "block" }}>
+                {errors.Estimates}
+              </span>
+            )}
           </div>
 
           {/* ---------- Material ---------- */}
@@ -1091,6 +1368,12 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                 + Add material
               </button>
             </div>
+
+            {errors.Materials && (
+              <span className="error-message" style={{ display: "block", marginBottom: "0.5rem" }}>
+                {errors.Materials}
+              </span>
+            )}
 
             {(formData.Materials || []).length === 0 ? (
               <div className="jt-empty-block" style={{ marginBottom: "1.25rem" }}>
@@ -1142,21 +1425,22 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                                 }
                               >
                                 <option value="">Select...</option>
-                                {type === "product"
-                                  ? products.map((p) => (
+                                {type === "product" ? (
+                                  <>
+                                    {products.map((p) => (
                                       <option key={p.id} value={p.id}>
                                         {catalogItemLabel(p.partNo, p.partName)}
                                       </option>
-                                    ))
-                                  : rawMaterials.map((rm) => (
-                                      <option key={rm.id} value={rm.id}>
-                                        {catalogItemLabel(
-                                          rm.partNo,
-                                          rm.partName,
-                                          rm.isRemnant ? "remnant" : undefined
-                                        )}
-                                      </option>
                                     ))}
+                                    {line.ProductId && !products.some((p) => p.id === line.ProductId) && (
+                                      <option value={line.ProductId}>
+                                        {catalogItemLabel(line.ProductPartNo, line.ProductName)}
+                                      </option>
+                                    )}
+                                  </>
+                                ) : (
+                                  renderRawMaterialOptions(line)
+                                )}
                               </select>
                             </td>
                             <td>
@@ -1362,13 +1646,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                               }
                             >
                               <option value="">Select...</option>
-                              {processes.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.processCode
-                                    ? `${p.processCode} — ${p.processName}`
-                                    : p.processName}
-                                </option>
-                              ))}
+                              {renderProcessOptions(operation.ProcessId, operation.ProcessName)}
                             </select>
                             {operationErrors[index] && (
                               <span className="error-message">{operationErrors[index]}</span>
@@ -1386,11 +1664,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                               }
                             >
                               <option value="">None</option>
-                              {workstations.map((w) => (
-                                <option key={w.id} value={w.id}>
-                                  {w.workstationName}
-                                </option>
-                              ))}
+                              {renderWorkstationOptions(operation.WorkstationId, operation.WorkstationName)}
                             </select>
                           </td>
                           <td>
@@ -1756,7 +2030,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
               </div>
             ) : (
               <>
-                <div className="jt-upload-bar">
+                <div className="jt-upload-bar" style={{ marginBottom: "0.75rem" }}>
+                  <label className="jt-section-hint" style={{ marginRight: "0.5rem" }}>
+                    Attachment type
+                  </label>
                   <select
                     className="jt-upload-select"
                     value={uploadType}
@@ -1768,55 +2045,51 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                       </option>
                     ))}
                   </select>
-                  <label className={`jt-upload-label ${uploading ? "is-disabled" : ""}`}>
-                    {uploading ? "Uploading..." : "Choose File"}
-                    <input
-                      type="file"
-                      style={{ display: "none" }}
-                      disabled={uploading}
-                      onChange={(e) => {
-                        handleUpload(e.target.files?.[0]);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
                 </div>
-
-                {attachments.length === 0 ? (
-                  <div className="jt-empty-block">
-                    <p>No attachments yet</p>
-                    <small>Attach the drawing and setup sheet so the shop floor has them</small>
-                  </div>
-                ) : (
-                  <div className="jt-attachments">
-                    {attachments.map((attachment) => (
-                      <div className="jt-attachment" key={attachment.id}>
-                        <span className="jt-attachment-icon">📎</span>
-                        <div className="jt-attachment-body">
-                          <a
-                            className="jt-attachment-name"
-                            href={attachment.fileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {attachment.fileName}
-                          </a>
-                          <span className="jt-attachment-meta">
-                            {attachment.attachmentType} · {formatBytes(attachment.fileSize)}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="jt-icon-button is-danger"
-                          title="Remove attachment"
-                          onClick={() => handleDeleteAttachment(attachment.id)}
-                        >
-                          🗑
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <AttachmentUploadSection
+                  attachments={attachments}
+                  orderId={jobTemplateId}
+                  disabled={loading}
+                  maxFileSizeBytes={JOB_TEMPLATE_MAX_UPLOAD_BYTES}
+                  onAttachmentsChange={setAttachments}
+                  onUploadFiles={async (files) => {
+                    const added: ModuleAttachment[] = [];
+                    for (const file of files) {
+                      const uploaded = await JobTemplateService.UploadAttachment(
+                        jobTemplateId,
+                        uploadType,
+                        file
+                      );
+                      added.push(toModuleAttachment(uploaded));
+                    }
+                    setAttachments((prev) => [...prev, ...added]);
+                    toast.success(
+                      files.length === 1 ? "Attachment uploaded" : `${files.length} attachments uploaded`
+                    );
+                  }}
+                  onDeleteAttachment={async (attachment) => {
+                    if (!window.confirm("Remove this attachment?")) {
+                      return;
+                    }
+                    documentCacheRef.current.remove({
+                      id: attachment.id,
+                      fileUniqueno: attachment.fileUniqueno ?? attachment.id,
+                    });
+                    await JobTemplateService.DeleteAttachment(attachment.id);
+                    setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                    toast.success("Attachment removed");
+                  }}
+                  onDownloadAttachment={async (attachment) => {
+                    await handleViewerDownload({
+                      id: attachment.id,
+                      name: attachment.name,
+                      size: attachment.size,
+                      fileUniqueno: attachment.fileUniqueno ?? attachment.id,
+                      contentType: attachment.contentType,
+                    });
+                  }}
+                  onViewAttachment={handleOpenDocumentViewer}
+                />
               </>
             )}
           </div>

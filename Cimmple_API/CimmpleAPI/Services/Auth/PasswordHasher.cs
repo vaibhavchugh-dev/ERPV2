@@ -37,6 +37,13 @@ namespace CimmpleAPI.Services.Auth
                 return false;
             }
 
+            if (IsLegacyHelperHash(storedHash))
+            {
+                var legacyOk = CimmpleAPI.Utilities.PasswordHelper.VerifyPassword(storedHash, password);
+                needsUpgrade = legacyOk;
+                return legacyOk;
+            }
+
             // Legacy plaintext (pre-auth implementation)
             if (!storedHash.Contains(Separator) || storedHash.Split(Separator).Length != 3)
             {
@@ -75,6 +82,29 @@ namespace CimmpleAPI.Services.Auth
             var ok = CryptographicOperations.FixedTimeEquals(actual, expected);
             needsUpgrade = ok && iterations < Iterations;
             return ok;
+        }
+
+        /// <summary>
+        /// Format written by the retired UserController endpoints via PasswordHelper:
+        /// base64(32-byte PBKDF2-SHA512 hash) + '|' + base64(16-byte salt).
+        /// </summary>
+        private static bool IsLegacyHelperHash(string storedHash)
+        {
+            var parts = storedHash.Split('|');
+            if (parts.Length != 2)
+            {
+                return false;
+            }
+
+            try
+            {
+                return Convert.FromBase64String(parts[0]).Length == 32
+                    && Convert.FromBase64String(parts[1]).Length == 16;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         public static bool IsHashed(string? storedHash)

@@ -13,11 +13,17 @@ const COLUMNS: ColumnDefinition[] = [
   { key: "cardNumber", label: "Card Number", sortKey: "cardNumber", locked: true },
   { key: "cardholderName", label: "Cardholder Name", sortKey: "cardholderName", locked: true },
   { key: "cardType", label: "Card Type", sortKey: "cardType" },
-  { key: "expiry", label: "Expiry", sortKey: "expiryMonth" },
+  { key: "expiry", label: "Expiry", sortKey: "expiryYear" },
   { key: "nickName", label: "Nick Name", sortKey: "nickName" },
   { key: "status", label: "Status", sortKey: "status" },
 ];
 const DEFAULT_HIDDEN_COLUMNS = ["nickName"];
+
+// Expiry is shown as MM/YYYY but has to sort by year first, then month.
+const sortValue = (card: CreditCardMaster, column: keyof CreditCardMaster): any =>
+  column === "expiryYear" || column === "expiryMonth"
+    ? `${(card.expiryYear || "").padStart(4, "0")}${(card.expiryMonth || "").padStart(2, "0")}`
+    : card[column];
 const COLUMN_PREFERENCE_KEY = "creditCardMaster.hiddenColumns";
 
 const CreditCardMasterComponent: React.FC = () => {
@@ -82,7 +88,7 @@ const CreditCardMasterComponent: React.FC = () => {
       }
     } catch (error: any) {
       console.error('[CreditCardMaster] Error loading credit cards:', error);
-      toast.error(`Error loading credit cards: ${error.message || 'Unknown error'}`);
+      toast.error(`Error loading credit cards: ${error?.response?.data?.error || error.message || 'Unknown error'}`);
       setCreditCards([]);
     } finally {
       setLoading(false);
@@ -140,8 +146,8 @@ const CreditCardMasterComponent: React.FC = () => {
   const sortedCreditCards = [...filteredCreditCards].sort((a, b) => {
     if (!sortColumn) return 0;
 
-    let aValue: any = a[sortColumn];
-    let bValue: any = b[sortColumn];
+    let aValue: any = sortValue(a, sortColumn);
+    let bValue: any = sortValue(b, sortColumn);
 
     if (aValue == null && bValue == null) return 0;
     if (aValue == null) return 1;

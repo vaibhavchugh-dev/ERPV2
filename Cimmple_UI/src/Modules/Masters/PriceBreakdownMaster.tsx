@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
@@ -21,12 +21,18 @@ const COLUMNS: ColumnDefinition[] = [
 const DEFAULT_HIDDEN_COLUMNS: string[] = [];
 const COLUMN_PREFERENCE_KEY = "priceBreakdownMaster.hiddenColumns";
 
+const apiError = (error: unknown): string => {
+  const err = error as { response?: { data?: { error?: string } }; message?: string };
+  return err?.response?.data?.error || err?.message || "Unknown error";
+};
+
 const PriceBreakdownMasterComponent: React.FC = () => {
   const [priceBreakdowns, setPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [originalPriceBreakdowns, setOriginalPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
+  const focusRowIndexRef = useRef<number | null>(null);
 
   const {
     hiddenColumns,
@@ -68,24 +74,6 @@ const PriceBreakdownMasterComponent: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleAddRow = () => {
-    const maxSrno = priceBreakdowns.length > 0 
-      ? Math.max(...priceBreakdowns.map(p => p.srno || 0))
-      : 0;
-    
-    const newRow: EditablePriceBreakdown = {
-      id: 0,
-      itemName: "",
-      srno: maxSrno + 1,
-      status: 1,
-      statusText: "Active",
-      isNew: true
-    };
-
-    setPriceBreakdowns([...priceBreakdowns, newRow]);
-    setIsStateChanged(true);
   };
 
   const handleDeleteRow = (index: number) => {
@@ -159,7 +147,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
       loadPriceBreakdowns();
     } catch (error: any) {
       console.error("Error saving price breakdowns:", error);
-      toast.error(`Error saving price breakdowns: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving price breakdowns: ${apiError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -220,6 +208,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             }}
             placeholder="Enter item name"
             maxLength={500}
+            data-pb-item-index={index}
           />
         );
       case "status":
@@ -292,6 +281,39 @@ const PriceBreakdownMasterComponent: React.FC = () => {
     pageSize,
     setPageSize,
   } = useClientPagination(priceBreakdowns, []);
+
+  useEffect(() => {
+    const idx = focusRowIndexRef.current;
+    if (idx == null) return;
+    focusRowIndexRef.current = null;
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector<HTMLInputElement>(`input[data-pb-item-index="${idx}"]`);
+      el?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [priceBreakdowns, currentPage]);
+
+  const handleAddRow = () => {
+    const maxSrno =
+      priceBreakdowns.length > 0 ? Math.max(...priceBreakdowns.map((p) => p.srno || 0)) : 0;
+
+    const newRow: EditablePriceBreakdown = {
+      id: 0,
+      itemName: "",
+      srno: maxSrno + 1,
+      status: 1,
+      statusText: "Active",
+      isNew: true,
+    };
+
+    const newList = [...priceBreakdowns, newRow];
+    const newIndex = newList.length - 1;
+    setPriceBreakdowns(newList);
+    setIsStateChanged(true);
+    const lastPage = Math.max(1, Math.ceil(newList.length / pageSize));
+    setCurrentPage(lastPage);
+    focusRowIndexRef.current = newIndex;
+  };
 
   if (loading) {
     return (

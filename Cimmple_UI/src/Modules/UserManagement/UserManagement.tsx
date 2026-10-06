@@ -121,6 +121,7 @@ const UserManagementComponent: React.FC = () => {
       if (result && result.users) {
         setUsers(result.users);
         setPagination(result.pagination);
+        setSortColumn(null);
         console.log('[UserManagement] Loaded', result.users.length, 'users');
       } else {
         console.warn('[UserManagement] Invalid response from API:', result);
@@ -165,6 +166,13 @@ const UserManagementComponent: React.FC = () => {
     }
   };
 
+  const getRoleName = (roleId?: number, roleName?: string) => {
+    if (roleName && roleName.trim()) return roleName;
+    const id = Number(roleId);
+    if (!id || id === 0) return 'Unknown';
+    return rolesMap[id] || 'Unknown';
+  };
+
   const handleResetPassword = (user: UserManagementType) => {
     const displayName = `${user.firstName || ""} ${user.lastName || ""}`.trim();
     setResetPasswordUser({
@@ -181,8 +189,15 @@ const UserManagementComponent: React.FC = () => {
     setSortDirection(direction);
 
     const sorted = [...users].sort((a, b) => {
-      const aVal = a[column];
-      const bVal = b[column];
+      let aVal: string | number | undefined;
+      let bVal: string | number | undefined;
+      if (column === "role") {
+        aVal = getRoleName(a.role, a.roleName);
+        bVal = getRoleName(b.role, b.roleName);
+      } else {
+        aVal = a[column] as string | number | undefined;
+        bVal = b[column] as string | number | undefined;
+      }
 
       if (aVal === null || aVal === undefined) return 1;
       if (bVal === null || bVal === undefined) return -1;
@@ -208,13 +223,6 @@ const UserManagementComponent: React.FC = () => {
     const statusClass = status?.toLowerCase() === 'active' ? 'status-active' :
                        status?.toLowerCase() === 'inactive' ? 'status-inactive' : 'status-pending';
     return <span className={`status-badge ${statusClass}`}>{status || 'Unknown'}</span>;
-  };
-
-  const getRoleName = (roleId?: number, roleName?: string) => {
-    if (roleName && roleName.trim()) return roleName;
-    const id = Number(roleId);
-    if (!id || id === 0) return 'Unknown';
-    return rolesMap[id] || 'Unknown';
   };
 
   return (
@@ -266,7 +274,10 @@ const UserManagementComponent: React.FC = () => {
           <div className="filter-container">
             <select
               value={filterValue}
-              onChange={(e) => setFilterValue(e.target.value)}
+              onChange={(e) => {
+                setFilterValue(e.target.value);
+                setPagination((prev) => ({ ...prev, pageNumber: 1 }));
+              }}
               className="filter-select"
             >
               <option value="all">All Status</option>

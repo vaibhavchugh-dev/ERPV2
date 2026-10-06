@@ -222,31 +222,30 @@ namespace CimmpleAPI.Controllers
                 var cashOut = cashFlow.cashOut;
                 var netCashFlow = cashIn - cashOut;
 
-                // Quality Metrics — NonConformanceReport has no locationId; leave tenant-wide
-                var openNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId &&
-                               (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval"))
-                    .Count();
+                var openNcrBase = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                        (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval")),
+                    tenantId, filterLocationId, restrictToLocationIds);
+                var openNCRs = openNcrBase.Count();
 
-                var ncrResolvedThisWeek = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId &&
-                               n.Status == "Closed" &&
-                               n.ClosedDate != null &&
-                               n.ClosedDate.Value.Date >= rangeStart &&
-                               n.ClosedDate.Value.Date <= rangeEnd)
-                    .Count();
+                var ncrResolvedThisWeek = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                        n.Status == "Closed" &&
+                        n.ClosedDate != null &&
+                        n.ClosedDate.Value.Date >= rangeStart &&
+                        n.ClosedDate.Value.Date <= rangeEnd),
+                    tenantId, filterLocationId, restrictToLocationIds).Count();
 
                 var totalJobOrdersForDefect = jobOrdersQuery
                     .Where(j => j.OrderDate.Date >= rangeStart &&
                                j.OrderDate.Date <= rangeEnd)
                     .Count();
 
-                // NCR count remains tenant-wide (no locationId on entity)
-                var totalNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId &&
-                               n.ReportedDate.Date >= rangeStart &&
-                               n.ReportedDate.Date <= rangeEnd)
-                    .Count();
+                var totalNCRs = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                        n.ReportedDate.Date >= rangeStart &&
+                        n.ReportedDate.Date <= rangeEnd),
+                    tenantId, filterLocationId, restrictToLocationIds).Count();
 
                 var defectRate = totalJobOrdersForDefect > 0
                     ? (decimal)totalNCRs / totalJobOrdersForDefect * 100
@@ -687,9 +686,25 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // Shipping has no locationId — leave tenant-wide
-                var recentShipments = _context.Shipping
-                    .Where(s => s.TenantId == tenantId)
+                var recentShipmentsQuery = _context.Shipping.Where(s => s.TenantId == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var locId = filterLocationId.Value;
+                    recentShipmentsQuery = recentShipmentsQuery.Where(s =>
+                        _context.CustomerOrder.Any(o =>
+                            o.OrderID == s.OrderId && o.Tenantid == tenantId && o.locationId == locId));
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    recentShipmentsQuery = allowed.Count == 0
+                        ? recentShipmentsQuery.Where(_ => false)
+                        : recentShipmentsQuery.Where(s =>
+                            _context.CustomerOrder.Any(o =>
+                                o.OrderID == s.OrderId && o.Tenantid == tenantId && allowed.Contains(o.locationId)));
+                }
+
+                var recentShipments = recentShipmentsQuery
                     .OrderByDescending(s => s.ShipmentDate)
                     .Take(limit / 4)
                     .Select(s => new
@@ -745,9 +760,9 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                // NCR has no locationId — leave tenant-wide
-                var recentNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId)
+                var recentNCRs = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId),
+                    tenantId, filterLocationId, restrictToLocationIds)
                     .OrderByDescending(n => n.CreatedDate)
                     .Take(limit / 4)
                     .Select(n => new
@@ -819,7 +834,9 @@ namespace CimmpleAPI.Controllers
                                j.Status != null &&
                                j.Status != "Completed" &&
                                j.Status != "Cancelled" &&
-                               j.Status != "Void");
+                               j.Status != "Void" &&
+                               j.Status != "Shipped" &&
+                               j.Status != "Partially Shipped");
                 if (filterLocationId.HasValue)
                 {
                     var locId = filterLocationId.Value;
@@ -890,7 +907,7 @@ namespace CimmpleAPI.Controllers
                         type = "overdue_invoice_ar",
                         priority = "high",
                         title = $"Overdue Invoice: {im.PrefixInvoiceNo}{im.InvoiceNo}",
-                        description = $"Invoice for ${im.TotalAmount:N2} was due on {im.DueDate:MM/dd/yyyy}",
+                        description = $"Customer invoice was due on {im.DueDate:MM/dd/yyyy}",
                         entityId = im.Id,
                         entityType = "Invoice",
                         amount = im.TotalAmount,
@@ -922,7 +939,7 @@ namespace CimmpleAPI.Controllers
                         type = "overdue_invoice_ap",
                         priority = "high",
                         title = $"Overdue Vendor Invoice: {vim.InvoiceNo}",
-                        description = $"Invoice from {vim.VendorName} for ${vim.TotalAmount:N2} was due on {vim.DueDate:MM/dd/yyyy}",
+                        description = $"Vendor invoice from {vim.VendorName} was due on {vim.DueDate:MM/dd/yyyy}",
                         entityId = vim.Id,
                         entityType = "VendorInvoice",
                         amount = vim.TotalAmount,
@@ -931,12 +948,12 @@ namespace CimmpleAPI.Controllers
                     .Take(10)
                     .ToList();
 
-                // Open NCRs — no locationId; leave tenant-wide
-                var criticalNCRs = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId &&
-                               n.Status != null &&
-                               (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval") &&
-                               n.CreatedDate < today.AddDays(-7))
+                var criticalNCRs = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                        n.Status != null &&
+                        (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval") &&
+                        n.CreatedDate < today.AddDays(-7)),
+                    tenantId, filterLocationId, restrictToLocationIds)
                     .Select(n => new
                     {
                         type = "critical_ncr",
@@ -1035,13 +1052,21 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var topCustomers = topCustomersQuery
-                    .GroupBy(x => new { x.co.CustomerID, x.co.CustomerName })
+                    .GroupBy(x => x.im.Id)
                     .Select(g => new
                     {
-                        customerId = g.Key.CustomerID,
-                        customerName = g.Key.CustomerName ?? "Unknown",
-                        revenue = g.Sum(x => x.im.TotalAmount),
-                        orderCount = g.Select(x => x.co.OrderID).Distinct().Count()
+                        customerId = g.First().co.CustomerID,
+                        customerName = g.First().co.CustomerName,
+                        revenue = g.First().im.TotalAmount,
+                        orderId = g.First().co.OrderID
+                    })
+                    .GroupBy(x => new { x.customerId, x.customerName })
+                    .Select(g => new
+                    {
+                        customerId = g.Key.customerId,
+                        customerName = g.Key.customerName ?? "Unknown",
+                        revenue = g.Sum(x => x.revenue),
+                        orderCount = g.Select(x => x.orderId).Distinct().Count()
                     })
                     .OrderByDescending(x => x.revenue)
                     .Take(limit)
@@ -1162,12 +1187,9 @@ namespace CimmpleAPI.Controllers
                 if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
-                // NonConformanceReport has no locationId — leave tenant-wide (location filters unused)
-                _ = filterLocationId;
-                _ = restrictToLocationIds;
-
-                var ncrByStatus = _context.NonConformanceReports
-                    .Where(n => n.TenantId == tenantId && n.Status != null)
+                var ncrByStatus = ApplyNcrSiteFilter(
+                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId && n.Status != null),
+                    tenantId, filterLocationId, restrictToLocationIds)
                     .GroupBy(n => n.Status)
                     .Select(g => new
                     {
@@ -1426,6 +1448,54 @@ namespace CimmpleAPI.Controllers
                 var today = DateTime.Now.Date;
                 return (new DateTime(today.Year, today.Month, 1), today);
             }
+        }
+
+        private IQueryable<NonConformanceReport> ApplyNcrSiteFilter(
+            IQueryable<NonConformanceReport> q,
+            int tenantId,
+            int? filterLocationId,
+            IReadOnlyList<int>? restrictToLocationIds)
+        {
+            if (filterLocationId is int loc)
+            {
+                return q.Where(n =>
+                    (n.JobOrderId != null && n.JobOrderId > 0 &&
+                     _context.JobOrderMaster.Any(j =>
+                         j.JobOrderID == n.JobOrderId && j.Tenantid == tenantId &&
+                         _context.CustomerOrder.Any(o =>
+                             o.OrderID == j.CustomerOrderID &&
+                             o.Tenantid == tenantId &&
+                             o.locationId == loc))) ||
+                    ((n.JobOrderId == null || n.JobOrderId <= 0) &&
+                     _context.UserDetails.Any(u =>
+                         u.User_UniqueID == n.ReportedBy && u.TenantID == tenantId &&
+                         ((u.DefaultLocationId != null && u.DefaultLocationId == loc) ||
+                          _context.UserMapping.Any(m =>
+                              m.userId == u.User_UniqueID && m.locationId == loc)))));
+            }
+
+            if (restrictToLocationIds is { Count: > 0 } allowed)
+            {
+                return q.Where(n =>
+                    (n.JobOrderId != null && n.JobOrderId > 0 &&
+                     _context.JobOrderMaster.Any(j =>
+                         j.JobOrderID == n.JobOrderId && j.Tenantid == tenantId &&
+                         _context.CustomerOrder.Any(o =>
+                             o.OrderID == j.CustomerOrderID &&
+                             o.Tenantid == tenantId &&
+                             allowed.Contains(o.locationId)))) ||
+                    ((n.JobOrderId == null || n.JobOrderId <= 0) &&
+                     _context.UserDetails.Any(u =>
+                         u.User_UniqueID == n.ReportedBy && u.TenantID == tenantId &&
+                         ((u.DefaultLocationId != null && allowed.Contains(u.DefaultLocationId.Value)) ||
+                          _context.UserMapping.Any(m =>
+                              m.userId == u.User_UniqueID && allowed.Contains(m.locationId))))));
+            }
+
+            if (restrictToLocationIds is { Count: 0 })
+                return q.Where(_ => false);
+
+            return q;
         }
     }
 }

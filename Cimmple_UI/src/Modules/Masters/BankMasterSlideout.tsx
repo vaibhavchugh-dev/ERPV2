@@ -11,15 +11,24 @@ import { Utils } from "../../Common/Utilis";
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { maskAccountNumber } from "../../Common/Hooks/useCompanyBanks";
+import { LocationMaster } from "../../Common/Services/LocationService";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
+import "./CustomerMasterSlideout.scss";
 
 interface BankMasterSlideoutProps {
   bankId: number;
+  sites?: LocationMaster[];
+  defaultLocationId?: number;
   onClose: (refreshList?: boolean) => void;
 }
 
+const isSelectableCoa = (a: { accountCode: string; isActive?: boolean }) =>
+  a.isActive !== false && (a.accountCode || "").trim().length === 4;
+
 const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   bankId,
+  sites = [],
+  defaultLocationId,
   onClose,
 }) => {
   const handleDismiss = () => onClose(false);
@@ -55,11 +64,14 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   const [balanceDisplay, setBalanceDisplay] = useState<string>("");
   const [isBalanceFocused, setIsBalanceFocused] = useState(false);
   const [isStateEditable, setIsStateEditable] = useState(false);
-  const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string }>>([]);
+  const [coaAccounts, setCoaAccounts] = useState<Array<{ accountID: number; accountCode: string; accountName: string; isActive?: boolean }>>([]);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   const [deletionImpact, setDeletionImpact] = useState<DeletionImpactResult | null>(null);
   const [showAccountNo, setShowAccountNo] = useState(false);
-  const isAccountNoMasked = bankId > 0 && !showAccountNo && !!formData.AccountNo;
+  const [maskedAccountNo, setMaskedAccountNo] = useState("");
+  const [accountNoRevealed, setAccountNoRevealed] = useState(false);
+  const isAccountNoMasked = bankId > 0 && !showAccountNo;
+  const coaOptions = coaAccounts.filter((a) => isSelectableCoa(a) || (!!formData.coa && a.accountCode === formData.coa));
 
   const loadCOAAccounts = async () => {
     try {
@@ -70,7 +82,8 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
         setCoaAccounts(accounts.map(a => ({
           accountID: a.accountID,
           accountCode: a.accountCode,
-          accountName: a.accountName
+          accountName: a.accountName,
+          isActive: a.isActive
         })));
       }
     } catch (error) {
@@ -96,6 +109,19 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
     }
   }, [bankId]);
 
+  useEffect(() => {
+    if (bankId > 0) return;
+    setFormData((prev) => {
+      if (prev.locationId > 0 && sites.some((s) => s.locationId === prev.locationId)) return prev;
+      const workingSiteId = Number(localStorage.getItem("locationId") || 0);
+      const preferred = [defaultLocationId || 0, workingSiteId].find(
+        (id) => id > 0 && sites.some((s) => s.locationId === id)
+      );
+      const locationId = preferred ?? (sites.length === 1 ? sites[0].locationId : 0);
+      return locationId === prev.locationId ? prev : { ...prev, locationId };
+    });
+  }, [bankId, sites, defaultLocationId]);
+
   const loadBank = async () => {
     setLoading(true);
     try {
@@ -104,7 +130,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
         const bankData: BankMasterReq = {
           Id: bank.id,
           BankName: bank.bankName || "",
-          AccountNo: bank.accountNo || "",
+          AccountNo: "",
           AccountType: bank.accountType || "Checking",
           RoutingNumber: bank.routingNumber || "",
           Phone: bank.phone || "",
@@ -128,6 +154,9 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
         };
         
         setFormData(bankData);
+        setMaskedAccountNo(bank.lastAccountNo || bank.accountNo || "");
+        setAccountNoRevealed(false);
+        setShowAccountNo(false);
         // Use settings-aware formatting - will fallback to defaults if settings not loaded
         const storage = JSON.parse(localStorage.getItem('storage') || '{}');
         const tenantId = storage?.tenantID || 1;
@@ -140,6 +169,24 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleAccountNo = async () => {
+    if (showAccountNo) {
+      setShowAccountNo(false);
+      return;
+    }
+    if (!accountNoRevealed) {
+      try {
+        const accountNo = await BankService.RevealAccountNo(bankId);
+        setFormData((prev) => ({ ...prev, AccountNo: accountNo }));
+        setAccountNoRevealed(true);
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message || error?.response?.data?.error || "Unable to show the account number");
+        return;
+      }
+    }
+    setShowAccountNo(true);
   };
 
   const handleInputChange = (field: keyof BankMasterReq, value: any) => {
@@ -201,8 +248,13 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
       newErrors.BankName = "Bank Name is required";
     }
 
-    if (!formData.AccountNo || formData.AccountNo.trim() === "") {
+    // On edit a blank, unrevealed account number means "keep the stored number".
+    if ((bankId === 0 || accountNoRevealed) && (!formData.AccountNo || formData.AccountNo.trim() === "")) {
       newErrors.AccountNo = "Account No is required";
+    }
+
+    if (bankId === 0 && sites.length > 0 && !(formData.locationId > 0)) {
+      newErrors.locationId = "Site is required";
     }
 
     if (!formData.NickName || formData.NickName.trim() === "") {
@@ -242,7 +294,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
     
     if (hasErrors) {
       toast.error("Please fix validation errors before submitting");
-      if (newErrors.BankName || newErrors.AccountNo || newErrors.NickName || newErrors.startingcheck || newErrors.checkseries) {
+      if (newErrors.BankName || newErrors.AccountNo || newErrors.NickName || newErrors.startingcheck || newErrors.checkseries || newErrors.locationId) {
         setActiveTab('bank');
       } else if (newErrors.Email || newErrors.Phone || newErrors.zip) {
         setActiveTab('contact');
@@ -317,7 +369,10 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting bank:", error);
-      toast.error(`Error deleting bank: ${error.message || "Unknown error"}`);
+      toast.error(error?.response?.data?.error || error?.response?.data?.message || `Error deleting bank: ${error.message || "Unknown error"}`);
+      if (error?.response?.status === 409) {
+        await refreshDeletionImpact();
+      }
     } finally {
       setLoading(false);
     }
@@ -335,55 +390,69 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   };
 
   const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
-    // Handle dependency deletion based on endpoint
-    setLoading(true);
     try {
-      // This would need to be implemented based on the specific endpoint
-      toast.info(`Deleting ${dependencyType}...`);
+      if (deleteEndpoint?.includes('/Accounting/DeleteTransaction')) {
+        const { AccountingService } = await import("../../Common/Services/AccountingService");
+        await AccountingService.DeleteTransaction(itemId);
+      } else if (deleteEndpoint?.includes('/VendorInvoice/DeleteVendorInvoice')) {
+        const { VendorInvoiceService } = await import("../../Common/Services/VendorInvoiceService");
+        await VendorInvoiceService.DeleteVendorInvoice(itemId);
+      } else if (deleteEndpoint?.includes('/Invoice/DeleteInvoice')) {
+        const { InvoiceService } = await import("../../Common/Services/InvoiceService");
+        await InvoiceService.DeleteInvoice(itemId);
+      } else {
+        toast.info(`${dependencyType} cannot be removed from here. Resolve it in its own module first.`);
+        return;
+      }
+      toast.success(`${dependencyType} item deleted successfully`);
       await refreshDeletionImpact();
     } catch (error: any) {
       console.error(`Error deleting ${dependencyType}:`, error);
-      toast.error(`Error deleting ${dependencyType}: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
+      toast.error(`Failed to delete ${dependencyType}: ${error?.response?.data?.error || error.message || "Unknown error"}`);
+      throw error;
     }
   };
 
   const handleDeleteAll = async () => {
-    if (!deletionImpact || bankId === 0) return;
+    if (!deletionImpact?.blockingDependencies || bankId === 0) return;
     setLoading(true);
     try {
-      // Delete all blocking dependencies first
-      if (deletionImpact.blockingDependencies && deletionImpact.blockingDependencies.length > 0) {
-        for (const dependency of deletionImpact.blockingDependencies) {
-          for (const item of dependency.items) {
-            try {
-              await handleDeleteDependency(dependency.entityType, item.id, item.deleteEndpoint);
-            } catch (error) {
-              console.error(`Error deleting ${dependency.entityType} ${item.id}:`, error);
-            }
+      let impact: DeletionImpactResult = deletionImpact;
+      // The impact check lists at most 10 items per type, so keep going until nothing removable is left.
+      for (;;) {
+        const removable = (impact.blockingDependencies || []).flatMap((dep) =>
+          dep.items
+            .filter((item) => !!item.deleteEndpoint)
+            .map((item) => ({ type: dep.entityType, ...item }))
+        );
+        if (removable.length === 0) break;
+
+        for (const item of removable) {
+          try {
+            await handleDeleteDependency(item.type, item.id, item.deleteEndpoint);
+          } catch {
+            toast.error(`Failed to delete ${item.name}. Stopping deletion process.`);
+            await refreshDeletionImpact();
+            return;
           }
         }
+
+        const response = await BankService.CheckBankDeletionImpact(bankId);
+        impact = response.result as DeletionImpactResult;
+        setDeletionImpact(impact);
       }
-      
-      // Refresh impact to check if we can delete now
-      await refreshDeletionImpact();
-      
-      // If still can't delete, show error
-      const updatedResponse = await BankService.CheckBankDeletionImpact(bankId);
-      const updatedImpact = updatedResponse.result as DeletionImpactResult;
-      
-      if (!updatedImpact.canDelete) {
-        toast.error("Some dependencies could not be deleted. Please try again.");
-        setDeletionImpact(updatedImpact);
+
+      if (!impact.canDelete) {
+        toast.error(
+          `Bank still cannot be deleted. Resolve these in their own modules first: ${(impact.blockingDependencies || []).map((d) => d.entityType).join(", ")}`
+        );
         return;
       }
-      
-      // Now delete the main bank
+
       await confirmDeletion();
     } catch (error: any) {
       console.error("Error in delete all:", error);
-      toast.error(`Error deleting dependencies: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting dependencies: ${error?.response?.data?.error || error.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -567,16 +636,16 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
                     name="AccountNo"
                     className={`form-input ${errors.AccountNo ? 'error' : ''}`}
                     placeholder="Enter account number"
-                    value={isAccountNoMasked ? maskAccountNumber(formData.AccountNo) : formData.AccountNo}
+                    value={isAccountNoMasked ? maskAccountNumber(accountNoRevealed ? formData.AccountNo : maskedAccountNo) : formData.AccountNo}
                     onChange={(e) => handleInputChange("AccountNo", e.target.value)}
                     readOnly={isAccountNoMasked}
                     autoComplete="off"
-                    required
+                    required={bankId === 0 || accountNoRevealed}
                   />
-                  {bankId > 0 && formData.AccountNo && (
+                  {bankId > 0 && (maskedAccountNo || formData.AccountNo) && (
                     <button
                       type="button"
-                      onClick={() => setShowAccountNo((v) => !v)}
+                      onClick={toggleAccountNo}
                       aria-label={showAccountNo ? "Hide account number" : "Show account number"}
                       style={{
                         border: "none",
@@ -729,15 +798,44 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
                     onChange={(e) => handleInputChange("coa", e.target.value)}
                   >
                     <option value="">Select Chart of Accounts</option>
-                    {coaAccounts.map((coa) => (
+                    {coaOptions.map((coa) => (
                       <option key={coa.accountID} value={coa.accountCode}>
                         {coa.accountCode} - {coa.accountName}
+                        {!isSelectableCoa(coa) ? (coa.isActive === false ? " (inactive)" : " (invalid code)") : ""}
                       </option>
                     ))}
                   </select>
                 </div>
                 {errors.coa && <span className="error-message">{errors.coa}</span>}
               </div>
+              {bankId === 0 && sites.length > 0 && (
+                <div className="form-group">
+                  <label htmlFor="locationId">Site <span className="required">*</span></label>
+                  <div className="input-group">
+                    <div className="input-group-prepend">
+                      <span className="input-group-icon">
+                        {Icons.Location}
+                      </span>
+                    </div>
+                    <select
+                      id="locationId"
+                      name="locationId"
+                      className={`form-input ${errors.locationId ? 'error' : ''}`}
+                      value={formData.locationId > 0 ? String(formData.locationId) : ""}
+                      onChange={(e) => handleInputChange("locationId", Number(e.target.value) || 0)}
+                      required
+                    >
+                      <option value="">Select Site</option>
+                      {sites.map((site) => (
+                        <option key={site.locationId} value={site.locationId}>
+                          {site.name || site.code || `Site ${site.locationId}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {errors.locationId && <span className="error-message">{errors.locationId}</span>}
+                </div>
+              )}
             </div>
           </div>
 

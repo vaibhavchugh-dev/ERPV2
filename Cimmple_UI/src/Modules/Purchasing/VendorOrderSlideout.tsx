@@ -797,12 +797,26 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     return status === "fully invoiced" || status === "partially invoiced" || status === "invoiced";
   };
 
+  const isDetailReceived = (d: any): boolean => {
+    if (!d) return false;
+    const qty = Number(d.ReceivedQty ?? d.receivedQty ?? 0);
+    return qty > 0;
+  };
+
   const handleDetailChange = (index: number, field: keyof VendorOrderDetailReq, value: any) => {
     const detailToEdit = formData.Details?.[index];
     const isItemInvoiced = isDetailInvoiced(detailToEdit);
     if (isItemInvoiced) {
       toast.error("Invoiced line items cannot be edited");
       return;
+    }
+    if (isDetailReceived(detailToEdit) && field === "QtyOrdered") {
+      const receivedQty = Number(detailToEdit?.ReceivedQty ?? 0);
+      const nextQty = Number(value);
+      if (nextQty < receivedQty) {
+        toast.error(`Quantity cannot be less than received quantity (${receivedQty})`);
+        return;
+      }
     }
 
     setFormData((prev) => {
@@ -839,6 +853,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     const isInvoiced = isDetailInvoiced(removed);
     if (isInvoiced) {
       toast.error("Invoiced line items cannot be removed from the order");
+      return;
+    }
+    if (isDetailReceived(removed)) {
+      toast.error("Received line items cannot be removed from the order");
       return;
     }
 

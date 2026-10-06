@@ -124,6 +124,28 @@ const emptyResults = (): GlobalSearchResults => ({
   journalEntries: [],
 });
 
+const resolveSearchTenantId = (tenantId: number): number => {
+  if (tenantId > 0) return tenantId;
+  try {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const fromStorage = Number(storage?.tenantID) || 0;
+    if (fromStorage > 0) return fromStorage;
+  } catch {
+    // ignore
+  }
+  if (process.env.NODE_ENV === "development") return 1;
+  return 0;
+};
+
+const normalizeSearchResults = (data: Record<string, unknown>): GlobalSearchResults => {
+  const base = emptyResults();
+  (Object.keys(base) as (keyof GlobalSearchResults)[]).forEach((key) => {
+    const value = data[key as string];
+    base[key] = Array.isArray(value) ? (value as SearchResult[]) : [];
+  });
+  return base;
+};
+
 export class GlobalSearchService {
   public static emptyResults = emptyResults;
   public static async Search(query: string, tenantId: number, limit: number = 10): Promise<GlobalSearchResults> {
@@ -131,19 +153,19 @@ export class GlobalSearchService {
       return emptyResults();
     }
 
+    const effectiveTenantId = resolveSearchTenantId(tenantId);
+    if (effectiveTenantId <= 0) {
+      console.warn("Global search skipped: tenantId is missing");
+      return emptyResults();
+    }
+
     const url = `/GlobalSearch/Search`;
     try {
       const response = await Instense.get(url, {
-        params: { query: query.trim(), tenantId, limit }
+        params: { query: query.trim(), tenantId: effectiveTenantId, limit }
       });
-      const data = response.data || {};
-      return {
-        ...emptyResults(),
-        ...data,
-        products: data.products || [],
-        rawMaterials: data.rawMaterials || [],
-        employees: data.employees || [],
-      };
+      const data = (response.data || {}) as Record<string, unknown>;
+      return normalizeSearchResults(data);
     } catch (error) {
       console.error("Error performing global search:", error);
       return emptyResults();
@@ -215,7 +237,7 @@ export class GlobalSearchService {
       case 'vendorInvoice':
         return `/purchasing/vendor-invoices?open=${result.id}`;
       case 'vendorReceiving':
-        return `/purchasing/vendor-receiving?open=${result.id}`;
+        return `/purchasing/vendor-receiving?open=${(result as any).orderId ?? result.id}`;
       case 'vendorQuotation':
         return `/quotations/vendor?open=${result.id}`;
       case 'shipment':
@@ -273,7 +295,7 @@ export class GlobalSearchService {
       case 'vendorInvoice':
         return result.invoiceNumber || result.invoiceNo || result.displayNumber || '';
       case 'vendorReceiving':
-        return `Receiving #${result.id}`;
+        return `Receiving #${(result as SearchResult & { receivingId?: number }).receivingId ?? result.id}`;
       case 'vendorQuotation':
         return result.displayNumber || `VQ#${result.quotationNumber}`;
       case 'shipment':

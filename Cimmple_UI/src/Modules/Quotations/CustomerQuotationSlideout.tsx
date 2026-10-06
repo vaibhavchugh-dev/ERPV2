@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
@@ -94,7 +94,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     ],
   });
 
-  const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string }>>([]);
+  const [customers, setCustomers] = useState<Array<{ customer_id: number; company_name: string; customercode: string; status?: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [isHydrating, setIsHydrating] = useState(quotationId > 0);
   const [printing, setPrinting] = useState(false);
@@ -288,7 +288,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         setCustomers(result.map(c => ({
           customer_id: c.customer_id,
           company_name: c.company_name,
-          customercode: c.customercode
+          customercode: c.customercode,
+          status: c.status
         })));
       }
     } catch (error) {
@@ -779,19 +780,22 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           itemErrors.UnitPrice = "Unit price must be 0 or greater";
         }
 
-        // DueDate/LeadTime must not be earlier than today
         const estDate = detail.LeadTime || detail.DueDate;
         if (estDate) {
-          try {
-            const dateValue = new Date(estDate);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
-            dateValue.setHours(0, 0, 0, 0);
-            if (dateValue < today) {
-              itemErrors.DueDate = "Est Date cannot be earlier than today";
+          const isNewQuotation = (formData.OrderID > 0 ? formData.OrderID : quotationId) === 0;
+          const isNewLineItem = detail.ID === 0;
+          if (isNewQuotation || isNewLineItem) {
+            try {
+              const dateValue = new Date(estDate);
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              dateValue.setHours(0, 0, 0, 0);
+              if (dateValue < today) {
+                itemErrors.DueDate = "Est Date cannot be earlier than today";
+              }
+            } catch (e) {
+              // Invalid date format — skip
             }
-          } catch (e) {
-            // Invalid date format - ignore for now, or add validation if needed
           }
         }
 
@@ -1784,11 +1788,13 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     required
                   >
                     <option value="0">Select Customer</option>
-                    {customers.map((customer) => (
-                      <option key={customer.customer_id} value={customer.customer_id}>
-                        {customer.company_name} ({customer.customercode})
-                      </option>
-                    ))}
+                    {customers
+                      .filter((customer) => customer.status !== "Inactive" || customer.customer_id === formData.CustomerID)
+                      .map((customer) => (
+                        <option key={customer.customer_id} value={customer.customer_id}>
+                          {customer.company_name} ({customer.customercode}){customer.status === "Inactive" ? " - Inactive" : ""}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 {errors.CustomerID && <span className="error-message">{errors.CustomerID}</span>}
@@ -3036,6 +3042,15 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   );
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
+  const historicalRowIdsRef = useRef<Set<number>>(
+    new Set((initialMatrix?.breakdownPrices || []).map((bp) => bp.priceBreakdownId))
+  );
+
+  useEffect(() => {
+    historicalRowIdsRef.current = new Set(
+      (initialMatrix?.breakdownPrices || []).map((bp) => bp.priceBreakdownId)
+    );
+  }, [initialMatrix]);
 
   useEffect(() => {
     loadPriceBreakdowns();
@@ -3101,18 +3116,21 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
       return;
     }
 
-    // Keep only active ops in totals/state; add any newly active ops missing from the matrix
-    const activeIds = new Set(priceBreakdowns.map(item => item.id));
+    // Keep active master rows plus historical rows saved on the quotation; add newly active ops missing from the matrix
+    const activeIds = new Set(priceBreakdowns.map((item) => item.id));
+    const historicalIds = historicalRowIdsRef.current;
     setBreakdownPrices((prev) => {
-      const pruned = prev.filter(bp => activeIds.has(bp.priceBreakdownId));
-      const existingIds = new Set(pruned.map(bp => bp.priceBreakdownId));
-      const missingItems = priceBreakdowns.filter(item => !existingIds.has(item.id));
+      const pruned = prev.filter(
+        (bp) => activeIds.has(bp.priceBreakdownId) || historicalIds.has(bp.priceBreakdownId)
+      );
+      const existingIds = new Set(pruned.map((bp) => bp.priceBreakdownId));
+      const missingItems = priceBreakdowns.filter((item) => !existingIds.has(item.id));
       if (pruned.length === prev.length && missingItems.length === 0) {
         return prev;
       }
       return [
         ...pruned,
-        ...missingItems.map(item => ({
+        ...missingItems.map((item) => ({
           priceBreakdownId: item.id,
           itemName: item.itemName,
           prices: quantities.map(() => 0),
@@ -3229,9 +3247,10 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
     
     const matrix: PriceBreakdownMatrix = {
       quantities: sortedQuantities,
-      // Persist only active ops so inactive prices are not kept in totals
-      breakdownPrices: reorderedBreakdownPrices.filter(bp =>
-        priceBreakdowns.some(pb => pb.id === bp.priceBreakdownId)
+      breakdownPrices: reorderedBreakdownPrices.filter(
+        (bp) =>
+          priceBreakdowns.some((pb) => pb.id === bp.priceBreakdownId) ||
+          historicalRowIdsRef.current.has(bp.priceBreakdownId)
       ),
       includeInPrint: reorderedIncludeInPrint,
     };
@@ -3256,13 +3275,31 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   // Calculate totals for each quantity column
   const getColumnTotals = (): number[] => {
     if (quantities.length === 0) return [];
-    const activeIds = new Set(priceBreakdowns.map(pb => pb.id));
-    return quantities.map((_, quantityIndex) => {
-      return breakdownPrices
-        .filter(bp => activeIds.has(bp.priceBreakdownId))
-        .reduce((sum, bp) => sum + (bp.prices[quantityIndex] || 0), 0);
-    });
+    return quantities.map((_, quantityIndex) =>
+      breakdownPrices.reduce((sum, bp) => sum + (bp.prices[quantityIndex] || 0), 0)
+    );
   };
+
+  const gridRows = useMemo(() => {
+    const rows: Array<{ id: number; itemName: string; historical: boolean }> = [];
+    const seen = new Set<number>();
+    breakdownPrices.forEach((bp) => {
+      if (seen.has(bp.priceBreakdownId)) return;
+      const master = priceBreakdowns.find((p) => p.id === bp.priceBreakdownId);
+      rows.push({
+        id: bp.priceBreakdownId,
+        itemName: master?.itemName || bp.itemName,
+        historical: !master,
+      });
+      seen.add(bp.priceBreakdownId);
+    });
+    priceBreakdowns.forEach((item) => {
+      if (seen.has(item.id)) return;
+      rows.push({ id: item.id, itemName: item.itemName, historical: false });
+      seen.add(item.id);
+    });
+    return rows;
+  }, [breakdownPrices, priceBreakdowns]);
 
   const columnTotals = getColumnTotals();
 
@@ -3294,7 +3331,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
           {/* Price Breakdown Grid */}
           {loading ? (
             <div style={{ padding: "2rem", textAlign: "center" }}>Loading price breakdown items...</div>
-          ) : priceBreakdowns.length === 0 ? (
+          ) : gridRows.length === 0 ? (
             <div style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
               No price breakdown items available. Please create price breakdown items in the master.
             </div>
@@ -3469,11 +3506,12 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {priceBreakdowns.map((item) => {
+                    {gridRows.map((row) => {
+                      const item = { id: row.id, itemName: row.itemName };
                       let breakdownIndex = breakdownPrices.findIndex(bp => bp.priceBreakdownId === item.id);
                       
                       // Ensure this breakdown item exists
-                      if (breakdownIndex === -1) {
+                      if (breakdownIndex === -1 && !row.historical) {
                         const newBreakdown = {
                           priceBreakdownId: item.id,
                           itemName: item.itemName,
@@ -3489,7 +3527,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                       return (
                         <tr key={item.id}>
                           <td style={{ padding: "0.75rem", fontWeight: 600, position: "sticky", left: 0, backgroundColor: "#ffffff" }}>
-                            {item.itemName}
+                            {row.historical ? `${row.itemName} (removed from master)` : row.itemName}
                           </td>
                           {quantities.map((quantity, originalIndex) => {
                               const currentBreakdownIndex = breakdownPrices.findIndex(bp => bp.priceBreakdownId === item.id);
@@ -3503,9 +3541,11 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                                     type="text"
                                     inputMode="decimal"
                                     className="form-input no-spinner"
-                                    style={{ width: "100%", minWidth: "100px", textAlign: "right", padding: "0.5rem" }}
+                                    readOnly={row.historical}
+                                    style={{ width: "100%", minWidth: "100px", textAlign: "right", padding: "0.5rem", ...(row.historical ? { backgroundColor: "#f3f4f6" } : {}) }}
                                     value={numericDisplayValues.get(`price-${item.id}-${originalIndex}`) ?? (currentPrice === 0 ? "" : currentPrice.toString())}
                                     onChange={(e) => {
+                                      if (row.historical) return;
                                       const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
                                         return string.indexOf('.') === offset ? match : '';
                                       });

@@ -19,11 +19,65 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private readonly ILogger<LocationController> _logger;
 
-        public LocationController(CimmpleDbContext context, IWebHostEnvironment environment)
+        public LocationController(CimmpleDbContext context, IWebHostEnvironment environment, ILogger<LocationController> logger)
         {
             _context = context;
             _environment = environment;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Location {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
+        }
+
+        private void LockLocationMaster(int tenantId) => _context.Database.ExecuteSqlRaw(@"DECLARE @r int;
+EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
+IF @r < 0 THROW 51000, 'Location master is busy, please try again.', 1;", $"location-master-{tenantId}");
+
+        /// <summary>Everything that stops a location from being deleted, as user-facing sentences.</summary>
+        private List<string> GetDeleteBlockers(int locationId, int tenantId)
+        {
+            var reasons = new List<string>();
+
+            void Add(Func<int> count, string message)
+            {
+                int n;
+                try
+                {
+                    n = count();
+                }
+                catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 208)
+                {
+                    // Optional module table not created in this database, so nothing can reference the location.
+                    return;
+                }
+                if (n > 0) reasons.Add(string.Format(message, n));
+            }
+
+            Add(() => _context.Locations.Count(l => l.ParentLocationId == locationId), "{0} child location(s) exist under this record. Remove or reassign them first.");
+            Add(() => _context.InventoryBalance.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} inventory balance row(s) reference this location.");
+            Add(() => _context.InventoryLotBalance.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} lot balance row(s) reference this location.");
+            Add(() => _context.InventoryTransaction.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} inventory transaction(s) reference this location.");
+            Add(() => _context.InventoryReservation.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} inventory reservation(s) reference this location.");
+            Add(() => _context.BankMaster.Count(x => x.locationId == locationId && x.TenantId == tenantId), "{0} bank account(s) are assigned to this location.");
+            Add(() => _context.QuotationOrder.Count(x => x.Locationid == locationId && x.Tenantid == tenantId), "{0} customer quotation(s) reference this location.");
+            Add(() => _context.CustomerOrder.Count(x => x.locationId == locationId && x.Tenantid == tenantId), "{0} customer order(s) reference this location.");
+            Add(() => _context.VendorOrders.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} purchase order(s) reference this location.");
+            Add(() => _context.VendorReceiving.Count(x => x.LocationId == locationId && x.Tenantid == tenantId), "{0} vendor receipt(s) reference this location.");
+            Add(() => _context.VendorInvoicing.Count(x => x.LocationId == locationId && x.Tenantid == tenantId)
+                    + _context.VendorInvoiceMaster.Count(x => x.locationId == locationId && x.TenantId == tenantId),
+                "{0} vendor invoice(s) reference this location.");
+            Add(() => _context.JobNCR.Count(x => x.locationId == locationId && x.TenantId == tenantId), "{0} job NCR(s) reference this location.");
+            Add(() => _context.FaceAttendanceLog.Count(x => x.LocationId == locationId && x.TenantId == tenantId), "{0} attendance record(s) reference this location.");
+            Add(() => _context.PayrollJournalLinks.Count(x => x.LocationId == locationId && x.TenantId == tenantId), "{0} payroll journal link(s) reference this location.");
+            Add(() => _context.Documents.Count(x => x.LocationId == locationId && x.TenantId == tenantId && x.IsActive), "{0} document(s) are filed under this location.");
+            Add(() => _context.ReportSchedules.Count(x => x.LocationId == locationId && x.TenantId == tenantId), "{0} report schedule(s) are scoped to this location.");
+
+            return reasons;
         }
 
         [HttpGet("GetLocations")]
@@ -70,7 +124,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "list");
             }
         }
 
@@ -151,7 +205,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "load");
             }
         }
 
@@ -163,6 +217,27 @@ namespace CimmpleAPI.Controllers
                 if (request == null)
                     return BadRequest(new { error = "Request is null" });
 
+                var code = request.Code?.Trim() ?? "";
+                var name = request.Name?.Trim() ?? "";
+                if (code.Length == 0)
+                    return BadRequest(new { error = "Location code is required" });
+                if (name.Length == 0)
+                    return BadRequest(new { error = "Location name is required" });
+
+                using var tx = _context.Database.BeginTransaction();
+                LockLocationMaster(request.TenantId);
+
+                var codeTaken = _context.Locations.Any(l =>
+                    l.TenantId == request.TenantId &&
+                    l.LocationId != request.LocationId &&
+                    l.Code != null &&
+                    l.Code.Trim().ToLower() == code.ToLower());
+                if (codeTaken)
+                    return BadRequest(new { error = $"Location code '{code}' is already used by another location" });
+
+                // Unit/Suite is stored in Region; Apartment is the form field, so an empty value clears it.
+                var unitSuite = (request.Apartment ?? request.Region ?? "").Trim();
+
                 Location location;
 
                 if (request.LocationId > 0)
@@ -173,10 +248,10 @@ namespace CimmpleAPI.Controllers
                     if (location == null)
                         return NotFound(new { error = "Location not found" });
 
-                    location.Code = request.Code ?? location.Code ?? "";
-                    location.Name = request.Name ?? location.Name ?? "";
+                    location.Code = code;
+                    location.Name = name;
                     location.Address = request.Address ?? location.Address ?? "";
-                    location.Region = !string.IsNullOrWhiteSpace(request.Apartment) ? request.Apartment : (request.Region ?? location.Region ?? "");
+                    location.Region = request.Apartment == null && request.Region == null ? location.Region ?? "" : unitSuite;
                     location.city = request.City ?? location.city ?? "";
                     location.state = request.State ?? location.state ?? "";
                     location.zip = request.Zip ?? location.zip ?? "";
@@ -198,6 +273,12 @@ namespace CimmpleAPI.Controllers
                         var desired = request.LocType > 0 ? request.LocType : location.LocType;
                         if (!LocationKind.IsValidParentChild(parent.LocType, desired))
                             return BadRequest(new { error = "Invalid location type for this parent." });
+                        var childTypes = _context.Locations
+                            .Where(l => l.ParentLocationId == location.LocationId && l.TenantId == request.TenantId)
+                            .Select(l => l.LocType)
+                            .ToList();
+                        if (childTypes.Any(t => !LocationKind.IsValidParentChild(desired, t)))
+                            return BadRequest(new { error = $"This location has child locations, so it cannot become a {LocationKind.GetDisplayName(desired)}. Each child must be a lower level than its parent." });
                         location.LocType = desired;
                     }
                 }
@@ -226,14 +307,14 @@ namespace CimmpleAPI.Controllers
                     location = new Location
                     {
                         TenantId = request.TenantId,
-                        Code = request.Code ?? "",
-                        Name = request.Name ?? "",
+                        Code = code,
+                        Name = name,
                         Address = request.Address ?? "",
                         city = request.City ?? "",
                         state = request.State ?? "",
                         zip = request.Zip ?? "",
                         Country = request.Country ?? "US",
-                        Region = !string.IsNullOrWhiteSpace(request.Apartment) ? request.Apartment : (request.Region ?? ""),
+                        Region = unitSuite,
                         email = request.Email ?? "",
                         phone = request.Phone ?? "",
                         webaddress = request.WebAddress ?? "",
@@ -246,12 +327,13 @@ namespace CimmpleAPI.Controllers
                 }
 
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { locationId = location.LocationId, message = "Location saved successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "save");
             }
         }
 
@@ -266,11 +348,12 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Validate file type
-                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".svg" };
+                // PDF letterheads can only draw raster images, and stored SVG can carry script.
+                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif" };
                 var fileExtension = Path.GetExtension(file.FileName).ToLowerInvariant();
                 if (!allowedExtensions.Contains(fileExtension))
                 {
-                    return BadRequest(new { error = "Invalid file type. Only image files (jpg, jpeg, png, gif, svg) are allowed." });
+                    return BadRequest(new { error = "Invalid file type. Only image files (jpg, jpeg, png, gif) are allowed." });
                 }
 
                 // Validate file size (max 5MB)
@@ -312,8 +395,9 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Generate unique filename
-                var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
-                var uniqueFileName = $"logo_{timestamp}{fileExtension}";
+                // Must never equal the previous logo's name: the old files are deleted after this one is written.
+                var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+                var uniqueFileName = $"logo_{timestamp}_{Guid.NewGuid().ToString("N").Substring(0, 8)}{fileExtension}";
                 var filePath = Path.Combine(logosPath, uniqueFileName);
 
                 // Save file
@@ -387,20 +471,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                // Log the full exception details for debugging
-                var errorMessage = ex.Message;
-                var innerException = ex.InnerException?.Message ?? "";
-                var stackTrace = ex.StackTrace ?? "";
-                
-                Console.WriteLine($"Error uploading logo: {errorMessage}");
-                Console.WriteLine($"Inner exception: {innerException}");
-                Console.WriteLine($"Stack trace: {stackTrace}");
-                
-                return StatusCode(500, new { 
-                    error = errorMessage, 
-                    innerException = innerException,
-                    details = stackTrace 
-                });
+                return ServerError(ex, "logo upload");
             }
         }
 
@@ -443,7 +514,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "logo delete");
             }
         }
 
@@ -500,32 +571,22 @@ namespace CimmpleAPI.Controllers
                     });
                 }
 
-                var childCount = _context.Locations.Count(l => l.ParentLocationId == locationId);
-                if (childCount > 0)
+                var defaultUsers = _context.UserDetails.Count(u => u.DefaultLocationId == locationId && u.TenantID == tenantId);
+                if (defaultUsers > 0)
                 {
-                    impact.CanDelete = false;
-                    impact.BlockingReasons.Add($"{childCount} child location(s) exist under this record. Remove or reassign them first.");
+                    impact.WillBeAffected.Add(new ImpactedEntity
+                    {
+                        EntityType = "Users",
+                        Count = defaultUsers,
+                        Description = $"{defaultUsers} user(s) have this as their default starting location; it will be cleared"
+                    });
                 }
 
-                var invBal = _context.InventoryBalance.Count(ib => ib.LocationId == locationId && ib.Tenantid == tenantId);
-                if (invBal > 0)
+                impact.BlockingReasons.AddRange(GetDeleteBlockers(locationId, tenantId));
+                if (impact.BlockingReasons.Count > 0)
                 {
                     impact.CanDelete = false;
-                    impact.BlockingReasons.Add($"{invBal} inventory balance row(s) reference this location.");
-                }
-
-                var lotBal = _context.InventoryLotBalance.Count(ib => ib.LocationId == locationId && ib.Tenantid == tenantId);
-                if (lotBal > 0)
-                {
-                    impact.CanDelete = false;
-                    impact.BlockingReasons.Add($"{lotBal} lot balance row(s) reference this location.");
-                }
-
-                var invTx = _context.InventoryTransaction.Count(ib => ib.LocationId == locationId && ib.Tenantid == tenantId);
-                if (invTx > 0)
-                {
-                    impact.CanDelete = false;
-                    impact.BlockingReasons.Add($"{invTx} inventory transaction(s) reference this location.");
+                    impact.Warnings.Add("Locations that are still referenced cannot be deleted. Set the location to Inactive instead, or move those records first.");
                 }
 
                 impact.Warnings.Add("This action cannot be undone");
@@ -534,7 +595,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "deletion impact");
             }
         }
 
@@ -551,29 +612,29 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Location not found" });
                 }
 
-                if (_context.Locations.Any(l => l.ParentLocationId == locationId))
-                    return BadRequest(new { error = "Cannot delete: child locations exist. Remove or reassign them first." });
+                var blockers = GetDeleteBlockers(locationId, tenantId);
+                if (blockers.Count > 0)
+                    return Conflict(new { error = "Cannot delete: " + string.Join(" ", blockers), blockingReasons = blockers });
 
-                if (_context.InventoryBalance.Any(ib => ib.LocationId == locationId && ib.Tenantid == tenantId))
-                    return BadRequest(new { error = "Cannot delete: inventory balances exist for this location." });
-
-                if (_context.InventoryLotBalance.Any(ib => ib.LocationId == locationId && ib.Tenantid == tenantId))
-                    return BadRequest(new { error = "Cannot delete: lot balances exist for this location." });
-
-                if (_context.InventoryTransaction.Any(ib => ib.LocationId == locationId && ib.Tenantid == tenantId))
-                    return BadRequest(new { error = "Cannot delete: inventory transactions exist for this location." });
-
-                // Delete related entities
                 var userMappings = _context.UserMapping
                     .Where(um => um.locationId == locationId)
                     .ToList();
                 _context.UserMapping.RemoveRange(userMappings);
 
-                // Delete logo attachments and files
+                foreach (var user in _context.UserDetails.Where(u => u.DefaultLocationId == locationId && u.TenantID == tenantId).ToList())
+                {
+                    user.DefaultLocationId = null;
+                }
+
                 var logoAttachments = _context.LogoAttachment
                     .Where(la => la.locationId == locationId && la.TenantID == tenantId)
                     .ToList();
+                _context.LogoAttachment.RemoveRange(logoAttachments);
 
+                _context.Locations.Remove(location);
+                _context.SaveChanges();
+
+                // Files go only after the rows are gone, so a failed delete keeps the logo.
                 var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
                 foreach (var logoAttachment in logoAttachments)
                 {
@@ -593,17 +654,12 @@ namespace CimmpleAPI.Controllers
                         }
                     }
                 }
-                _context.LogoAttachment.RemoveRange(logoAttachments);
-
-                // Delete the location
-                _context.Locations.Remove(location);
-                _context.SaveChanges();
 
                 return Ok(new { result = new { message = "Location deleted successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "delete");
             }
         }
     }

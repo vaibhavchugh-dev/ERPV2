@@ -14,8 +14,8 @@ const COLUMNS: ColumnDefinition[] = [
   { key: "customercode", label: "Customer Code", sortKey: "customercode", locked: true },
   { key: "company_name", label: "Customer Name", sortKey: "company_name", locked: true },
   { key: "fullAddress", label: "Address", sortKey: "fullAddress" },
-  { key: "contactPerson", label: "Contact Person" },
-  { key: "phone_number", label: "Contact Phone" },
+  { key: "contactPerson", label: "Contact Person", sortKey: "contactPerson" },
+  { key: "phone_number", label: "Contact Phone", sortKey: "phone_number" },
   { key: "status", label: "Status", sortKey: "status" },
 ];
 const DEFAULT_HIDDEN_COLUMNS: string[] = [];
@@ -104,7 +104,7 @@ const CustomerMasterComponent: React.FC = () => {
       }
     } catch (error: any) {
       console.error('[CustomerMaster] Error loading customers:', error);
-      toast.error(`Error loading customers: ${error.message || 'Unknown error'}`);
+      toast.error(`Error loading customers: ${error?.response?.data?.error || error.message || 'Unknown error'}`);
       setCustomers([]);
     } finally {
       setLoading(false);

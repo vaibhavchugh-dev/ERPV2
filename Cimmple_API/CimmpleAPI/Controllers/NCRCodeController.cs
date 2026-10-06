@@ -16,11 +16,23 @@ namespace CimmpleAPI.Controllers
     public class NCRCodeController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly ILogger<NCRCodeController> _logger;
 
-        public NCRCodeController(CimmpleDbContext context)
+        public NCRCodeController(CimmpleDbContext context, ILogger<NCRCodeController> logger)
         {
             _context = context;
+            _logger = logger;
         }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "NCR code {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
+        }
+
+        private Task LockNcrCodesAsync(int tenantId) => _context.Database.ExecuteSqlRawAsync(@"DECLARE @r int;
+EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
+IF @r < 0 THROW 51000, 'NCR code master is busy, please try again.', 1;", $"ncr-code-master-{tenantId}");
 
         [HttpGet("GetNCRCodes")]
         public IActionResult GetNCRCodes([FromQuery] int tenantId)
@@ -45,21 +57,29 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "list");
             }
         }
 
         [HttpPost("SeedDefaultNCRCodes")]
-        public async Task<IActionResult> SeedDefaultNCRCodes([FromQuery] int tenantId = 1, [FromQuery] int createdBy = 1)
+        public async Task<IActionResult> SeedDefaultNCRCodes([FromQuery] int? tenantId = null)
         {
             try
             {
-                if (tenantId <= 0)
-                    return BadRequest(new { error = "tenantId is required" });
+                var tokenTenantId = GetTenantId();
+                var userId = GetUserId();
+                if (tokenTenantId <= 0 || !userId.HasValue)
+                    return BadRequest(new { error = "A signed-in tenant user is required" });
+
+                if (tenantId.HasValue && tenantId.Value != tokenTenantId)
+                    return StatusCode(403, new { error = "Default NCR codes can only be seeded for your own tenant" });
+
+                await using var tx = await _context.Database.BeginTransactionAsync();
+                await LockNcrCodesAsync(tokenTenantId);
 
                 var existingCodes = await _context.NCRCodeMaster
                     .AsNoTracking()
-                    .Where(c => c.TenantId == tenantId && c.NCRCode != null)
+                    .Where(c => c.TenantId == tokenTenantId && c.NCRCode != null)
                     .Select(c => c.NCRCode!.ToLower())
                     .ToListAsync();
 
@@ -71,8 +91,8 @@ namespace CimmpleAPI.Controllers
                     {
                         NCRCode = c.Code,
                         Description = c.Description,
-                        TenantId = tenantId,
-                        CreatedBy = createdBy > 0 ? createdBy : 1,
+                        TenantId = tokenTenantId,
+                        CreatedBy = userId.Value,
                         CreatedDate = now
                     })
                     .ToList();
@@ -83,7 +103,8 @@ namespace CimmpleAPI.Controllers
                     await _context.SaveChangesAsync();
                 }
 
-                var total = await _context.NCRCodeMaster.CountAsync(c => c.TenantId == tenantId);
+                var total = await _context.NCRCodeMaster.CountAsync(c => c.TenantId == tokenTenantId);
+                await tx.CommitAsync();
 
                 return Ok(new
                 {
@@ -95,7 +116,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "seed");
             }
         }
 
@@ -126,7 +147,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "load");
             }
         }
 
@@ -142,8 +163,18 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "NCR Code is required" });
 
                 var normalizedCode = request.NCRCode.Trim();
+                if (normalizedCode.Length > 50)
+                    return BadRequest(new { error = "NCR Code must be 50 characters or fewer" });
+
                 var isNew = request.Id == 0;
+                var userId = GetUserId();
+                if (isNew && !userId.HasValue)
+                    return BadRequest(new { error = "A signed-in user is required" });
+
                 NCRCodeMaster entity;
+
+                await using var tx = await _context.Database.BeginTransactionAsync();
+                await LockNcrCodesAsync(request.TenantId);
 
                 if (isNew)
                 {
@@ -160,7 +191,7 @@ namespace CimmpleAPI.Controllers
                         NCRCode = normalizedCode,
                         Description = request.Description?.Trim() ?? "",
                         TenantId = request.TenantId,
-                        CreatedBy = request.CreatedBy > 0 ? request.CreatedBy : 1,
+                        CreatedBy = userId!.Value,
                         CreatedDate = DateTime.UtcNow
                     };
                     _context.NCRCodeMaster.Add(entity);
@@ -182,12 +213,23 @@ namespace CimmpleAPI.Controllers
                     if (duplicate)
                         return BadRequest(new { error = "NCR Code already exists" });
 
+                    var renamed = !string.Equals(entity.NCRCode, normalizedCode, StringComparison.Ordinal);
                     entity.NCRCode = normalizedCode;
                     entity.Description = request.Description?.Trim() ?? "";
                     _context.NCRCodeMaster.Update(entity);
+
+                    // NCRs keep a copy of the code text for lists and search; keep it in step with the master.
+                    if (renamed)
+                    {
+                        await EnsureNcrCodeColumnsAsync();
+                        await _context.Database.ExecuteSqlRawAsync(
+                            "UPDATE CimmpleFlow.NonConformanceReports SET NcrCode = {0} WHERE TenantId = {1} AND NcrCodeId = {2}",
+                            normalizedCode, request.TenantId, entity.Id);
+                    }
                 }
 
                 await _context.SaveChangesAsync();
+                await tx.CommitAsync();
 
                 return Ok(new
                 {
@@ -202,7 +244,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "save");
             }
         }
 
@@ -264,7 +306,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "deletion impact");
             }
         }
 
@@ -310,7 +352,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "delete");
             }
         }
 

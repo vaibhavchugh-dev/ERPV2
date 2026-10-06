@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -17,6 +20,8 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private readonly IConfiguration _configuration;
+        private readonly ILogger<JobTemplateController> _logger;
 
         public static readonly string[] AttachmentTypes = new[]
         {
@@ -30,17 +35,42 @@ namespace CimmpleAPI.Controllers
 
         private static readonly string[] AllowedAttachmentExtensions = new[]
         {
-            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp",
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
             ".dwg", ".dxf", ".step", ".stp", ".igs", ".iges",
             ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt"
         };
 
         private const long MaxAttachmentSize = 25 * 1024 * 1024;
 
-        public JobTemplateController(CimmpleDbContext context, IWebHostEnvironment environment)
+        // Opened inline from the attachment link; anything else is sent as a download.
+        private static readonly Dictionary<string, string> InlineContentTypes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [".pdf"] = "application/pdf",
+            [".png"] = "image/png",
+            [".jpg"] = "image/jpeg",
+            [".jpeg"] = "image/jpeg",
+            [".gif"] = "image/gif",
+            [".bmp"] = "image/bmp",
+            [".webp"] = "image/webp",
+            [".txt"] = "text/plain",
+        };
+
+        public JobTemplateController(
+            CimmpleDbContext context,
+            IWebHostEnvironment environment,
+            IConfiguration configuration,
+            ILogger<JobTemplateController> logger)
         {
             _context = context;
             _environment = environment;
+            _configuration = configuration;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Job template {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
         }
 
         [HttpGet("GetAttachmentTypes")]
@@ -224,7 +254,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "list");
             }
         }
 
@@ -409,7 +439,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "load");
             }
         }
 
@@ -514,10 +544,6 @@ namespace CimmpleAPI.Controllers
                         var rawMaterialId = mat.RawMaterialId.HasValue && mat.RawMaterialId.Value > 0 ? mat.RawMaterialId : null;
                         if (productId.HasValue && rawMaterialId.HasValue)
                             rawMaterialId = null;
-                        if (!productId.HasValue && !rawMaterialId.HasValue)
-                            continue;
-                        if (mat.Quantity <= 0)
-                            continue;
 
                         _context.JobTemplateMaterial.Add(new JobTemplateMaterial
                         {
@@ -555,7 +581,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "save");
             }
         }
 
@@ -707,7 +733,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "clone");
             }
         }
 
@@ -771,12 +797,12 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "deletion impact");
             }
         }
 
         [HttpDelete("DeleteJobTemplate")]
-        public IActionResult DeleteJobTemplate([FromQuery] int jobTemplateId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteJobTemplate([FromQuery] int jobTemplateId, [FromQuery] int tenantId)
         {
             try
             {
@@ -809,14 +835,14 @@ namespace CimmpleAPI.Controllers
 
                 foreach (var attachment in attachments)
                 {
-                    DeletePhysicalFile(attachment.FileUrl);
+                    await DeleteAttachmentStorageAsync(attachment, tenantId);
                 }
 
                 return Ok(new { result = new { message = "Job template deleted successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "delete");
             }
         }
 
@@ -853,21 +879,28 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Job template not found" });
                 }
 
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var folderPath = Path.Combine(webRootPath, "uploads", "jobtemplates", tenantId.ToString(), jobTemplateId.ToString());
+                var displayName = Path.GetFileName(file.FileName);
+                var blobName = $"{jobTemplateId}/{Guid.NewGuid():N}{extension}";
+                var createdBy = GetUserId() ?? 0;
 
-                if (!Directory.Exists(folderPath))
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName,
+                    createdBy);
+
+                var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                if (!uploadedOk)
                 {
-                    Directory.CreateDirectory(folderPath);
-                }
-
-                var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
-                var uniqueFileName = $"{timestamp}{extension}";
-                var filePath = Path.Combine(folderPath, uniqueFileName);
-
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                {
-                    await file.CopyToAsync(stream);
+                    var connMissing = string.IsNullOrEmpty(
+                        _configuration["AzureConnection:storageConnectionString"]
+                        ?? _configuration["AzureConnString"]);
+                    return StatusCode(500, new
+                    {
+                        error = connMissing
+                            ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                            : $"Failed to upload file '{displayName}' to Azure Storage"
+                    });
                 }
 
                 var attachment = new JobTemplateAttachment
@@ -875,12 +908,14 @@ namespace CimmpleAPI.Controllers
                     JobTemplateId = jobTemplateId,
                     Tenantid = tenantId,
                     AttachmentType = string.IsNullOrWhiteSpace(attachmentType) ? "Other" : attachmentType.Trim(),
-                    FileName = Path.GetFileName(file.FileName),
-                    FileUrl = $"/uploads/jobtemplates/{tenantId}/{jobTemplateId}/{uniqueFileName}",
-                    ContentType = file.ContentType,
+                    FileName = displayName,
+                    FileUrl = blobName,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                        ? ModuleFileStorage.GetContentType(displayName)
+                        : file.ContentType,
                     FileSize = file.Length,
                     UploadedDate = DateTime.Now,
-                    UploadedBy = GetUserId()
+                    UploadedBy = createdBy
                 };
 
                 _context.JobTemplateAttachment.Add(attachment);
@@ -902,12 +937,12 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "attachment upload");
             }
         }
 
         [HttpDelete("DeleteJobTemplateAttachment")]
-        public IActionResult DeleteJobTemplateAttachment([FromQuery] int attachmentId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteJobTemplateAttachment([FromQuery] int attachmentId, [FromQuery] int tenantId)
         {
             try
             {
@@ -922,13 +957,98 @@ namespace CimmpleAPI.Controllers
                 _context.JobTemplateAttachment.Remove(attachment);
                 _context.SaveChanges();
 
-                DeletePhysicalFile(attachment.FileUrl);
+                await DeleteAttachmentStorageAsync(attachment, tenantId);
 
                 return Ok(new { result = new { message = "Attachment deleted successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "attachment delete");
+            }
+        }
+
+        [HttpGet("DownloadJobTemplateAttachment")]
+        public IActionResult DownloadJobTemplateAttachment([FromQuery] int attachmentId, [FromQuery] int tenantId)
+        {
+            try
+            {
+                var tokenTenantId = GetTenantId();
+                if (tokenTenantId > 0 && tokenTenantId != tenantId)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var attachment = _context.JobTemplateAttachment
+                    .AsNoTracking()
+                    .FirstOrDefault(a => a.Id == attachmentId && a.Tenantid == tenantId);
+
+                if (attachment == null)
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.FileName);
+                Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+                if (IsLegacyLocalJobTemplateFileUrl(attachment.FileUrl))
+                {
+                    var fullPath = ResolveAttachmentPath(attachment.FileUrl);
+                    if (fullPath == null || !System.IO.File.Exists(fullPath))
+                    {
+                        return NotFound(new { error = "Attachment not found" });
+                    }
+
+                    fileName = string.IsNullOrWhiteSpace(attachment.FileName)
+                        ? Path.GetFileName(fullPath)
+                        : attachment.FileName;
+                    var extension = Path.GetExtension(fullPath);
+
+                    if (InlineContentTypes.TryGetValue(extension, out var inlineType))
+                    {
+                        var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+                        disposition.SetHttpFileName(fileName);
+                        Response.Headers["Content-Disposition"] = disposition.ToString();
+                        return PhysicalFile(fullPath, inlineType);
+                    }
+
+                    return PhysicalFile(fullPath, "application/octet-stream", fileName);
+                }
+
+                var blobName = attachment.FileUrl;
+                if (string.IsNullOrWhiteSpace(blobName))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = !string.IsNullOrWhiteSpace(attachment.ContentType)
+                    ? attachment.ContentType
+                    : ModuleFileStorage.GetContentType(attachment.FileName ?? blobName);
+                var extensionAzure = Path.GetExtension(fileName);
+
+                if (InlineContentTypes.TryGetValue(extensionAzure, out var inlineAzure))
+                {
+                    var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+                    disposition.SetHttpFileName(fileName);
+                    Response.Headers["Content-Disposition"] = disposition.ToString();
+                    return File(bytes, inlineAzure);
+                }
+
+                return File(bytes, contentType, fileName);
+            }
+            catch (Exception ex)
+            {
+                return ServerError(ex, "attachment download");
             }
         }
 
@@ -1038,6 +1158,58 @@ namespace CimmpleAPI.Controllers
                 }
             }
 
+            if (new[] { request.EstimatedSetupTimeMinutes, request.EstimatedCycleTimeMinutes, request.EstimatedLabourTimeMinutes, request.EstimatedMachineTimeMinutes }
+                    .Any(v => v.HasValue && v.Value < 0))
+            {
+                return "Estimated times must be 0 or more";
+            }
+
+            var negativeTimeOp = operations.FirstOrDefault(o =>
+                (o.SetupTimeMinutes.HasValue && o.SetupTimeMinutes.Value < 0) ||
+                (o.CycleTimeMinutes.HasValue && o.CycleTimeMinutes.Value < 0));
+            if (negativeTimeOp != null)
+            {
+                return $"Operation {negativeTimeOp.SequenceNumber}: setup and cycle times must be 0 or more";
+            }
+
+            var materials = request.Materials ?? new List<JobTemplateMaterialReq>();
+            for (var i = 0; i < materials.Count; i++)
+            {
+                var mat = materials[i];
+                var hasProduct = mat.ProductId.HasValue && mat.ProductId.Value > 0;
+                var hasRawMaterial = mat.RawMaterialId.HasValue && mat.RawMaterialId.Value > 0;
+                if (!hasProduct && !hasRawMaterial)
+                {
+                    return $"Material line {i + 1}: select a raw material or product";
+                }
+                if (mat.Quantity <= 0)
+                {
+                    return $"Material line {i + 1}: quantity must be greater than 0";
+                }
+            }
+
+            var productIds = materials
+                .Where(m => m.ProductId.HasValue && m.ProductId.Value > 0)
+                .Select(m => m.ProductId!.Value)
+                .Distinct()
+                .ToList();
+            if (productIds.Count > 0 &&
+                _context.ProductMaster.Count(p => p.tenantid == request.Tenantid && productIds.Contains(p.Id)) != productIds.Count)
+            {
+                return "One or more selected products were not found";
+            }
+
+            var rawMaterialIds = materials
+                .Where(m => m.RawMaterialId.HasValue && m.RawMaterialId.Value > 0)
+                .Select(m => m.RawMaterialId!.Value)
+                .Distinct()
+                .ToList();
+            if (rawMaterialIds.Count > 0 &&
+                _context.RawMaterialMaster.Count(r => r.Tenantid == request.Tenantid && rawMaterialIds.Contains(r.Id)) != rawMaterialIds.Count)
+            {
+                return "One or more selected raw materials were not found";
+            }
+
             return null;
         }
 
@@ -1085,22 +1257,25 @@ namespace CimmpleAPI.Controllers
             switch ((sortBy ?? "").ToLowerInvariant())
             {
                 case "templatename":
-                    return descending ? query.OrderByDescending(t => t.TemplateName) : query.OrderBy(t => t.TemplateName);
+                    return ThenById(descending ? query.OrderByDescending(t => t.TemplateName) : query.OrderBy(t => t.TemplateName));
                 case "revision":
-                    return descending ? query.OrderByDescending(t => t.Revision) : query.OrderBy(t => t.Revision);
+                    return ThenById(descending ? query.OrderByDescending(t => t.Revision) : query.OrderBy(t => t.Revision));
                 case "status":
-                    return descending ? query.OrderByDescending(t => t.Status) : query.OrderBy(t => t.Status);
+                    return ThenById(descending ? query.OrderByDescending(t => t.Status) : query.OrderBy(t => t.Status));
                 case "lastupdated":
-                    return descending
+                    return ThenById(descending
                         ? query.OrderByDescending(t => t.ModifiedDate ?? t.CreatedDate)
-                        : query.OrderBy(t => t.ModifiedDate ?? t.CreatedDate);
+                        : query.OrderBy(t => t.ModifiedDate ?? t.CreatedDate));
                 case "effectivefrom":
-                    return descending ? query.OrderByDescending(t => t.EffectiveFrom) : query.OrderBy(t => t.EffectiveFrom);
+                    return ThenById(descending ? query.OrderByDescending(t => t.EffectiveFrom) : query.OrderBy(t => t.EffectiveFrom));
                 case "templatecode":
                 default:
-                    return descending ? query.OrderByDescending(t => t.TemplateCode) : query.OrderBy(t => t.TemplateCode);
+                    return ThenById(descending ? query.OrderByDescending(t => t.TemplateCode) : query.OrderBy(t => t.TemplateCode));
             }
         }
+
+        // OFFSET/FETCH paging needs a unique tie-breaker, or rows with equal sort keys can repeat or vanish between pages.
+        private static IQueryable<JobTemplateMaster> ThenById(IOrderedQueryable<JobTemplateMaster> query) => query.ThenBy(t => t.Id);
 
         private static List<int> ParseIdList(string? csv)
         {
@@ -1122,6 +1297,54 @@ namespace CimmpleAPI.Controllers
             return value.HasValue && value.Value > 0 ? value : null;
         }
 
+        private static bool IsLegacyLocalJobTemplateFileUrl(string? fileUrl) =>
+            !string.IsNullOrWhiteSpace(fileUrl) &&
+            fileUrl.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase);
+
+        private async Task DeleteAttachmentStorageAsync(JobTemplateAttachment attachment, int tenantId)
+        {
+            if (IsLegacyLocalJobTemplateFileUrl(attachment.FileUrl))
+            {
+                DeletePhysicalFile(attachment.FileUrl);
+                return;
+            }
+
+            var blobName = attachment.FileUrl;
+            if (string.IsNullOrWhiteSpace(blobName))
+            {
+                return;
+            }
+
+            try
+            {
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName);
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not remove job template blob '{BlobName}'", blobName);
+            }
+        }
+
+        /// <summary>Maps a stored FileUrl to its file under the job template upload folder; null if it points anywhere else.</summary>
+        private string? ResolveAttachmentPath(string? fileUrl)
+        {
+            if (string.IsNullOrWhiteSpace(fileUrl))
+            {
+                return null;
+            }
+
+            var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+            var uploadRoot = Path.GetFullPath(Path.Combine(webRootPath, "uploads", "jobtemplates")) + Path.DirectorySeparatorChar;
+            var relativePath = fileUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            var fullPath = Path.GetFullPath(Path.Combine(webRootPath, relativePath));
+
+            return fullPath.StartsWith(uploadRoot, StringComparison.OrdinalIgnoreCase) ? fullPath : null;
+        }
+
         private void DeletePhysicalFile(string? fileUrl)
         {
             if (string.IsNullOrWhiteSpace(fileUrl))
@@ -1131,11 +1354,9 @@ namespace CimmpleAPI.Controllers
 
             try
             {
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var relativePath = fileUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-                var fullPath = Path.Combine(webRootPath, relativePath);
+                var fullPath = ResolveAttachmentPath(fileUrl);
 
-                if (System.IO.File.Exists(fullPath))
+                if (fullPath != null && System.IO.File.Exists(fullPath))
                 {
                     System.IO.File.Delete(fullPath);
                 }

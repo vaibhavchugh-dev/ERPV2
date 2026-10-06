@@ -139,6 +139,8 @@ IF OBJECT_ID(N'CimmpleFlow.UserDetails', N'U') IS NULL
 
             await AddUserDetailsLoginColumnsAsync(context, "dbo.UserDetails");
             await AddUserDetailsLoginColumnsAsync(context, "CimmpleFlow.UserDetails");
+            await AddUserInfoSessionColumnsAsync(context, "dbo.UserInfo");
+            await AddUserInfoSessionColumnsAsync(context, "CimmpleFlow.UserInfo");
             await EnsureEmailDeliveryModeColumnAsync(context);
 
             await context.Database.ExecuteSqlRawAsync(@"
@@ -190,6 +192,20 @@ BEGIN
         EXEC(N'ALTER TABLE {tableName} ADD PasswordSalt nvarchar(max) NULL');
     IF COL_LENGTH(N'{tableName}', N'VendorId') IS NULL
         EXEC(N'ALTER TABLE {tableName} ADD VendorId INT NULL');
+END");
+        }
+
+        private static async Task AddUserInfoSessionColumnsAsync(CimmpleDbContext context, string tableName)
+        {
+            await context.Database.ExecuteSqlRawAsync($@"
+IF OBJECT_ID(N'{tableName}', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'{tableName}', N'RefreshTokenHash') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD RefreshTokenHash nvarchar(128) NULL');
+    IF COL_LENGTH(N'{tableName}', N'RefreshExpiresUtc') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD RefreshExpiresUtc DATETIME2 NULL');
+    IF COL_LENGTH(N'{tableName}', N'LastRefreshUtc') IS NULL
+        EXEC(N'ALTER TABLE {tableName} ADD LastRefreshUtc DATETIME2 NULL');
 END");
         }
 

@@ -34,6 +34,8 @@ export interface CreditCardMasterReq {
   NickName: string;
   IsPrimary: boolean;
   COA: string;
+  // Read-only, returned by GetCreditCardById; the full number and CVV are never returned or stored.
+  LastFourDigits?: string;
 }
 
 export class CreditCardService {
@@ -76,12 +78,13 @@ export class CreditCardService {
       const result = response.data.result as any;
       return {
         Id: result.id,
-        CardNumber: result.cardNumber || "",
+        CardNumber: "",
+        LastFourDigits: result.lastFourDigits || "",
         CardholderName: result.cardholderName || "",
         CardType: result.cardType || "",
         ExpiryMonth: result.expiryMonth || "",
         ExpiryYear: result.expiryYear || "",
-        CVV: result.cvv || "",
+        CVV: "",
         BillingStreet: result.billingStreet || "",
         BillingApartment: result.billingApartment || "",
         BillingCity: result.billingCity || "",
@@ -105,10 +108,11 @@ export class CreditCardService {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
 
-    request.TenantId = tenantID;
+    const { LastFourDigits, ...payload } = request;
+    const body: CreditCardMasterReq = { ...payload, TenantId: tenantID, CVV: "" };
 
     const url = `/CreditCard/SaveCreditCard`;
-    return Instense.post(url, request).then((response) => {
+    return Instense.post(url, body).then((response) => {
       const result = response.data.result;
       return result;
     });

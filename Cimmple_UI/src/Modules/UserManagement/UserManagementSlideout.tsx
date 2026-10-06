@@ -130,6 +130,14 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
         ...prev,
         [field]: numValue
       }));
+    } else if (field === "status") {
+      setUserData((prev) => ({
+        ...prev,
+        status: value,
+        ...(value === "Active" || value === "Pending"
+          ? { terminationReason: undefined, dateOfTermination: undefined }
+          : {}),
+      }));
     } else {
       setUserData(prev => ({
         ...prev,
@@ -147,7 +155,11 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     // Validate role - must be a positive number
     const roleValue = userData.role;
     if (!roleValue || roleValue === undefined || isNaN(roleValue) || roleValue <= 0) {
-      errors.push("Role is required");
+      if (userData.status === "Active") {
+        errors.push("Select a role before setting this account to Active");
+      } else {
+        errors.push("Role is required");
+      }
     }
 
     return errors;
@@ -171,8 +183,10 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
         userUniqueID: userData.userUniqueID,
         tenantID,
         status: userData.status,
-        role: userData.role,
-        terminationReason: userData.terminationReason
+        ...(userData.role && userData.role > 0 ? { role: userData.role } : {}),
+        ...(userData.status === "Inactive" && userData.terminationReason
+          ? { terminationReason: userData.terminationReason }
+          : {}),
       };
 
       await UserManagementService.UpdateUser(updateData);
@@ -273,6 +287,13 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
               style={{ flex: 1 }}
             >
               <option value="">Select Role</option>
+              {userData.role &&
+                userData.role > 0 &&
+                !roles.some((r) => Number(r.id) === Number(userData.role)) && (
+                  <option value={userData.role}>
+                    {userData.roleName || `Role #${userData.role}`}
+                  </option>
+                )}
               {roles.map(role => (
                 <option key={role.id} value={role.id}>{role.name}</option>
               ))}

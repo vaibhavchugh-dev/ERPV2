@@ -361,6 +361,24 @@ namespace CimmpleAPI.Controllers
 
                     GlWorkflowService.AddAudit(_context, tenantId, "PayrollNetPayPayment", GetUserId(), header.Id, null,
                         periodKey, refNo);
+
+                    if (bankId is > 0)
+                    {
+                        _context.Transactions.Add(new Transactions
+                        {
+                            TransactionType = "Payment",
+                            Amount = amount,
+                            TransactionDate = paymentDate,
+                            AccountingPeriod = periodKey,
+                            Description = desc,
+                            TenantId = tenantId,
+                            locationId = locId,
+                            BankId = bankId.Value,
+                            approved = true,
+                            isCustomer = 0
+                        });
+                    }
+
                     _context.SaveChanges();
                     tx.Commit();
 
@@ -515,6 +533,24 @@ namespace CimmpleAPI.Controllers
 
                     GlWorkflowService.AddAudit(_context, tenantId, "PayrollTaxRemittance", GetUserId(), header.Id, null,
                         periodKey, refNo);
+
+                    if (bankId is > 0)
+                    {
+                        _context.Transactions.Add(new Transactions
+                        {
+                            TransactionType = "Payment",
+                            Amount = total,
+                            TransactionDate = paymentDate,
+                            AccountingPeriod = periodKey,
+                            Description = desc,
+                            TenantId = tenantId,
+                            locationId = locId,
+                            BankId = bankId.Value,
+                            approved = true,
+                            isCustomer = 0
+                        });
+                    }
+
                     _context.SaveChanges();
                     tx.Commit();
 
@@ -887,8 +923,23 @@ namespace CimmpleAPI.Controllers
                     totalCredit += c;
                 }
 
-                if (Math.Abs(totalDebit - totalCredit) > 0.01m)
+                var imbalance = totalDebit - totalCredit;
+                if (Math.Abs(imbalance) > ManualPayrollJournalBuilder.BalanceTolerance)
                     return BadRequest(new { error = $"Debits ({totalDebit:N2}) must equal credits ({totalCredit:N2})." });
+
+                if (Math.Abs(imbalance) > 0 && Math.Abs(imbalance) <= ManualPayrollJournalBuilder.BalanceTolerance)
+                {
+                    var adjustLine = request.Lines.LastOrDefault(l => l.Credit > 0 || l.Debit > 0);
+                    if (adjustLine != null)
+                    {
+                        if (imbalance > 0)
+                            adjustLine.Credit = Math.Round(adjustLine.Credit + imbalance, 2, MidpointRounding.AwayFromZero);
+                        else
+                            adjustLine.Debit = Math.Round(adjustLine.Debit + Math.Abs(imbalance), 2, MidpointRounding.AwayFromZero);
+                        totalDebit = request.Lines.Sum(l => Math.Round(l.Debit, 2, MidpointRounding.AwayFromZero));
+                        totalCredit = request.Lines.Sum(l => Math.Round(l.Credit, 2, MidpointRounding.AwayFromZero));
+                    }
+                }
 
                 var accountIds = request.Lines.Select(l => l.AccountId).Distinct().ToList();
                 var validAccounts = _context.ChartofAccounts
@@ -903,22 +954,50 @@ namespace CimmpleAPI.Controllers
                     ? $"PAYRUN-{entryDate:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}"
                     : request.ReferenceNumber.Trim();
 
+                if (request.PayPeriodStart.HasValue && request.PayPeriodEnd.HasValue)
+                {
+                    var ps = request.PayPeriodStart.Value.Date;
+                    var pe = request.PayPeriodEnd.Value.Date;
+                    var periodDup = _context.PayrollJournalLinks.AsNoTracking()
+                        .Any(p => p.TenantId == tenantId
+                                  && p.Status == PayrollJournalStatuses.Posted
+                                  && p.PayPeriodStart == ps
+                                  && p.PayPeriodEnd == pe);
+                    if (periodDup)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"A payroll journal for pay period {ps:yyyy-MM-dd} to {pe:yyyy-MM-dd} is already posted."
+                        });
+                    }
+                }
+
                 var existingByRef = _context.PayrollJournalLinks.AsNoTracking()
                     .FirstOrDefault(p => p.TenantId == tenantId
                                          && p.ReferenceNumber == refNo
                                          && p.Status == PayrollJournalStatuses.Posted);
                 if (existingByRef != null)
                 {
-                    return Ok(new
+                    var sameRun = !string.IsNullOrEmpty(externalRunId)
+                                  && string.Equals(existingByRef.ExternalRunId, externalRunId, StringComparison.Ordinal);
+                    if (sameRun)
                     {
-                        result = new
+                        return Ok(new
                         {
-                            id = existingByRef.Id,
-                            journalEntryId = existingByRef.JournalEntryId,
-                            referenceNumber = existingByRef.ReferenceNumber,
-                            alreadyExists = true,
-                            message = "Payroll journal already posted for this reference."
-                        }
+                            result = new
+                            {
+                                id = existingByRef.Id,
+                                journalEntryId = existingByRef.JournalEntryId,
+                                referenceNumber = existingByRef.ReferenceNumber,
+                                alreadyExists = true,
+                                message = "Payroll journal already posted for this reference."
+                            }
+                        });
+                    }
+
+                    return BadRequest(new
+                    {
+                        error = $"Reference {refNo} is already used by another payroll run. Use a unique reference or pay period."
                     });
                 }
 

@@ -119,7 +119,15 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         const tenantID = storage?.tenantID || 0;
         const result = await LocationService.GetLocations({ tenantid: tenantID });
         if (!cancelled && result && Array.isArray(result)) {
-          setLocations(result);
+          let list = result;
+          if (!storage?.canAccessAllLocations) {
+            const { AuthService } = await import("../../Common/Services/AuthService");
+            const allowedIds = new Set(
+              AuthService.getAllowedLocations().map((l) => l.locationId)
+            );
+            list = result.filter((loc) => allowedIds.has(loc.locationId));
+          }
+          setLocations(list);
         }
       } catch (error: any) {
         console.error("Error loading locations:", error);

@@ -189,6 +189,9 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Vendor invoice not found" });
                 }
 
+                if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
+
                 // Get invoice details separately
                 var invoiceDetails = _context.VendorInvoiceDetail
                     .Where(vid => vid.InvoiceId == invoiceId)
@@ -320,11 +323,11 @@ namespace CimmpleAPI.Controllers
                     {
                         TenantId = tenantId,
                         InvoiceNo = invoiceNumber.ToString(),
-                        prefixinvoiceno = $"VINV-{DateTime.Now.Year}-{invoiceNumber:D4}",
+                        prefixinvoiceno = $"VINV-{invoiceDate.Year}-{invoiceNumber:D4}",
                         InvoiceDate = invoiceDate,
                         DueDate = dueDate,
                         PaymentTermId = paymentTermId,
-                        AccountingPeriod = $"{DateTime.Now.Year}{DateTime.Now.Month:D2}",
+                        AccountingPeriod = GlWorkflowService.PeriodKeyFromDate(invoiceDate),
                         VendorCode = request.VendorCode,
                         VendorName = request.VendorName,
                         vid = request.VendorId,
@@ -622,6 +625,9 @@ namespace CimmpleAPI.Controllers
                 if (invoice == null)
                     return NotFound(new { error = "Vendor invoice not found" });
 
+                if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
+
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var userId = GetUserId();
                 if (userId.HasValue)
@@ -735,10 +741,7 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    var periodKey = !string.IsNullOrWhiteSpace(invoice.AccountingPeriod) &&
-                                    GlWorkflowService.TryNormalizePeriodKey(invoice.AccountingPeriod, out var normalizedPeriod, out _)
-                        ? normalizedPeriod
-                        : GlWorkflowService.PeriodKeyFromDate(paymentDate);
+                    var periodKey = GlWorkflowService.PeriodKeyFromDate(paymentDate);
                     if (GlWorkflowService.IsPeriodLocked(_context, tenantId, periodKey))
                     {
                         return BadRequest(new
@@ -746,6 +749,9 @@ namespace CimmpleAPI.Controllers
                             error = $"Accounting period {periodKey} is closed. Open the period or pick another payment date."
                         });
                     }
+
+                    if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                        return StatusCode(403, new { error = "You do not have access to this site." });
 
                     var newPaidTotal = Math.Round(alreadyPaid + paymentAmount, 2);
                     var isFullyPaid = newPaidTotal >= invoice.TotalAmount - 0.009m;
@@ -857,7 +863,7 @@ namespace CimmpleAPI.Controllers
         private static string BuildAutoPostingReference(string prefix, string? invoiceNo, int invoiceId)
         {
             var safeInvoice = string.IsNullOrWhiteSpace(invoiceNo) ? invoiceId.ToString() : invoiceNo.Trim();
-            var reference = $"{prefix}-{safeInvoice}";
+            var reference = $"{prefix}-{invoiceId}-{safeInvoice}";
             return reference.Length > 200 ? reference[..200] : reference;
         }
 
@@ -874,6 +880,9 @@ namespace CimmpleAPI.Controllers
 
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
+
+                    if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                        return StatusCode(403, new { error = "You do not have access to this site." });
 
                     if (invoice.isPaid == 2)
                         return BadRequest(new { error = "Invoice is already voided." });
@@ -930,6 +939,9 @@ namespace CimmpleAPI.Controllers
 
                     if (invoice == null)
                         return NotFound(new { error = "Vendor invoice not found" });
+
+                    if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                        return StatusCode(403, new { error = "You do not have access to this site." });
 
                     // Check if invoice is already paid / partially paid
                     if (invoice.isPaid == 1)

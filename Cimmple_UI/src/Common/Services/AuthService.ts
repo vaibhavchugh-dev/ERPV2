@@ -294,38 +294,93 @@ export class AuthService {
   }
 
   /** In-flight refresh shared by SessionKeepAlive + Axios 401 interceptor (avoids rotating the same token twice). */
-  private static refreshInFlight: Promise<LoginResponse | null> | null = null;
+  private static refreshInFlight: Promise<Pick<LoginResponse, "accessToken"> | null> | null = null;
 
-  public static async refresh(): Promise<LoginResponse | null> {
+  public static async refresh(): Promise<Pick<LoginResponse, "accessToken"> | null> {
     if (AuthService.refreshInFlight) {
       return AuthService.refreshInFlight;
     }
 
-    AuthService.refreshInFlight = (async () => {
-      const isVendor = (window.location.pathname || "").startsWith("/vendor");
-      const refreshToken = isVendor
-        ? localStorage.getItem("vendorRefreshToken")
-        : localStorage.getItem(REFRESH_KEY);
-      if (!refreshToken) return null;
-      try {
-        const { data } = await Instense.post<LoginResponse>("/Auth/Refresh", { refreshToken });
-        AuthService.persistSession(data, isVendor ? "vendor" : "erp");
-        return data;
-      } catch {
-        return null;
-      }
-    })().finally(() => {
+    AuthService.refreshInFlight = AuthService.refreshAcrossTabs().finally(() => {
       AuthService.refreshInFlight = null;
     });
 
     return AuthService.refreshInFlight;
   }
 
-  public static async logout(): Promise<void> {
+  /**
+   * Refresh tokens rotate on every use and are shared by all tabs through localStorage, so
+   * refreshes are serialized across tabs with a Web Lock. A tab that finds the token already
+   * rotated by another tab reuses that tab's new session instead of sending the stale token.
+   */
+  private static async refreshAcrossTabs(): Promise<Pick<LoginResponse, "accessToken"> | null> {
+    const isVendor = (window.location.pathname || "").startsWith("/vendor");
+    const refreshKey = isVendor ? "vendorRefreshToken" : REFRESH_KEY;
+    const tokenKey = isVendor ? "vendorToken" : TOKEN_KEY;
+    const tokenAtStart = localStorage.getItem(refreshKey);
+    if (!tokenAtStart) return null;
+
+    const run = async (): Promise<Pick<LoginResponse, "accessToken"> | null> => {
+      const current = localStorage.getItem(refreshKey);
+      if (!current) return null;
+      if (current !== tokenAtStart) {
+        const accessToken = localStorage.getItem(tokenKey);
+        return accessToken ? { accessToken } : null;
+      }
+      try {
+        const { data } = await Instense.post<LoginResponse>("/Auth/Refresh", { refreshToken: current });
+        AuthService.persistSession(data, isVendor ? "vendor" : "erp");
+        return data;
+      } catch (err: any) {
+        if (err?.response?.status === 401) {
+          return AuthService.awaitRotationByOtherTab(refreshKey, tokenKey, current);
+        }
+        return null;
+      }
+    };
+
+    const locks = (navigator as any).locks;
+    if (locks?.request) {
+      return locks.request(`cimmple-auth-refresh-${isVendor ? "vendor" : "erp"}`, run);
+    }
+    return run();
+  }
+
+  /**
+   * A 401 on refresh can mean another tab rotated the token first: localStorage writes from
+   * other tabs reach this tab asynchronously, so the lock alone does not guarantee a fresh read.
+   */
+  private static async awaitRotationByOtherTab(
+    refreshKey: string,
+    tokenKey: string,
+    sentToken: string
+  ): Promise<Pick<LoginResponse, "accessToken"> | null> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const latest = localStorage.getItem(refreshKey);
+      if (!latest) return null;
+      if (latest !== sentToken) {
+        const accessToken = localStorage.getItem(tokenKey);
+        return accessToken ? { accessToken } : null;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  /** Ends the current session on the server (works even when the access token has expired). */
+  public static async revokeSession(portal: "erp" | "vendor" = "erp"): Promise<void> {
+    const refreshToken = localStorage.getItem(portal === "vendor" ? "vendorRefreshToken" : REFRESH_KEY);
+    if (!refreshToken) return;
     try {
-      await Instense.post("/Auth/Logout", {});
+      await Instense.post("/Auth/RevokeSession", { refreshToken });
     } catch {
       // ignore
+    }
+  }
+
+  public static async logout(): Promise<void> {
+    try {
+      await AuthService.revokeSession("erp");
     } finally {
       AuthService.clearSession("erp");
     }

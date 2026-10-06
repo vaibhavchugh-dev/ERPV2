@@ -7,6 +7,7 @@ using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 
 namespace CimmpleAPI.Controllers
 {
@@ -15,10 +16,155 @@ namespace CimmpleAPI.Controllers
     public class BankController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly ILogger<BankController> _logger;
 
-        public BankController(CimmpleDbContext context)
+        public BankController(CimmpleDbContext context, ILogger<BankController> logger)
         {
             _context = context;
+            _logger = logger;
+        }
+
+        private bool CanAccessBank(BankMaster bank) => bank.locationId <= 0 || CanAccessLocation(bank.locationId);
+
+        private IActionResult ForbidBank() => StatusCode(403, new { message = "You do not have access to this bank's site" });
+
+        private static string MaskAccountNo(string? accountNo)
+        {
+            var value = accountNo ?? string.Empty;
+            return "XXXX" + (value.Length >= 4 ? value.Substring(value.Length - 4) : value);
+        }
+
+        private static object ToBankDetail(BankMaster bank) => new
+        {
+            id = bank.Id,
+            bankName = bank.BankName,
+            accountNo = bank.lastAccountNo,
+            lastAccountNo = bank.lastAccountNo,
+            accountType = bank.AccountType,
+            routingNumber = bank.RoutingNumber,
+            phone = bank.Phone,
+            email = bank.Email,
+            street = bank.street,
+            apartment = bank.apartment ?? string.Empty,
+            city = bank.city,
+            state = bank.state,
+            zip = bank.zip,
+            country = bank.country ?? "US",
+            balance = bank.Balance,
+            startingcheck = bank.startingcheck,
+            checkseries = bank.checkseries,
+            coa = bank.coa,
+            nickName = bank.NickName,
+            status = bank.status ?? "Active",
+            isprimary = bank.isprimary ?? false,
+            ispayrollDefault = bank.ispayrollDefault ?? false,
+            TenantId = bank.TenantId,
+            locationId = bank.locationId,
+            sharingid = bank.sharingid ?? 0
+        };
+
+        /// <summary>Records that would break (or be orphaned) if the bank were deleted.</summary>
+        private List<BlockingDependency> GetDeleteBlockers(int bankId, int tenantId)
+        {
+            AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+            var blockers = new List<BlockingDependency>();
+
+            var transactions = _context.Transactions
+                .Where(t => t.BankId == bankId && t.TenantId == tenantId)
+                .Select(t => t.TransactionID)
+                .ToList();
+            if (transactions.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Transactions",
+                    Description = $"This bank is used in {transactions.Count} transaction(s)",
+                    Items = transactions.Take(10).Select(id => new DependencyItem
+                    {
+                        Id = id,
+                        Name = $"Transaction #{id}",
+                        DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={id}"
+                    }).ToList()
+                });
+            }
+
+            var vendorInvoices = _context.VendorInvoiceMaster
+                .Where(vim => vim.Bankid == bankId && vim.TenantId == tenantId)
+                .Select(vi => new { vi.Id, vi.InvoiceNo })
+                .ToList();
+            if (vendorInvoices.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Vendor Invoices",
+                    Description = $"This bank is used in {vendorInvoices.Count} vendor invoice(s)",
+                    Items = vendorInvoices.Take(10).Select(vi => new DependencyItem
+                    {
+                        Id = vi.Id,
+                        Name = !string.IsNullOrEmpty(vi.InvoiceNo) ? $"Invoice #{vi.InvoiceNo}" : $"Invoice #{vi.Id}",
+                        DeleteEndpoint = $"/api/VendorInvoice/DeleteVendorInvoice?vendorInvoiceId={vi.Id}"
+                    }).ToList()
+                });
+            }
+
+            var customerInvoices = _context.InvoiceMaster
+                .Where(im => im.Bankid == bankId && im.TenantId == tenantId)
+                .Select(ci => new { ci.Id, ci.InvoiceNo })
+                .ToList();
+            if (customerInvoices.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Customer Invoices",
+                    Description = $"This bank is used in {customerInvoices.Count} customer invoice(s)",
+                    Items = customerInvoices.Take(10).Select(ci => new DependencyItem
+                    {
+                        Id = ci.Id,
+                        Name = ci.InvoiceNo > 0 ? $"Invoice #{ci.InvoiceNo}" : $"Invoice #{ci.Id}",
+                        DeleteEndpoint = $"/api/Invoice/DeleteInvoice?invoiceId={ci.Id}"
+                    }).ToList()
+                });
+            }
+
+            var reconPeriods = _context.BankReconciliationPeriods
+                .Where(p => p.BankId == bankId && p.TenantId == tenantId)
+                .Select(p => new { p.Id, p.StatementDate })
+                .ToList();
+            if (reconPeriods.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Bank Reconciliations",
+                    Description = $"This bank has {reconPeriods.Count} reconciliation period(s)",
+                    Items = reconPeriods.Take(10).Select(p => new DependencyItem { Id = p.Id, Name = $"Statement {p.StatementDate:yyyy-MM-dd}" }).ToList()
+                });
+            }
+
+            var checks = _context.Payment
+                .Where(p => p.bankid == bankId && p.tenantid == tenantId)
+                .Select(p => new { p.Id, p.series, p.ckno })
+                .ToList();
+            if (checks.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Check Payments",
+                    Description = $"This bank was used to write {checks.Count} check(s)",
+                    Items = checks.Take(10).Select(c => new DependencyItem { Id = c.Id, Name = $"Check {c.series}{c.ckno}" }).ToList()
+                });
+            }
+
+            if (_context.AccountingDefaults.Any(d => d.TenantId == tenantId && d.DefaultPayrollBankId == bankId))
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Accounting Setup",
+                    Description = "This bank is the default payroll bank in Accounting Setup",
+                    Items = new List<DependencyItem>()
+                });
+            }
+
+            return blockers;
         }
 
         [HttpGet("GetBanklist")]
@@ -133,36 +279,43 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Bank not found" });
                 }
 
-                var result = new
+                if (!CanAccessBank(bank))
                 {
-                    id = bank.Id,
-                    bankName = bank.BankName,
-                    accountNo = bank.AccountNo,
-                    lastAccountNo = bank.lastAccountNo,
-                    accountType = bank.AccountType,
-                    routingNumber = bank.RoutingNumber,
-                    phone = bank.Phone,
-                    email = bank.Email,
-                    street = bank.street,
-                    apartment = bank.apartment ?? string.Empty,
-                    city = bank.city,
-                    state = bank.state,
-                    zip = bank.zip,
-                    country = bank.country ?? "US",
-                    balance = bank.Balance,
-                    startingcheck = bank.startingcheck,
-                    checkseries = bank.checkseries,
-                    coa = bank.coa,
-                    nickName = bank.NickName,
-                    status = bank.status ?? "Active",
-                    isprimary = bank.isprimary ?? false,
-                    ispayrollDefault = bank.ispayrollDefault ?? false,
-                    TenantId = bank.TenantId,
-                    locationId = bank.locationId,
-                    sharingid = bank.sharingid ?? 0
-                };
+                    return ForbidBank();
+                }
 
-                return Ok(new { result = result });
+                return Ok(new { result = ToBankDetail(bank) });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>Returns the full account number for the Show button; every call is audit-logged.</summary>
+        [HttpGet("RevealAccountNo")]
+        public IActionResult RevealAccountNo([FromQuery] int bankId)
+        {
+            try
+            {
+                var tenantId = GetTenantId();
+                var bank = _context.BankMaster.AsNoTracking()
+                    .FirstOrDefault(b => b.Id == bankId && b.TenantId == tenantId);
+
+                if (bank == null)
+                {
+                    return NotFound(new { error = "Bank not found" });
+                }
+
+                if (!CanAccessBank(bank))
+                {
+                    _logger.LogWarning("Bank account number reveal denied: bank {BankId}, tenant {TenantId}, user {UserId}", bankId, tenantId, GetUserId());
+                    return ForbidBank();
+                }
+
+                // Warning level so the audit entry survives the default "Warning" log filter.
+                _logger.LogWarning("Bank account number revealed: bank {BankId}, tenant {TenantId}, user {UserId}", bankId, tenantId, GetUserId());
+                return Ok(new { result = new { accountNo = bank.AccountNo } });
             }
             catch (Exception ex)
             {
@@ -175,10 +328,6 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (!TryResolveLocationId(request.locationId > 0 ? request.locationId : null, out var resolvedLocationId, out var forbid))
-                    return forbid!;
-                request.locationId = resolvedLocationId;
-
                 // Validate required fields
                 if (string.IsNullOrWhiteSpace(request.BankName))
                 {
@@ -211,11 +360,48 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "COA must be exactly 4 characters" });
                 }
 
-                var existingBank = _context.BankMaster
-                    .FirstOrDefault(b => b.Id == request.Id && b.TenantId == request.TenantID);
+                var existingBank = request.Id > 0
+                    ? _context.BankMaster.FirstOrDefault(b => b.Id == request.Id && b.TenantId == request.TenantID)
+                    : null;
+
+                if (request.Id > 0 && existingBank == null)
+                {
+                    return NotFound(new { error = "Bank not found. It may have been deleted." });
+                }
 
                 BankMaster bank;
                 bool isNew = existingBank == null;
+
+                if (isNew)
+                {
+                    if (!TryResolveLocationId(request.locationId > 0 ? request.locationId : null, out var resolvedLocationId, out var forbid))
+                        return forbid!;
+                    if (resolvedLocationId <= 0 && _context.Locations.Any(l => l.TenantId == request.TenantID))
+                    {
+                        return BadRequest(new { error = "Site is required" });
+                    }
+                    request.locationId = resolvedLocationId;
+                }
+                else
+                {
+                    if (!CanAccessBank(existingBank!))
+                    {
+                        return ForbidBank();
+                    }
+                    if (request.locationId > 0 && request.locationId != existingBank!.locationId)
+                    {
+                        if (!CanAccessLocation(request.locationId))
+                        {
+                            return StatusCode(403, new { message = "You do not have access to the selected location" });
+                        }
+                    }
+                    else
+                    {
+                        request.locationId = existingBank!.locationId;
+                    }
+                }
+
+                var coaChanged = !string.IsNullOrWhiteSpace(request.coa) && (isNew || (existingBank!.coa ?? string.Empty) != request.coa);
 
                 if (isNew)
                 {
@@ -279,8 +465,8 @@ namespace CimmpleAPI.Controllers
                         }
                     }
 
-                    // Check for duplicate COA (excluding current bank)
-                    if (bank.coa != request.coa)
+                    // Check for duplicate COA (excluding current bank; clearing the link is always allowed)
+                    if (coaChanged)
                     {
                         var duplicateCOA = _context.BankMaster
                             .Any(b => b.Id != request.Id && b.TenantId == request.TenantID && b.coa == request.coa);
@@ -290,6 +476,11 @@ namespace CimmpleAPI.Controllers
                             return BadRequest(new { error = "COA already exists", coa = "duplicate" });
                         }
                     }
+                }
+
+                if (coaChanged && !_context.ChartofAccounts.Any(c => c.Tenantid == request.TenantID && c.AccountCode == request.coa && c.IsActive))
+                {
+                    return BadRequest(new { error = "Select an active Chart of Accounts code" });
                 }
 
                 // Update bank properties
@@ -322,17 +513,21 @@ namespace CimmpleAPI.Controllers
                 bank.BankStreet1 = bank.BankStreet1 ?? string.Empty;
                 bank.BankStreet2 = bank.BankStreet2 ?? string.Empty;
 
-                // Handle Account No encryption/masking
+                // A blank account number on update means "unchanged" (the UI only holds it after an audited reveal).
                 if (isNew || !string.IsNullOrWhiteSpace(request.AccountNo))
                 {
-                    bank.AccountNo = request.AccountNo; // In production, encrypt this
-                    if (request.AccountNo.Length >= 4)
+                    bank.AccountNo = request.AccountNo ?? string.Empty;
+                    bank.lastAccountNo = MaskAccountNo(request.AccountNo);
+                }
+
+                if (bank.ispayrollDefault == true)
+                {
+                    var otherDefaults = _context.BankMaster
+                        .Where(b => b.TenantId == request.TenantID && b.Id != bank.Id && b.ispayrollDefault == true)
+                        .ToList();
+                    foreach (var other in otherDefaults)
                     {
-                        bank.lastAccountNo = "XXXX" + request.AccountNo.Substring(request.AccountNo.Length - 4);
-                    }
-                    else
-                    {
-                        bank.lastAccountNo = "XXXX" + request.AccountNo;
+                        other.ispayrollDefault = false;
                     }
                 }
 
@@ -347,7 +542,7 @@ namespace CimmpleAPI.Controllers
 
                 _context.SaveChanges();
 
-                return Ok(new { result = bank });
+                return Ok(new { result = ToBankDetail(bank) });
             }
             catch (Exception ex)
             {
@@ -368,75 +563,21 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Bank not found" });
                 }
 
+                if (!CanAccessBank(bank))
+                {
+                    return ForbidBank();
+                }
+
+                var blockers = GetDeleteBlockers(bankId, tenantId);
                 var result = new DeletionImpactResult
                 {
-                    CanDelete = true,
+                    CanDelete = blockers.Count == 0,
                     BlockingReasons = new List<string>(),
-                    BlockingDependencies = new List<BlockingDependency>(),
+                    BlockingDependencies = blockers,
                     WillBeDeleted = new List<ImpactedEntity>(),
                     WillBeAffected = new List<ImpactedEntity>(),
                     Warnings = new List<string>()
                 };
-
-                // Check Transactions
-                var transactions = _context.Transactions
-                    .Where(t => t.BankId == bankId && t.TenantId == tenantId)
-                    .ToList();
-                if (transactions.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Transactions",
-                        Description = $"This bank is used in {transactions.Count} transaction(s)",
-                        Items = transactions.Take(10).Select(t => new DependencyItem
-                        {
-                            Id = t.TransactionID,
-                            Name = $"Transaction #{t.TransactionID}",
-                            DeleteEndpoint = $"/api/Accounting/DeleteTransaction?transactionId={t.TransactionID}"
-                        }).ToList()
-                    });
-                }
-
-                // Check VendorInvoiceMaster
-                var vendorInvoices = _context.VendorInvoiceMaster
-                    .Where(vim => vim.Bankid == bankId && vim.TenantId == tenantId)
-                    .ToList();
-                if (vendorInvoices.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Vendor Invoices",
-                        Description = $"This bank is used in {vendorInvoices.Count} vendor invoice(s)",
-                        Items = vendorInvoices.Take(10).Select(vi => new DependencyItem
-                        {
-                            Id = vi.Id,
-                            Name = !string.IsNullOrEmpty(vi.InvoiceNo) ? $"Invoice #{vi.InvoiceNo}" : $"Invoice #{vi.Id}",
-                            DeleteEndpoint = $"/api/VendorInvoice/DeleteVendorInvoice?vendorInvoiceId={vi.Id}"
-                        }).ToList()
-                    });
-                }
-
-                // Check InvoiceMaster
-                var customerInvoices = _context.InvoiceMaster
-                    .Where(im => im.Bankid == bankId && im.TenantId == tenantId)
-                    .ToList();
-                if (customerInvoices.Any())
-                {
-                    result.CanDelete = false;
-                    result.BlockingDependencies.Add(new BlockingDependency
-                    {
-                        EntityType = "Customer Invoices",
-                        Description = $"This bank is used in {customerInvoices.Count} customer invoice(s)",
-                        Items = customerInvoices.Take(10).Select(ci => new DependencyItem
-                        {
-                            Id = ci.Id,
-                            Name = ci.InvoiceNo > 0 ? $"Invoice #{ci.InvoiceNo}" : $"Invoice #{ci.Id}",
-                            DeleteEndpoint = $"/api/Invoice/DeleteInvoice?invoiceId={ci.Id}"
-                        }).ToList()
-                    });
-                }
 
                 // Check BankCOAMapping
                 var bankMappings = _context.BankCOAMapping
@@ -454,7 +595,7 @@ namespace CimmpleAPI.Controllers
 
                 if (!result.CanDelete)
                 {
-                    result.BlockingReasons.Add("This Bank is referenced by transactions, invoices, or other entities.");
+                    result.BlockingReasons.Add("This Bank is referenced by transactions, invoices, reconciliations, checks, or Accounting Setup.");
                 }
 
                 return Ok(new { result = result });
@@ -478,6 +619,23 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Bank not found" });
                 }
 
+                if (!CanAccessBank(bank))
+                {
+                    return ForbidBank();
+                }
+
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                using var tx = _context.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+                var blockers = GetDeleteBlockers(bankId, tenantId);
+                if (blockers.Count > 0)
+                {
+                    return Conflict(new
+                    {
+                        error = "Bank is in use and cannot be deleted: " + string.Join(", ", blockers.Select(b => b.EntityType)),
+                        blockingDependencies = blockers
+                    });
+                }
+
                 // Delete child records first
                 var bankMappings = _context.BankCOAMapping
                     .Where(b => b.bankid == bankId)
@@ -487,6 +645,7 @@ namespace CimmpleAPI.Controllers
                 // Delete the bank
                 _context.BankMaster.Remove(bank);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { message = "Bank deleted successfully" } });
             }

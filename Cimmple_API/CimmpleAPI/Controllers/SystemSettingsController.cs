@@ -442,15 +442,53 @@ namespace CimmpleAPI.Controllers
                 settings.SmtpUseSsl = request.SmtpUseSsl.Value;
             if (request.SmtpUsername != null)
                 settings.SmtpUsername = request.SmtpUsername;
-            // Empty password in the form means "keep saved password"
+
+            // Empty password means "keep saved password" only when the test targets the saved SMTP host/settings.
             if (!string.IsNullOrEmpty(request.SmtpPassword))
+            {
                 settings.SmtpPassword = request.SmtpPassword;
+            }
+            else if (saved != null && SmtpTestTargetMatchesSaved(saved, request))
+            {
+                settings.SmtpPassword = saved.SmtpPassword;
+            }
+            else
+            {
+                settings.SmtpPassword = "";
+            }
             if (!string.IsNullOrWhiteSpace(request.SmtpFromEmail))
                 settings.SmtpFromEmail = request.SmtpFromEmail.Trim();
             if (request.SmtpFromName != null)
                 settings.SmtpFromName = request.SmtpFromName;
 
             return settings;
+        }
+
+        private static bool SmtpTestTargetMatchesSaved(SystemSettings saved, TestSmtpRequest request)
+        {
+            if (!string.IsNullOrWhiteSpace(request.SmtpServer)
+                && !string.Equals(request.SmtpServer.Trim(), saved.SmtpServer?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (request.SmtpPort.HasValue && request.SmtpPort.Value > 0 && request.SmtpPort != saved.SmtpPort)
+            {
+                return false;
+            }
+
+            if (request.SmtpUseSsl.HasValue && request.SmtpUseSsl != saved.SmtpUseSsl)
+            {
+                return false;
+            }
+
+            if (request.SmtpUsername != null
+                && !string.Equals(request.SmtpUsername, saved.SmtpUsername ?? "", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         // POST: api/SystemSettings/SaveCompanyInfo

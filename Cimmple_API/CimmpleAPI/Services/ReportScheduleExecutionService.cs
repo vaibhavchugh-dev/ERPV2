@@ -85,7 +85,10 @@ namespace CimmpleAPI.Services
                     }
                 };
 
-                var (ok, error) = await _emailOutbox.EnqueueAsync(schedule.TenantId, mail);
+                var (ok, error) = await _emailOutbox.EnqueueAsync(
+                    schedule.TenantId,
+                    mail,
+                    relatedReportScheduleId: schedule.Id);
                 if (!ok)
                 {
                     await MarkFailureAsync(schedule, error ?? "Failed to queue email.");

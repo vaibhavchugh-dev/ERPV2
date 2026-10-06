@@ -117,6 +117,8 @@ export interface VendorOrderDetailReq {
   Notes: string;
   ShippedQty: number;
   ShippingStatus: string;
+  /** Populated when loading an order that has receiving history */
+  ReceivedQty?: number;
   InvoicedQty: number;
   InvoiceStatus: string;
   /** Expense GL account id (as string) or account code for invoice posting */

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
@@ -42,6 +43,7 @@ namespace CimmpleAPI.Controllers
 
             var comments = request.Comments ?? new List<EntityCommentDto>();
             var mentions = CommentMentionHelper.FromDtos(comments);
+            var (actorLabels, isAdmin) = await GetCommentActorAsync(tenantId);
 
             string? linkPath = request.LinkPath;
             string? entityLabel = request.EntityLabel;
@@ -58,6 +60,10 @@ namespace CimmpleAPI.Controllers
                             return NotFound(new { message = "Customer order not found." });
                         if (order.locationId > 0 && !CanAccessLocation(order.locationId))
                             return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+
+                        var coExisting = ParseCommentsJson(order.CommentsJson);
+                        var coDenied = ValidateCommentChanges(coExisting, comments, actorLabels, isAdmin);
+                        if (coDenied != null) return coDenied;
 
                         order.CommentsJson = comments.Count > 0
                             ? CommentMentionHelper.SerializeDtosForStorage(comments)
@@ -79,6 +85,10 @@ namespace CimmpleAPI.Controllers
                         if (quotation.Locationid.HasValue && quotation.Locationid.Value > 0 &&
                             !CanAccessLocation(quotation.Locationid.Value))
                             return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+
+                        var cqExisting = ParseCommentsJson(quotation.CommentsJson);
+                        var cqDenied = ValidateCommentChanges(cqExisting, comments, actorLabels, isAdmin);
+                        if (cqDenied != null) return cqDenied;
 
                         quotation.CommentsJson = comments.Count > 0
                             ? CommentMentionHelper.SerializeDtosForStorage(comments)
@@ -103,6 +113,18 @@ namespace CimmpleAPI.Controllers
                         var existing = await _context.VendorOrderComments
                             .Where(c => c.OrderID == order.OrderID)
                             .ToListAsync();
+                        var voExisting = existing
+                            .Select(c => new EntityCommentDto
+                            {
+                                Id = c.Id,
+                                Text = c.Text,
+                                CreatedBy = c.CreatedBy,
+                                CreatedAt = c.CreatedAt.ToString("o")
+                            })
+                            .ToList();
+                        var voDenied = ValidateCommentChanges(voExisting, comments, actorLabels, isAdmin);
+                        if (voDenied != null) return voDenied;
+
                         if (existing.Count > 0)
                             _context.VendorOrderComments.RemoveRange(existing);
 
@@ -143,6 +165,10 @@ namespace CimmpleAPI.Controllers
                             !CanAccessLocation(quotation.locationid.Value))
                             return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
 
+                        var vqExisting = ParseCommentsJson(quotation.CommentsJson);
+                        var vqDenied = ValidateCommentChanges(vqExisting, comments, actorLabels, isAdmin);
+                        if (vqDenied != null) return vqDenied;
+
                         quotation.CommentsJson = comments.Count > 0
                             ? CommentMentionHelper.SerializeDtosForStorage(comments)
                             : null;
@@ -159,6 +185,10 @@ namespace CimmpleAPI.Controllers
                             .FirstOrDefaultAsync(j => j.JobOrderID == request.EntityId && j.Tenantid == tenantId);
                         if (jobOrder == null)
                             return NotFound(new { message = "Job order not found." });
+
+                        var joExisting = ParseCommentsJson(jobOrder.CommentsJson);
+                        var joDenied = ValidateCommentChanges(joExisting, comments, actorLabels, isAdmin);
+                        if (joDenied != null) return joDenied;
 
                         jobOrder.CommentsJson = comments.Count > 0
                             ? CommentMentionHelper.SerializeDtosForStorage(comments)
@@ -190,6 +220,95 @@ namespace CimmpleAPI.Controllers
             }
 
             return Ok(new { message = "Comments saved.", count = comments.Count });
+        }
+
+        private static List<EntityCommentDto> ParseCommentsJson(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return new List<EntityCommentDto>();
+
+            try
+            {
+                return JsonSerializer.Deserialize<List<EntityCommentDto>>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                }) ?? new List<EntityCommentDto>();
+            }
+            catch
+            {
+                return new List<EntityCommentDto>();
+            }
+        }
+
+        private async Task<(HashSet<string> labels, bool isAdmin)> GetCommentActorAsync(int tenantId)
+        {
+            var isAdmin = CanAccessAllLocations();
+            var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var userId = GetUserId();
+            if (!userId.HasValue)
+                return (labels, isAdmin);
+
+            var user = await _context.UserDetails.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.User_UniqueID == userId.Value && u.TenantID == tenantId);
+            if (user == null)
+                return (labels, isAdmin);
+
+            if (!string.IsNullOrWhiteSpace(user.UserName))
+                labels.Add(user.UserName.Trim());
+            var display = $"{user.FirstName} {user.LastName}".Trim();
+            if (!string.IsNullOrWhiteSpace(display))
+                labels.Add(display);
+
+            return (labels, isAdmin);
+        }
+
+        private static bool AuthoredBy(EntityCommentDto comment, HashSet<string> actorLabels) =>
+            !string.IsNullOrWhiteSpace(comment.CreatedBy)
+            && actorLabels.Contains(comment.CreatedBy.Trim());
+
+        private static IActionResult? ValidateCommentChanges(
+            List<EntityCommentDto> existing,
+            List<EntityCommentDto> incoming,
+            HashSet<string> actorLabels,
+            bool isAdmin)
+        {
+            if (isAdmin)
+                return null;
+
+            var incomingById = incoming
+                .Where(c => c.Id > 0)
+                .ToDictionary(c => c.Id);
+
+            foreach (var old in existing)
+            {
+                if (old.Id <= 0)
+                    continue;
+
+                if (!incomingById.TryGetValue(old.Id, out var updated))
+                {
+                    if (!AuthoredBy(old, actorLabels))
+                        return new ObjectResult(new { message = "You can only delete your own comments." })
+                        {
+                            StatusCode = StatusCodes.Status403Forbidden
+                        };
+                    continue;
+                }
+
+                var textChanged = !string.Equals(old.Text?.Trim(), updated.Text?.Trim(), StringComparison.Ordinal);
+                var authorChanged = !string.Equals(
+                    old.CreatedBy?.Trim(),
+                    updated.CreatedBy?.Trim(),
+                    StringComparison.OrdinalIgnoreCase);
+                if ((textChanged || authorChanged) && !AuthoredBy(old, actorLabels))
+                {
+                    return new ObjectResult(new { message = "You can only edit your own comments." })
+                    {
+                        StatusCode = StatusCodes.Status403Forbidden
+                    };
+                }
+            }
+
+            return null;
         }
     }
 

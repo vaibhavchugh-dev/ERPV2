@@ -108,7 +108,7 @@ const DeletionImpactDialog: React.FC<DeletionImpactDialogProps> = ({
                           <strong>{dependency.entityType}:</strong> {dependency.description}
                         </div>
                         <ul className="dependency-items">
-                          {dependency.items.slice(0, 3).map((item, itemIdx) => (
+                          {(onDeleteDependency ? dependency.items.slice(0, 3) : dependency.items).map((item, itemIdx) => (
                             <li key={itemIdx} className="dependency-item">
                               <span className="dependency-name">{item.name}</span>
                               {onDeleteDependency && (

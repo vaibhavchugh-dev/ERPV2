@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
+using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -58,34 +59,48 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var searchTerm = query.Trim().ToLower();
+
+                async Task<List<object>> Safe(Func<Task<List<object>>> run, string category)
+                {
+                    try
+                    {
+                        return await run();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[GlobalSearch] {category}: {ex.Message}");
+                        return new List<object>();
+                    }
+                }
+
                 var results = new
                 {
-                    customers = await SearchCustomers(searchTerm, tenantId, limit),
-                    vendors = await SearchVendors(searchTerm, tenantId, limit),
-                    products = await SearchProducts(searchTerm, tenantId, limit),
-                    rawMaterials = await SearchRawMaterials(searchTerm, tenantId, limit),
-                    orders = await SearchOrders(searchTerm, tenantId, limit),
-                    invoices = await SearchInvoices(searchTerm, tenantId, limit),
-                    jobOrders = await SearchJobOrders(searchTerm, tenantId, limit),
-                    quotations = await SearchQuotations(searchTerm, tenantId, limit),
-                    banks = await SearchBanks(searchTerm, tenantId, limit),
-                    workstations = await SearchWorkstations(searchTerm, tenantId, limit),
-                    locations = await SearchLocations(searchTerm, tenantId, limit),
-                    processes = await SearchProcesses(searchTerm, tenantId, limit),
-                    jobTemplates = await SearchJobTemplates(searchTerm, tenantId, limit),
-                    priceBreakdowns = await SearchPriceBreakdowns(searchTerm, tenantId, limit),
-                    creditCards = await SearchCreditCards(searchTerm, tenantId, limit),
-                    chartOfAccounts = await SearchChartOfAccounts(searchTerm, tenantId, limit),
-                    vendorOrders = await SearchVendorOrders(searchTerm, tenantId, limit),
-                    vendorInvoices = await SearchVendorInvoices(searchTerm, tenantId, limit),
-                    vendorReceiving = await SearchVendorReceiving(searchTerm, tenantId, limit),
-                    vendorQuotations = await SearchVendorQuotations(searchTerm, tenantId, limit),
-                    shipments = await SearchShipments(searchTerm, tenantId, limit),
-                    ncrReports = await SearchNCRReports(searchTerm, tenantId, limit),
-                    users = await SearchUsers(searchTerm, tenantId, limit),
-                    employees = await SearchEmployees(searchTerm, tenantId, limit),
-                    documents = await SearchDocuments(searchTerm, tenantId, limit),
-                    journalEntries = await SearchJournalEntries(searchTerm, tenantId, limit)
+                    customers = await Safe(() => SearchCustomers(searchTerm, tenantId, limit), "customers"),
+                    vendors = await Safe(() => SearchVendors(searchTerm, tenantId, limit), "vendors"),
+                    products = await Safe(() => SearchProducts(searchTerm, tenantId, limit), "products"),
+                    rawMaterials = await Safe(() => SearchRawMaterials(searchTerm, tenantId, limit), "rawMaterials"),
+                    orders = await Safe(() => SearchOrders(searchTerm, tenantId, limit), "orders"),
+                    invoices = await Safe(() => SearchInvoices(searchTerm, tenantId, limit), "invoices"),
+                    jobOrders = await Safe(() => SearchJobOrders(searchTerm, tenantId, limit), "jobOrders"),
+                    quotations = await Safe(() => SearchQuotations(searchTerm, tenantId, limit), "quotations"),
+                    banks = await Safe(() => SearchBanks(searchTerm, tenantId, limit), "banks"),
+                    workstations = await Safe(() => SearchWorkstations(searchTerm, tenantId, limit), "workstations"),
+                    locations = await Safe(() => SearchLocations(searchTerm, tenantId, limit), "locations"),
+                    processes = await Safe(() => SearchProcesses(searchTerm, tenantId, limit), "processes"),
+                    jobTemplates = await Safe(() => SearchJobTemplates(searchTerm, tenantId, limit), "jobTemplates"),
+                    priceBreakdowns = await Safe(() => SearchPriceBreakdowns(searchTerm, tenantId, limit), "priceBreakdowns"),
+                    creditCards = await Safe(() => SearchCreditCards(searchTerm, tenantId, limit), "creditCards"),
+                    chartOfAccounts = await Safe(() => SearchChartOfAccounts(searchTerm, tenantId, limit), "chartOfAccounts"),
+                    vendorOrders = await Safe(() => SearchVendorOrders(searchTerm, tenantId, limit), "vendorOrders"),
+                    vendorInvoices = await Safe(() => SearchVendorInvoices(searchTerm, tenantId, limit), "vendorInvoices"),
+                    vendorReceiving = await Safe(() => SearchVendorReceiving(searchTerm, tenantId, limit), "vendorReceiving"),
+                    vendorQuotations = await Safe(() => SearchVendorQuotations(searchTerm, tenantId, limit), "vendorQuotations"),
+                    shipments = await Safe(() => SearchShipments(searchTerm, tenantId, limit), "shipments"),
+                    ncrReports = await Safe(() => SearchNCRReports(searchTerm, tenantId, limit), "ncrReports"),
+                    users = await Safe(() => SearchUsers(searchTerm, tenantId, limit), "users"),
+                    employees = await Safe(() => SearchEmployees(searchTerm, tenantId, limit), "employees"),
+                    documents = await Safe(() => SearchDocuments(searchTerm, tenantId, limit), "documents"),
+                    journalEntries = await Safe(() => SearchJournalEntries(searchTerm, tenantId, limit), "journalEntries")
                 };
 
                 return Ok(results);
@@ -504,7 +519,6 @@ namespace CimmpleAPI.Controllers
                 .Where(b => b.TenantId == tenantId &&
                     (b.BankName != null && b.BankName.ToLower().Contains(searchTerm) ||
                      b.Bankcode != null && b.Bankcode.ToLower().Contains(searchTerm) ||
-                     b.AccountNo != null && b.AccountNo.ToLower().Contains(searchTerm) ||
                      b.displayname != null && b.displayname.ToLower().Contains(searchTerm)))
                 .Take(limit)
                 .Select(b => new
@@ -513,12 +527,20 @@ namespace CimmpleAPI.Controllers
                     type = "bank",
                     name = b.BankName ?? "",
                     code = b.Bankcode ?? "",
-                    accountNo = b.AccountNo ?? "",
+                    accountNo = b.lastAccountNo ?? "",
                     displayName = b.displayname ?? ""
                 })
                 .ToListAsync();
 
-            return banks.Cast<object>().ToList();
+            return banks.Select(b => (object)new
+            {
+                b.id,
+                b.type,
+                b.name,
+                b.code,
+                accountNo = GlobalSearchSupport.MaskAccountNumber(b.accountNo),
+                b.displayName
+            }).ToList();
         }
 
         private async Task<List<object>> SearchWorkstations(string searchTerm, int tenantId, int limit)
@@ -827,7 +849,8 @@ namespace CimmpleAPI.Controllers
                 .GroupBy(x => x.receivingRec.ID)
                 .Select(g => new
                 {
-                    id = g.Key,
+                    id = g.First().order != null ? g.First().order.OrderID : g.Key,
+                    orderId = g.First().order != null ? g.First().order.OrderID : g.Key,
                     type = "vendorReceiving",
                     receivingId = g.Key,
                     vendorName = g.First().order != null ? g.First().order.VendorName ?? "" : "",

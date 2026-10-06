@@ -120,8 +120,8 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.InvoiceMaster.AsNoTracking(),
                         id => id.InvoiceId,
                         im => im.Id,
-                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
-                    .Where(x => x.TenantId == tenantid)
+                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId, im.IsVoided })
+                    .Where(x => x.TenantId == tenantid && !x.IsVoided)
                     .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
@@ -329,8 +329,8 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.InvoiceMaster,
                         id => id.InvoiceId,
                         im => im.Id,
-                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
-                    .Where(x => x.TenantId == tenantId)
+                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId, im.IsVoided })
+                    .Where(x => x.TenantId == tenantId && !x.IsVoided)
                     .GroupBy(x => x.OrderDetailID.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
@@ -535,6 +535,17 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Details cannot be null" });
                 }
 
+                var currentCustomerId = request.OrderID > 0
+                    ? _context.CustomerOrder.AsNoTracking()
+                        .Where(o => o.OrderID == request.OrderID && o.Tenantid == request.Tenantid)
+                        .Select(o => (int?)o.CustomerID)
+                        .FirstOrDefault()
+                    : null;
+                if (CustomerStatusGuard.BlocksAssignment(_context, request.Tenantid, request.CustomerID, currentCustomerId))
+                {
+                    return BadRequest(new { error = CustomerStatusGuard.InactiveMessage });
+                }
+
                 // Block creating a second CO from an already-converted CQ
                 if (request.OrderID <= 0 && request.QuotationId.HasValue && request.QuotationId.Value > 0)
                 {
@@ -683,17 +694,47 @@ namespace CimmpleAPI.Controllers
                     var newDetailIds = request.Details.Where(d => d.ID > 0).Select(d => d.ID).ToList();
                     var detailsToDelete = existingDetailIds.Except(newDetailIds).ToList();
 
-                    // Before deleting order details, delete associated shipping details
                     if (detailsToDelete.Any())
                     {
-                        var shippingDetailsToDelete = _context.ShippingDetails
-                            .Where(sd => sd.OrderDetailID.HasValue && detailsToDelete.Contains(sd.OrderDetailID.Value))
-                            .ToList();
-                        
-                        if (shippingDetailsToDelete.Any())
+                        foreach (var detailId in detailsToDelete)
                         {
-                            _context.ShippingDetails.RemoveRange(shippingDetailsToDelete);
-                            _context.SaveChanges();
+                            var hasJob = _context.JobOrderMaster.Any(j =>
+                                j.CustomerOrderDetailID == detailId && j.Tenantid == request.Tenantid);
+                            if (hasJob)
+                            {
+                                return BadRequest(new
+                                {
+                                    error = "Cannot remove an order line that has a linked job order. Delete or unlink the job first."
+                                });
+                            }
+
+                            var shippedQty = _context.ShippingDetails
+                                .Where(sd => sd.OrderDetailID == detailId)
+                                .Join(_context.Shipping, sd => sd.ShipmentId, s => s.Id,
+                                    (sd, s) => new { sd.ShippedQty, s.TenantId })
+                                .Where(x => x.TenantId == request.Tenantid)
+                                .Sum(x => x.ShippedQty);
+                            if (shippedQty > 0)
+                            {
+                                return BadRequest(new
+                                {
+                                    error = "Cannot remove an order line that has shipments. Delete or adjust shipments first."
+                                });
+                            }
+
+                            var invoicedQty = _context.InvoiceDetail
+                                .Where(id => id.OrderDetailID == detailId)
+                                .Join(_context.InvoiceMaster, id => id.InvoiceId, im => im.Id,
+                                    (id, im) => new { id.QtyInvoiced, im.TenantId, im.IsVoided })
+                                .Where(x => x.TenantId == request.Tenantid && !x.IsVoided)
+                                .Sum(x => x.QtyInvoiced);
+                            if (invoicedQty > 0)
+                            {
+                                return BadRequest(new
+                                {
+                                    error = "Cannot remove an order line that has been invoiced. Void the invoice first."
+                                });
+                            }
                         }
                     }
 
@@ -742,9 +783,19 @@ namespace CimmpleAPI.Controllers
                             // Keep linked Job Orders in sync (listing/detail read JO's own QtyOrdered snapshot).
                             if (jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
                             {
+                                var remainingJobQty = Math.Max(0, detail.QtyOrdered - existingDetail.ShippedQty);
                                 foreach (var jobOrder in jobsForDetail)
                                 {
-                                    jobOrder.QtyOrdered = detail.QtyOrdered;
+                                    var jobStatus = jobOrder.Status ?? "";
+                                    if (string.Equals(jobStatus, "Completed", StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(jobStatus, "Cancelled", StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(jobStatus, "Canceled", StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(jobStatus, "Shipped", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        continue;
+                                    }
+
+                                    jobOrder.QtyOrdered = remainingJobQty;
                                     jobOrder.Unit = detail.Unit ?? "";
                                     jobOrder.UnitPrice = detail.UnitPrice;
                                     jobOrder.DueDate = detail.DueDate.Date;
@@ -2505,20 +2556,26 @@ namespace CimmpleAPI.Controllers
 
                         if (existingDetail != null)
                         {
-                            // Detail exists - check if it's invoiced
+                            var receivedQty = await GetReceivedQtyForVendorOrderDetail(existingDetail.ID, tenantid);
                             bool isInvoiced = existingDetail.VendorInvoicings != null && existingDetail.VendorInvoicings.Any();
+                            int reqQty = detailElem.TryGetProperty("QtyOrdered", out JsonElement qElem) ? qElem.GetInt32() : existingDetail.QtyOrdered;
+                            decimal reqPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement pElem) ? pElem.GetDecimal() : existingDetail.UnitPrice;
+
+                            if (receivedQty > 0 && reqQty < receivedQty)
+                            {
+                                return BadRequest(new
+                                {
+                                    error = $"Quantity for line item #{itemNo} cannot be less than received quantity ({receivedQty})."
+                                });
+                            }
 
                             if (!isInvoiced)
                             {
-                                // Update non-invoiced detail
                                 UpdateVendorOrderDetailFromJson(existingDetail, detailElem, jobId, order.MaterialType);
                                 Console.WriteLine($"SaveVendorOrder: Updating existing non-invoiced detail (JobId: {jobId}, ItemNo: {itemNo})");
                             }
                             else
                             {
-                                // Validate if quantity or price was modified
-                                int reqQty = detailElem.TryGetProperty("QtyOrdered", out JsonElement qElem) ? qElem.GetInt32() : existingDetail.QtyOrdered;
-                                decimal reqPrice = detailElem.TryGetProperty("UnitPrice", out JsonElement pElem) ? pElem.GetDecimal() : existingDetail.UnitPrice;
                                 if (reqQty != existingDetail.QtyOrdered || Math.Abs(reqPrice - existingDetail.UnitPrice) > 0.001m)
                                 {
                                     return BadRequest(new { error = $"Quantity or price for line item #{itemNo} cannot be edited because it has already been invoiced." });
@@ -2555,11 +2612,23 @@ namespace CimmpleAPI.Controllers
                         _context.VendorOrderDetails.AddRange(detailsToAdd);
                     }
 
-                    // Delete details that are not in the request and not invoiced
+                    // Delete details that are not in the request and not invoiced/received
                     var detailsToDelete = existingDetails
                         .Where(d => !processedDetailIds.Contains(d.ID) &&
                                    (d.VendorInvoicings == null || !d.VendorInvoicings.Any()))
                         .ToList();
+
+                    foreach (var del in detailsToDelete)
+                    {
+                        var receivedQty = await GetReceivedQtyForVendorOrderDetail(del.ID, tenantid);
+                        if (receivedQty > 0)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Line item #{del.ItemNo} cannot be removed because it has receiving history ({receivedQty} received)."
+                            });
+                        }
+                    }
 
                     if (detailsToDelete.Any())
                     {
@@ -3180,6 +3249,14 @@ namespace CimmpleAPI.Controllers
                 if (!string.Equals(lineType, "RawMaterial", StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                if (detail.RawMaterialId.HasValue && detail.RawMaterialId.Value > 0)
+                {
+                    var linkOk = await _context.RawMaterialMaster.AnyAsync(
+                        r => r.Id == detail.RawMaterialId.Value && r.Tenantid == tenantId);
+                    if (linkOk)
+                        continue;
+                }
+
                 var rawMaterialId = await RawMaterialCatalog.EnsureAsync(
                     _context,
                     tenantId,
@@ -3187,7 +3264,8 @@ namespace CimmpleAPI.Controllers
                     detail.PartName,
                     detail.Unit,
                     detail.UnitPrice,
-                    vendorId > 0 ? vendorId : (int?)null);
+                    vendorId > 0 ? vendorId : (int?)null,
+                    reactivateInactive: false);
 
                 if (rawMaterialId.HasValue && rawMaterialId.Value > 0)
                 {
@@ -3420,6 +3498,9 @@ namespace CimmpleAPI.Controllers
 
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
+
+                if (order.LocationId is int delLoc and > 0 && !CanAccessLocation(delLoc))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
 
                 // Enforce same rules as CheckVendorOrderDeletionImpact — do not wipe receiving/invoice history
                 var orderDetailIds = await _context.VendorOrderDetails
@@ -3708,6 +3789,9 @@ namespace CimmpleAPI.Controllers
                 if (order == null)
                     return NotFound(new { error = "Vendor order not found" });
 
+                if (order.LocationId is int orderLoc and > 0 && !CanAccessLocation(orderLoc))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
+
                 // Get order details — only fields the receiving UI needs
                 var details = await _context.VendorOrderDetails
                     .AsNoTracking()
@@ -3834,6 +3918,16 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order detail not found" });
                 }
 
+                var vendorOrder = await _context.VendorOrders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OrderID == orderDetail.OrderID && o.Tenantid == tenantId);
+                if (vendorOrder == null)
+                    return NotFound(new { error = "Vendor order not found" });
+                if (vendorOrder.LocationId is int voLoc and > 0 && !CanAccessLocation(voLoc))
+                    return StatusCode(403, new { error = "You do not have access to this vendor order's site." });
+                if (locationId is int recvLoc and > 0 && !CanAccessLocation(recvLoc))
+                    return StatusCode(403, new { error = "You do not have access to the selected receiving location." });
+
                 // Get current total received quantity from transactions
                 var currentReceivedTotal = await _context.VendorReceiving
                     .Where(r => r.VendorOrderDetailID == orderDetailId && r.Tenantid == tenantId)
@@ -3954,7 +4048,8 @@ namespace CimmpleAPI.Controllers
                             orderDetail.PartName,
                             orderDetail.Unit,
                             orderDetail.UnitPrice,
-                            order?.VendorID > 0 ? order.VendorID : (int?)null);
+                            order?.VendorID > 0 ? order.VendorID : (int?)null,
+                            reactivateInactive: false);
                         if (ensuredRmId.HasValue && ensuredRmId.Value > 0)
                         {
                             orderDetail.RawMaterialId = ensuredRmId;
@@ -4170,6 +4265,14 @@ namespace CimmpleAPI.Controllers
                 var tenantId = GetTenantId();
                 Console.WriteLine($"GetInvoiceableItemsForVendorOrder called - TenantId: {tenantId}, OrderId: {orderId}");
 
+                var vendorOrder = await _context.VendorOrders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (vendorOrder == null)
+                    return NotFound(new { error = "Vendor order not found" });
+                if (vendorOrder.LocationId is int invLoc and > 0 && !CanAccessLocation(invLoc))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
+
                 var detailsList = await _context.VendorOrderDetails
                     .AsNoTracking()
                     .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
@@ -4246,6 +4349,26 @@ namespace CimmpleAPI.Controllers
                     if (vendorOrder == null)
                         return NotFound(new { error = "Vendor order not found" });
 
+                    if (vendorOrder.LocationId is int voSite and > 0 && !CanAccessLocation(voSite))
+                        return StatusCode(403, new { error = "You do not have access to this site." });
+
+                    if (!string.IsNullOrWhiteSpace(request.InvoiceNo))
+                    {
+                        var invoiceNoTrim = request.InvoiceNo.Trim();
+                        var duplicateNo = await _context.VendorInvoiceMaster.AnyAsync(v =>
+                            v.TenantId == tenantId &&
+                            v.vid == vendorOrder.VendorID &&
+                            v.voideddate == null &&
+                            (v.InvoiceNo == invoiceNoTrim || v.prefixinvoiceno == invoiceNoTrim));
+                        if (duplicateNo)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Vendor invoice number '{invoiceNoTrim}' already exists for this vendor."
+                            });
+                        }
+                    }
+
                     var invoiceDateValue = request.InvoiceDate ?? DateTime.Now;
                     var dueDateValue = request.DueDate ?? invoiceDateValue.AddDays(30);
                     var accountingPeriod = $"{invoiceDateValue:yyyyMM}";
@@ -4274,6 +4397,14 @@ namespace CimmpleAPI.Controllers
 
                         if (detail == null)
                             return BadRequest(new { error = $"Order detail {item.OrderDetailId} not found" });
+
+                        if (detail.OrderID != request.OrderId)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Order detail {item.OrderDetailId} does not belong to vendor order {request.OrderId}."
+                            });
+                        }
 
                         // Check if received quantity >= invoiced quantity + requested quantity
                         var receivedQty = await GetReceivedQtyForVendorOrderDetail(detail.ID, tenantId);
@@ -4659,15 +4790,23 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                // Get the invoice master details
+                var tenantId = GetTenantId();
+                if (tenantId <= 0)
+                    return BadRequest(new { error = "TenantId is required" });
+
                 var invoice = await _context.VendorInvoiceMaster
                     .AsNoTracking()
-                    .Where(i => i.Id == invoiceId)
+                    .Where(i => i.Id == invoiceId && i.TenantId == tenantId)
                     .FirstOrDefaultAsync();
 
                 if (invoice == null)
                 {
                     return NotFound(new { error = "Invoice not found" });
+                }
+
+                if (invoice.locationId > 0 && !CanAccessLocation(invoice.locationId))
+                {
+                    return StatusCode(403, new { error = "You do not have access to this site." });
                 }
 
                 // Get the invoice detail items
@@ -4976,7 +5115,7 @@ namespace CimmpleAPI.Controllers
         private static string BuildAutoPostingReference(string prefix, string? invoiceNo, int invoiceId)
         {
             var safeInvoice = string.IsNullOrWhiteSpace(invoiceNo) ? invoiceId.ToString() : invoiceNo.Trim();
-            var reference = $"{prefix}-{safeInvoice}";
+            var reference = $"{prefix}-{invoiceId}-{safeInvoice}";
             return reference.Length > 200 ? reference[..200] : reference;
         }
 

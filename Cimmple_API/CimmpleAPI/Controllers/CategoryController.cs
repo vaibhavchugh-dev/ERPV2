@@ -6,6 +6,7 @@ using CimmpleAPI.Data.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 
 namespace CimmpleAPI.Controllers
 {
@@ -36,9 +37,21 @@ namespace CimmpleAPI.Controllers
             ("Product Line", "PRODUCTLINE", 9, new string[0])
         };
 
-        public CategoryController(CimmpleDbContext context)
+        /// <summary>Matches the database column length of <c>CategoryValue.Name</c>.</summary>
+        private const int MaxValueNameLength = 150;
+
+        private readonly ILogger<CategoryController> _logger;
+
+        public CategoryController(CimmpleDbContext context, ILogger<CategoryController> logger)
         {
             _context = context;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Category {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
         }
 
         [HttpGet("GetCategoryTypes")]
@@ -121,13 +134,14 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(GetCategoryTypes));
             }
         }
 
         /// <summary>
-        /// Provisions the starter category types for a tenant that has none. Safe to call
-        /// repeatedly: existing types are left untouched and nothing is overwritten.
+        /// Provisions the starter category types a tenant does not have yet. Safe to call
+        /// repeatedly: a starter type counts as existing when its code or its name is already
+        /// used (so a renamed system type is not re-created), and nothing is overwritten.
         /// </summary>
         [HttpPost("EnsureDefaultCategoryTypes")]
         public IActionResult EnsureDefaultCategoryTypes([FromBody] EnsureDefaultCategoryTypesReq request)
@@ -150,9 +164,17 @@ namespace CimmpleAPI.Controllers
                 int typesCreated = 0;
                 int valuesCreated = 0;
 
+                var existingCodes = _context.CategoryType
+                    .Where(t => t.Tenantid == request.Tenantid)
+                    .Select(t => t.Code)
+                    .ToList()
+                    .Where(c => !string.IsNullOrWhiteSpace(c))
+                    .Select(c => c!.Trim().ToLower())
+                    .ToHashSet();
+
                 foreach (var seed in DefaultCategoryTypes)
                 {
-                    if (existingNames.Contains(seed.Name.ToLower()))
+                    if (existingNames.Contains(seed.Name.ToLower()) || existingCodes.Contains(seed.Code.ToLower()))
                     {
                         continue;
                     }
@@ -191,7 +213,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(EnsureDefaultCategoryTypes));
             }
         }
 
@@ -263,7 +285,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(SaveCategoryType));
             }
         }
 
@@ -305,7 +327,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(DeleteCategoryType));
             }
         }
 
@@ -355,7 +377,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(GetCategoryValues));
             }
         }
 
@@ -389,10 +411,20 @@ namespace CimmpleAPI.Controllers
 
                 var name = request.Name.Trim();
 
+                if (name.Length > MaxValueNameLength)
+                {
+                    return BadRequest(new { error = $"Name must be {MaxValueNameLength} characters or fewer" });
+                }
+
                 var existing = _context.CategoryValue.FirstOrDefault(v =>
                     v.CategoryTypeId == request.CategoryTypeId &&
                     v.Name != null &&
                     v.Name.ToLower() == name.ToLower());
+
+                if (existing != null && existing.Id != request.Id && request.Id > 0)
+                {
+                    return BadRequest(new { error = $"'{name}' already exists in this category" });
+                }
 
                 if (existing != null && existing.Id != request.Id)
                 {
@@ -447,7 +479,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(SaveCategoryValue));
             }
         }
 
@@ -477,7 +509,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, nameof(DeleteCategoryValue));
             }
         }
     }

@@ -149,6 +149,26 @@ export class AccountingService {
     });
   };
 
+  public static DeleteTransaction = async (transactionId: number): Promise<void> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+
+    const url = `/Accounting/DeleteTransaction`;
+    await Instense.delete(url, {
+      params: { transactionId, tenantId: tenantID },
+    });
+  };
+
+  public static DeleteJournalEntry = async (journalEntryId: number): Promise<void> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+
+    const url = `/Accounting/DeleteJournalEntry`;
+    await Instense.delete(url, {
+      params: { journalEntryId, tenantId: tenantID },
+    });
+  };
+
   public static BulkReconcileTransactions = async (
     transactionIds: number[]
   ): Promise<any> => {

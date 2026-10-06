@@ -216,6 +216,13 @@
 
 .jt-attachment-name {
   display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
   font-size: 0.875rem;
   font-weight: 500;
   color: #4f46e5;

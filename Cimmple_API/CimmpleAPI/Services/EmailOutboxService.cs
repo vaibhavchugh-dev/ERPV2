@@ -40,7 +40,8 @@ namespace CimmpleAPI.Services
             int tenantId,
             MailRequest request,
             bool skipNotificationGate = false,
-            int? relatedNotificationId = null)
+            int? relatedNotificationId = null,
+            int? relatedReportScheduleId = null)
         {
             if (tenantId <= 0)
                 return (false, "Tenant is required.");
@@ -87,6 +88,7 @@ namespace CimmpleAPI.Services
                 AttachmentsJson = attachmentsJson,
                 SkipNotificationGate = skipNotificationGate,
                 RelatedNotificationId = relatedNotificationId,
+                RelatedReportScheduleId = relatedReportScheduleId,
                 Attempts = 0,
                 MaxAttempts = 5,
                 CreatedUtc = DateTime.UtcNow
@@ -176,6 +178,18 @@ namespace CimmpleAPI.Services
                         }
                     }
 
+                    if (row.RelatedReportScheduleId is int sid and > 0)
+                    {
+                        var schedule = await _context.ReportSchedules
+                            .FirstOrDefaultAsync(s => s.Id == sid && s.TenantId == row.TenantId, cancellationToken);
+                        if (schedule != null)
+                        {
+                            schedule.LastRunStatus = "Sent";
+                            schedule.LastRunError = null;
+                            schedule.UpdatedUtc = DateTime.UtcNow;
+                        }
+                    }
+
                     await _context.SaveChangesAsync(cancellationToken);
                     return;
                 }
@@ -198,6 +212,18 @@ namespace CimmpleAPI.Services
                 row.ProcessedUtc = DateTime.UtcNow;
                 row.LockedUntilUtc = null;
                 row.LockedBy = null;
+
+                if (row.RelatedReportScheduleId is int sid and > 0)
+                {
+                    var schedule = await _context.ReportSchedules
+                        .FirstOrDefaultAsync(s => s.Id == sid && s.TenantId == row.TenantId, cancellationToken);
+                    if (schedule != null)
+                    {
+                        schedule.LastRunStatus = "Failed";
+                        schedule.LastRunError = Truncate(error, 2000);
+                        schedule.UpdatedUtc = DateTime.UtcNow;
+                    }
+                }
             }
             else
             {

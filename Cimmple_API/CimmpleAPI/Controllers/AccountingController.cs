@@ -766,6 +766,14 @@ namespace CimmpleAPI.Controllers
                     .ThenByDescending(p => p.Id)
                     .FirstOrDefault();
 
+                if (lastCompleted != null && statementDate.Date <= lastCompleted.StatementDate.Date)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Statement date must be after the last completed statement ({lastCompleted.StatementDate:yyyy-MM-dd})."
+                    });
+                }
+
                 var beginning = lastCompleted?.EndingBalance ?? bank.Balance;
                 var period = new BankReconciliationPeriod
                 {
@@ -827,6 +835,21 @@ namespace CimmpleAPI.Controllers
                             error = $"Accounting period {pk} is closed. Reopen that period on Period Close & Audit before updating the statement date."
                         });
                     }
+
+                    var lastCompletedDate = _context.BankReconciliationPeriods
+                        .Where(p => p.TenantId == tenantId && p.BankId == period.BankId && p.Status == "Completed")
+                        .OrderByDescending(p => p.StatementDate)
+                        .ThenByDescending(p => p.Id)
+                        .Select(p => p.StatementDate)
+                        .FirstOrDefault();
+                    if (lastCompletedDate != default && statementDate.Date <= lastCompletedDate.Date)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Statement date must be after the last completed statement ({lastCompletedDate:yyyy-MM-dd})."
+                        });
+                    }
+
                     period.StatementDate = statementDate.Date;
                 }
 

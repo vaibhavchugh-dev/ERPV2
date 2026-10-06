@@ -88,21 +88,27 @@ function formatStorage(m: RawMaterial): string {
   return parts.length > 0 ? parts.join(" / ") : "—";
 }
 
+type RawMaterialSortKey =
+  | keyof RawMaterial
+  | "status"
+  | "storage"
+  | "dims";
+
 const COLUMNS: ColumnDefinition[] = [
-  { key: "partNo", label: "Part #", locked: true },
-  { key: "partName", label: "Part Name", locked: true },
-  { key: "status", label: "Status" },
-  { key: "vendorName", label: "Vendor" },
-  { key: "sku", label: "SKU" },
+  { key: "partNo", label: "Part #", sortKey: "partNo", locked: true },
+  { key: "partName", label: "Part Name", sortKey: "partName", locked: true },
+  { key: "status", label: "Status", sortKey: "status" },
+  { key: "vendorName", label: "Vendor", sortKey: "vendorName" },
+  { key: "sku", label: "SKU", sortKey: "sku" },
   { key: "storage", label: "Storage" },
-  { key: "defaultLocationName", label: "Loc (master)" },
-  { key: "stockForm", label: "Form" },
-  { key: "materialGrade", label: "Grade" },
+  { key: "defaultLocationName", label: "Loc (master)", sortKey: "defaultLocationName" },
+  { key: "stockForm", label: "Form", sortKey: "stockForm" },
+  { key: "materialGrade", label: "Grade", sortKey: "materialGrade" },
   { key: "dims", label: "Dims (mm)" },
-  { key: "isRemnant", label: "Remnant" },
-  { key: "unit", label: "Unit" },
-  { key: "unitCost", label: "Cost" },
-  { key: "description", label: "Description" },
+  { key: "isRemnant", label: "Remnant", sortKey: "isRemnant" },
+  { key: "unit", label: "Unit", sortKey: "unit" },
+  { key: "unitCost", label: "Cost", sortKey: "unitCost" },
+  { key: "description", label: "Description", sortKey: "description" },
   { key: "action", label: "Action", locked: true },
 ];
 
@@ -126,6 +132,8 @@ const RawMaterialMaster: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showInactive, setShowInactive] = useState(false);
+  const [sortColumn, setSortColumn] = useState<RawMaterialSortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState("");
   const [isMaterialGradeOther, setIsMaterialGradeOther] = useState(false);
@@ -463,6 +471,34 @@ const RawMaterialMaster: React.FC = () => {
     }
   };
 
+  const handleSort = (column: RawMaterialSortKey) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortValue = (material: RawMaterial, column: RawMaterialSortKey): string | number | boolean => {
+    switch (column) {
+      case "status":
+        return material.isActive === false ? 0 : 1;
+      case "storage":
+        return formatStorage(material).toLowerCase();
+      case "dims":
+        return `${material.thicknessMm ?? ""}|${material.widthMm ?? ""}|${material.lengthMm ?? ""}`;
+      default: {
+        const value = material[column as keyof RawMaterial];
+        if (value === undefined || value === null) return "";
+        if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+          return value;
+        }
+        return String(value);
+      }
+    }
+  };
+
   const filteredMaterials = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     return materials.filter((material) => {
@@ -487,6 +523,37 @@ const RawMaterialMaster: React.FC = () => {
     });
   }, [materials, searchTerm, showInactive]);
 
+  const sortedMaterials = useMemo(() => {
+    if (!sortColumn) return filteredMaterials;
+    const sorted = [...filteredMaterials];
+    sorted.sort((a, b) => {
+      let aValue = sortValue(a, sortColumn);
+      let bValue = sortValue(b, sortColumn);
+      if (aValue == null && bValue == null) return 0;
+      if (aValue == null) return 1;
+      if (bValue == null) return -1;
+      if (typeof aValue === "string" && typeof bValue === "string") {
+        aValue = aValue.toLowerCase();
+        bValue = bValue.toLowerCase();
+      }
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [filteredMaterials, sortColumn, sortDirection]);
+
+  const getSortIcon = (column: RawMaterialSortKey) => {
+    if (sortColumn !== column) {
+      return <span className="sort-icon inactive">⇅</span>;
+    }
+    return sortDirection === "asc" ? (
+      <span className="sort-icon active">↑</span>
+    ) : (
+      <span className="sort-icon active">↓</span>
+    );
+  };
+
   const {
     pageItems: pagedMaterials,
     currentPage,
@@ -498,7 +565,7 @@ const RawMaterialMaster: React.FC = () => {
     showControls,
     pageSize,
     setPageSize,
-  } = useClientPagination(filteredMaterials, [searchTerm, showInactive]);
+  } = useClientPagination(sortedMaterials, [searchTerm, showInactive, sortColumn, sortDirection]);
 
   const parentOptions = useMemo(() => {
     const id = form.id;
@@ -1208,7 +1275,19 @@ const RawMaterialMaster: React.FC = () => {
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
-                  <th key={column.key}>{column.label}</th>
+                  <th
+                    key={column.key}
+                    className={column.sortKey ? "sortable" : ""}
+                    onClick={() =>
+                      column.sortKey && handleSort(column.sortKey as RawMaterialSortKey)
+                    }
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+                      {column.label}
+                      {column.sortKey &&
+                        getSortIcon(column.sortKey as RawMaterialSortKey)}
+                    </span>
+                  </th>
                 ))}
               </tr>
             </thead>

@@ -6,6 +6,7 @@ using CimmpleAPI.Data.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 
 namespace CimmpleAPI.Controllers
 {
@@ -83,15 +84,21 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
-                if (request == null || request.Count == 0)
-                {
-                    return BadRequest(new { error = "Request is null or empty" });
-                }
+                request ??= new List<PriceBreakdownMasterReq>();
 
-                var tenantId = request.FirstOrDefault()?.Tenantid ?? 0;
-                if (tenantId == 0)
+                var tenantId = GetTenantId();
+                if (tenantId <= 0)
+                {
+                    tenantId = request.FirstOrDefault()?.Tenantid ?? 0;
+                }
+                if (tenantId <= 0)
                 {
                     return BadRequest(new { error = "Tenant ID is required" });
+                }
+
+                if (request.Any(r => r.Tenantid > 0 && r.Tenantid != tenantId))
+                {
+                    return BadRequest(new { error = "Tenant mismatch" });
                 }
 
                 // Get existing price breakdowns for this tenant
@@ -102,6 +109,18 @@ namespace CimmpleAPI.Controllers
                 // Delete existing ones that are not in the request
                 var requestIds = request.Where(r => r.Id > 0).Select(r => r.Id).ToList();
                 var toDelete = existingPriceBreakdowns.Where(e => !requestIds.Contains(e.Id)).ToList();
+                foreach (var item in toDelete)
+                {
+                    var usageCount = CountQuotationLinesUsingPriceBreakdown(tenantId, item.Id);
+                    if (usageCount > 0)
+                    {
+                        var name = string.IsNullOrWhiteSpace(item.ItemName) ? "This item" : item.ItemName.Trim();
+                        return BadRequest(new
+                        {
+                            error = $"{name} cannot be deleted because it is used on {usageCount} quotation line(s)."
+                        });
+                    }
+                }
                 _context.PriceBreakdownMaster.RemoveRange(toDelete);
 
                 // Update or create price breakdowns
@@ -123,7 +142,7 @@ namespace CimmpleAPI.Controllers
                         // Create new
                         priceBreakdown = new PriceBreakdownMaster
                         {
-                            Tenantid = tenantId
+                            Tenantid = tenantId,
                         };
                         _context.PriceBreakdownMaster.Add(priceBreakdown);
                     }
@@ -143,6 +162,49 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
         }
+
+        private static readonly JsonSerializerOptions QuotationMatrixJsonOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+        };
+
+        private int CountQuotationLinesUsingPriceBreakdown(int tenantId, int priceBreakdownId)
+        {
+            var jsonRows = _context.QuotationOrderDetails
+                .AsNoTracking()
+                .Where(d => d.Tenantid == tenantId && d.QuantityTiers != null && d.QuantityTiers != "")
+                .Select(d => d.QuantityTiers!)
+                .ToList();
+
+            var count = 0;
+            foreach (var json in jsonRows)
+            {
+                try
+                {
+                    var matrix = JsonSerializer.Deserialize<QuotationMatrixSnapshotDto>(json, QuotationMatrixJsonOptions);
+                    if (matrix?.BreakdownPrices?.Any(bp => bp.PriceBreakdownId == priceBreakdownId) == true)
+                    {
+                        count++;
+                    }
+                }
+                catch
+                {
+                    // ignore malformed JSON
+                }
+            }
+
+            return count;
+        }
+    }
+
+    internal class QuotationMatrixSnapshotDto
+    {
+        public List<QuotationMatrixBreakdownRefDto> BreakdownPrices { get; set; } = new();
+    }
+
+    internal class QuotationMatrixBreakdownRefDto
+    {
+        public int PriceBreakdownId { get; set; }
     }
 
     public class PriceBreakdownMasterReq

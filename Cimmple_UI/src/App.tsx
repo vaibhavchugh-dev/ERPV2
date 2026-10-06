@@ -4,6 +4,7 @@ import { ToastContainer } from "react-toastify";
 import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
 import { ChangePassword } from "./Login/ChangePassword";
+import { UnderMaintenance } from "./Login/UnderMaintenance";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
 import { installGlobalEscapeToClose } from "./Common/Utils/escapeToClose";
 import "./App.scss";
@@ -50,6 +51,7 @@ const AppContent: React.FC = () => {
             <Route exact path="/login" component={Login} />
             <Route exact path="/logout" component={Logout} />
             <Route exact path="/change-password" component={ChangePassword} />
+            <Route exact path="/Under-Maintenance" component={UnderMaintenance} />
             <Route path="/vendor" component={VendorProtectedLayout} />
             <Route path="/support" component={SupportProtectedLayout} />
             <Route path="/" component={ProtectedLayout} />

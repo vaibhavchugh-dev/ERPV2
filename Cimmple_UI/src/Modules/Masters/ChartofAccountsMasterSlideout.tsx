@@ -6,6 +6,8 @@ import {
 } from "../../Common/Services/ChartofAccountsService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { AccountingService } from "../../Common/Services/AccountingService";
+import { VendorInvoiceService } from "../../Common/Services/VendorInvoiceService";
 import "./CustomerMasterSlideout.scss";
 
 interface ChartofAccountsMasterSlideoutProps {
@@ -17,6 +19,12 @@ interface GroupOption {
   id: number;
   name: string;
 }
+
+type GroupField = "Groupid" | "Subgroupid" | "Subgroupid2" | "Subgroupid3";
+const groupFieldOrder: GroupField[] = ["Groupid", "Subgroupid", "Subgroupid2", "Subgroupid3"];
+
+const apiError = (error: any) =>
+  error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
 
 const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps> = ({
   accountId,
@@ -179,7 +187,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       }
     } catch (error: any) {
       console.error("Error loading chart of account:", error);
-      toast.error(`Error loading chart of account: ${error.message || "Unknown error"}`);
+      toast.error(`Error loading chart of account: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -202,6 +210,19 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     }
   };
 
+  // A group only makes sense under its parent, so picking a different parent clears everything below it.
+  const handleGroupChange = (field: GroupField, value: number | undefined) => {
+    setFormData((prev) => {
+      if (prev[field] === value) return prev;
+      const next = { ...prev, [field]: value };
+      groupFieldOrder.slice(groupFieldOrder.indexOf(field) + 1).forEach((child) => {
+        next[child] = undefined;
+      });
+      return next;
+    });
+    setIsStateChanged(true);
+  };
+
   const handleSaveNewMainGroup = async () => {
     if (!newGroupName.trim()) {
       toast.error("Please enter a main group name");
@@ -211,12 +232,12 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     try {
       const result = await ChartofAccountsService.SaveMainGroup(newGroupName.trim());
       setMainGroups((prev) => [...prev, { id: result.mainGroupID, name: result.mainGroupName }]);
-      handleInputChange("Groupid", result.mainGroupID);
+      handleGroupChange("Groupid", result.mainGroupID);
       setShowAddMainGroup(false);
       setNewGroupName("");
       toast.success("Main group created successfully");
     } catch (error: any) {
-      toast.error(`Error creating main group: ${error.message || "Unknown error"}`);
+      toast.error(`Error creating main group: ${apiError(error)}`);
     }
   };
 
@@ -234,12 +255,12 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     try {
       const result = await ChartofAccountsService.SaveSubGroup(newGroupName.trim(), formData.Groupid);
       setSubGroups((prev) => [...prev, { id: result.subGroupID, name: result.subGroupName }]);
-      handleInputChange("Subgroupid", result.subGroupID);
+      handleGroupChange("Subgroupid", result.subGroupID);
       setShowAddSubGroup(false);
       setNewGroupName("");
       toast.success("Sub group created successfully");
     } catch (error: any) {
-      toast.error(`Error creating sub group: ${error.message || "Unknown error"}`);
+      toast.error(`Error creating sub group: ${apiError(error)}`);
     }
   };
 
@@ -257,12 +278,12 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     try {
       const result = await ChartofAccountsService.SaveSubGroup2(newGroupName.trim(), formData.Subgroupid);
       setSubGroups2((prev) => [...prev, { id: result.subGroup2ID, name: result.subGroup2Name }]);
-      handleInputChange("Subgroupid2", result.subGroup2ID);
+      handleGroupChange("Subgroupid2", result.subGroup2ID);
       setShowAddSubGroup2(false);
       setNewGroupName("");
       toast.success("Sub group 2 created successfully");
     } catch (error: any) {
-      toast.error(`Error creating sub group 2: ${error.message || "Unknown error"}`);
+      toast.error(`Error creating sub group 2: ${apiError(error)}`);
     }
   };
 
@@ -280,12 +301,12 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     try {
       const result = await ChartofAccountsService.SaveSubGroup3(newGroupName.trim(), formData.Subgroupid2);
       setSubGroups3((prev) => [...prev, { id: result.subGroup3ID, name: result.subGroup3Name }]);
-      handleInputChange("Subgroupid3", result.subGroup3ID);
+      handleGroupChange("Subgroupid3", result.subGroup3ID);
       setShowAddSubGroup3(false);
       setNewGroupName("");
       toast.success("Sub group 3 created successfully");
     } catch (error: any) {
-      toast.error(`Error creating sub group 3: ${error.message || "Unknown error"}`);
+      toast.error(`Error creating sub group 3: ${apiError(error)}`);
     }
   };
 
@@ -324,7 +345,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       onClose(true);
     } catch (error: any) {
       console.error("Error saving chart of account:", error);
-      toast.error(`Error saving chart of account: ${error.message || "Unknown error"}`);
+      toast.error(`Error saving chart of account: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -351,7 +372,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       setShowDeletionDialog(true);
     } catch (error: any) {
       console.error("Error checking deletion impact:", error);
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -368,7 +389,10 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       onClose(true);
     } catch (error: any) {
       console.error("Error deleting chart of account:", error);
-      toast.error(`Error deleting chart of account: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting chart of account: ${apiError(error)}`);
+      if (error?.response?.status === 409) {
+        await refreshDeletionImpact();
+      }
     } finally {
       setLoading(false);
     }
@@ -385,56 +409,73 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
     }
   };
 
-  const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
-    // Handle dependency deletion based on endpoint
-    setLoading(true);
+  const removeDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string): Promise<boolean> => {
     try {
-      // This would need to be implemented based on the specific endpoint
-      toast.info(`Deleting ${dependencyType}...`);
-      await refreshDeletionImpact();
+      if (deleteEndpoint?.includes("/Accounting/DeleteJournalEntry")) {
+        await AccountingService.DeleteJournalEntry(itemId);
+      } else if (deleteEndpoint?.includes("/Accounting/DeleteTransaction")) {
+        await AccountingService.DeleteTransaction(itemId);
+      } else if (deleteEndpoint?.includes("/VendorInvoice/DeleteVendorInvoice")) {
+        await VendorInvoiceService.DeleteVendorInvoice(itemId);
+      } else {
+        toast.info(`${dependencyType} cannot be removed from here. Resolve it in its own module first.`);
+        return false;
+      }
+      toast.success(`${dependencyType} item deleted successfully`);
+      return true;
     } catch (error: any) {
       console.error(`Error deleting ${dependencyType}:`, error);
-      toast.error(`Error deleting ${dependencyType}: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
+      toast.error(`Failed to delete ${dependencyType}: ${apiError(error)}`);
+      throw error;
     }
   };
 
+  const handleDeleteDependency = async (dependencyType: string, itemId: number, deleteEndpoint: string) => {
+    await removeDependency(dependencyType, itemId, deleteEndpoint);
+  };
+
   const handleDeleteAll = async () => {
-    if (!deletionImpact || accountId === 0) return;
+    if (!deletionImpact?.blockingDependencies || accountId === 0) return;
     setLoading(true);
     try {
-      // Delete all blocking dependencies first
-      if (deletionImpact.blockingDependencies && deletionImpact.blockingDependencies.length > 0) {
-        for (const dependency of deletionImpact.blockingDependencies) {
-          for (const item of dependency.items) {
-            try {
-              await handleDeleteDependency(dependency.entityType, item.id, item.deleteEndpoint);
-            } catch (error) {
-              console.error(`Error deleting ${dependency.entityType} ${item.id}:`, error);
-            }
+      let impact: DeletionImpactResult = deletionImpact;
+      // Deposits, withdrawals and transaction lines can point at the same transaction, and the impact
+      // check lists at most 10 items per type, so delete each endpoint once and re-check until nothing new is left.
+      const attempted = new Set<string>();
+      for (;;) {
+        const removable = (impact.blockingDependencies || [])
+          .flatMap((dep) => dep.items.map((item) => ({ type: dep.entityType, ...item })))
+          .filter((item) => !!item.deleteEndpoint && !attempted.has(item.deleteEndpoint));
+        if (removable.length === 0) break;
+
+        for (const item of removable) {
+          if (attempted.has(item.deleteEndpoint)) continue;
+          attempted.add(item.deleteEndpoint);
+          try {
+            await removeDependency(item.type, item.id, item.deleteEndpoint);
+          } catch {
+            toast.error(`Failed to delete ${item.name}. Stopping deletion process.`);
+            await refreshDeletionImpact();
+            return;
           }
         }
+
+        const response = await ChartofAccountsService.CheckChartofAccountDeletionImpact(accountId);
+        impact = response.result as DeletionImpactResult;
+        setDeletionImpact(impact);
       }
-      
-      // Refresh impact to check if we can delete now
-      await refreshDeletionImpact();
-      
-      // If still can't delete, show error
-      const updatedResponse = await ChartofAccountsService.CheckChartofAccountDeletionImpact(accountId);
-      const updatedImpact = updatedResponse.result as DeletionImpactResult;
-      
-      if (!updatedImpact.canDelete) {
-        toast.error("Some dependencies could not be deleted. Please try again.");
-        setDeletionImpact(updatedImpact);
+
+      if (!impact.canDelete) {
+        toast.error(
+          `Account still cannot be deleted. Resolve these in their own modules first: ${(impact.blockingDependencies || []).map((d) => d.entityType).join(", ")}`
+        );
         return;
       }
-      
-      // Now delete the main account
+
       await confirmDeletion();
     } catch (error: any) {
       console.error("Error in delete all:", error);
-      toast.error(`Error deleting dependencies: ${error.message || "Unknown error"}`);
+      toast.error(`Error deleting dependencies: ${apiError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -663,14 +704,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                 "Main Group",
                 formData.Groupid,
                 mainGroups,
-                (value) => {
-                  handleInputChange("Groupid", value);
-                  if (!value) {
-                    handleInputChange("Subgroupid", undefined);
-                    handleInputChange("Subgroupid2", undefined);
-                    handleInputChange("Subgroupid3", undefined);
-                  }
-                },
+                (value) => handleGroupChange("Groupid", value),
                 showAddMainGroup,
                 () => {
                   setShowAddMainGroup(!showAddMainGroup);
@@ -682,13 +716,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                 "Subgroup 1",
                 formData.Subgroupid,
                 subGroups,
-                (value) => {
-                  handleInputChange("Subgroupid", value);
-                  if (!value) {
-                    handleInputChange("Subgroupid2", undefined);
-                    handleInputChange("Subgroupid3", undefined);
-                  }
-                },
+                (value) => handleGroupChange("Subgroupid", value),
                 showAddSubGroup,
                 () => {
                   setShowAddSubGroup(!showAddSubGroup);
@@ -704,12 +732,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                 "Subgroup 2",
                 formData.Subgroupid2,
                 subGroups2,
-                (value) => {
-                  handleInputChange("Subgroupid2", value);
-                  if (!value) {
-                    handleInputChange("Subgroupid3", undefined);
-                  }
-                },
+                (value) => handleGroupChange("Subgroupid2", value),
                 showAddSubGroup2,
                 () => {
                   setShowAddSubGroup2(!showAddSubGroup2);
@@ -722,7 +745,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                 "Subgroup 3",
                 formData.Subgroupid3,
                 subGroups3,
-                (value) => handleInputChange("Subgroupid3", value),
+                (value) => handleGroupChange("Subgroupid3", value),
                 showAddSubGroup3,
                 () => {
                   setShowAddSubGroup3(!showAddSubGroup3);

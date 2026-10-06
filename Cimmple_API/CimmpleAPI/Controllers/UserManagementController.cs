@@ -92,7 +92,9 @@ namespace CimmpleAPI.Controllers
 
                 if (!string.IsNullOrEmpty(status))
                 {
-                    query = query.Where(u => u.Status == status);
+                    var statusNorm = status.Trim();
+                    query = query.Where(u =>
+                        u.Status != null && u.Status.ToLower() == statusNorm.ToLower());
                 }
 
                 // Get total count for pagination
@@ -245,21 +247,34 @@ namespace CimmpleAPI.Controllers
                 // User Management focuses on account management only (roles, permissions, status, security)
                 // Profile data (name, email, phone, address) should be managed via Employee Master
                 
-                // Update account management fields only
-                user.Status = userDto.Status;
-                user.Role = userDto.Role;
-                
-                // Update termination info if status is being changed to Inactive
-                if (userDto.Status == "Inactive" && string.IsNullOrEmpty(user.Date_of_termination))
+                if (userDto.Role.HasValue)
                 {
-                    user.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
-                    user.Termination_Reason = userDto.TerminationReason ?? "Deactivated by admin";
+                    user.Role = userDto.Role.Value > 0 ? userDto.Role : null;
                 }
-                else if (userDto.Status == "Active" && !string.IsNullOrEmpty(user.Date_of_termination))
+
+                if (!string.IsNullOrWhiteSpace(userDto.Status))
                 {
-                    // Reactivating user - clear termination info
-                    user.Date_of_termination = null;
-                    user.Termination_Reason = null;
+                    var status = NormalizeAccountStatus(userDto.Status);
+                    user.Status = status;
+
+                    if (IsInactiveAccountStatus(status))
+                    {
+                        if (string.IsNullOrEmpty(user.Date_of_termination))
+                        {
+                            user.Date_of_termination = DateTime.Now.ToString("yyyy-MM-dd");
+                            user.Termination_Reason = userDto.TerminationReason ?? "Deactivated by admin";
+                        }
+                        else if (userDto.TerminationReason != null)
+                        {
+                            user.Termination_Reason = userDto.TerminationReason;
+                        }
+                    }
+                    else
+                    {
+                        // DB columns are non-nullable; match Employee Master clear-on-active behavior.
+                        user.Date_of_termination = "";
+                        user.Termination_Reason = "";
+                    }
                 }
 
                 await _context.SaveChangesAsync();
@@ -467,6 +482,7 @@ namespace CimmpleAPI.Controllers
                         displayName = p.DisplayPermissionName,
                         levelInfo = p.LevelInfo,
                         orderNo = p.OrderNo,
+                        url = p.Url,
                         moduleName = p.ReportGroup ?? "General"
                     })
                     .ToListAsync();
@@ -486,21 +502,24 @@ namespace CimmpleAPI.Controllers
         // DELETE: api/UserManagement/ClearPermissions
         // This endpoint clears all permissions from PermissionMaster and PermissionRole tables
         [HttpDelete("ClearPermissions")]
-        public async Task<IActionResult> ClearPermissions()
+        public async Task<IActionResult> ClearPermissions([FromQuery] int tenantId = 0)
         {
             try
             {
-                // First, delete all role-permission assignments
-                var rolePermissions = await _context.PermissionRole.ToListAsync();
+                var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
+                if (effectiveTenantId <= 0)
+                {
+                    return BadRequest(new { message = "Tenant id is required" });
+                }
+
+                var rolePermissions = await _context.PermissionRole
+                    .Where(pr => pr.TenantId == effectiveTenantId)
+                    .ToListAsync();
                 _context.PermissionRole.RemoveRange(rolePermissions);
-                
-                // Then, delete all permissions
-                var permissions = await _context.PermissionMaster.ToListAsync();
-                _context.PermissionMaster.RemoveRange(permissions);
                 
                 await _context.SaveChangesAsync();
                 
-                return Ok(new { message = $"Cleared {permissions.Count} permissions and {rolePermissions.Count} role assignments", permissionsCleared = permissions.Count, roleAssignmentsCleared = rolePermissions.Count });
+                return Ok(new { message = $"Cleared {rolePermissions.Count} role permission assignments for tenant {effectiveTenantId}", roleAssignmentsCleared = rolePermissions.Count });
             }
             catch (Exception ex)
             {
@@ -518,37 +537,35 @@ namespace CimmpleAPI.Controllers
         // This endpoint seeds the PermissionMaster table with common permissions
         // Optional query parameter: clearExisting=true to clear existing permissions first
         [HttpPost("SeedPermissions")]
-        public async Task<IActionResult> SeedPermissions([FromQuery(Name = "clearExisting")] bool clearExisting = false)
+        public async Task<IActionResult> SeedPermissions(
+            [FromQuery(Name = "clearExisting")] bool clearExisting = false,
+            [FromQuery] int tenantId = 0)
         {
             try
             {
-                // Log the parameter value for debugging
-                Console.WriteLine($"[SeedPermissions] Received clearExisting parameter: {clearExisting}");
-                
-                // Check if permissions already exist
-                var existingCount = await _context.PermissionMaster.CountAsync();
-                Console.WriteLine($"[SeedPermissions] Existing permissions count: {existingCount}");
-                
-                // Clear existing permissions if requested
-                if (clearExisting && existingCount > 0)
+                var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
+                if (effectiveTenantId <= 0)
                 {
-                    Console.WriteLine($"[SeedPermissions] Clearing {existingCount} existing permissions...");
-                    // First, delete all role-permission assignments
-                    var rolePermissions = await _context.PermissionRole.ToListAsync();
-                    _context.PermissionRole.RemoveRange(rolePermissions);
-                    Console.WriteLine($"[SeedPermissions] Removed {rolePermissions.Count} role-permission assignments");
-                    
-                    // Then, delete all permissions
-                    var permissions = await _context.PermissionMaster.ToListAsync();
-                    _context.PermissionMaster.RemoveRange(permissions);
-                    
-                    await _context.SaveChangesAsync();
-                    Console.WriteLine($"[SeedPermissions] Cleared {permissions.Count} existing permissions");
+                    return BadRequest(new { message = "Tenant id is required" });
                 }
 
-                var permissionsToSeed = BuildPermissionsToSeed();
+                Console.WriteLine($"[SeedPermissions] tenantId={effectiveTenantId}, clearExisting={clearExisting}");
+                
+                var existingCount = await _context.PermissionMaster.CountAsync();
+                
+                if (clearExisting)
+                {
+                    var rolePermissions = await _context.PermissionRole
+                        .Where(pr => pr.TenantId == effectiveTenantId)
+                        .ToListAsync();
+                    _context.PermissionRole.RemoveRange(rolePermissions);
+                    await _context.SaveChangesAsync();
+                    Console.WriteLine($"[SeedPermissions] Cleared {rolePermissions.Count} assignments for tenant {effectiveTenantId}");
+                }
 
-                if (existingCount > 0 && !clearExisting)
+                var permissionsToSeed = ErpPermissionSeedService.BuildPermissionCatalog().ToList();
+
+                if (existingCount > 0)
                 {
                     var existingUrls = await _context.PermissionMaster
                         .Where(p => p.Url != null)
@@ -558,24 +575,47 @@ namespace CimmpleAPI.Controllers
                         .Where(p => p.Url != null && !existingUrls.Contains(p.Url))
                         .ToList();
 
+                    if (missingPermissions.Count > 0)
+                    {
+                        await _context.PermissionMaster.AddRangeAsync(missingPermissions);
+                        await _context.SaveChangesAsync();
+                        Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
+                        var assigned = await ErpPermissionSeedService.AssignNewPermissionsToRolesAsync(_context, missingPermissions);
+                        Console.WriteLine($"[SeedPermissions] Added {assigned} role assignments for new permissions");
+                    }
+
+                    await ErpPermissionSeedService.EnsureScheduledReportEmailsRoleMirroringAsync(_context);
+
+                    if (clearExisting)
+                    {
+                        var resetAssignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
+                        return Ok(new
+                        {
+                            message = $"Reset role assignments for tenant {effectiveTenantId}. Added {missingPermissions.Count} missing permission definitions.",
+                            count = existingCount + missingPermissions.Count,
+                            added = missingPermissions.Count,
+                            clearExisting = true,
+                            tenantId = effectiveTenantId,
+                            adminRolesAssigned = resetAssignment.adminRoles,
+                            nonAdminRolesAssigned = resetAssignment.nonAdminRoles,
+                            permissionAssignments = resetAssignment.assignments
+                        });
+                    }
+
                     if (missingPermissions.Count == 0)
                     {
-                        Console.WriteLine($"[SeedPermissions] Permissions exist and no missing entries found");
                         return Ok(new { message = $"Permissions already up to date ({existingCount} records).", count = existingCount, added = 0, clearExisting = false });
                     }
 
-                    await _context.PermissionMaster.AddRangeAsync(missingPermissions);
-                    await _context.SaveChangesAsync();
-                    Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
                     return Ok(new { message = $"Added {missingPermissions.Count} missing permissions", count = existingCount + missingPermissions.Count, added = missingPermissions.Count, clearExisting = false });
                 }
 
                 await _context.PermissionMaster.AddRangeAsync(permissionsToSeed);
                 await _context.SaveChangesAsync();
 
-                var assignment = await AssignDefaultRolePermissionsAsync();
+                var assignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
                 var assignMsg = assignment.adminRoles > 0 || assignment.nonAdminRoles > 0
-                    ? $" Assigned defaults: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
+                    ? $" Assigned defaults for tenant {effectiveTenantId}: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
                     : "";
 
                 return Ok(new
@@ -583,6 +623,7 @@ namespace CimmpleAPI.Controllers
                     message = $"Successfully seeded {permissionsToSeed.Count} permissions.{assignMsg}",
                     count = permissionsToSeed.Count,
                     clearExisting,
+                    tenantId = effectiveTenantId,
                     adminRolesAssigned = assignment.adminRoles,
                     nonAdminRolesAssigned = assignment.nonAdminRoles,
                     permissionAssignments = assignment.assignments
@@ -601,9 +642,9 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// After a full seed/clear: Admin roles get every permission; all other roles get Dashboard only.
+        /// Resets assignments for one tenant: admin roles get every permission; others get Dashboard only.
         /// </summary>
-        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsAsync()
+        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsForTenantAsync(int tenantId)
         {
             var allPermissions = await _context.PermissionMaster.AsNoTracking().ToListAsync();
             if (allPermissions.Count == 0)
@@ -613,14 +654,15 @@ namespace CimmpleAPI.Controllers
                 string.Equals(p.Url, "/home", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(p.PermissionName, "Dashboard", StringComparison.OrdinalIgnoreCase));
 
-            var roles = await _context.UserRole.AsNoTracking().ToListAsync();
+            var roles = await _context.UserRole.AsNoTracking()
+                .Where(r => r.TenantId == tenantId)
+                .ToListAsync();
             if (roles.Count == 0)
                 return (0, 0, 0);
 
-            // Replace any leftover assignments for these roles with the defaults.
             var roleIds = roles.Select(r => r.RoleID).ToList();
             var existing = await _context.PermissionRole
-                .Where(pr => roleIds.Contains(pr.RoleId))
+                .Where(pr => pr.TenantId == tenantId && roleIds.Contains(pr.RoleId))
                 .ToListAsync();
             if (existing.Count > 0)
             {
@@ -634,8 +676,7 @@ namespace CimmpleAPI.Controllers
 
             foreach (var role in roles)
             {
-                var tenantId = role.TenantId;
-                if (IsAdminRoleName(role.RoleName, role.RoleTag))
+                if (ErpPermissionSeedService.IsAdminRoleName(role.RoleName, role.RoleTag))
                 {
                     adminRoles++;
                     foreach (var perm in allPermissions)
@@ -669,16 +710,20 @@ namespace CimmpleAPI.Controllers
             return (adminRoles, nonAdminRoles, toAdd.Count);
         }
 
-        private static bool IsAdminRoleName(string? roleName, string? roleTag)
+        private static string NormalizeAccountStatus(string status)
         {
-            static bool Match(string? value) =>
-                !string.IsNullOrEmpty(value)
-                && (value.Contains("admin", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
-
-            return Match(roleName) || Match(roleTag);
+            var s = status.Trim();
+            if (IsActiveAccountStatus(s)) return "Active";
+            if (IsInactiveAccountStatus(s)) return "Inactive";
+            if (string.Equals(s, "Pending", StringComparison.OrdinalIgnoreCase)) return "Pending";
+            return s;
         }
+
+        private static bool IsActiveAccountStatus(string? status) =>
+            string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsInactiveAccountStatus(string? status) =>
+            string.Equals(status, "Inactive", StringComparison.OrdinalIgnoreCase);
 
         // POST: api/UserManagement/AssignPermissionsToRole
         [HttpPost("AssignPermissionsToRole")]
@@ -798,7 +843,7 @@ namespace CimmpleAPI.Controllers
 
                 if (!string.IsNullOrEmpty(dto.RoleName))
                     role.RoleName = dto.RoleName;
-                if (!string.IsNullOrEmpty(dto.Description))
+                if (dto.Description != null)
                     role.RoleTag = dto.Description;
                 if (dto.OrderNo.HasValue)
                     role.OrderNo = dto.OrderNo.Value;
@@ -858,55 +903,6 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { message = "Error deleting role", error = ex.Message });
             }
-        }
-
-        private static List<PermissionMaster> BuildPermissionsToSeed()
-        {
-            return new List<PermissionMaster>
-            {
-                new PermissionMaster { PermissionName = "Dashboard", DisplayPermissionName = "Dashboard", LevelInfo = 1, OrderNo = 1, Url = "/home", ReportGroup = "Dashboard", ReportDescription = "Access main dashboard" },
-                new PermissionMaster { PermissionName = "Customer Quotations", DisplayPermissionName = "Customer Quotations", LevelInfo = 1, OrderNo = 10, Url = "/quotations/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer quotations" },
-                new PermissionMaster { PermissionName = "Customer Orders", DisplayPermissionName = "Customer Orders", LevelInfo = 1, OrderNo = 11, Url = "/orders/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer orders" },
-                new PermissionMaster { PermissionName = "Customer Shipments", DisplayPermissionName = "Customer Shipments", LevelInfo = 1, OrderNo = 12, Url = "/orders/customer-shipments", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer shipments" },
-                new PermissionMaster { PermissionName = "Customer Invoices", DisplayPermissionName = "Customer Invoices", LevelInfo = 1, OrderNo = 13, Url = "/orders/customer-invoices", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer invoices" },
-                new PermissionMaster { PermissionName = "Job Orders", DisplayPermissionName = "Job Orders", LevelInfo = 1, OrderNo = 14, Url = "/job-orders", ReportGroup = "Sales & Orders", ReportDescription = "View and manage job orders" },
-                new PermissionMaster { PermissionName = "Vendor Quotations", DisplayPermissionName = "Vendor Quotations", LevelInfo = 1, OrderNo = 20, Url = "/quotations/vendor", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor quotations" },
-                new PermissionMaster { PermissionName = "Vendor Orders", DisplayPermissionName = "Vendor Orders", LevelInfo = 1, OrderNo = 21, Url = "/purchasing/vendor-orders", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor orders" },
-                new PermissionMaster { PermissionName = "Vendor Receiving", DisplayPermissionName = "Vendor Receiving", LevelInfo = 1, OrderNo = 22, Url = "/purchasing/vendor-receiving", ReportGroup = "Purchasing", ReportDescription = "Manage vendor receiving" },
-                new PermissionMaster { PermissionName = "Vendor Invoices", DisplayPermissionName = "Vendor Invoices", LevelInfo = 1, OrderNo = 23, Url = "/purchasing/vendor-invoices", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor invoices" },
-                new PermissionMaster { PermissionName = "Inventory", DisplayPermissionName = "Inventory", LevelInfo = 1, OrderNo = 24, Url = "/inventory", ReportGroup = "Purchasing", ReportDescription = "View and manage inventory" },
-                new PermissionMaster { PermissionName = "Non Conformance Reports", DisplayPermissionName = "Non Conformance Reports", LevelInfo = 1, OrderNo = 30, Url = "/quality", ReportGroup = "Quality", ReportDescription = "View and manage non-conformance reports" },
-                new PermissionMaster { PermissionName = "NCR Code Master", DisplayPermissionName = "NCR Code Master", LevelInfo = 1, OrderNo = 31, Url = "/quality/ncr-codes", ReportGroup = "Quality", ReportDescription = "Manage NCR code master data" },
-                new PermissionMaster { PermissionName = "Business Intelligence", DisplayPermissionName = "Reports", LevelInfo = 1, OrderNo = 40, Url = "/reports", ReportGroup = "Reports", ReportDescription = "Access operational and business reports" },
-                new PermissionMaster { PermissionName = "Documents", DisplayPermissionName = "Documents", LevelInfo = 1, OrderNo = 45, Url = "/documents", ReportGroup = "Documents", ReportDescription = "Manage documents" },
-                new PermissionMaster { PermissionName = "Payment Dashboard", DisplayPermissionName = "Payment Dashboard", LevelInfo = 1, OrderNo = 50, Url = "/accounts/dashboard", ReportGroup = "Accounting", ReportDescription = "View payment dashboard" },
-                new PermissionMaster { PermissionName = "Accounts Payable", DisplayPermissionName = "Accounts Payable (AP)", LevelInfo = 1, OrderNo = 51, Url = "/accounts/payable", ReportGroup = "Accounting", ReportDescription = "Manage accounts payable" },
-                new PermissionMaster { PermissionName = "Accounts Receivable", DisplayPermissionName = "Accounts Receivable (AR)", LevelInfo = 1, OrderNo = 52, Url = "/accounts/receivable", ReportGroup = "Accounting", ReportDescription = "Manage accounts receivable" },
-                new PermissionMaster { PermissionName = "Bank Reconciliation", DisplayPermissionName = "Bank Reconciliation", LevelInfo = 1, OrderNo = 53, Url = "/accounts/banks", ReportGroup = "Accounting", ReportDescription = "Perform bank reconciliation" },
-                new PermissionMaster { PermissionName = "Financial Reports", DisplayPermissionName = "Financial Reports", LevelInfo = 1, OrderNo = 54, Url = "/accounts/reports", ReportGroup = "Accounting", ReportDescription = "View financial reports" },
-                new PermissionMaster { PermissionName = "Accounting Setup", DisplayPermissionName = "Accounting Setup", LevelInfo = 1, OrderNo = 55, Url = "/accounts/setup", ReportGroup = "Accounting", ReportDescription = "Configure accounting settings" },
-                new PermissionMaster { PermissionName = "Journal Entries", DisplayPermissionName = "Journal Entries", LevelInfo = 1, OrderNo = 56, Url = "/accounts/journal-entries", ReportGroup = "Accounting", ReportDescription = "Manage journal entries" },
-                new PermissionMaster { PermissionName = "Payroll Journals", DisplayPermissionName = "Payroll Journals", LevelInfo = 1, OrderNo = 56, Url = "/accounts/payroll", ReportGroup = "Accounting", ReportDescription = "View payroll journals posted to the GL" },
-                new PermissionMaster { PermissionName = "GL Account Activity", DisplayPermissionName = "GL Account Activity", LevelInfo = 1, OrderNo = 57, Url = "/accounts/general-ledger", ReportGroup = "Accounting", ReportDescription = "View general ledger activity" },
-                new PermissionMaster { PermissionName = "Period Close & Audit", DisplayPermissionName = "Period Close & Audit", LevelInfo = 1, OrderNo = 58, Url = "/accounts/periods", ReportGroup = "Accounting", ReportDescription = "Period close and audit" },
-                new PermissionMaster { PermissionName = "Bank Master", DisplayPermissionName = "Bank Master", LevelInfo = 1, OrderNo = 59, Url = "/masters/bank", ReportGroup = "Accounting", ReportDescription = "Manage bank master data" },
-                new PermissionMaster { PermissionName = "Credit Card Master", DisplayPermissionName = "Credit Card Master", LevelInfo = 1, OrderNo = 60, Url = "/masters/creditcard", ReportGroup = "Accounting", ReportDescription = "Manage credit card master data" },
-                new PermissionMaster { PermissionName = "Chart of Accounts Master", DisplayPermissionName = "Chart of Accounts Master", LevelInfo = 1, OrderNo = 61, Url = "/masters/chartofaccounts", ReportGroup = "Accounting", ReportDescription = "Manage chart of accounts" },
-                new PermissionMaster { PermissionName = "Customer Master", DisplayPermissionName = "Customer Master", LevelInfo = 1, OrderNo = 70, Url = "/masters/customer", ReportGroup = "Administration", ReportDescription = "Manage customer master data" },
-                new PermissionMaster { PermissionName = "Vendor Master", DisplayPermissionName = "Vendor Master", LevelInfo = 1, OrderNo = 71, Url = "/masters/vendor", ReportGroup = "Administration", ReportDescription = "Manage vendor master data" },
-                new PermissionMaster { PermissionName = "Workstation Master", DisplayPermissionName = "Workstation Master", LevelInfo = 1, OrderNo = 72, Url = "/masters/workstation", ReportGroup = "Administration", ReportDescription = "Manage workstation master data" },
-                new PermissionMaster { PermissionName = "Employee Master", DisplayPermissionName = "Employee Master", LevelInfo = 1, OrderNo = 73, Url = "/masters/employee", ReportGroup = "Administration", ReportDescription = "Manage employee master data" },
-                new PermissionMaster { PermissionName = "Location Master", DisplayPermissionName = "Location Master", LevelInfo = 1, OrderNo = 74, Url = "/masters/location", ReportGroup = "Administration", ReportDescription = "Manage location master data" },
-                new PermissionMaster { PermissionName = "Process Master", DisplayPermissionName = "Process Master", LevelInfo = 1, OrderNo = 75, Url = "/masters/process", ReportGroup = "Administration", ReportDescription = "Manage process master data" },
-                new PermissionMaster { PermissionName = "Job Template Master", DisplayPermissionName = "Job Template Master", LevelInfo = 1, OrderNo = 76, Url = "/masters/jobtemplate", ReportGroup = "Administration", ReportDescription = "Manage job templates" },
-                new PermissionMaster { PermissionName = "Category Master", DisplayPermissionName = "Category Master", LevelInfo = 1, OrderNo = 77, Url = "/masters/category", ReportGroup = "Administration", ReportDescription = "Manage categories" },
-                new PermissionMaster { PermissionName = "Price Breakdown Master", DisplayPermissionName = "Price Breakdown Master", LevelInfo = 1, OrderNo = 78, Url = "/masters/pricebreakdown", ReportGroup = "Administration", ReportDescription = "Manage price breakdown master data" },
-                new PermissionMaster { PermissionName = "Product Master", DisplayPermissionName = "Product Master", LevelInfo = 1, OrderNo = 79, Url = "/masters/product", ReportGroup = "Administration", ReportDescription = "Manage product master data" },
-                new PermissionMaster { PermissionName = "Raw Material Master", DisplayPermissionName = "Raw Material Master", LevelInfo = 1, OrderNo = 80, Url = "/masters/raw-material", ReportGroup = "Administration", ReportDescription = "Manage raw materials" },
-                new PermissionMaster { PermissionName = "Attendance Register", DisplayPermissionName = "Attendance Register", LevelInfo = 1, OrderNo = 89, Url = "/attendance", ReportGroup = "Administration", ReportDescription = "View Time Clock attendance by day" },
-                new PermissionMaster { PermissionName = "User Management", DisplayPermissionName = "User Management", LevelInfo = 1, OrderNo = 90, Url = "/user-management", ReportGroup = "Administration", ReportDescription = "Manage users, roles, and permissions" },
-                new PermissionMaster { PermissionName = "System Settings", DisplayPermissionName = "System Settings", LevelInfo = 1, OrderNo = 91, Url = "/settings", ReportGroup = "Administration", ReportDescription = "Configure system settings" }
-            };
         }
 
         /// <summary>Normalize role ResetPwd to Y/N (also accepts Yes/No from legacy data).</summary>

@@ -56,7 +56,7 @@ const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId
         });
       }
     } catch (error: any) {
-      toast.error(`Error loading NCR code: ${error.message || "Unknown error"}`);
+      toast.error(`Error loading NCR code: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -125,7 +125,7 @@ const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId
       setDeletionImpact(response.result as DeletionImpactResult);
       setShowDeletionDialog(true);
     } catch (error: any) {
-      toast.error(`Error checking deletion impact: ${error.message || "Unknown error"}`);
+      toast.error(`Error checking deletion impact: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }

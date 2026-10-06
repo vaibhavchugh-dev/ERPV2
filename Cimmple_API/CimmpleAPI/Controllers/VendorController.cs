@@ -714,7 +714,11 @@ namespace CimmpleAPI.Controllers
                         .Where(vc => existingIds.Contains(vc.customer_id))
                         .ToList();
 
-                int nextCodeSeq = MasterCodeGenerator.GetNextSequence(existing.Select(v => v.vendorcode), 'V');
+                var assignedCodes = new HashSet<string>(
+                    existing
+                        .Select(v => v.vendorcode)
+                        .Where(c => !string.IsNullOrWhiteSpace(c))!,
+                    StringComparer.OrdinalIgnoreCase);
                 var result = new VendorImportResult();
                 var rowResults = new List<VendorImportRowResult>();
                 var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -789,7 +793,7 @@ namespace CimmpleAPI.Controllers
                                 (match == null || v.vendor_id != match.vendor_id) &&
                                 !string.IsNullOrEmpty(v.vendorcode) &&
                                 string.Equals(v.vendorcode, vendorCode, StringComparison.OrdinalIgnoreCase));
-                            if (codeConflict != null)
+                            if (codeConflict != null || !assignedCodes.Add(vendorCode))
                             {
                                 rowResult.Status = "Error";
                                 rowResult.Message = $"Vendor Code '{vendorCode}' already exists";
@@ -848,10 +852,22 @@ namespace CimmpleAPI.Controllers
                         }
                         else
                         {
+                            var codeToAssign = string.IsNullOrEmpty(vendorCode)
+                                ? MasterCodeGenerator.NextCode(assignedCodes, 'V')
+                                : vendorCode;
+                            if (!assignedCodes.Add(codeToAssign))
+                            {
+                                rowResult.Status = "Error";
+                                rowResult.Message = $"Vendor Code '{codeToAssign}' already exists";
+                                result.Failed++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+
                             vendor = new VendorMaster
                             {
                                 Tenantid = request.Tenantid,
-                                vendorcode = string.IsNullOrEmpty(vendorCode) ? $"V{nextCodeSeq++}" : vendorCode,
+                                vendorcode = codeToAssign,
                                 company_name = companyName,
                                 companyAlias = row.CompanyAlias?.Trim() ?? "",
                                 email = row.Email?.Trim() ?? "",
@@ -1003,6 +1019,16 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Vendor not found" });
                 }
 
+                return Ok(new { result = BuildVendorDeletionImpact(vendorId, tenantId) });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        private DeletionImpactResult BuildVendorDeletionImpact(int vendorId, int tenantId)
+        {
                 var impact = new DeletionImpactResult
                 {
                     CanDelete = true,
@@ -1155,12 +1181,13 @@ namespace CimmpleAPI.Controllers
                     impact.Warnings.Add("This action cannot be undone");
                 }
 
-                return Ok(new { result = impact });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
-            }
+                if (!impact.CanDelete)
+                {
+                    impact.BlockingReasons.Insert(0,
+                        "Delete the linked records listed below first, then try deleting this vendor again.");
+                }
+
+                return impact;
         }
 
         [HttpDelete("DeleteVendor")]
@@ -1174,6 +1201,17 @@ namespace CimmpleAPI.Controllers
                 if (vendor == null)
                 {
                     return NotFound(new { error = "Vendor not found" });
+                }
+
+                var impact = BuildVendorDeletionImpact(vendorId, tenantId);
+                if (!impact.CanDelete)
+                {
+                    return StatusCode(409, new
+                    {
+                        error = impact.BlockingReasons.FirstOrDefault()
+                            ?? "Vendor cannot be deleted while linked records exist.",
+                        blockingReasons = impact.BlockingReasons
+                    });
                 }
 
                 // Delete related entities

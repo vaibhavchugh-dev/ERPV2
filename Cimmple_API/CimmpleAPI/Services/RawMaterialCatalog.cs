@@ -18,6 +18,7 @@ namespace CimmpleAPI.Services
             string? unit,
             decimal? unitCost,
             int? vendorId,
+            bool reactivateInactive = true,
             CancellationToken cancellationToken = default)
         {
             var safePartNo = (partNo ?? "").Trim();
@@ -54,7 +55,7 @@ namespace CimmpleAPI.Services
                     existing.UnitCost = cost;
                 if (!existing.VendorId.HasValue && validVendorId.HasValue)
                     existing.VendorId = validVendorId;
-                if (!existing.IsActive)
+                if (!existing.IsActive && reactivateInactive)
                     existing.IsActive = true;
                 return existing.Id;
             }

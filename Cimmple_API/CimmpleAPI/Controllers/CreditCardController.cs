@@ -7,6 +7,7 @@ using CimmpleAPI.Data.Dtos;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace CimmpleAPI.Controllers
 {
@@ -15,11 +16,132 @@ namespace CimmpleAPI.Controllers
     public class CreditCardController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly ILogger<CreditCardController> _logger;
         private static bool _coaColumnEnsured;
+        private static bool _sensitiveDataPurged;
 
-        public CreditCardController(CimmpleDbContext context)
+        public CreditCardController(CimmpleDbContext context, ILogger<CreditCardController> logger)
         {
             _context = context;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Credit card {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
+        }
+
+        private static string Masked(string? lastFour) =>
+            string.IsNullOrEmpty(lastFour) ? "****" : "****" + lastFour;
+
+        /// <summary>
+        /// Full card numbers and CVVs must never be kept. Older rows stored both in plaintext; reduce them to
+        /// the masked last four digits once per process.
+        /// </summary>
+        private void PurgeSensitiveCardData()
+        {
+            if (_sensitiveDataPurged) return;
+            _context.Database.ExecuteSqlRaw(@"
+UPDATE CimmpleFlow.CreditCardMaster
+SET LastFourDigits = CASE
+        WHEN (LastFourDigits IS NULL OR LastFourDigits = '') AND LEN(REPLACE(REPLACE(ISNULL(CardNumber, ''), ' ', ''), '-', '')) >= 4
+            THEN RIGHT(REPLACE(REPLACE(CardNumber, ' ', ''), '-', ''), 4)
+        ELSE LastFourDigits END,
+    CardNumber = CASE
+        WHEN CardNumber IS NULL OR CardNumber = '' OR CardNumber LIKE '****%' THEN CardNumber
+        ELSE '****' + RIGHT(REPLACE(REPLACE(CardNumber, ' ', ''), '-', ''), 4) END,
+    CVV = ''
+WHERE (CVV IS NOT NULL AND CVV <> '')
+   OR (CardNumber IS NOT NULL AND CardNumber <> '' AND CardNumber NOT LIKE '****%');");
+            _sensitiveDataPurged = true;
+        }
+
+        // Same rules as Common/Utils/validation.ts.
+        private static readonly Regex EmailPattern = new(@"^[^\s@]+@[^\s@]+\.[^\s@]+$");
+        private static readonly Regex ZipPattern = new(@"^[0-9]{5}(-[0-9]{4})?$|^[A-Z0-9]{3,10}$", RegexOptions.IgnoreCase);
+        private static readonly Regex CvvPattern = new(@"^[0-9]{3,4}$");
+
+        private static string ExpiryKey(string? month, string? year) =>
+            $"{(int.TryParse(month?.Trim(), out var m) ? m : 0):00}/{year?.Trim()}";
+
+        private static bool PassesLuhn(string digits)
+        {
+            int sum = 0;
+            bool doubleIt = false;
+            for (int i = digits.Length - 1; i >= 0; i--)
+            {
+                int d = digits[i] - '0';
+                if (doubleIt) { d *= 2; if (d > 9) d -= 9; }
+                sum += d;
+                doubleIt = !doubleIt;
+            }
+            return sum % 10 == 0;
+        }
+
+        /// <summary>
+        /// Validates the request and returns the normalised card digits (null when the number is unchanged).
+        /// Expiry must not be in the past for a new card or when the expiry is being changed, so an expired
+        /// card can still be deactivated or have its billing details edited.
+        /// </summary>
+        private static string? ValidateRequest(CreditCardMasterReq r, CreditCardMaster? existing, out string? cardDigits, out string? month, out string? year)
+        {
+            cardDigits = null;
+            month = null;
+            year = null;
+            bool isNew = existing == null;
+
+            var rawNumber = (r.CardNumber ?? "").Trim();
+            if (rawNumber.StartsWith("*")) rawNumber = "";
+            if (rawNumber.Length > 0)
+            {
+                var digits = rawNumber.Replace(" ", "").Replace("-", "");
+                if (!digits.All(char.IsDigit) || digits.Length < 13 || digits.Length > 19 || !PassesLuhn(digits))
+                    return "Please enter a valid card number";
+                cardDigits = digits;
+            }
+            else if (isNew)
+            {
+                return "Card Number is required";
+            }
+
+            if (!string.IsNullOrWhiteSpace(r.CVV) && !CvvPattern.IsMatch(r.CVV.Trim()))
+                return "CVV must be 3 or 4 digits";
+
+            var m = (r.ExpiryMonth ?? "").Trim();
+            var y = (r.ExpiryYear ?? "").Trim();
+            if (isNew && (m.Length == 0 || y.Length == 0))
+                return "Expiry month and year are required";
+            if (m.Length > 0)
+            {
+                if (!int.TryParse(m, out var mi) || mi < 1 || mi > 12) return "Expiry month must be between 01 and 12";
+                m = mi.ToString("00");
+            }
+            if (y.Length > 0 && (y.Length != 4 || !int.TryParse(y, out _)))
+                return "Expiry year must be a 4-digit year";
+
+            month = m.Length > 0 ? m : existing?.ExpiryMonth ?? "";
+            year = y.Length > 0 ? y : existing?.ExpiryYear ?? "";
+            var expiryChanged = isNew
+                || ExpiryKey(month, year) != ExpiryKey(existing!.ExpiryMonth, existing.ExpiryYear);
+            if (expiryChanged && int.TryParse(month, out var em) && int.TryParse(year, out var ey))
+            {
+                var now = DateTime.Now;
+                if (ey < now.Year || (ey == now.Year && em < now.Month))
+                    return "Card has expired";
+            }
+
+            if (!string.IsNullOrWhiteSpace(r.Email) && !EmailPattern.IsMatch(r.Email.Trim()))
+                return "Please enter a valid email address";
+            if (!string.IsNullOrWhiteSpace(r.Phone))
+            {
+                var phoneDigits = r.Phone.Count(char.IsDigit);
+                if (phoneDigits < 10 || phoneDigits > 15) return "Please enter a valid phone number (10-15 digits)";
+            }
+            if (!string.IsNullOrWhiteSpace(r.BillingZip) && !ZipPattern.IsMatch(r.BillingZip.Trim()))
+                return "Please enter a valid zip/postal code";
+
+            return null;
         }
 
         /// <summary>
@@ -28,6 +150,7 @@ namespace CimmpleAPI.Controllers
         /// </summary>
         private void EnsureCoaColumnExists()
         {
+            PurgeSensitiveCardData();
             if (_coaColumnEnsured) return;
             try
             {
@@ -81,7 +204,7 @@ END
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "list");
             }
         }
 
@@ -103,13 +226,12 @@ END
                 var result = new
                 {
                     id = creditCard.Id,
-                    cardNumber = creditCard.CardNumber ?? "",
+                    cardNumber = Masked(creditCard.LastFourDigits),
                     lastFourDigits = creditCard.LastFourDigits ?? "",
                     cardholderName = creditCard.CardholderName ?? "",
                     cardType = creditCard.CardType ?? "",
                     expiryMonth = creditCard.ExpiryMonth ?? "",
                     expiryYear = creditCard.ExpiryYear ?? "",
-                    cvv = creditCard.CVV ?? "",
                     billingStreet = creditCard.BillingStreet ?? "",
                     billingApartment = creditCard.BillingApartment ?? "",
                     billingCity = creditCard.BillingCity ?? "",
@@ -130,7 +252,7 @@ END
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "get");
             }
         }
 
@@ -150,61 +272,42 @@ END
                     return BadRequest(new { error = "Cardholder Name is required" });
                 }
 
-                if (string.IsNullOrWhiteSpace(request.CardNumber) && request.Id == 0)
-                {
-                    return BadRequest(new { error = "Card Number is required" });
-                }
-
                 EnsureCoaColumnExists();
-                CreditCardMaster creditCard;
-
+                CreditCardMaster? existing = null;
                 if (request.Id > 0)
                 {
-                    // Update existing credit card
-                    creditCard = _context.CreditCardMaster
+                    existing = _context.CreditCardMaster
                         .FirstOrDefault(c => c.Id == request.Id && c.TenantId == request.TenantId);
 
-                    if (creditCard == null)
+                    if (existing == null)
                     {
                         return NotFound(new { error = "Credit Card not found" });
                     }
                 }
-                else
+
+                var validationError = ValidateRequest(request, existing, out var cardDigits, out var expiryMonth, out var expiryYear);
+                if (validationError != null)
                 {
-                    // Create new credit card
-                    creditCard = new CreditCardMaster
-                    {
-                        TenantId = request.TenantId
-                    };
+                    return BadRequest(new { error = validationError });
+                }
+
+                var creditCard = existing ?? new CreditCardMaster { TenantId = request.TenantId };
+                if (existing == null)
+                {
                     _context.CreditCardMaster.Add(creditCard);
                 }
 
-                // Update fields
-                if (!string.IsNullOrWhiteSpace(request.CardNumber))
+                if (cardDigits != null)
                 {
-                    creditCard.CardNumber = request.CardNumber;
-                    // Store last 4 digits for display (remove spaces first)
-                    var digitsOnly = request.CardNumber.Replace(" ", "").Replace("-", "");
-                    if (digitsOnly.Length >= 4)
-                    {
-                        creditCard.LastFourDigits = digitsOnly.Substring(digitsOnly.Length - 4);
-                    }
-                    else
-                    {
-                        creditCard.LastFourDigits = digitsOnly;
-                    }
-                }
-                else
-                {
-                    creditCard.CardNumber = "";
-                    creditCard.LastFourDigits = "";
+                    creditCard.LastFourDigits = cardDigits.Substring(cardDigits.Length - 4);
+                    creditCard.CardNumber = Masked(creditCard.LastFourDigits);
                 }
 
-                creditCard.CardholderName = request.CardholderName ?? "";
+                creditCard.CardholderName = request.CardholderName.Trim();
                 creditCard.CardType = request.CardType ?? "";
-                creditCard.ExpiryMonth = request.ExpiryMonth ?? "";
-                creditCard.ExpiryYear = request.ExpiryYear ?? "";
-                creditCard.CVV = request.CVV ?? "";
+                creditCard.ExpiryMonth = expiryMonth ?? "";
+                creditCard.ExpiryYear = expiryYear ?? "";
+                creditCard.CVV = "";
                 creditCard.BillingStreet = request.BillingStreet ?? "";
                 creditCard.BillingApartment = request.BillingApartment ?? "";
                 creditCard.BillingCity = request.BillingCity ?? "";
@@ -224,13 +327,7 @@ END
             }
             catch (Exception ex)
             {
-                // Log inner exception if available
-                var errorMessage = ex.Message;
-                if (ex.InnerException != null)
-                {
-                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
-                }
-                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+                return ServerError(ex, "save");
             }
         }
 
@@ -271,7 +368,7 @@ END
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "deletion impact");
             }
         }
 
@@ -297,7 +394,7 @@ END
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "delete");
             }
         }
     }

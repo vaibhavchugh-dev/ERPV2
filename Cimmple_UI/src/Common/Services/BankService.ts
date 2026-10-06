@@ -117,16 +117,18 @@ export class BankService {
       tenantID = 1; // Default tenant ID for development
     }
     
-    const locationId = Number(localStorage.getItem("locationId") || 0);
-
     request.TenantID = tenantID;
-    request.locationId = locationId > 0 ? locationId : 0;
 
     const url = `/Bank/SaveBankData`;
     return Instense.post(url, request).then((response) => {
       const result = response.data.result;
       return result;
     });
+  };
+
+  public static RevealAccountNo = async (bankId: number): Promise<string> => {
+    const response = await Instense.get(`/Bank/RevealAccountNo`, { params: { bankId } });
+    return response.data?.result?.accountNo || "";
   };
 
   public static CheckBankDeletionImpact = async (

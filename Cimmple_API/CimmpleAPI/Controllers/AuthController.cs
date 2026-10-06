@@ -20,17 +20,20 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _db;
         private readonly IJwtTokenService _jwt;
         private readonly TokenConfigOptions _tokenConfig;
+        private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             IAuthService authService,
             CimmpleDbContext db,
             IJwtTokenService jwt,
-            IOptions<TokenConfigOptions> tokenConfig)
+            IOptions<TokenConfigOptions> tokenConfig,
+            ILogger<AuthController> logger)
         {
             _authService = authService;
             _db = db;
             _jwt = jwt;
             _tokenConfig = tokenConfig.Value;
+            _logger = logger;
         }
         [AllowAnonymous]
         [HttpPost("Login")]
@@ -51,8 +54,8 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                var detail = ex.GetBaseException().Message;
-                return StatusCode(500, new { message = "Login failed.", detail });
+                _logger.LogError(ex, "Login failed with an unhandled exception.");
+                return StatusCode(500, new { message = "Login failed. Please try again." });
             }
         }
         [AllowAnonymous]
@@ -74,21 +77,51 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                var detail = ex.GetBaseException().Message;
-                return StatusCode(500, new { message = "Login failed.", detail });
+                _logger.LogError(ex, "Vendor login failed with an unhandled exception.");
+                return StatusCode(500, new { message = "Login failed. Please try again." });
             }
         }
         [AllowAnonymous]
         [HttpPost("Refresh")]
         public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequest request)
         {
-            var (response, error, status) = await _authService.RefreshAsync(request.RefreshToken);
-            if (response == null)
+            try
             {
-                return StatusCode(status, new { message = error, session = false });
+                await SystemSettingsSchemaService.EnsureLoginSchemaAsync(_db);
+                var (response, error, status) = await _authService.RefreshAsync(request?.RefreshToken ?? "");
+                if (response == null)
+                {
+                    return StatusCode(status, new { message = error, session = false });
+                }
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Token refresh failed with an unhandled exception.");
+                return StatusCode(500, new { message = "Session refresh failed. Please try again." });
+            }
+        }
+
+        /// <summary>
+        /// Ends the session that owns the given refresh token. Anonymous because it is used on idle
+        /// logout, when the access token may already have expired; possession of the refresh token
+        /// is the proof. Always returns 200 so it cannot be used to probe tokens.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("RevokeSession")]
+        public async Task<IActionResult> RevokeSession([FromBody] RefreshTokenRequest? request)
+        {
+            try
+            {
+                await _authService.RevokeSessionAsync(request?.RefreshToken ?? "");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Revoking a session failed.");
             }
 
-            return Ok(response);
+            return Ok(new { message = "Logged out" });
         }
 
         /// <summary>
@@ -172,7 +205,7 @@ namespace CimmpleAPI.Controllers
             var userId = GetUserId();
             if (userId.HasValue)
             {
-                await _authService.LogoutAsync(userId.Value);
+                await _authService.LogoutAsync(userId.Value, GetSessionId());
             }
 
             return Ok(new { message = "Logged out" });

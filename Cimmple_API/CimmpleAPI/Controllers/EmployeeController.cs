@@ -224,10 +224,12 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetEmployeeById")]
-        public IActionResult GetEmployeeById([FromQuery] int employeeId, [FromQuery] int tenantId)
+        public async Task<IActionResult> GetEmployeeById([FromQuery] int employeeId, [FromQuery] int tenantId)
         {
             try
             {
+                await EmployeeUserDetailSchemaService.EnsureCountryColumnAsync(_context);
+
                 var employee = _context.UserDetails
                     .Where(u => u.User_UniqueID == employeeId && u.TenantID == tenantId)
                     .FirstOrDefault();
@@ -238,7 +240,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 var role = _context.UserRole
-                    .Where(r => r.RoleID == employee.Role)
+                    .Where(r => r.RoleID == employee.Role && (r.TenantId == tenantId || r.TenantId == 0))
                     .FirstOrDefault();
 
                 // Get location mappings
@@ -269,14 +271,14 @@ namespace CimmpleAPI.Controllers
                     city = employee.City ?? "",
                     state = employee.State ?? "",
                     zip = employee.Zip ?? "",
-                    country = "US", // Default to US for now, can be added to UserDetail model later
+                    country = string.IsNullOrWhiteSpace(employee.Country) ? "US" : employee.Country.Trim(),
                     locationId = locationMappings.FirstOrDefault() > 0 ? (int?)locationMappings.FirstOrDefault() : null,
                     locationIds = locationMappings,
                     defaultLocationId = employee.DefaultLocationId,
                     canAccessAllLocations = employee.CanAccessAllLocations,
                     tenantID = employee.TenantID,
-                    dob = employee.DOB ?? "",
-                    ssn = employee.SSN ?? "",
+                    hasSsn = !string.IsNullOrWhiteSpace(employee.SSN),
+                    hasDob = !string.IsNullOrWhiteSpace(employee.DOB),
                     profilePic = employee.ProfilePic ?? "",
                     faceEnrolled = _context.EmployeeFace.Any(f =>
                         f.TenantId == tenantId
@@ -330,13 +332,24 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetProfilePic")]
-        [AllowAnonymous]
         public async Task<IActionResult> GetProfilePic([FromQuery] int userId, [FromQuery] int? tenantId)
         {
             try
             {
-                var user = _context.UserDetails.AsNoTracking().FirstOrDefault(u => u.User_UniqueID == userId);
-                int effTenantId = (tenantId.HasValue && tenantId.Value > 0) ? tenantId.Value : (user?.TenantID ?? 0);
+                var tokenTenantId = GetTenantId();
+                if (tokenTenantId <= 0)
+                {
+                    return Unauthorized(new { error = "Authentication required" });
+                }
+
+                var user = _context.UserDetails.AsNoTracking()
+                    .FirstOrDefault(u => u.User_UniqueID == userId && u.TenantID == tokenTenantId);
+                if (user == null)
+                {
+                    return NotFound("No profile picture found for this user");
+                }
+
+                int effTenantId = tokenTenantId;
 
                 // 1. Try Azure Blob Directory Listing (matching WorkFlowAPI_New)
                 string? cloudConn = _configuration?["AzureConnection:storageConnectionString"]
@@ -391,9 +404,9 @@ namespace CimmpleAPI.Controllers
 
                 return NotFound("No profile picture found for this user");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                return StatusCode(500, $"Failed to fetch profile picture: {ex.Message}");
+                return StatusCode(500, "Failed to fetch profile picture.");
             }
         }
 
@@ -401,6 +414,8 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                await EmployeeUserDetailSchemaService.EnsureCountryColumnAsync(_context);
+
                 if (request == null)
                 {
                     return BadRequest(new { error = "Request cannot be null" });
@@ -503,6 +518,12 @@ namespace CimmpleAPI.Controllers
                 employee.Email = request.Email ?? "";
                 employee.UserName = request.UserName ?? "";
                 employee.Status = request.Status ?? "Active";
+                var accessError = ValidateEmployeeAccessFields(request);
+                if (accessError != null)
+                {
+                    return accessError;
+                }
+
                 employee.Role = request.Role;
                 employee.EmployeeType = request.EmployeeType ?? "";
                 employee.EmployeeCategory = request.EmployeeCategory ?? "";
@@ -519,8 +540,16 @@ namespace CimmpleAPI.Controllers
                 employee.City = request.City ?? "";
                 employee.State = request.State ?? "";
                 employee.Zip = request.Zip ?? "";
-                employee.DOB = request.DOB ?? "";
-                employee.SSN = request.SSN ?? "";
+                employee.Country = string.IsNullOrWhiteSpace(request.Country) ? "US" : request.Country.Trim();
+                if (request.DOB != null)
+                {
+                    employee.DOB = request.DOB;
+                }
+
+                if (request.SSN != null)
+                {
+                    employee.SSN = request.SSN;
+                }
 
                 var loginAccessEnabled = !string.IsNullOrWhiteSpace(request.UserName);
                 var passwordProvided = !string.IsNullOrWhiteSpace(request.Password);
@@ -636,6 +665,11 @@ namespace CimmpleAPI.Controllers
 
                 if (request.DefaultLocationId.HasValue && request.DefaultLocationId.Value > 0)
                 {
+                    if (locationIds.Count > 0 && !locationIds.Contains(request.DefaultLocationId.Value))
+                    {
+                        return BadRequest(new { error = "Starting location must be one of the assigned locations." });
+                    }
+
                     employee.DefaultLocationId = request.DefaultLocationId.Value;
                 }
 
@@ -1176,6 +1210,18 @@ namespace CimmpleAPI.Controllers
                     });
                 }
 
+                var faceRow = _context.EmployeeFace
+                    .FirstOrDefault(f => f.TenantId == tenantId && f.UserUniqueId == employeeId);
+                if (faceRow != null)
+                {
+                    impact.WillBeDeleted.Add(new ImpactedEntity
+                    {
+                        EntityType = "Time Clock face enrolment",
+                        Count = 1,
+                        Description = "Face enrolment and profile photo will be removed"
+                    });
+                }
+
                 // Check for Orders created by this employee (warning only, not blocking)
                 var ordersCreated = _context.CustomerOrder
                     .Where(co => co.UserId == employeeId && co.Tenantid == tenantId)
@@ -1219,7 +1265,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpDelete("DeleteEmployee")]
-        public IActionResult DeleteEmployee([FromQuery] int employeeId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteEmployee([FromQuery] int employeeId, [FromQuery] int tenantId)
         {
             try
             {
@@ -1230,6 +1276,8 @@ namespace CimmpleAPI.Controllers
                 {
                     return NotFound(new { error = "Employee not found" });
                 }
+
+                await _faceRecognition.RemoveEnrollmentAsync(tenantId, employeeId);
 
                 // Delete related entities
                 var workstationMappings = _context.UserWorkstationMapping
@@ -1242,9 +1290,32 @@ namespace CimmpleAPI.Controllers
                     .ToList();
                 _context.UserMapping.RemoveRange(locationMappings);
 
+                if (!string.IsNullOrWhiteSpace(employee.ProfilePic))
+                {
+                    try
+                    {
+                        var fileName = Path.GetFileName(employee.ProfilePic);
+                        var fileInfo = new FileInfor
+                        {
+                            ContainerName = "data",
+                            Dirname = "ProfilePic/" + tenantId + "/" + employeeId,
+                            UploadFileName = fileName,
+                            tenantID = tenantId,
+                            type = "profilepic",
+                            userUniqueno = employeeId
+                        };
+                        var uploadfile = new UploadFile(_context, _configuration);
+                        await uploadfile.DeleteFileOnServer(new List<FileInfor> { fileInfo });
+                    }
+                    catch
+                    {
+                        // Best-effort blob cleanup
+                    }
+                }
+
                 // Delete the employee
                 _context.UserDetails.Remove(employee);
-                _context.SaveChanges();
+                await _context.SaveChangesAsync();
 
                 return Ok(new { result = new { message = "Employee deleted successfully" } });
             }
@@ -1252,6 +1323,56 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
+        }
+
+        private IActionResult? ValidateEmployeeAccessFields(EmployeeMasterReq request)
+        {
+            var tenantId = request.TenantID;
+
+            if (request.Role.HasValue && request.Role.Value > 0)
+            {
+                var roleOk = _context.UserRole.Any(r =>
+                    r.RoleID == request.Role.Value
+                    && (r.TenantId == tenantId || r.TenantId == 0));
+                if (!roleOk)
+                {
+                    return BadRequest(new { error = "The selected role is not valid for this tenant." });
+                }
+            }
+
+            var locationIds = (request.LocationIds != null && request.LocationIds.Count > 0)
+                ? request.LocationIds.Where(id => id > 0).Distinct().ToList()
+                : (request.LocationId.HasValue && request.LocationId.Value > 0
+                    ? new List<int> { request.LocationId.Value }
+                    : new List<int>());
+
+            if (locationIds.Count > 0)
+            {
+                var validLocationIds = _context.Locations
+                    .Where(l => l.TenantId == tenantId && locationIds.Contains(l.LocationId))
+                    .Select(l => l.LocationId)
+                    .ToHashSet();
+                if (locationIds.Any(id => !validLocationIds.Contains(id)))
+                {
+                    return BadRequest(new { error = "One or more selected locations are not valid for this tenant." });
+                }
+            }
+
+            if (!CanAccessAllLocations())
+            {
+                if (request.CanAccessAllLocations == true)
+                {
+                    return StatusCode(403, new { error = "You cannot grant access to all locations." });
+                }
+
+                var allowed = GetAllowedLocationIds().ToHashSet();
+                if (locationIds.Any(id => !allowed.Contains(id)))
+                {
+                    return StatusCode(403, new { error = "You can only assign locations you are allowed to access." });
+                }
+            }
+
+            return null;
         }
 
         private async Task TrySaveProfilePicAsync(UserDetail employee, string originalFileName, byte[] imageBytes)
@@ -1321,8 +1442,8 @@ namespace CimmpleAPI.Controllers
         public int? DefaultLocationId { get; set; }
         public bool? CanAccessAllLocations { get; set; }
         public int TenantID { get; set; }
-        public string DOB { get; set; }
-        public string SSN { get; set; }
+        public string? DOB { get; set; }
+        public string? SSN { get; set; }
         /// <summary>Optional plaintext password when enabling or changing login access. Never returned from GET.</summary>
         public string? Password { get; set; }
         /// <summary>When 1 and a password is set with a valid email, send a welcome email with credentials.</summary>

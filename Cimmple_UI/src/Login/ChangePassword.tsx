@@ -29,6 +29,10 @@ export const ChangePassword: React.FC = () => {
       toast.error(policyError);
       return;
     }
+    if (newPassword === currentPassword) {
+      toast.error("New password must be different from your current password");
+      return;
+    }
     if (newPassword !== confirmPassword) {
       toast.error("New passwords do not match");
       return;
@@ -36,6 +40,15 @@ export const ChangePassword: React.FC = () => {
     setIsLoading(true);
     try {
       await AuthService.changePassword(currentPassword, newPassword);
+      // A token issued while the change was pending only allows changing the password.
+      const refreshed = await AuthService.refresh();
+      if (!refreshed) {
+        toast.success("Password updated. Please sign in again.");
+        AuthService.clearSession("erp");
+        User.isAuthenticated = false;
+        history.push("/login");
+        return;
+      }
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       storage.mustChangePassword = false;
       localStorage.setItem("storage", JSON.stringify(storage));

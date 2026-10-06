@@ -5,9 +5,11 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using Microsoft.EntityFrameworkCore.Storage;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace CimmpleAPI.Controllers
 {
@@ -16,10 +18,188 @@ namespace CimmpleAPI.Controllers
     public class CustomerController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly ILogger<CustomerController> _logger;
+        private static bool _sequenceTableEnsured;
 
-        public CustomerController(CimmpleDbContext context)
+        public CustomerController(CimmpleDbContext context, ILogger<CustomerController> logger)
         {
             _context = context;
+            _logger = logger;
+        }
+
+        private IActionResult ServerError(Exception ex, string action)
+        {
+            _logger.LogError(ex, "Customer {Action} failed", action);
+            return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
+        }
+
+        // Same rules as Common/Utils/validation.ts so the API, import and slideout agree.
+        private static readonly Regex EmailPattern = new(@"^[^\s@]+@[^\s@]+\.[^\s@]+$");
+        private static readonly Regex ZipPattern = new(@"^[0-9]{5}(-[0-9]{4})?$|^[A-Z0-9]{3,10}$", RegexOptions.IgnoreCase);
+
+        private static bool IsValidEmail(string? v) => string.IsNullOrWhiteSpace(v) || EmailPattern.IsMatch(v.Trim());
+        private static bool IsValidZip(string? v) => string.IsNullOrWhiteSpace(v) || ZipPattern.IsMatch(v.Trim());
+        private static bool IsValidPhone(string? v)
+        {
+            if (string.IsNullOrWhiteSpace(v)) return true;
+            var digits = v.Count(char.IsDigit);
+            return digits >= 10 && digits <= 15;
+        }
+
+        private static string? FormatError(string label, string? email, string? phone, string? zip, string? shippingZip = null)
+        {
+            if (!IsValidEmail(email)) return $"{label}: please enter a valid email address";
+            if (!IsValidPhone(phone)) return $"{label}: please enter a valid phone number (10-15 digits)";
+            if (!IsValidZip(zip)) return $"{label}: please enter a valid zip/postal code";
+            if (!IsValidZip(shippingZip)) return $"{label}: please enter a valid shipping zip/postal code";
+            return null;
+        }
+
+        // Serialises customer creates and imports per tenant so the name check and code allocation can't race.
+        private void LockCustomerMaster(int tenantId)
+        {
+            _context.Database.ExecuteSqlRaw(@"
+DECLARE @r int;
+EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
+IF @r < 0 THROW 51000, 'Customer master is busy, please try again.', 1;", $"customer-master-{tenantId}");
+        }
+
+        private void EnsureSequenceTable()
+        {
+            if (_sequenceTableEnsured) return;
+            _context.Database.ExecuteSqlRaw(@"
+IF OBJECT_ID('CimmpleFlow.MasterCodeSequence') IS NULL
+CREATE TABLE CimmpleFlow.MasterCodeSequence (
+    TenantId int NOT NULL,
+    Prefix nvarchar(10) NOT NULL,
+    LastValue int NOT NULL,
+    CONSTRAINT PK_MasterCodeSequence PRIMARY KEY (TenantId, Prefix));");
+            _sequenceTableEnsured = true;
+        }
+
+        /// <summary>
+        /// Next customer code that is above both the highest existing code and every code ever issued,
+        /// so codes of deleted customers are not reissued. Must run inside the customer-master lock.
+        /// </summary>
+        private string NextCustomerCode(int tenantId, IEnumerable<string?> takenCodes)
+        {
+            var taken = new HashSet<string>(takenCodes.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c!.Trim()), StringComparer.OrdinalIgnoreCase);
+            var conn = _context.Database.GetDbConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+            cmd.CommandText = "SELECT LastValue FROM CimmpleFlow.MasterCodeSequence WHERE TenantId = @t AND Prefix = 'C'";
+            var p = cmd.CreateParameter(); p.ParameterName = "@t"; p.Value = tenantId; cmd.Parameters.Add(p);
+            var last = cmd.ExecuteScalar() is int v ? v : 0;
+
+            var seq = Math.Max(MasterCodeGenerator.GetNextSequence(taken, 'C'), last + 1);
+            while (taken.Contains($"C{seq}")) seq++;
+
+            RecordIssuedCode(tenantId, $"C{seq}");
+            return $"C{seq}";
+        }
+
+        private void RecordIssuedCode(int tenantId, string? code)
+        {
+            var c = code?.Trim() ?? "";
+            if (c.Length < 2 || char.ToUpperInvariant(c[0]) != 'C' || !int.TryParse(c.Substring(1), out var n) || n <= 0) return;
+            _context.Database.ExecuteSqlRaw(@"
+UPDATE CimmpleFlow.MasterCodeSequence SET LastValue = CASE WHEN LastValue < {1} THEN {1} ELSE LastValue END WHERE TenantId = {0} AND Prefix = 'C';
+IF @@ROWCOUNT = 0 INSERT INTO CimmpleFlow.MasterCodeSequence (TenantId, Prefix, LastValue) VALUES ({0}, 'C', {1});", tenantId, n);
+        }
+
+        /// <summary>
+        /// Documents that stop a customer from being deleted, leaf-first so that deleting them in the
+        /// listed order satisfies each downstream delete rule (shipments and invoices before orders,
+        /// job orders before orders, orders before quotations).
+        /// </summary>
+        private List<BlockingDependency> GetDeleteBlockers(int customerId, int tenantId)
+        {
+            var blockers = new List<BlockingDependency>();
+            var orders = _context.CustomerOrder.AsNoTracking()
+                .Where(co => co.CustomerID == customerId && co.Tenantid == tenantId)
+                .Select(co => new { co.OrderID, co.PONumber })
+                .ToList();
+            var orderIds = orders.Select(o => o.OrderID).ToList();
+
+            var shipments = _context.Shipping.AsNoTracking()
+                .Where(s => s.TenantId == tenantId && orderIds.Contains(s.OrderId))
+                .Select(s => new { s.Id, s.ShipmentNo })
+                .ToList();
+            if (shipments.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Shipment",
+                    Description = $"Customer has {shipments.Count} shipment(s) associated",
+                    Items = shipments.Select(s => new DependencyItem { Id = s.Id, Name = s.ShipmentNo ?? $"Shipment #{s.Id}", DeleteEndpoint = $"/Shipping/DeleteShipment?shipmentId={s.Id}&tenantId={tenantId}" }).ToList()
+                });
+            }
+
+            // Voided invoices are already reversed and don't block order deletion, so they are not listed.
+            var invoices = _context.InvoiceMaster.AsNoTracking()
+                .Where(im => im.TenantId == tenantId && !im.IsVoided
+                    && _context.InvoiceDetail.Any(d => d.InvoiceId == im.Id && orderIds.Contains(d.OrderId)))
+                .Select(im => new { im.Id, im.InvoiceNo, im.PaidAmount, im.PaymentDate })
+                .ToList();
+            if (invoices.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Invoice",
+                    Description = $"Customer has {invoices.Count} invoice(s) associated",
+                    Items = invoices.Select(im =>
+                    {
+                        var label = im.InvoiceNo > 0 ? $"Invoice #{im.InvoiceNo}" : $"Invoice #{im.Id}";
+                        var paid = im.PaidAmount > 0.009m || im.PaymentDate.HasValue;
+                        return new DependencyItem
+                        {
+                            Id = im.Id,
+                            Name = paid ? $"{label} (paid - reverse the payment first)" : label,
+                            DeleteEndpoint = paid ? "" : $"/Invoice/DeleteInvoice?invoiceId={im.Id}&tenantId={tenantId}"
+                        };
+                    }).ToList()
+                });
+            }
+
+            var jobOrders = _context.JobOrderMaster.AsNoTracking()
+                .Where(j => j.Tenantid == tenantId && (orderIds.Contains(j.CustomerOrderID) || j.CustomerID == customerId))
+                .Select(j => new { j.JobOrderID, j.JobNumber, j.JobOrderNumber })
+                .ToList();
+            if (jobOrders.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "JobOrder",
+                    Description = $"Customer has {jobOrders.Count} job order(s) associated",
+                    Items = jobOrders.Select(j => new DependencyItem { Id = j.JobOrderID, Name = string.IsNullOrWhiteSpace(j.JobNumber) ? $"JO#{j.JobOrderNumber}" : j.JobNumber, DeleteEndpoint = $"/JobOrder/DeleteJobOrder?jobOrderId={j.JobOrderID}&tenantId={tenantId}" }).ToList()
+                });
+            }
+
+            if (orders.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "CustomerOrder",
+                    Description = $"Customer has {orders.Count} order(s) associated",
+                    Items = orders.Select(co => new DependencyItem { Id = co.OrderID, Name = $"CO#{co.PONumber}", DeleteEndpoint = $"/Order/DeleteOrder?orderId={co.OrderID}&tenantId={tenantId}" }).ToList()
+                });
+            }
+
+            var quotations = _context.QuotationOrder.AsNoTracking()
+                .Where(q => q.CustomerID == customerId && q.Tenantid == tenantId)
+                .Select(q => new { q.OrderID, q.PONumber })
+                .ToList();
+            if (quotations.Any())
+            {
+                blockers.Add(new BlockingDependency
+                {
+                    EntityType = "Quotation",
+                    Description = $"Customer has {quotations.Count} quotation(s) associated",
+                    Items = quotations.Select(q => new DependencyItem { Id = q.OrderID, Name = $"Q#{q.PONumber}", DeleteEndpoint = $"/Quotation/DeleteQuotation?quotationId={q.OrderID}&tenantId={tenantId}" }).ToList()
+                });
+            }
+
+            return blockers;
         }
 
         [HttpGet("GetCustomerlist")]
@@ -92,7 +272,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "list");
             }
         }
 
@@ -153,7 +333,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message });
+                return ServerError(ex, "get");
             }
         }
 
@@ -176,6 +356,31 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new { error = "Company name is required" });
                 }
+
+                var formatError = FormatError("Company", request.email, request.phone_number, request.zip, request.shippingZipCode);
+                if (formatError == null && request.CustomerContact != null)
+                {
+                    foreach (var c in request.CustomerContact)
+                    {
+                        var label = string.IsNullOrWhiteSpace(c.firstname) ? "Contact" : $"Contact '{c.firstname.Trim()}'";
+                        formatError = FormatError(label, c.email, c.phoneno, null);
+                        if (formatError != null) break;
+                    }
+                }
+                if (formatError != null)
+                {
+                    return BadRequest(new { error = formatError });
+                }
+
+                var normalizedStatus = ParseCustomerStatus(request.status);
+                if (!string.IsNullOrWhiteSpace(request.status) && normalizedStatus == null)
+                {
+                    return BadRequest(new { error = "Status must be Active or Inactive" });
+                }
+
+                EnsureSequenceTable();
+                using var tx = _context.Database.BeginTransaction();
+                LockCustomerMaster(request.TenantID);
 
                 var companyNameNorm = request.company_name.Trim();
                 var nameDuplicate = _context.CustomerMaster
@@ -201,7 +406,7 @@ namespace CimmpleAPI.Controllers
                         .Where(c => c.Tenantid == request.TenantID)
                         .Select(c => c.customercode)
                         .ToList();
-                    customer.customercode = MasterCodeGenerator.NextCode(existingCodes, 'C');
+                    customer.customercode = NextCustomerCode(request.TenantID, existingCodes);
                 }
                 else
                 {
@@ -225,7 +430,7 @@ namespace CimmpleAPI.Controllers
                 customer.shippingCountry = request.shippingCountry ?? "US";
                 customer.shippingZipCode = request.shippingZipCode ?? "";
                 customer.shippingApartment = request.shippingApartment ?? "";
-                customer.status = request.status ?? "Active";
+                customer.status = normalizedStatus ?? "Active";
                 customer.Tenantid = request.TenantID;
                 
                 // Set required fields that may not be in the request
@@ -316,6 +521,7 @@ namespace CimmpleAPI.Controllers
                     _context.CustomerBillingAddress.Add(billingAddress);
                 }
                 _context.SaveChanges();
+                tx.Commit();
 
                 // Reload contacts to include in response
                 var contacts = _context.CustomerContact
@@ -362,12 +568,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                var errorMessage = ex.Message;
-                if (ex.InnerException != null)
-                {
-                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
-                }
-                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+                return ServerError(ex, "save");
             }
         }
 
@@ -386,6 +587,10 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Tenantid is required" });
                 }
 
+                EnsureSequenceTable();
+                using var tx = _context.Database.BeginTransaction();
+                LockCustomerMaster(request.Tenantid);
+
                 var existing = _context.CustomerMaster
                     .Where(c => c.Tenantid == request.Tenantid)
                     .ToList();
@@ -403,13 +608,12 @@ namespace CimmpleAPI.Controllers
                         .Where(cb => existingIds.Contains(cb.customer_id))
                         .ToList();
 
-                int nextCodeSeq = MasterCodeGenerator.GetNextSequence(existing.Select(c => c.customercode), 'C');
+                var fileCodes = request.Rows.Select(r => r.CustomerCode?.Trim()).Where(c => !string.IsNullOrEmpty(c)).ToList();
                 var result = new CustomerImportResult();
                 var rowResults = new List<CustomerImportRowResult>();
                 var batchNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var batchCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                using var tx = _context.Database.BeginTransaction();
                 try
                 {
                     for (int i = 0; i < request.Rows.Count; i++)
@@ -425,6 +629,22 @@ namespace CimmpleAPI.Controllers
                         {
                             rowResult.Status = "Error";
                             rowResult.Message = "Company Name is required";
+                            result.Failed++;
+                            rowResults.Add(rowResult);
+                            continue;
+                        }
+
+                        var rowFormatError =
+                            FormatError("Company", row.Email, row.Phone, row.Zip, row.ShippingZip) ??
+                            FormatError("Contact", row.ContactEmail, row.ContactPhone, null);
+                        if (rowFormatError == null && !string.IsNullOrWhiteSpace(row.Status) && ParseCustomerStatus(row.Status) == null)
+                        {
+                            rowFormatError = $"Status '{row.Status.Trim()}' is not valid (use Active or Inactive)";
+                        }
+                        if (rowFormatError != null)
+                        {
+                            rowResult.Status = "Error";
+                            rowResult.Message = rowFormatError;
                             result.Failed++;
                             rowResults.Add(rowResult);
                             continue;
@@ -508,7 +728,11 @@ namespace CimmpleAPI.Controllers
                             }
 
                             customer = match;
-                            if (!string.IsNullOrEmpty(customerCode)) customer.customercode = customerCode;
+                            if (!string.IsNullOrEmpty(customerCode))
+                            {
+                                customer.customercode = customerCode;
+                                RecordIssuedCode(request.Tenantid, customerCode);
+                            }
                             customer.company_name = companyName;
                             if (row.CompanyAlias != null) customer.companyAlias = row.CompanyAlias.Trim();
                             if (row.Email != null) customer.email = row.Email.Trim();
@@ -535,10 +759,18 @@ namespace CimmpleAPI.Controllers
                         }
                         else
                         {
+                            if (string.IsNullOrEmpty(customerCode))
+                            {
+                                customerCode = NextCustomerCode(request.Tenantid, existing.Select(c => c.customercode).Concat(fileCodes));
+                            }
+                            else
+                            {
+                                RecordIssuedCode(request.Tenantid, customerCode);
+                            }
                             customer = new CustomerMaster
                             {
                                 Tenantid = request.Tenantid,
-                                customercode = string.IsNullOrEmpty(customerCode) ? $"C{nextCodeSeq++}" : customerCode,
+                                customercode = customerCode,
                                 company_name = companyName,
                                 companyAlias = row.CompanyAlias?.Trim() ?? "",
                                 email = row.Email?.Trim() ?? "",
@@ -609,7 +841,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "import");
             }
         }
 
@@ -753,124 +985,15 @@ namespace CimmpleAPI.Controllers
                     Warnings = new List<string>()
                 };
 
-                // Check for Customer Orders
-                var customerOrders = _context.CustomerOrder
-                    .Where(co => co.CustomerID == customerId && co.Tenantid == tenantId)
-                    .ToList();
-
-                if (customerOrders.Any())
+                impact.BlockingDependencies = GetDeleteBlockers(customerId, tenantId);
+                foreach (var dep in impact.BlockingDependencies)
                 {
-                    var orderDependency = new BlockingDependency
-                    {
-                        EntityType = "CustomerOrder",
-                        Description = $"Customer has {customerOrders.Count} order(s) associated",
-                        Items = customerOrders.Select(co => new DependencyItem
-                        {
-                            Id = co.OrderID,
-                            Name = $"CO#{co.PONumber}",
-                            DeleteEndpoint = $"/Order/DeleteOrder?orderId={co.OrderID}&tenantId={tenantId}"
-                        }).ToList()
-                    };
-
-                    impact.BlockingDependencies.Add(orderDependency);
-                    impact.BlockingReasons.Add(
-                        $"Customer has {customerOrders.Count} order(s) associated: {string.Join(", ", customerOrders.Select(co => $"CO#{co.PONumber}"))}. Delete orders first."
-                    );
-                    impact.CanDelete = false;
+                    var hint = dep.Items.Any(i => string.IsNullOrEmpty(i.DeleteEndpoint))
+                        ? "Resolve these in their own module first."
+                        : "Delete them first.";
+                    impact.BlockingReasons.Add($"{dep.Description}: {string.Join(", ", dep.Items.Select(i => i.Name))}. {hint}");
                 }
-
-                // Check for Customer Quotations
-                var quotations = _context.QuotationOrder
-                    .Where(q => q.CustomerID == customerId && q.Tenantid == tenantId)
-                    .ToList();
-
-                if (quotations.Any())
-                {
-                    var quotationDependency = new BlockingDependency
-                    {
-                        EntityType = "Quotation",
-                        Description = $"Customer has {quotations.Count} quotation(s) associated",
-                        Items = quotations.Select(q => new DependencyItem
-                        {
-                            Id = q.OrderID,
-                            Name = $"Q#{q.PONumber}",
-                            DeleteEndpoint = $"/Quotation/DeleteQuotation?quotationId={q.OrderID}&tenantId={tenantId}"
-                        }).ToList()
-                    };
-
-                    impact.BlockingDependencies.Add(quotationDependency);
-                    impact.BlockingReasons.Add(
-                        $"Customer has {quotations.Count} quotation(s) associated: {string.Join(", ", quotations.Select(q => $"Q#{q.PONumber}"))}. Delete quotations first."
-                    );
-                    impact.CanDelete = false;
-                }
-
-                // Check for Invoices (through InvoiceDetail -> CustomerOrder)
-                var invoices = _context.InvoiceMaster
-                    .Join(_context.InvoiceDetail,
-                        im => im.Id,
-                        id => id.InvoiceId,
-                        (im, id) => new { Invoice = im, Detail = id })
-                    .Join(_context.CustomerOrder,
-                        x => x.Detail.OrderId,
-                        co => co.OrderID,
-                        (x, co) => new { x.Invoice, Order = co })
-                    .Where(x => x.Order.CustomerID == customerId && x.Invoice.TenantId == tenantId)
-                    .Select(x => x.Invoice)
-                    .Distinct()
-                    .ToList();
-
-                if (invoices.Any())
-                {
-                    var invoiceDependency = new BlockingDependency
-                    {
-                        EntityType = "Invoice",
-                        Description = $"Customer has {invoices.Count} invoice(s) associated",
-                    Items = invoices.Select(im => new DependencyItem
-                    {
-                        Id = im.Id,
-                        Name = im.InvoiceNo > 0 ? $"Invoice #{im.InvoiceNo}" : $"Invoice #{im.Id}",
-                        DeleteEndpoint = $"/Invoice/DeleteInvoice/{im.Id}"
-                    }).ToList()
-                    };
-
-                    impact.BlockingDependencies.Add(invoiceDependency);
-                    impact.BlockingReasons.Add(
-                        $"Customer has {invoices.Count} invoice(s) associated: {string.Join(", ", invoices.Select(im => im.InvoiceNo > 0 ? $"Invoice #{im.InvoiceNo}" : $"Invoice #{im.Id}"))}. Delete invoices first."
-                    );
-                    impact.CanDelete = false;
-                }
-
-                // Check for Shipments (through Shipping -> CustomerOrder)
-                var shipments = _context.Shipping
-                    .Join(_context.CustomerOrder,
-                        s => s.OrderId,
-                        co => co.OrderID,
-                        (s, co) => new { Shipment = s, Order = co })
-                    .Where(x => x.Order.CustomerID == customerId && x.Shipment.TenantId == tenantId)
-                    .Select(x => x.Shipment)
-                    .ToList();
-
-                if (shipments.Any())
-                {
-                    var shipmentDependency = new BlockingDependency
-                    {
-                        EntityType = "Shipment",
-                        Description = $"Customer has {shipments.Count} shipment(s) associated",
-                        Items = shipments.Select(s => new DependencyItem
-                        {
-                            Id = s.Id,
-                            Name = s.ShipmentNo ?? $"Shipment #{s.Id}",
-                            DeleteEndpoint = $"/Shipping/DeleteShipment/{s.Id}"
-                        }).ToList()
-                    };
-
-                    impact.BlockingDependencies.Add(shipmentDependency);
-                    impact.BlockingReasons.Add(
-                        $"Customer has {shipments.Count} shipment(s) associated: {string.Join(", ", shipments.Select(s => s.ShipmentNo ?? $"Shipment #{s.Id}"))}. Delete shipments first."
-                    );
-                    impact.CanDelete = false;
-                }
+                impact.CanDelete = !impact.BlockingDependencies.Any();
 
                 // If can delete, list what will be deleted
                 if (impact.CanDelete)
@@ -918,7 +1041,7 @@ namespace CimmpleAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "deletion impact");
             }
         }
 
@@ -935,7 +1058,20 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Customer not found" });
                 }
 
-                // Delete related entities
+                using var tx = _context.Database.BeginTransaction(System.Data.IsolationLevel.Serializable);
+
+                var blockers = GetDeleteBlockers(customerId, tenantId);
+                if (blockers.Any())
+                {
+                    tx.Rollback();
+                    return Conflict(new
+                    {
+                        error = "This customer is still used by other documents and cannot be deleted: "
+                            + string.Join("; ", blockers.Select(b => b.Description)) + ".",
+                        blockingDependencies = blockers
+                    });
+                }
+
                 var contacts = _context.CustomerContact
                     .Where(cc => cc.customer_id == customerId)
                     .ToList();
@@ -951,15 +1087,15 @@ namespace CimmpleAPI.Controllers
                     .ToList();
                 _context.CustomerShippingAddressNew.RemoveRange(shippingAddresses);
 
-                // Delete the customer
                 _context.CustomerMaster.Remove(customer);
                 _context.SaveChanges();
+                tx.Commit();
 
                 return Ok(new { result = new { message = "Customer deleted successfully" } });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+                return ServerError(ex, "delete");
             }
         }
 

@@ -111,6 +111,33 @@ namespace CimmpleAPI.Services
             return (true, "Face enrolled");
         }
 
+        public async Task RemoveEnrollmentAsync(int tenantId, int userUniqueId)
+        {
+            var face = await _db.EmployeeFace
+                .FirstOrDefaultAsync(f => f.TenantId == tenantId && f.UserUniqueId == userUniqueId);
+            if (face == null)
+            {
+                return;
+            }
+
+            if (IsConfigured
+                && !string.IsNullOrEmpty(face.AzurePersonId)
+                && !string.IsNullOrEmpty(face.AzurePersistedFaceId))
+            {
+                try
+                {
+                    await DeletePersistedFaceAsync(tenantId, face.AzurePersonId!, face.AzurePersistedFaceId!);
+                }
+                catch
+                {
+                    // Best-effort Azure cleanup
+                }
+            }
+
+            _db.EmployeeFace.Remove(face);
+            await _db.SaveChangesAsync();
+        }
+
         public async Task<(bool ok, string message, string faceId)> DetectAsync(byte[] image)
         {
             if (!IsConfigured)

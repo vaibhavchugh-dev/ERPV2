@@ -981,8 +981,35 @@ namespace CimmpleAPI.Controllers
                 if (tenantId <= 0)
                     tenantId = GetTenantId();
 
-                var jobsRaw = await _context.JobOrderMaster
-                    .Where(j => j.Tenantid == tenantId)
+                if (!TryResolveListLocationFilter(null, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
+                IQueryable<JobOrderMaster> jobsQuery = _context.JobOrderMaster
+                    .Where(j => j.Tenantid == tenantId);
+
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    jobsQuery = from j in jobsQuery
+                                join o in _context.CustomerOrder on j.CustomerOrderID equals o.OrderID
+                                where o.Tenantid == tenantId && o.locationId == loc
+                                select j;
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    if (allowed.Count == 0)
+                        jobsQuery = jobsQuery.Where(j => false);
+                    else
+                    {
+                        jobsQuery = from j in jobsQuery
+                                    join o in _context.CustomerOrder on j.CustomerOrderID equals o.OrderID
+                                    where o.Tenantid == tenantId && allowed.Contains(o.locationId)
+                                    select j;
+                    }
+                }
+
+                var jobsRaw = await jobsQuery
                     .OrderByDescending(j => j.JobOrderID)
                     .Take(80)
                     .Select(j => new
@@ -1100,22 +1127,40 @@ namespace CimmpleAPI.Controllers
                     };
                 }).ToList();
 
-                var receivingRows = await (
-                    from r in _context.VendorReceiving
+                var receivingBase = from r in _context.VendorReceiving
                     join d in _context.VendorOrderDetails on r.VendorOrderDetailID equals d.ID
                     join o in _context.VendorOrders on d.OrderID equals o.OrderID
                     where r.Tenantid == tenantId
-                    orderby r.ReceivedDate descending
+                    select new { r, d, o };
+
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    receivingBase = receivingBase.Where(x =>
+                        x.o.LocationId.HasValue && x.o.LocationId.Value == loc);
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    receivingBase = allowed.Count == 0
+                        ? receivingBase.Where(x => false)
+                        : receivingBase.Where(x =>
+                            x.o.LocationId.HasValue && allowed.Contains(x.o.LocationId.Value));
+                }
+
+                var receivingRows = await (
+                    from x in receivingBase
+                    orderby x.r.ReceivedDate descending
                     select new
                     {
-                        id = r.ID,
-                        poNumber = o.PONumber,
-                        partNo = d.PartNo,
-                        partName = d.PartName,
-                        productId = d.ProductId,
-                        rawMaterialId = d.RawMaterialId,
-                        receivedDate = r.ReceivedDate,
-                        receivedQty = r.ReceivedQty
+                        id = x.r.ID,
+                        poNumber = x.o.PONumber,
+                        partNo = x.d.PartNo,
+                        partName = x.d.PartName,
+                        productId = x.d.ProductId,
+                        rawMaterialId = x.d.RawMaterialId,
+                        receivedDate = x.r.ReceivedDate,
+                        receivedQty = x.r.ReceivedQty
                     }
                 ).Take(50).ToListAsync();
 
@@ -1155,8 +1200,27 @@ namespace CimmpleAPI.Controllers
                     };
                 }).ToList();
 
-                var shipmentRows = await _context.Shipping
-                    .Where(s => s.TenantId == tenantId)
+                var shipmentQuery = _context.Shipping.Where(s => s.TenantId == tenantId);
+                if (filterLocationId.HasValue)
+                {
+                    var loc = filterLocationId.Value;
+                    shipmentQuery = from s in shipmentQuery
+                                    join o in _context.CustomerOrder on s.OrderId equals o.OrderID
+                                    where o.Tenantid == tenantId && o.locationId == loc
+                                    select s;
+                }
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    shipmentQuery = allowed.Count == 0
+                        ? shipmentQuery.Where(s => false)
+                        : from s in shipmentQuery
+                          join o in _context.CustomerOrder on s.OrderId equals o.OrderID
+                          where o.Tenantid == tenantId && allowed.Contains(o.locationId)
+                          select s;
+                }
+
+                var shipmentRows = await shipmentQuery
                     .OrderByDescending(s => s.ShipmentDate)
                     .Take(50)
                     .Select(s => new { s.Id, s.ShipmentNo, s.ShipmentDate })
@@ -1393,6 +1457,11 @@ namespace CimmpleAPI.Controllers
 
             if (!isReceive && referenceType.Equals("CustomerShipment", StringComparison.OrdinalIgnoreCase))
             {
+                var shipmentExists = await _context.Shipping.AsNoTracking()
+                    .AnyAsync(s => s.Id == referenceId.Value && s.TenantId == tenantId);
+                if (!shipmentExists)
+                    return (false, "Shipment not found or has no lines.");
+
                 var shipmentLines = await (
                     from sd in _context.ShippingDetails.AsNoTracking()
                     where sd.ShipmentId == referenceId.Value

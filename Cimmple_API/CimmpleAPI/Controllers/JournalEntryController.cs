@@ -227,7 +227,9 @@ namespace CimmpleAPI.Controllers
                     totalCredit += c;
                 }
 
-                if (Math.Abs(totalDebit - totalCredit) > 0.01m)
+                totalDebit = Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero);
+                totalCredit = Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero);
+                if (totalDebit != totalCredit)
                     return BadRequest(new { error = $"Debits ({totalDebit:N2}) must equal credits ({totalCredit:N2})." });
 
                 var accountIds = request.Lines.Select(l => l.AccountId).Distinct().ToList();
