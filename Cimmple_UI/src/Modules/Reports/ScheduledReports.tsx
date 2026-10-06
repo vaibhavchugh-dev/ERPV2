@@ -76,7 +76,7 @@ const ScheduledReports: React.FC = () => {
     setBusyId(item.id);
     try {
       await ReportScheduleService.RunNow(item.id);
-      toast.success("Report generated and emailed");
+      toast.success("Report generated and queued for email delivery");
       await load();
     } catch (error: any) {
       toast.error(
@@ -203,7 +203,9 @@ const ScheduledReports: React.FC = () => {
                         >
                           {item.lastRunStatus === "Queued"
                             ? "Queued (sending)"
-                            : item.lastRunStatus}
+                            : item.lastRunStatus === "Sent"
+                              ? "Delivered"
+                              : item.lastRunStatus}
                           {item.lastRunError ? `: ${item.lastRunError}` : ""}
                         </div>
                       )}

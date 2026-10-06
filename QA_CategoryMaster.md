@@ -1,8 +1,8 @@
 ﻿# QA — Category Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Category Master | 2.10 | BUG-CAT | Yes | 4 | 1 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Category Master | 2.10 | BUG-CAT | Yes | Yes | 4 | 1 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -192,3 +192,4 @@ Severity scale:
 | --- | --- | --- |
 | Client-supplied `tenantid`/`Tenantid` trusted without comparing to the token tenant | `GET Category/GetCategoryTypes?tenantid`, `POST EnsureDefaultCategoryTypes` (body `Tenantid`), `POST SaveCategoryType` (body), `DELETE DeleteCategoryType?tenantId`, `GET GetCategoryValues?tenantid`, `POST SaveCategoryValue` (body), `DELETE DeleteCategoryValue?tenantId` | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement (any authenticated user can create, rename or delete types and values) | All `CategoryController` endpoints | `QA_RolesPermissions.md` |
+

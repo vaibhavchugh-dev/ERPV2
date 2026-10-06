@@ -1,4 +1,4 @@
-﻿# QA — Inventory
+﻿# QA — Inventory -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |

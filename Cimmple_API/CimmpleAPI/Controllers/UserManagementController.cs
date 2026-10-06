@@ -482,6 +482,7 @@ namespace CimmpleAPI.Controllers
                         displayName = p.DisplayPermissionName,
                         levelInfo = p.LevelInfo,
                         orderNo = p.OrderNo,
+                        url = p.Url,
                         moduleName = p.ReportGroup ?? "General"
                     })
                     .ToListAsync();
@@ -562,7 +563,7 @@ namespace CimmpleAPI.Controllers
                     Console.WriteLine($"[SeedPermissions] Cleared {rolePermissions.Count} assignments for tenant {effectiveTenantId}");
                 }
 
-                var permissionsToSeed = BuildPermissionsToSeed();
+                var permissionsToSeed = ErpPermissionSeedService.BuildPermissionCatalog().ToList();
 
                 if (existingCount > 0)
                 {
@@ -579,7 +580,11 @@ namespace CimmpleAPI.Controllers
                         await _context.PermissionMaster.AddRangeAsync(missingPermissions);
                         await _context.SaveChangesAsync();
                         Console.WriteLine($"[SeedPermissions] Added {missingPermissions.Count} missing permissions");
+                        var assigned = await ErpPermissionSeedService.AssignNewPermissionsToRolesAsync(_context, missingPermissions);
+                        Console.WriteLine($"[SeedPermissions] Added {assigned} role assignments for new permissions");
                     }
+
+                    await ErpPermissionSeedService.EnsureScheduledReportEmailsRoleMirroringAsync(_context);
 
                     if (clearExisting)
                     {
@@ -671,7 +676,7 @@ namespace CimmpleAPI.Controllers
 
             foreach (var role in roles)
             {
-                if (IsAdminRoleName(role.RoleName, role.RoleTag))
+                if (ErpPermissionSeedService.IsAdminRoleName(role.RoleName, role.RoleTag))
                 {
                     adminRoles++;
                     foreach (var perm in allPermissions)
@@ -719,17 +724,6 @@ namespace CimmpleAPI.Controllers
 
         private static bool IsInactiveAccountStatus(string? status) =>
             string.Equals(status, "Inactive", StringComparison.OrdinalIgnoreCase);
-
-        private static bool IsAdminRoleName(string? roleName, string? roleTag)
-        {
-            static bool Match(string? value) =>
-                !string.IsNullOrEmpty(value)
-                && (value.Contains("admin", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("ADMIN", StringComparison.OrdinalIgnoreCase));
-
-            return Match(roleName);
-        }
 
         // POST: api/UserManagement/AssignPermissionsToRole
         [HttpPost("AssignPermissionsToRole")]
@@ -909,55 +903,6 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { message = "Error deleting role", error = ex.Message });
             }
-        }
-
-        private static List<PermissionMaster> BuildPermissionsToSeed()
-        {
-            return new List<PermissionMaster>
-            {
-                new PermissionMaster { PermissionName = "Dashboard", DisplayPermissionName = "Dashboard", LevelInfo = 1, OrderNo = 1, Url = "/home", ReportGroup = "Dashboard", ReportDescription = "Access main dashboard" },
-                new PermissionMaster { PermissionName = "Customer Quotations", DisplayPermissionName = "Customer Quotations", LevelInfo = 1, OrderNo = 10, Url = "/quotations/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer quotations" },
-                new PermissionMaster { PermissionName = "Customer Orders", DisplayPermissionName = "Customer Orders", LevelInfo = 1, OrderNo = 11, Url = "/orders/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer orders" },
-                new PermissionMaster { PermissionName = "Customer Shipments", DisplayPermissionName = "Customer Shipments", LevelInfo = 1, OrderNo = 12, Url = "/orders/customer-shipments", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer shipments" },
-                new PermissionMaster { PermissionName = "Customer Invoices", DisplayPermissionName = "Customer Invoices", LevelInfo = 1, OrderNo = 13, Url = "/orders/customer-invoices", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer invoices" },
-                new PermissionMaster { PermissionName = "Job Orders", DisplayPermissionName = "Job Orders", LevelInfo = 1, OrderNo = 14, Url = "/job-orders", ReportGroup = "Sales & Orders", ReportDescription = "View and manage job orders" },
-                new PermissionMaster { PermissionName = "Vendor Quotations", DisplayPermissionName = "Vendor Quotations", LevelInfo = 1, OrderNo = 20, Url = "/quotations/vendor", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor quotations" },
-                new PermissionMaster { PermissionName = "Vendor Orders", DisplayPermissionName = "Vendor Orders", LevelInfo = 1, OrderNo = 21, Url = "/purchasing/vendor-orders", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor orders" },
-                new PermissionMaster { PermissionName = "Vendor Receiving", DisplayPermissionName = "Vendor Receiving", LevelInfo = 1, OrderNo = 22, Url = "/purchasing/vendor-receiving", ReportGroup = "Purchasing", ReportDescription = "Manage vendor receiving" },
-                new PermissionMaster { PermissionName = "Vendor Invoices", DisplayPermissionName = "Vendor Invoices", LevelInfo = 1, OrderNo = 23, Url = "/purchasing/vendor-invoices", ReportGroup = "Purchasing", ReportDescription = "View and manage vendor invoices" },
-                new PermissionMaster { PermissionName = "Inventory", DisplayPermissionName = "Inventory", LevelInfo = 1, OrderNo = 24, Url = "/inventory", ReportGroup = "Purchasing", ReportDescription = "View and manage inventory" },
-                new PermissionMaster { PermissionName = "Non Conformance Reports", DisplayPermissionName = "Non Conformance Reports", LevelInfo = 1, OrderNo = 30, Url = "/quality", ReportGroup = "Quality", ReportDescription = "View and manage non-conformance reports" },
-                new PermissionMaster { PermissionName = "NCR Code Master", DisplayPermissionName = "NCR Code Master", LevelInfo = 1, OrderNo = 31, Url = "/quality/ncr-codes", ReportGroup = "Quality", ReportDescription = "Manage NCR code master data" },
-                new PermissionMaster { PermissionName = "Business Intelligence", DisplayPermissionName = "Reports", LevelInfo = 1, OrderNo = 40, Url = "/reports", ReportGroup = "Reports", ReportDescription = "Access operational and business reports" },
-                new PermissionMaster { PermissionName = "Documents", DisplayPermissionName = "Documents", LevelInfo = 1, OrderNo = 45, Url = "/documents", ReportGroup = "Documents", ReportDescription = "Manage documents" },
-                new PermissionMaster { PermissionName = "Payment Dashboard", DisplayPermissionName = "Payment Dashboard", LevelInfo = 1, OrderNo = 50, Url = "/accounts/dashboard", ReportGroup = "Accounting", ReportDescription = "View payment dashboard" },
-                new PermissionMaster { PermissionName = "Accounts Payable", DisplayPermissionName = "Accounts Payable (AP)", LevelInfo = 1, OrderNo = 51, Url = "/accounts/payable", ReportGroup = "Accounting", ReportDescription = "Manage accounts payable" },
-                new PermissionMaster { PermissionName = "Accounts Receivable", DisplayPermissionName = "Accounts Receivable (AR)", LevelInfo = 1, OrderNo = 52, Url = "/accounts/receivable", ReportGroup = "Accounting", ReportDescription = "Manage accounts receivable" },
-                new PermissionMaster { PermissionName = "Bank Reconciliation", DisplayPermissionName = "Bank Reconciliation", LevelInfo = 1, OrderNo = 53, Url = "/accounts/banks", ReportGroup = "Accounting", ReportDescription = "Perform bank reconciliation" },
-                new PermissionMaster { PermissionName = "Financial Reports", DisplayPermissionName = "Financial Reports", LevelInfo = 1, OrderNo = 54, Url = "/accounts/reports", ReportGroup = "Accounting", ReportDescription = "View financial reports" },
-                new PermissionMaster { PermissionName = "Accounting Setup", DisplayPermissionName = "Accounting Setup", LevelInfo = 1, OrderNo = 55, Url = "/accounts/setup", ReportGroup = "Accounting", ReportDescription = "Configure accounting settings" },
-                new PermissionMaster { PermissionName = "Journal Entries", DisplayPermissionName = "Journal Entries", LevelInfo = 1, OrderNo = 56, Url = "/accounts/journal-entries", ReportGroup = "Accounting", ReportDescription = "Manage journal entries" },
-                new PermissionMaster { PermissionName = "Payroll Journals", DisplayPermissionName = "Payroll Journals", LevelInfo = 1, OrderNo = 56, Url = "/accounts/payroll", ReportGroup = "Accounting", ReportDescription = "View payroll journals posted to the GL" },
-                new PermissionMaster { PermissionName = "GL Account Activity", DisplayPermissionName = "GL Account Activity", LevelInfo = 1, OrderNo = 57, Url = "/accounts/general-ledger", ReportGroup = "Accounting", ReportDescription = "View general ledger activity" },
-                new PermissionMaster { PermissionName = "Period Close & Audit", DisplayPermissionName = "Period Close & Audit", LevelInfo = 1, OrderNo = 58, Url = "/accounts/periods", ReportGroup = "Accounting", ReportDescription = "Period close and audit" },
-                new PermissionMaster { PermissionName = "Bank Master", DisplayPermissionName = "Bank Master", LevelInfo = 1, OrderNo = 59, Url = "/masters/bank", ReportGroup = "Accounting", ReportDescription = "Manage bank master data" },
-                new PermissionMaster { PermissionName = "Credit Card Master", DisplayPermissionName = "Credit Card Master", LevelInfo = 1, OrderNo = 60, Url = "/masters/creditcard", ReportGroup = "Accounting", ReportDescription = "Manage credit card master data" },
-                new PermissionMaster { PermissionName = "Chart of Accounts Master", DisplayPermissionName = "Chart of Accounts Master", LevelInfo = 1, OrderNo = 61, Url = "/masters/chartofaccounts", ReportGroup = "Accounting", ReportDescription = "Manage chart of accounts" },
-                new PermissionMaster { PermissionName = "Customer Master", DisplayPermissionName = "Customer Master", LevelInfo = 1, OrderNo = 70, Url = "/masters/customer", ReportGroup = "Administration", ReportDescription = "Manage customer master data" },
-                new PermissionMaster { PermissionName = "Vendor Master", DisplayPermissionName = "Vendor Master", LevelInfo = 1, OrderNo = 71, Url = "/masters/vendor", ReportGroup = "Administration", ReportDescription = "Manage vendor master data" },
-                new PermissionMaster { PermissionName = "Workstation Master", DisplayPermissionName = "Workstation Master", LevelInfo = 1, OrderNo = 72, Url = "/masters/workstation", ReportGroup = "Administration", ReportDescription = "Manage workstation master data" },
-                new PermissionMaster { PermissionName = "Employee Master", DisplayPermissionName = "Employee Master", LevelInfo = 1, OrderNo = 73, Url = "/masters/employee", ReportGroup = "Administration", ReportDescription = "Manage employee master data" },
-                new PermissionMaster { PermissionName = "Location Master", DisplayPermissionName = "Location Master", LevelInfo = 1, OrderNo = 74, Url = "/masters/location", ReportGroup = "Administration", ReportDescription = "Manage location master data" },
-                new PermissionMaster { PermissionName = "Process Master", DisplayPermissionName = "Process Master", LevelInfo = 1, OrderNo = 75, Url = "/masters/process", ReportGroup = "Administration", ReportDescription = "Manage process master data" },
-                new PermissionMaster { PermissionName = "Job Template Master", DisplayPermissionName = "Job Template Master", LevelInfo = 1, OrderNo = 76, Url = "/masters/jobtemplate", ReportGroup = "Administration", ReportDescription = "Manage job templates" },
-                new PermissionMaster { PermissionName = "Category Master", DisplayPermissionName = "Category Master", LevelInfo = 1, OrderNo = 77, Url = "/masters/category", ReportGroup = "Administration", ReportDescription = "Manage categories" },
-                new PermissionMaster { PermissionName = "Price Breakdown Master", DisplayPermissionName = "Price Breakdown Master", LevelInfo = 1, OrderNo = 78, Url = "/masters/pricebreakdown", ReportGroup = "Administration", ReportDescription = "Manage price breakdown master data" },
-                new PermissionMaster { PermissionName = "Product Master", DisplayPermissionName = "Product Master", LevelInfo = 1, OrderNo = 79, Url = "/masters/product", ReportGroup = "Administration", ReportDescription = "Manage product master data" },
-                new PermissionMaster { PermissionName = "Raw Material Master", DisplayPermissionName = "Raw Material Master", LevelInfo = 1, OrderNo = 80, Url = "/masters/raw-material", ReportGroup = "Administration", ReportDescription = "Manage raw materials" },
-                new PermissionMaster { PermissionName = "Attendance Register", DisplayPermissionName = "Attendance Register", LevelInfo = 1, OrderNo = 89, Url = "/attendance", ReportGroup = "Administration", ReportDescription = "View Time Clock attendance by day" },
-                new PermissionMaster { PermissionName = "User Management", DisplayPermissionName = "User Management", LevelInfo = 1, OrderNo = 90, Url = "/user-management", ReportGroup = "Administration", ReportDescription = "Manage users, roles, and permissions" },
-                new PermissionMaster { PermissionName = "System Settings", DisplayPermissionName = "System Settings", LevelInfo = 1, OrderNo = 91, Url = "/settings", ReportGroup = "Administration", ReportDescription = "Configure system settings" }
-            };
         }
 
         /// <summary>Normalize role ResetPwd to Y/N (also accepts Yes/No from legacy data).</summary>

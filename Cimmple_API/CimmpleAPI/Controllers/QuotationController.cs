@@ -2649,9 +2649,12 @@ namespace CimmpleAPI.Controllers
                 DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Converting quotation {quotationId} to vendor order");
 
-                // Get the quotation data
+                var callerTenantId = GetTenantId();
+                if (callerTenantId <= 0)
+                    return BadRequest(new { error = "TenantId is required" });
+
                 var quotation = _context.VendorQuotations
-                    .Where(q => q.OrderID == quotationId)
+                    .Where(q => q.OrderID == quotationId && q.Tenantid == callerTenantId)
                     .FirstOrDefault();
 
                 if (quotation == null)
@@ -2659,6 +2662,9 @@ namespace CimmpleAPI.Controllers
                     Console.WriteLine($"ConvertVendorQuotationToOrder: Quotation {quotationId} not found!");
                     return NotFound(new { error = "Vendor quotation not found" });
                 }
+
+                if (quotation.locationid is int qLoc and > 0 && !CanAccessLocation(qLoc))
+                    return StatusCode(403, new { error = "You do not have access to this site." });
 
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Found quotation - OrderID: {quotation.OrderID}, PONumber: {quotation.PONumber}, Status: {quotation.Status}, convertedOrderId: {quotation.convertedOrderId}");
 

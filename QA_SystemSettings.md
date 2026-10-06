@@ -1,8 +1,8 @@
 ﻿# QA — System Settings
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| System Settings | 1.5 | BUG-SET | Yes | 7 | 2 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| System Settings | 1.5 | BUG-SET | Yes | No | 7 | 2 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -484,3 +484,4 @@ Make the index unique (after de-duplicating) and handle the conflict as an updat
 | --- | --- | --- |
 | All System Settings endpoints trust the tenant from the client: `GetSettings?tenantId`, `SaveSettings` body `TenantId` (also inserts a row for any ID such as 0), `TestSmtp` body `tenantId` (lets a user test with another tenant's saved SMTP credentials, combining with BUG-SET-001), `GetCompanyInfo?tenantId`, `SaveCompanyInfo`. | Tenant / Location Framework — `QA_TenantLocationFramework.md` | `Controllers/SystemSettingsController.cs` lines 91, 146–147, 344, 290–295, 457–460 |
 | The page falls back to tenant `1` when `storage.tenantID` is missing. | Tenant / Location Framework | `Modules/Settings/SystemSettings.tsx` lines 30, 35, 54, 72, 85 |
+

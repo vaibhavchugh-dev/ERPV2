@@ -38,17 +38,28 @@ const resolveSettings = (settings?: SystemSettings | null): SystemSettings | nul
       storage.currencySymbol ||
       storage.locale ||
       storage.decimalPlaces != null ||
+      storage.decimalSeparator != null ||
+      storage.thousandsSeparator != null ||
       storage.dateFormat ||
       storage.timeFormat ||
       storage.timezone
     ) {
       const tenantId = storage.tenantID || 1;
+      const defaults = getDefaultSystemSettings(tenantId);
       return {
-        ...getDefaultSystemSettings(tenantId),
+        ...defaults,
         defaultCurrency: storage.defaultCurrency || 'USD',
         currencySymbol: storage.currencySymbol || '$',
         locale: storage.locale || 'en-US',
         decimalPlaces: storage.decimalPlaces ?? 2,
+        decimalSeparator:
+          storage.decimalSeparator != null
+            ? storage.decimalSeparator
+            : defaults.decimalSeparator,
+        thousandsSeparator:
+          storage.thousandsSeparator != null
+            ? storage.thousandsSeparator
+            : defaults.thousandsSeparator,
         dateFormat: storage.dateFormat || 'M/d/yyyy',
         timeFormat: storage.timeFormat || '12',
         timezone: storage.timezone || 'America/New_York',
@@ -117,27 +128,8 @@ export const formatCurrency = (
   settings?: SystemSettings | null
 ): string => {
   const resolved = resolveSettings(settings);
-  const currency = resolved?.defaultCurrency || 'USD';
-  const locale = resolved?.locale || 'en-US';
-  const decimalPlaces = resolved?.decimalPlaces ?? 2;
-  const currencySymbol = resolved?.currencySymbol || '$';
-  
-  try {
-    // Try using Intl.NumberFormat first (supports most currencies)
-    const formatter = new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: decimalPlaces,
-      maximumFractionDigits: decimalPlaces
-    });
-    
-    return formatter.format(value);
-  } catch (error) {
-    // Fallback to manual formatting if Intl fails
-    console.warn('Error formatting currency with Intl, using fallback:', error);
-    const formatted = formatNumber(value, resolved);
-    return `${currencySymbol}${formatted}`;
-  }
+  const symbol = getCurrencySymbol(resolved);
+  return `${symbol}${formatNumber(value, resolved)}`;
 };
 
 /**
@@ -150,15 +142,21 @@ export const formatNumber = (
 ): string => {
   const resolved = resolveSettings(settings);
   const decimalPlaces = resolved?.decimalPlaces ?? 2;
-  const decimalSeparator = resolved?.decimalSeparator || '.';
-  const thousandsSeparator = resolved?.thousandsSeparator || ',';
-  
+  const decimalSeparator =
+    resolved?.decimalSeparator != null && resolved.decimalSeparator !== ''
+      ? resolved.decimalSeparator
+      : '.';
+  const thousandsSeparator = resolved?.thousandsSeparator;
+
   // Format with correct decimal places
   const fixed = value.toFixed(decimalPlaces);
   const parts = fixed.split('.');
-  
-  // Add thousands separator
-  const integerPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSeparator);
+
+  let integerPart = parts[0];
+  if (thousandsSeparator !== '') {
+    const groupingChar = thousandsSeparator ?? ',';
+    integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, groupingChar);
+  }
   
   // Combine with decimal separator
   if (parts.length > 1 && decimalPlaces > 0) {

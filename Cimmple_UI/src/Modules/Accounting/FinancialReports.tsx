@@ -16,6 +16,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
+import { AuthService } from "../../Common/Services/AuthService";
 import ReportDrillDrawer, { DrillTarget } from "./ReportDrillDrawer";
 import "./FinancialReports.scss";
 
@@ -146,6 +147,7 @@ const FinancialReports: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [drillTarget, setDrillTarget] = useState<DrillTarget | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const canManageScheduledEmails = AuthService.hasPermissionForPath("/reports/schedules");
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -354,14 +356,16 @@ const FinancialReports: React.FC = () => {
           <h1>Financial Reports</h1>
           <p>Select a report, set the period, then run to preview. Export when ready.</p>
         </div>
-        <button
-          type="button"
-          className="fr-btn fr-btn-secondary"
-          onClick={() => history.push("/reports/schedules")}
-        >
-          <FontAwesomeIcon icon={faClock} />
-          Scheduled emails
-        </button>
+        {canManageScheduledEmails && (
+          <button
+            type="button"
+            className="fr-btn fr-btn-secondary"
+            onClick={() => history.push("/reports/schedules")}
+          >
+            <FontAwesomeIcon icon={faClock} />
+            Scheduled emails
+          </button>
+        )}
       </header>
 
       <div className="fr-workspace">
@@ -442,19 +446,21 @@ const FinancialReports: React.FC = () => {
                     >
                       CSV
                     </button>
-                    <button
-                      type="button"
-                      className="fr-btn fr-btn-secondary"
-                      disabled={loading || !selectedReport}
-                      onClick={() => {
-                        if (!validateCustomRange()) return;
-                        setScheduleOpen(true);
-                      }}
-                      title="Schedule email"
-                    >
-                      <FontAwesomeIcon icon={faClock} />
-                      Schedule
-                    </button>
+                    {canManageScheduledEmails && (
+                      <button
+                        type="button"
+                        className="fr-btn fr-btn-secondary"
+                        disabled={loading || !selectedReport}
+                        onClick={() => {
+                          if (!validateCustomRange()) return;
+                          setScheduleOpen(true);
+                        }}
+                        title="Schedule email"
+                      >
+                        <FontAwesomeIcon icon={faClock} />
+                        Schedule
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

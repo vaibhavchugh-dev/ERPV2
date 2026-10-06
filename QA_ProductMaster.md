@@ -1,8 +1,8 @@
 ﻿# QA — Product Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Product Master | 2.8 | BUG-PROD | Yes | 4 | 1 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Product Master | 2.8 | BUG-PROD | Yes | No | 4 | 1 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -200,3 +200,4 @@ Severity scale:
 | --- | --- | --- |
 | Client-supplied `tenantid`/`tenantId` trusted without comparison to the token tenant | `GET /ProductMaster/GetProductsFromOrders`, `GetProductMasterList`, `GetProductById`, `GetPartsByCustomer`, `GetPartsByVendor`; `POST SyncFromOrders`; `POST SaveReorderPolicy` (prefers `dto.Tenantid` over the token) | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All `/api/ProductMaster/*` endpoints | `QA_RolesPermissions.md` |
+

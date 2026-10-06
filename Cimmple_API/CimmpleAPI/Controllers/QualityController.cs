@@ -508,8 +508,7 @@ END");
                                 WHERE ud.User_UniqueID = NonConformanceReports.ReportedBy
                                   AND ud.TenantID = @tenantId
                                   AND (
-                                      ud.CanAccessAllLocations = 1
-                                      OR ud.DefaultLocationId = @locationId
+                                      (ud.DefaultLocationId IS NOT NULL AND ud.DefaultLocationId = @locationId)
                                       OR EXISTS (
                                           SELECT 1 FROM CimmpleFlow.UserMapping um
                                           WHERE um.userId = ud.User_UniqueID AND um.locationId = @locationId
@@ -554,8 +553,7 @@ END");
                                     WHERE ud.User_UniqueID = NonConformanceReports.ReportedBy
                                       AND ud.TenantID = @tenantId
                                       AND (
-                                          ud.CanAccessAllLocations = 1
-                                          OR (ud.DefaultLocationId IS NOT NULL AND ud.DefaultLocationId IN ({inList}))
+                                          (ud.DefaultLocationId IS NOT NULL AND ud.DefaultLocationId IN ({inList}))
                                           OR EXISTS (
                                               SELECT 1 FROM CimmpleFlow.UserMapping um
                                               WHERE um.userId = ud.User_UniqueID AND um.locationId IN ({inList})

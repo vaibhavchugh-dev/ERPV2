@@ -38,6 +38,8 @@ export const applyRuntimeSettings = (settings: SystemSettings | null | undefined
     storage.currencySymbol = settings.currencySymbol;
     storage.locale = settings.locale;
     storage.decimalPlaces = settings.decimalPlaces;
+    storage.decimalSeparator = settings.decimalSeparator;
+    storage.thousandsSeparator = settings.thousandsSeparator;
     localStorage.setItem("storage", JSON.stringify(storage));
   } catch {
     // ignore storage sync failures

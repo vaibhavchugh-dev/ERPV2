@@ -43,6 +43,9 @@ namespace CimmpleAPI.Data.Models
         /// <summary>When set, worker marks the related in-app notification EmailSent on success.</summary>
         public int? RelatedNotificationId { get; set; }
 
+        /// <summary>When set, worker updates ReportSchedule LastRunStatus on send success/failure.</summary>
+        public int? RelatedReportScheduleId { get; set; }
+
         public int Attempts { get; set; }
 
         public int MaxAttempts { get; set; } = 5;

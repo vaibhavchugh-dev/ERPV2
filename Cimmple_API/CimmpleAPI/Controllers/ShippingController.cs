@@ -586,9 +586,9 @@ namespace CimmpleAPI.Controllers
 
                         if (invoicedDetails.Any())
                         {
-                            impact.Warnings.Add(
-                                $"Warning: Some items in this shipment have been invoiced. Deleting the shipment may affect invoice accuracy."
-                            );
+                            impact.CanDelete = false;
+                            impact.BlockingReasons.Add(
+                                "One or more shipment lines have been invoiced. Void the invoice or adjust billing before deleting this shipment.");
                         }
                     }
                 }
@@ -621,6 +621,28 @@ namespace CimmpleAPI.Controllers
                     var shippingDetails = _context.ShippingDetails
                         .Where(sd => sd.ShipmentId == shipmentId)
                         .ToList();
+
+                    var orderDetailIds = shippingDetails
+                        .Where(sd => sd.OrderDetailID.HasValue)
+                        .Select(sd => sd.OrderDetailID!.Value)
+                        .Distinct()
+                        .ToList();
+                    if (orderDetailIds.Count > 0)
+                    {
+                        var invoicedQty = _context.InvoiceDetail
+                            .Where(id => id.OrderDetailID.HasValue && orderDetailIds.Contains(id.OrderDetailID.Value))
+                            .Join(_context.InvoiceMaster, id => id.InvoiceId, im => im.Id,
+                                (id, im) => new { id.QtyInvoiced, im.TenantId, im.IsVoided })
+                            .Where(x => x.TenantId == tenantId && !x.IsVoided)
+                            .Sum(x => x.QtyInvoiced);
+                        if (invoicedQty > 0)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "Cannot delete a shipment that includes invoiced quantities. Void the invoice first."
+                            });
+                        }
+                    }
 
                     foreach (var detail in shippingDetails)
                     {

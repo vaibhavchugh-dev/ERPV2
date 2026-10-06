@@ -58,6 +58,12 @@ BEGIN
     CREATE INDEX [IX_EmailOutbox_Status_Locked]
         ON CimmpleFlow.EmailOutbox ([Status], [LockedUntilUtc]);
 END
+
+IF OBJECT_ID(N'CimmpleFlow.EmailOutbox', N'U') IS NOT NULL
+   AND COL_LENGTH('CimmpleFlow.EmailOutbox', 'RelatedReportScheduleId') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.EmailOutbox ADD [RelatedReportScheduleId] int NULL;
+END
 ");
                 Volatile.Write(ref _ensured, 1);
             }

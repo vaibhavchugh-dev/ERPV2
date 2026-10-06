@@ -1,8 +1,8 @@
 ﻿# QA — Credit Card Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Credit Card Master | 2.13 | BUG-CC | Yes | 5 | 0 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Credit Card Master | 2.13 | BUG-CC | Yes | Yes | 5 | 0 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -202,3 +202,4 @@ _None found._
 | Client-supplied `tenantid`/`TenantId` trusted without comparing to the token tenant | `GET CreditCard/GetCreditCards?tenantid`, `GET GetCreditCardById?tenantId` (returns full PAN/CVV of any tenant), `POST SaveCreditCard` (body `TenantId`), `GET CheckCreditCardDeletionImpact?tenantId`, `DELETE DeleteCreditCard?tenantId` | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All `CreditCardController` endpoints | `QA_RolesPermissions.md` |
 | COA deletion does not check credit-card links | `ChartofAccountsController.CheckChartofAccountDeletionImpact` | `QA_ChartOfAccountsMaster.md` (BUG-COA-002) |
+

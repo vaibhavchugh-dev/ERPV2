@@ -1,4 +1,4 @@
-﻿# QA — Authentication
+﻿# QA — Authentication -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -847,4 +847,5 @@ These were observed while tracing auth and session data, but their root cause be
 | ERP and Vendor Portal sessions share the localStorage keys `permissions` and `allowedLocations`, and a forced logout on either clears both (`clearSession("all")`). | Vendor Portal (1.11). To be logged in `QA_VendorPortal.md` | `Common/Services/AuthService.ts` lines 77–88; `Common/Services/Axios-config.ts` line 36. |
 | Employee Master `GetProfilePic` is also anonymous (matrix section 11.3). | Employee Master (2.3). To be logged in `QA_EmployeeMaster.md` | Matrix section 11.3. |
 | `QA_TEST_MATRIX.md` section 0.2 lists anonymous endpoints but omits the legacy `UserController` ones (Login, AutoLogin, ValidateUserStatusNew, UnderMaintenance, ChangePassword, ChangePasswordNew, GetProfilePic). This is a gap in the matrix document only; the matrix was not edited. | QA documentation | `Controllers/UserController.cs` lines 43–258. |
+
 

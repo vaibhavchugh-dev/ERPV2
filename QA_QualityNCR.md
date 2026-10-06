@@ -1,4 +1,4 @@
-﻿# QA — Quality / NCR
+﻿# QA — Quality / NCR -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |

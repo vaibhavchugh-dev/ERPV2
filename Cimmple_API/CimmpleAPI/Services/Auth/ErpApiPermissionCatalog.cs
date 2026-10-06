@@ -47,7 +47,7 @@ namespace CimmpleAPI.Services.Auth
                 ["Quality"] = "/quality",
                 ["Attendance"] = "/attendance",
                 ["Reports"] = "/reports",
-                ["ReportSchedule"] = "/reports",
+                ["ReportSchedule"] = "/reports/schedules",
                 ["Documents"] = "/documents",
                 ["Accounting"] = "/accounts/setup",
                 ["JournalEntry"] = "/accounts/journal-entries",

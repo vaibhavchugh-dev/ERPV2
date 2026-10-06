@@ -1,8 +1,8 @@
 ﻿# QA — Price Breakdown Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Price Breakdown Master | 2.11 | BUG-PB | Yes | 5 | 1 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Price Breakdown Master | 2.11 | BUG-PB | Yes | No | 5 | 1 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -223,3 +223,4 @@ Severity scale:
 | Client-supplied `tenantid`/`Tenantid` trusted without comparing to the token tenant | `GET PriceBreakdown/GetPriceBreakdowns?tenantid`, `GET GetPriceBreakdownById?tenantId`, `POST SavePriceBreakdowns` (tenant from the first row's `Tenantid`; a forged value deletes and replaces another tenant's whole list) | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All `PriceBreakdownController` endpoints | `QA_RolesPermissions.md` |
 | Quotation matrix prunes deleted/inactive breakdown rows on re-save | `CustomerQuotationSlideout.tsx` price breakdown popup | `QA_Sales.md` (see BUG-PB-006 for the master side) |
+

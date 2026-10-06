@@ -1,8 +1,8 @@
 ﻿# QA — Workstation Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Workstation Master | 2.5 | BUG-WS | Yes | 7 | 1 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Workstation Master | 2.5 | BUG-WS | Yes | No | 7 | 1 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -264,3 +264,4 @@ Severity scale:
 | --- | --- | --- |
 | Client-supplied `tenantId`/`TenantID` trusted without comparison to the token tenant | `GET /Workstation/GetWorkstations`, `GetWorkstationById`, `GetUserWorkstationMapping`, `GetAllUsers`, `CheckWorkstationDeletionImpact`; `POST SaveWorkstation`, `ImportWorkstations`; `DELETE DeleteWorkstation` | `QA_TenantLocationFramework.md` (`ApiBaseController.cs`) |
 | No server-side role/permission enforcement | All `/api/Workstation/*` endpoints | `QA_RolesPermissions.md` (`Program.cs` fallback policy) |
+

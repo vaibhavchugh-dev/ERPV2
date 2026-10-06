@@ -1,8 +1,8 @@
 ﻿# QA — Support Tickets & Support Portal
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Support Tickets & Support Portal | 1.10 | BUG-SUPP | Yes | 4 | 1 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Support Tickets & Support Portal | 1.10 | BUG-SUPP | Yes | No | 4 | 1 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -261,3 +261,4 @@ Observed while testing Authentication; root cause is in this module. Verify and 
 | Header fallback in `GetTenantId`/`GetUserId` also affects the integration token. | BUG-AUTH-014 | `ApiBaseController.cs` lines 13–46. |
 | Support token can call `UserManagement/ResetPassword` for any tenant. | BUG-TEN-001 / User Management | `UserManagementController.cs` line 316. |
 | No server-side role/permission enforcement for ERP endpoints. | QA_RolesPermissions.md | `Program.cs` lines 142–147. |
+

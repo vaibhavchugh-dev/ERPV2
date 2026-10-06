@@ -1,8 +1,8 @@
 ﻿# QA — Vendor Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Vendor Master | 2.2 | BUG-VENDOR | Yes | 9 | 1 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Vendor Master | 2.2 | BUG-VENDOR | Yes | No | 9 | 1 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -500,3 +500,4 @@ Add filtered unique indexes per tenant.
 | The tenant id comes from the query or body and is not compared with the token's tenant. | `QA_TenantLocationFramework.md` | `GET /Vendor/GetVendorlist` (`VendorController.cs` 38–115), `GET GetVendorById` (117–188), `POST SaveVendorPortalAccess` (194–229), `POST SaveVendorData` (`TenantID` in body, 443–680), `POST ImportVendors` (691–926), `GET CheckVendorDeletionImpact` (993–1164), `DELETE DeleteVendor` (1166–1216). |
 | No server-side role/permission check: any authenticated user can create vendors, set portal passwords for any vendor and delete vendors. | `QA_RolesPermissions.md` | All endpoints above; in particular `SaveVendorPortalAccess` lets any authenticated user set a vendor's portal password. |
 | Vendor-portal tokens are accepted by the Vendor Master endpoints (a portal user could call them directly). | `QA_VendorPortal.md` | Already listed in `QA_Authentication.md` Cross-Module Concerns; Vendor Master endpoints have no `IsVendorPortal()` check. |
+

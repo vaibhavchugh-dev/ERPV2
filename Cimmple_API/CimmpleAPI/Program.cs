@@ -261,6 +261,7 @@ try
     var db = schemaScope.ServiceProvider.GetRequiredService<CimmpleDbContext>();
     await SystemSettingsSchemaService.EnsureLoginSchemaAsync(db);
     await EmployeeUserDetailSchemaService.EnsureCountryColumnAsync(db);
+    await ErpPermissionSeedService.EnsureMissingPermissionsAsync(db);
 }
 catch (Exception ex)
 {

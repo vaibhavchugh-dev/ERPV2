@@ -1,8 +1,8 @@
 ﻿# QA — Raw Material Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Raw Material Master | 2.9 | BUG-RM | Yes | 2 | 2 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Raw Material Master | 2.9 | BUG-RM | Yes | No | 2 | 2 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -182,3 +182,4 @@ Severity scale:
 | --- | --- | --- |
 | Client-supplied `tenantid`/`Tenantid` preferred over the token tenant | `GET /Inventory/GetRawMaterials`, `POST /Inventory/SaveRawMaterial`, `POST /Inventory/SetRawMaterialStatus` (`dto.Tenantid > 0 ? dto.Tenantid : GetTenantId()`) | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All raw-material endpoints in `InventoryController` | `QA_RolesPermissions.md` |
+

@@ -176,7 +176,7 @@ const JournalEntries: React.FC = () => {
     return {
       totalDebit: td,
       totalCredit: tc,
-      balanced: Math.abs(td - tc) < 0.02,
+      balanced: td === tc,
     };
   }, [lines]);
 

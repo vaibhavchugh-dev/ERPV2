@@ -1,4 +1,4 @@
-﻿# QA — Vendor Portal
+﻿# QA — Vendor Portal -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |

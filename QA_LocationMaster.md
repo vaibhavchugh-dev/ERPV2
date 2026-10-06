@@ -1,8 +1,8 @@
 ﻿# QA — Location Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Location Master | 2.4 | BUG-LOC | Yes | 4 | 3 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Location Master | 2.4 | BUG-LOC | Yes | Yes | 4 | 3 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -386,3 +386,4 @@ Sanitise or rasterise SVG on upload, or serve logos with `Content-Disposition: a
 | The tenant id comes from the query, form or body and is not compared with the token's tenant. | `QA_TenantLocationFramework.md` | `GET /Location/GetLocations?tenantid` (`LocationController.cs` 29–75), `GET GetLocationById?tenantId` (92–156), `POST SaveLocation` (`TenantId` in body, 158–256), `POST UploadLogo` (`tenantId` form field, 258–405), `DELETE DeleteLogo?tenantId` (407–448), `GET CheckLocationDeletionImpact?tenantId` (450–539), `DELETE DeleteLocation?tenantId` (541–608). |
 | No location scope on Location Master: a site-restricted user can list, edit and delete every site in the tenant, including sites they cannot access. | `QA_TenantLocationFramework.md` | All endpoints above; no `CanAccessLocation` call in `LocationController`. The matrix states only Bank and Employee lists filter by site on the server. |
 | No server-side role/permission check: any authenticated user can create, change or delete locations and logos. | `QA_RolesPermissions.md` | All endpoints above. |
+

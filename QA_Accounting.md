@@ -1,4 +1,4 @@
-﻿# QA — Accounting (Payment Dashboard, AP, AR, Payments, Bank Reconciliation, Financial Reports, Journal Entries, GL, Periods, Setup)
+﻿# QA — Accounting (Payment Dashboard, AP, AR, Payments, Bank Reconciliation, Financial Reports, Journal Entries, GL, Periods, Setup) -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |

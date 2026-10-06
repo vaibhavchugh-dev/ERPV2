@@ -1,8 +1,8 @@
 ﻿# QA — Chart of Accounts Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Chart of Accounts Master | 2.14 | BUG-COA | Yes | 7 | 2 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Chart of Accounts Master | 2.14 | BUG-COA | Yes | Yes | 7 | 2 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -297,3 +297,4 @@ Vendor COA mappings matched on `accountid` are listed as "will be deleted" rathe
 | Client-supplied `tenantid`/`Tenantid` trusted without comparing to the token tenant | `GET ChartofAccounts/GetChartofAccounts?tenantid`, `GetChartofAccountById`, `GetMainGroups`, `GetSubGroups*`, `POST SaveChartofAccount`, `SaveMainGroup`, `SaveSubGroup*`, `CheckChartofAccountDeletionImpact?tenantId`, `DeleteChartofAccount?tenantId` | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement (any user can delete GL accounts) | All `ChartofAccountsController` endpoints | `QA_RolesPermissions.md` |
 | GL resolution falls back to keyword matching when configured accounts are missing/inactive | `GlAccountResolutionService` | `QA_Accounting.md` |
+

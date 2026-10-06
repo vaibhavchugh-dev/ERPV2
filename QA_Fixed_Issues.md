@@ -118,7 +118,7 @@
 | BUG-USER-002 | User Management | Fixed | No | Status filter resets pageNumber to 1. |
 | BUG-USER-003 | User Management | Fixed | No | UpdateUser saves TerminationReason when user already inactive. |
 | BUG-USER-004 | User Management | Fixed | No | Role column sorts by name; sort cleared on list reload. |
-| BUG-NCR-009 | Quality NCR | Fixed | No | Unlinked NCRs visible when reporter is assigned to filtered site(s). |
+| BUG-NCR-009 | Quality NCR | Fixed | No | Unlinked NCRs match site via reporter default location or user mapping (not every site for all-locations users). |
 | BUG-CONV-006 | Conversations & Comments | Fixed | No | Delete own comments only (UI + EntityComments API); admins may delete any. |
 | BUG-SRCH-001 | Global Search | Fixed | No | Search API applies site/location scope via list location filter and category joins. |
 | BUG-SRCH-002 | Global Search | Fixed | No | API skips guarded categories without permission; dropdown hides sections user cannot open. |
@@ -132,3 +132,38 @@
 | BUG-INV-008 | Inventory | Fixed | No | Shipment-linked qty validation verifies shipment belongs to tenant before reading lines. |
 | BUG-INV-011 | Inventory | Fixed | No | GetMovementDocuments filters jobs, vendor receivings, and shipments by site scope. |
 | BUG-PWD-001 | Password Policy | Fixed | No | Change password rejects new = current on server and on change-password screen. |
+| BUG-RPT-004 | Reports | Fixed | No | Scheduled report outbox links to schedule; LastRunStatus updates on Sent/Failed. |
+| BUG-RPT-007 | Reports | Fixed | No | Schedule dialog and API reject start date after end date. |
+| BUG-DASH-001 | Dashboard | Fixed | No | Top customers revenue sums invoice totals once per invoice (not per line). |
+| BUG-DASH-002 | Dashboard | Fixed | No | NCR metrics respect site filter (job→CO location; unlinked NCR by reporter default/mapping site, not all-locations flag). |
+| BUG-DASH-003 | Dashboard | Fixed | No | Overdue job alerts exclude shipped and partially shipped jobs. |
+| BUG-DASH-005 | Dashboard | Fixed | No | AR/AP alert amounts use tenant currency formatting in UI. |
+| BUG-PAY-001 | Payroll | Fixed | No | Post payment and tax remittance create bank Transactions rows. |
+| BUG-PAY-002 | Payroll | Fixed | No | Post journal rejects duplicate posted journal for same pay period. |
+| BUG-PAY-003 | Payroll | Fixed | No | Journal post balances within tolerance before posting. |
+| BUG-PAY-005 | Payroll | Fixed | No | Default reference includes period; duplicate reference returns 400 unless same run id. |
+| BUG-PAY-010 | Payroll | Fixed | No | CSV import preserves negative amounts for payroll corrections. |
+| BUG-MFG-001 | Manufacturing | Fixed | No | Job attachment uploads use job-scoped blob paths (Guid per file). |
+| BUG-MFG-002 | Manufacturing | Fixed | No | FG completion and reversal no longer over-issue from on-hand fallback. |
+| BUG-MFG-006 | Manufacturing | Fixed | No | Get job order returns 403 when user cannot access order site. |
+| BUG-MFG-009 | Manufacturing | Reverted | — | Pause reason remains optional; “Pause without reason” restored per product. |
+| BUG-MFG-018 | Manufacturing | Fixed | No | Deleting job removes attachment blobs from storage. |
+| BUG-PROC-001 | Procurement | Fixed | No | GetVendorInvoiceDetails filters by tenant and site access. |
+| BUG-PROC-002 | Procurement | Fixed | No | Convert vendor quotation requires caller tenant and site access. |
+| BUG-PROC-003 | Procurement | Fixed | No | AP journal reference includes invoice id; duplicate vendor invoice no blocked per vendor. |
+| BUG-PROC-004 | Procurement | Fixed | No | VO lines with receipts cannot be deleted or qty reduced below received (API + UI). |
+| BUG-PROC-005 | Procurement | Fixed | No | Compare Create Orders copies RFQ job number, not part number. |
+| BUG-PROC-006 | Procurement | Fixed | No | Vendor payment period lock and GL use payment date. |
+| BUG-PROC-009 | Procurement | Fixed | No | Site checks on VO receive/invoice/pay/void; receiving location dropdown restricted. |
+| BUG-SALES-001 | Sales | Fixed | No | Customer invoice period and INV prefix year from invoice date. |
+| BUG-SALES-002 | Sales | Fixed | No | Customer payment period lock and GL use payment date. |
+| BUG-SALES-003 | Sales | Fixed | No | Save order blocks removing lines with shipments, invoices, or job orders. |
+| BUG-SALES-004 | Sales | Fixed | No | Invoiced qty excludes voided invoices. |
+| BUG-SALES-010 | Sales | Fixed | No | Shipment delete blocked when lines are invoiced. |
+| BUG-SALES-011 | Sales | Fixed | No | Linked JO qty sync uses ordered − shipped; skips completed/cancelled/shipped jobs. |
+| BUG-SALES-021 | Sales | Fixed | No | Quotation past-date validation only for new quotes/lines. |
+| BUG-SALES-022 | Sales | Fixed | No | Invoice overdue status uses date comparison (due date is current). |
+| BUG-ACC-001 | Accounting | Fixed | No | AR/AP payment period lock and GL/Transactions use payment date (Invoice + VendorInvoice controllers). |
+| BUG-ACC-002 | Accounting | Fixed | No | Customer invoice period from invoice date; API CreateVendorInvoice period/prefix from invoice date. |
+| BUG-ACC-003 | Accounting | Fixed | No | Manual journal requires exact debit/credit balance after rounding (API + Journal Entries UI). |
+| BUG-ACC-012 | Accounting | Fixed | No | Bank recon start/update rejects statement date on or before last completed statement. |

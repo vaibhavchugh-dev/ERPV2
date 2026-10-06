@@ -780,19 +780,22 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           itemErrors.UnitPrice = "Unit price must be 0 or greater";
         }
 
-        // DueDate/LeadTime must not be earlier than today
         const estDate = detail.LeadTime || detail.DueDate;
         if (estDate) {
-          try {
-            const dateValue = new Date(estDate);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
-            dateValue.setHours(0, 0, 0, 0);
-            if (dateValue < today) {
-              itemErrors.DueDate = "Est Date cannot be earlier than today";
+          const isNewQuotation = (formData.OrderID > 0 ? formData.OrderID : quotationId) === 0;
+          const isNewLineItem = detail.ID === 0;
+          if (isNewQuotation || isNewLineItem) {
+            try {
+              const dateValue = new Date(estDate);
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              dateValue.setHours(0, 0, 0, 0);
+              if (dateValue < today) {
+                itemErrors.DueDate = "Est Date cannot be earlier than today";
+              }
+            } catch (e) {
+              // Invalid date format — skip
             }
-          } catch (e) {
-            // Invalid date format - ignore for now, or add validation if needed
           }
         }
 

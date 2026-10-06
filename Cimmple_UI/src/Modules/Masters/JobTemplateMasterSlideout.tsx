@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
   JobTemplateService,
@@ -9,6 +10,14 @@ import {
   JOB_TEMPLATE_ATTACHMENT_TYPES,
   JOB_TEMPLATE_INSPECTION_TYPES,
 } from "../../Common/Services/JobTemplateService";
+import AttachmentUploadSection, {
+  ModuleAttachment,
+} from "../../Common/Components/AttachmentUploadSection";
+import DocumentViewerWorkspace, {
+  DocumentViewerFile,
+} from "../../Common/Components/DocumentViewerWorkspace";
+import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
+import { triggerBrowserDownload } from "../../Common/Services/FileUploadHelper";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import {
   WorkstationService,
@@ -90,11 +99,16 @@ const emptyForm = (): JobTemplateReq => ({
   IsSystem: false,
 });
 
-const formatBytes = (bytes: number): string => {
-  if (!bytes) return "0 KB";
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
+const JOB_TEMPLATE_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const toModuleAttachment = (a: JobTemplateAttachment): ModuleAttachment => ({
+  id: a.id,
+  name: a.fileName,
+  size: a.fileSize,
+  fileUniqueno: a.id,
+  contentType: a.contentType,
+  fileCode: a.attachmentType,
+});
 
 const toNumberOrNull = (value: string): number | null =>
   value === "" ? null : parseFloat(value);
@@ -115,8 +129,6 @@ const catalogItemLabel = (
 const apiError = (error: any) =>
   error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
 
-const INLINE_ATTACHMENT_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".txt"];
-
 const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   jobTemplateId: initialTemplateId,
   onClose: closeSlideout,
@@ -129,14 +141,17 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>([]);
-  const [attachments, setAttachments] = useState<JobTemplateAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ModuleAttachment[]>([]);
+  const [documentViewerOpen, setDocumentViewerOpen] = useState(false);
+  const [viewerDocuments, setViewerDocuments] = useState<DocumentViewerFile[]>([]);
+  const [activeViewerIndex, setActiveViewerIndex] = useState(0);
+  const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
 
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [uploadType, setUploadType] = useState<string>("Drawing");
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -211,7 +226,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
       const template = await JobTemplateService.GetJobTemplateById(id);
       if (template) {
         setFormData({ ...emptyForm(), ...template });
-        setAttachments(template.Attachments || []);
+        setAttachments((template.Attachments || []).map(toModuleAttachment));
       }
     } catch (error: any) {
       console.error("[JobTemplateSlideout] Error loading job template:", error);
@@ -529,74 +544,137 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
   // ---- Attachments ----
 
-  const handleUpload = async (file: File | undefined) => {
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const uploaded = await JobTemplateService.UploadAttachment(
-        jobTemplateId,
-        uploadType,
-        file
-      );
-      setAttachments((prev) => [...prev, uploaded]);
-      toast.success("Attachment uploaded");
-    } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || "Unknown error";
-      toast.error(`Error uploading attachment: ${message}`);
-    } finally {
-      setUploading(false);
-    }
+  const closeDocumentViewer = () => {
+    setDocumentViewerOpen(false);
+    setViewerDocuments([]);
+    setActiveViewerIndex(0);
   };
 
-  const handleOpenAttachment = async (attachment: JobTemplateAttachment) => {
-    const name = attachment.fileName || "attachment";
-    const extension = name.includes(".") ? name.substring(name.lastIndexOf(".")).toLowerCase() : "";
-    const viewInline = INLINE_ATTACHMENT_EXTENSIONS.includes(extension);
-    // Open the tab before the request so the browser treats it as a user action, not a pop-up.
-    const viewer = viewInline ? window.open("", "_blank") : null;
+  const handleOpenDocumentViewer = (
+    _attachment: ModuleAttachment,
+    index: number,
+    documents: DocumentViewerFile[]
+  ) => {
+    const hydrated = documents.map((doc) => {
+      if (doc.localUrl) return doc;
+      const cached = documentCacheRef.current.get({
+        id: doc.id,
+        fileUniqueno: doc.fileUniqueno,
+        isPending: doc.isPending,
+        localUrl: doc.localUrl,
+      });
+      if (!cached) return doc;
+      return {
+        ...doc,
+        localUrl: cached.blobUrl,
+        contentType: cached.contentType || doc.contentType,
+        size: cached.size || doc.size,
+      };
+    });
+    setViewerDocuments(hydrated);
+    setActiveViewerIndex(index);
+    setDocumentViewerOpen(true);
+  };
 
-    try {
-      const blob = await JobTemplateService.DownloadAttachment(attachment.id);
-      const objectUrl = URL.createObjectURL(blob);
-      if (viewer) {
-        viewer.location.href = objectUrl;
-      } else {
-        const link = document.createElement("a");
-        link.href = objectUrl;
-        link.download = name;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+  const loadAttachmentIntoCache = useCallback(
+    async (
+      file: DocumentViewerFile,
+      signal?: AbortSignal
+    ): Promise<{ url: string; contentType?: string } | null> => {
+      if (file.localUrl) {
+        return { url: file.localUrl, contentType: file.contentType };
       }
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-    } catch (error: any) {
-      viewer?.close();
-      let message = apiError(error);
-      const data = error?.response?.data;
-      if (data instanceof Blob) {
-        try {
-          message = JSON.parse(await data.text())?.error || message;
-        } catch {
-          // Not a JSON error body; keep the transport message.
+      const attachmentId = Number(file.id);
+      if (!attachmentId || attachmentId <= 0) {
+        throw new Error("Attachment is not available for viewing yet");
+      }
+
+      const entry = await documentCacheRef.current.getOrLoad(
+        { id: file.id, fileUniqueno: file.fileUniqueno ?? attachmentId },
+        async () => {
+          const blob = await JobTemplateService.DownloadAttachment(attachmentId);
+          const blobUrl = URL.createObjectURL(blob);
+          return {
+            attachmentId: file.id,
+            fileUniqueno: file.fileUniqueno ?? attachmentId,
+            name: file.name,
+            size: file.size || blob.size,
+            contentType: file.contentType || blob.type,
+            blobUrl,
+            ownsUrl: true,
+          };
         }
+      );
+
+      setViewerDocuments((prev) =>
+        prev.map((d) =>
+          String(d.id) === String(file.id)
+            ? {
+                ...d,
+                localUrl: entry.blobUrl,
+                contentType: entry.contentType || d.contentType,
+                size: entry.size || d.size,
+              }
+            : d
+        )
+      );
+
+      return { url: entry.blobUrl, contentType: entry.contentType };
+    },
+    []
+  );
+
+  const handleNeedDocument = useCallback(
+    (file: DocumentViewerFile, _index: number, signal: AbortSignal) =>
+      loadAttachmentIntoCache(file, signal),
+    [loadAttachmentIntoCache]
+  );
+
+  const handlePrefetchDocument = useCallback(
+    (file: DocumentViewerFile) => {
+      const attachmentId = Number(file.id);
+      if (file.localUrl || !attachmentId || attachmentId <= 0) {
+        return;
       }
-      toast.error(`Error opening attachment: ${message}`);
+      if (
+        documentCacheRef.current.has({
+          id: file.id,
+          fileUniqueno: file.fileUniqueno ?? attachmentId,
+        })
+      ) {
+        return;
+      }
+      loadAttachmentIntoCache(file).catch(() => {});
+    },
+    [loadAttachmentIntoCache]
+  );
+
+  const handleViewerDownload = async (file: DocumentViewerFile) => {
+    const match = attachments.find(
+      (a) => String(a.id) === String(file.id) || a.name === file.name
+    );
+    if (!match) return;
+
+    const cached = documentCacheRef.current.get({
+      id: match.id,
+      fileUniqueno: match.fileUniqueno ?? match.id,
+    });
+    if (cached?.blobUrl) {
+      triggerBrowserDownload(cached.blobUrl, match.name);
+      return;
     }
+
+    const blob = await JobTemplateService.DownloadAttachment(match.id);
+    const blobUrl = URL.createObjectURL(blob);
+    triggerBrowserDownload(blobUrl, match.name);
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   };
 
-  const handleDeleteAttachment = async (attachmentId: number) => {
-    if (!window.confirm("Remove this attachment?")) return;
-
-    try {
-      await JobTemplateService.DeleteAttachment(attachmentId);
-      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-      toast.success("Attachment removed");
-    } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || "Unknown error";
-      toast.error(`Error removing attachment: ${message}`);
-    }
-  };
+  useEffect(() => {
+    return () => {
+      documentCacheRef.current.clear();
+    };
+  }, []);
 
   // ---- Validation & save ----
 
@@ -814,6 +892,8 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   };
 
   const handleCancel = () => {
+    closeDocumentViewer();
+    documentCacheRef.current.clear();
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
         onClose();
@@ -840,6 +920,52 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
 
   return (
     <div className="slideout-overlay" onClick={handleCancel}>
+      {documentViewerOpen &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10050,
+              background: "rgba(15, 23, 42, 0.55)",
+              display: "flex",
+              alignItems: "stretch",
+              justifyContent: "center",
+              padding: "1.5rem",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeDocumentViewer();
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                maxWidth: "1100px",
+                background: "#fff",
+                borderRadius: "0.5rem",
+                overflow: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DocumentViewerWorkspace
+                documents={viewerDocuments}
+                activeIndex={activeViewerIndex}
+                onActiveIndexChange={setActiveViewerIndex}
+                onClose={closeDocumentViewer}
+                onNeedDocument={handleNeedDocument}
+                onPrefetchDocument={handlePrefetchDocument}
+                onDownload={(file) => {
+                  handleViewerDownload(file).catch((error: any) => {
+                    toast.error(error?.message || "Failed to download attachment");
+                  });
+                }}
+                mode="view"
+              />
+            </div>
+          </div>,
+          document.body
+        )}
       <div
         className="form-card"
         style={{ maxWidth: "1100px", width: "95vw" }}
@@ -1904,7 +2030,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
               </div>
             ) : (
               <>
-                <div className="jt-upload-bar">
+                <div className="jt-upload-bar" style={{ marginBottom: "0.75rem" }}>
+                  <label className="jt-section-hint" style={{ marginRight: "0.5rem" }}>
+                    Attachment type
+                  </label>
                   <select
                     className="jt-upload-select"
                     value={uploadType}
@@ -1916,54 +2045,51 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                       </option>
                     ))}
                   </select>
-                  <label className={`jt-upload-label ${uploading ? "is-disabled" : ""}`}>
-                    {uploading ? "Uploading..." : "Choose File"}
-                    <input
-                      type="file"
-                      style={{ display: "none" }}
-                      disabled={uploading}
-                      onChange={(e) => {
-                        handleUpload(e.target.files?.[0]);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
                 </div>
-
-                {attachments.length === 0 ? (
-                  <div className="jt-empty-block">
-                    <p>No attachments yet</p>
-                    <small>Attach the drawing and setup sheet so the shop floor has them</small>
-                  </div>
-                ) : (
-                  <div className="jt-attachments">
-                    {attachments.map((attachment) => (
-                      <div className="jt-attachment" key={attachment.id}>
-                        <span className="jt-attachment-icon">📎</span>
-                        <div className="jt-attachment-body">
-                          <button
-                            type="button"
-                            className="jt-attachment-name"
-                            onClick={() => handleOpenAttachment(attachment)}
-                          >
-                            {attachment.fileName}
-                          </button>
-                          <span className="jt-attachment-meta">
-                            {attachment.attachmentType} · {formatBytes(attachment.fileSize)}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="jt-icon-button is-danger"
-                          title="Remove attachment"
-                          onClick={() => handleDeleteAttachment(attachment.id)}
-                        >
-                          🗑
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <AttachmentUploadSection
+                  attachments={attachments}
+                  orderId={jobTemplateId}
+                  disabled={loading}
+                  maxFileSizeBytes={JOB_TEMPLATE_MAX_UPLOAD_BYTES}
+                  onAttachmentsChange={setAttachments}
+                  onUploadFiles={async (files) => {
+                    const added: ModuleAttachment[] = [];
+                    for (const file of files) {
+                      const uploaded = await JobTemplateService.UploadAttachment(
+                        jobTemplateId,
+                        uploadType,
+                        file
+                      );
+                      added.push(toModuleAttachment(uploaded));
+                    }
+                    setAttachments((prev) => [...prev, ...added]);
+                    toast.success(
+                      files.length === 1 ? "Attachment uploaded" : `${files.length} attachments uploaded`
+                    );
+                  }}
+                  onDeleteAttachment={async (attachment) => {
+                    if (!window.confirm("Remove this attachment?")) {
+                      return;
+                    }
+                    documentCacheRef.current.remove({
+                      id: attachment.id,
+                      fileUniqueno: attachment.fileUniqueno ?? attachment.id,
+                    });
+                    await JobTemplateService.DeleteAttachment(attachment.id);
+                    setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+                    toast.success("Attachment removed");
+                  }}
+                  onDownloadAttachment={async (attachment) => {
+                    await handleViewerDownload({
+                      id: attachment.id,
+                      name: attachment.name,
+                      size: attachment.size,
+                      fileUniqueno: attachment.fileUniqueno ?? attachment.id,
+                      contentType: attachment.contentType,
+                    });
+                  }}
+                  onViewAttachment={handleOpenDocumentViewer}
+                />
               </>
             )}
           </div>

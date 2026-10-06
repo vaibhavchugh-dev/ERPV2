@@ -40,8 +40,8 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.InvoiceMaster,
                         id => id.InvoiceId,
                         im => im.Id,
-                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
-                    .Where(x => x.TenantId == tenantId)
+                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId, im.IsVoided })
+                    .Where(x => x.TenantId == tenantId && !x.IsVoided)
                     .GroupBy(x => x.OrderDetailID!.Value)
                     .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
@@ -134,8 +134,10 @@ namespace CimmpleAPI.Controllers
                             return BadRequest(new { error = $"Quantity to invoice must be greater than 0 for item {detail.ItemNo}" });
                     }
 
-                    // Generate invoice number
-                    var invoiceNumber = GenerateInvoiceNumber(tenantId);
+                    var invoiceDateForNumber = request.InvoiceDate ?? DateTime.Now;
+
+                    // Generate invoice number (sequence scoped to invoice date year)
+                    var invoiceNumber = GenerateInvoiceNumber(tenantId, invoiceDateForNumber.Year);
 
                     // Calculate totals (Amount = line net; TotalAmount = net + tax + shipping + other)
                     decimal subtotal = 0;
@@ -189,7 +191,7 @@ namespace CimmpleAPI.Controllers
                     }
 
                     // Create invoice header
-                    var invoiceDate = request.InvoiceDate ?? DateTime.Now;
+                    var invoiceDate = invoiceDateForNumber;
                     DateTime dueDate;
                     int? paymentTermId = null;
                     if (request.PaymentTermId.HasValue && request.PaymentTermId.Value > 0)
@@ -217,11 +219,11 @@ namespace CimmpleAPI.Controllers
                     {
                         TenantId = tenantId,
                         InvoiceNo = invoiceNumber,
-                        PrefixInvoiceNo = $"INV-{DateTime.Now.Year}-{invoiceNumber:D4}",
+                        PrefixInvoiceNo = $"INV-{invoiceDate.Year}-{invoiceNumber:D4}",
                         InvoiceDate = invoiceDate,
                         DueDate = dueDate,
                         PaymentTermId = paymentTermId,
-                        AccountingPeriod = $"{DateTime.Now.Year}{DateTime.Now.Month:D2}", // YYYYMM format
+                        AccountingPeriod = GlWorkflowService.PeriodKeyFromDate(invoiceDate),
                         ShippingCharge = shippingCharge,
                         OtherCharge = otherCharge,
                         SaleTax = saleTaxRate,
@@ -976,11 +978,10 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private int GenerateInvoiceNumber(int tenantId)
+        private int GenerateInvoiceNumber(int tenantId, int sequenceYear)
         {
-            var currentYear = DateTime.Now.Year;
             var existingInvoices = _context.InvoiceMaster
-                .Where(im => im.TenantId == tenantId && im.InvoiceDate.Year == currentYear)
+                .Where(im => im.TenantId == tenantId && im.InvoiceDate.Year == sequenceYear)
                 .ToList();
 
             var maxInvoiceNo = existingInvoices.Any() ? existingInvoices.Max(im => im.InvoiceNo) : 0;
@@ -1010,8 +1011,8 @@ namespace CimmpleAPI.Controllers
                 .Join(_context.InvoiceMaster,
                     id => id.InvoiceId,
                     im => im.Id,
-                    (id, im) => new { id.QtyInvoiced, im.TenantId })
-                .Where(x => x.TenantId == tenantId)
+                    (id, im) => new { id.QtyInvoiced, im.TenantId, im.IsVoided })
+                .Where(x => x.TenantId == tenantId && !x.IsVoided)
                 .Sum(x => x.QtyInvoiced);
 
             return invoicedQty;
@@ -1035,8 +1036,8 @@ namespace CimmpleAPI.Controllers
                 .Join(_context.InvoiceMaster,
                     id => id.InvoiceId,
                     im => im.Id,
-                    (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId })
-                .Where(x => x.TenantId == tenantId)
+                    (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId, im.IsVoided })
+                .Where(x => x.TenantId == tenantId && !x.IsVoided)
                 .GroupBy(x => x.OrderDetailID.Value)
                 .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
 
@@ -1116,10 +1117,7 @@ namespace CimmpleAPI.Controllers
                         });
                     }
 
-                    var periodKey = !string.IsNullOrWhiteSpace(invoice.AccountingPeriod) &&
-                                    GlWorkflowService.TryNormalizePeriodKey(invoice.AccountingPeriod, out var normalizedPeriod, out _)
-                        ? normalizedPeriod
-                        : GlWorkflowService.PeriodKeyFromDate(paymentDate);
+                    var periodKey = GlWorkflowService.PeriodKeyFromDate(paymentDate);
                     if (GlWorkflowService.IsPeriodLocked(_context, tenantId, periodKey))
                     {
                         return BadRequest(new
@@ -1243,7 +1241,7 @@ namespace CimmpleAPI.Controllers
         private static string BuildAutoPostingReference(string prefix, string? documentNo, int documentId)
         {
             var safeDoc = string.IsNullOrWhiteSpace(documentNo) ? documentId.ToString() : documentNo.Trim();
-            var reference = $"{prefix}-{safeDoc}";
+            var reference = $"{prefix}-{documentId}-{safeDoc}";
             return reference.Length > 200 ? reference[..200] : reference;
         }
 
@@ -1279,9 +1277,10 @@ namespace CimmpleAPI.Controllers
         {
             if (GetBalanceDue(invoice) <= 0.009m)
                 return null;
-            if (invoice.DueDate >= DateTime.Now)
+            var today = DateTime.Now.Date;
+            if (invoice.DueDate.Date >= today)
                 return null;
-            return (int)(DateTime.Now - invoice.DueDate).TotalDays;
+            return (today - invoice.DueDate.Date).Days;
         }
 
         private static string ResolveCustomerInvoiceStatus(InvoiceMaster invoice)
@@ -1296,7 +1295,7 @@ namespace CimmpleAPI.Controllers
                 return "Paid";
             if (paid > 0.009m)
                 return "Partially Paid";
-            if (invoice.DueDate < DateTime.Now)
+            if (invoice.DueDate.Date < DateTime.Now.Date)
                 return "Overdue";
             return "Unpaid";
         }

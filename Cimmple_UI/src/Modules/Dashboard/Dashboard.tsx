@@ -25,6 +25,7 @@ import {
   faFilter
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { formatCurrency } from "../../Common/Utils/Formatting";
 import {
   BarChart,
   Bar,
@@ -597,7 +598,12 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div className="alert-content">
                       <div className="alert-title">{alert.title}</div>
-                      <div className="alert-description">{alert.description}</div>
+                      <div className="alert-description">
+                        {alert.amount != null &&
+                        (alert.type === "overdue_invoice_ar" || alert.type === "overdue_invoice_ap")
+                          ? `${alert.description} (${formatCurrency(alert.amount)})`
+                          : alert.description}
+                      </div>
                     </div>
                     <div className="alert-priority" style={{ backgroundColor: `${getPriorityColor(alert.priority)}20`, color: getPriorityColor(alert.priority) }}>
                       {alert.priority}

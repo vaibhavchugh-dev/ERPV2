@@ -1,4 +1,4 @@
-﻿# QA — Bank Master
+﻿# QA — Bank Master -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -351,3 +351,4 @@ Severity scale:
 | No server-side role/permission enforcement | All `BankController` endpoints | `QA_RolesPermissions.md` |
 | Global search returns full bank account numbers and ignores location restrictions | `GlobalSearchController.SearchBanks` (lines 501-519) | `QA_GlobalSearch.md` (bank data exposure logged here as BUG-BANK-005) |
 | Bank GL resolution id/code ambiguity | `GlAccountResolutionService.ResolveBank` | `QA_Accounting.md` (logged here as BUG-BANK-011 because it is the bank-to-GL link) |
+

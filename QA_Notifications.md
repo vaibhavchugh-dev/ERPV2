@@ -1,8 +1,8 @@
 ﻿# QA — Notifications
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Notifications | 1.8 | BUG-NOTIF | Yes | 5 | 0 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Notifications | 1.8 | BUG-NOTIF | Yes | No | 5 | 0 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -261,3 +261,4 @@ No potential bugs beyond the confirmed list.
 | `GetTenantId()`/`GetUserId()` fall back to the `tenantId`/`userId` headers when claims are missing; support-staff tokens (tenant 0) can act as any tenant/user on notification endpoints. (BUG-AUTH-014 covers the general header fallback.) | Support Portal — `QA_SupportPortal.md` | `Controllers/ApiBaseController.cs` lines 13–25, 34–46; used throughout `NotificationsController.cs`. |
 | Vendor-portal tokens are accepted on `/Notifications/*`, so vendor users can send direct messages to internal staff through `Send`. | Vendor Portal — `QA_VendorPortal.md` | No `IsVendorPortal()` check in `NotificationsController.cs`. |
 | Display-number scheme (`PONumber + 999`) used inconsistently across modules; notifications use raw numbers. | Sales / Procurement — `QA_Sales.md`, `QA_Procurement.md` | See BUG-NOTIF-002 evidence. |
+

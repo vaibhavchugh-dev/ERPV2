@@ -54,6 +54,7 @@ interface DetailData {
   discountType?: string;
   dueDate: string;
   notes: string;
+  JobNumber?: string;
   glcode?: string;
   lineType?: string;
   rawMaterialId?: number;
@@ -242,6 +243,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             discountType: d.discountType || d.DiscountType || "Percent",
             dueDate: d.dueDate || d.DueDate || "",
             notes: d.notes || d.Notes || "",
+            JobNumber: d.jobNumber || d.JobNumber || "",
             glcode: d.glcode || d.Glcode || "",
             lineType: d.lineType || d.LineType || "",
             rawMaterialId: d.rawMaterialId || d.RawMaterialId,
@@ -751,27 +753,26 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
           QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
           Details: items.map((item, idx) => {
-            // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)
+            const rfqJobNumber =
+              item.lineItem.JobNumber || item.detail.JobNumber || "";
             let jobId = 0;
-            if (item.detail.partNo) {
-              // Try to extract from partNo or jobNumber if available
-              const jobNumber = item.lineItem.partNo || "";
-              const match = jobNumber.match(/JO#?(\d+)/i);
+            if (rfqJobNumber) {
+              const match = rfqJobNumber.match(/JO#?(\d+)/i);
               if (match && match[1]) {
                 jobId = parseInt(match[1], 10) || 0;
               }
             }
-            
+
             return {
               ID: 0, // New detail
               ItemNo: idx + 1,
-              JobId: jobId, // Required field - extract from JobNumber or use 0
+              JobId: jobId,
               PartName: item.detail.partName,
               PartNo: item.detail.partNo,
               LineType: item.detail.lineType || lineTypeFromQuotationType(quotationData.QuotationType),
               RawMaterialId: item.detail.rawMaterialId,
               DueDate: formatDateForDetail(item.detail.dueDate),
-              JobNumber: item.lineItem.partNo || "", // Use partNo as job number if available
+              JobNumber: rfqJobNumber,
               JobDesc: "",
               QtyOrdered: item.detail.qtyOrdered,
               Unit: item.detail.unit || "EA",

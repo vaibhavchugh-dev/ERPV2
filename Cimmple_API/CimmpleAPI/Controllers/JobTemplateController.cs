@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
+using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -17,6 +20,7 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<JobTemplateController> _logger;
 
         public static readonly string[] AttachmentTypes = new[]
@@ -51,10 +55,15 @@ namespace CimmpleAPI.Controllers
             [".txt"] = "text/plain",
         };
 
-        public JobTemplateController(CimmpleDbContext context, IWebHostEnvironment environment, ILogger<JobTemplateController> logger)
+        public JobTemplateController(
+            CimmpleDbContext context,
+            IWebHostEnvironment environment,
+            IConfiguration configuration,
+            ILogger<JobTemplateController> logger)
         {
             _context = context;
             _environment = environment;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -793,7 +802,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpDelete("DeleteJobTemplate")]
-        public IActionResult DeleteJobTemplate([FromQuery] int jobTemplateId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteJobTemplate([FromQuery] int jobTemplateId, [FromQuery] int tenantId)
         {
             try
             {
@@ -826,7 +835,7 @@ namespace CimmpleAPI.Controllers
 
                 foreach (var attachment in attachments)
                 {
-                    DeletePhysicalFile(attachment.FileUrl);
+                    await DeleteAttachmentStorageAsync(attachment, tenantId);
                 }
 
                 return Ok(new { result = new { message = "Job template deleted successfully" } });
@@ -870,21 +879,28 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Job template not found" });
                 }
 
-                var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                var folderPath = Path.Combine(webRootPath, "uploads", "jobtemplates", tenantId.ToString(), jobTemplateId.ToString());
+                var displayName = Path.GetFileName(file.FileName);
+                var blobName = $"{jobTemplateId}/{Guid.NewGuid():N}{extension}";
+                var createdBy = GetUserId() ?? 0;
 
-                if (!Directory.Exists(folderPath))
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName,
+                    createdBy);
+
+                var uploadedOk = await ModuleFileStorage.UploadAsync(_context, _configuration, file, fileInfo);
+                if (!uploadedOk)
                 {
-                    Directory.CreateDirectory(folderPath);
-                }
-
-                var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
-                var uniqueFileName = $"{timestamp}{extension}";
-                var filePath = Path.Combine(folderPath, uniqueFileName);
-
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                {
-                    await file.CopyToAsync(stream);
+                    var connMissing = string.IsNullOrEmpty(
+                        _configuration["AzureConnection:storageConnectionString"]
+                        ?? _configuration["AzureConnString"]);
+                    return StatusCode(500, new
+                    {
+                        error = connMissing
+                            ? $"Failed to upload file '{displayName}' to Azure Storage. Configure AzureConnection:storageConnectionString (or AzureConnString / gcwConfig)."
+                            : $"Failed to upload file '{displayName}' to Azure Storage"
+                    });
                 }
 
                 var attachment = new JobTemplateAttachment
@@ -892,12 +908,14 @@ namespace CimmpleAPI.Controllers
                     JobTemplateId = jobTemplateId,
                     Tenantid = tenantId,
                     AttachmentType = string.IsNullOrWhiteSpace(attachmentType) ? "Other" : attachmentType.Trim(),
-                    FileName = Path.GetFileName(file.FileName),
-                    FileUrl = $"/uploads/jobtemplates/{tenantId}/{jobTemplateId}/{uniqueFileName}",
-                    ContentType = file.ContentType,
+                    FileName = displayName,
+                    FileUrl = blobName,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                        ? ModuleFileStorage.GetContentType(displayName)
+                        : file.ContentType,
                     FileSize = file.Length,
                     UploadedDate = DateTime.Now,
-                    UploadedBy = GetUserId()
+                    UploadedBy = createdBy
                 };
 
                 _context.JobTemplateAttachment.Add(attachment);
@@ -924,7 +942,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpDelete("DeleteJobTemplateAttachment")]
-        public IActionResult DeleteJobTemplateAttachment([FromQuery] int attachmentId, [FromQuery] int tenantId)
+        public async Task<IActionResult> DeleteJobTemplateAttachment([FromQuery] int attachmentId, [FromQuery] int tenantId)
         {
             try
             {
@@ -939,7 +957,7 @@ namespace CimmpleAPI.Controllers
                 _context.JobTemplateAttachment.Remove(attachment);
                 _context.SaveChanges();
 
-                DeletePhysicalFile(attachment.FileUrl);
+                await DeleteAttachmentStorageAsync(attachment, tenantId);
 
                 return Ok(new { result = new { message = "Attachment deleted successfully" } });
             }
@@ -964,25 +982,69 @@ namespace CimmpleAPI.Controllers
                     .AsNoTracking()
                     .FirstOrDefault(a => a.Id == attachmentId && a.Tenantid == tenantId);
 
-                var fullPath = ResolveAttachmentPath(attachment?.FileUrl);
-                if (attachment == null || fullPath == null || !System.IO.File.Exists(fullPath))
+                if (attachment == null)
                 {
                     return NotFound(new { error = "Attachment not found" });
                 }
 
-                var fileName = string.IsNullOrWhiteSpace(attachment.FileName) ? Path.GetFileName(fullPath) : attachment.FileName;
-                var extension = Path.GetExtension(fullPath);
+                var fileName = ModuleFileStorage.SanitizeFileName(attachment.FileName);
                 Response.Headers["X-Content-Type-Options"] = "nosniff";
 
-                if (InlineContentTypes.TryGetValue(extension, out var inlineType))
+                if (IsLegacyLocalJobTemplateFileUrl(attachment.FileUrl))
+                {
+                    var fullPath = ResolveAttachmentPath(attachment.FileUrl);
+                    if (fullPath == null || !System.IO.File.Exists(fullPath))
+                    {
+                        return NotFound(new { error = "Attachment not found" });
+                    }
+
+                    fileName = string.IsNullOrWhiteSpace(attachment.FileName)
+                        ? Path.GetFileName(fullPath)
+                        : attachment.FileName;
+                    var extension = Path.GetExtension(fullPath);
+
+                    if (InlineContentTypes.TryGetValue(extension, out var inlineType))
+                    {
+                        var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+                        disposition.SetHttpFileName(fileName);
+                        Response.Headers["Content-Disposition"] = disposition.ToString();
+                        return PhysicalFile(fullPath, inlineType);
+                    }
+
+                    return PhysicalFile(fullPath, "application/octet-stream", fileName);
+                }
+
+                var blobName = attachment.FileUrl;
+                if (string.IsNullOrWhiteSpace(blobName))
+                {
+                    return NotFound(new { error = "Attachment not found" });
+                }
+
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName);
+
+                var bytes = ModuleFileStorage.DownloadBytes(_context, _configuration, fileInfo);
+                if (bytes == null || bytes.Length == 0)
+                {
+                    return NotFound(new { error = "File not found in Azure Storage" });
+                }
+
+                var contentType = !string.IsNullOrWhiteSpace(attachment.ContentType)
+                    ? attachment.ContentType
+                    : ModuleFileStorage.GetContentType(attachment.FileName ?? blobName);
+                var extensionAzure = Path.GetExtension(fileName);
+
+                if (InlineContentTypes.TryGetValue(extensionAzure, out var inlineAzure))
                 {
                     var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
                     disposition.SetHttpFileName(fileName);
                     Response.Headers["Content-Disposition"] = disposition.ToString();
-                    return PhysicalFile(fullPath, inlineType);
+                    return File(bytes, inlineAzure);
                 }
 
-                return PhysicalFile(fullPath, "application/octet-stream", fileName);
+                return File(bytes, contentType, fileName);
             }
             catch (Exception ex)
             {
@@ -1233,6 +1295,38 @@ namespace CimmpleAPI.Controllers
         private static int? NullIfNotPositive(int? value)
         {
             return value.HasValue && value.Value > 0 ? value : null;
+        }
+
+        private static bool IsLegacyLocalJobTemplateFileUrl(string? fileUrl) =>
+            !string.IsNullOrWhiteSpace(fileUrl) &&
+            fileUrl.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase);
+
+        private async Task DeleteAttachmentStorageAsync(JobTemplateAttachment attachment, int tenantId)
+        {
+            if (IsLegacyLocalJobTemplateFileUrl(attachment.FileUrl))
+            {
+                DeletePhysicalFile(attachment.FileUrl);
+                return;
+            }
+
+            var blobName = attachment.FileUrl;
+            if (string.IsNullOrWhiteSpace(blobName))
+            {
+                return;
+            }
+
+            try
+            {
+                var fileInfo = ModuleFileStorage.CreateFileInfo(
+                    tenantId,
+                    ModuleFileStorage.JobTemplatesFolder,
+                    blobName);
+                await ModuleFileStorage.DeleteAsync(_context, _configuration, fileInfo);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not remove job template blob '{BlobName}'", blobName);
+            }
         }
 
         /// <summary>Maps a stored FileUrl to its file under the job template upload folder; null if it points anywhere else.</summary>

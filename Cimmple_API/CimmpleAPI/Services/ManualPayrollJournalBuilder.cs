@@ -103,6 +103,22 @@ namespace CimmpleAPI.Services
             AddCredit("employerPayrollTaxPayable", "Employer payroll taxes / benefits payable",
                 defaults?.DefaultEmployerPayrollTaxPayableAccountId, employer);
 
+            var diff = Round(theoreticalDr - theoreticalCr);
+            if (diff != 0 && Math.Abs(diff) <= BalanceTolerance && missing.Count == 0)
+            {
+                var netLine = lines.FirstOrDefault(l =>
+                    string.Equals(l.BucketKey, "netPayPayableOrCash", StringComparison.OrdinalIgnoreCase));
+                if (netLine != null)
+                {
+                    if (diff > 0)
+                        netLine.Credit = Round(netLine.Credit + diff);
+                    else
+                        netLine.Debit = Round(netLine.Debit + Math.Abs(diff));
+                    theoreticalCr += diff > 0 ? diff : 0;
+                    theoreticalDr += diff < 0 ? Math.Abs(diff) : 0;
+                }
+            }
+
             // Amount balance uses theoretical totals (includes buckets with missing GL accounts).
             var amountsBalanced = Math.Abs(theoreticalDr - theoreticalCr) <= BalanceTolerance
                                   && (theoreticalDr > 0 || theoreticalCr > 0);
@@ -123,7 +139,9 @@ namespace CimmpleAPI.Services
             var periodKey = $"{entryDate:yyyyMM}";
 
             var refNo = string.IsNullOrWhiteSpace(meta.ReferenceNumber)
-                ? $"{refPrefix}-{payDate:yyyyMMdd}"
+                ? periodStart.HasValue && periodEnd.HasValue
+                    ? $"{refPrefix}-{periodStart:yyyyMMdd}-{periodEnd:yyyyMMdd}-{payDate:yyyyMMdd}"
+                    : $"{refPrefix}-{payDate:yyyyMMdd}"
                 : meta.ReferenceNumber.Trim();
 
             var desc = string.IsNullOrWhiteSpace(meta.Description)

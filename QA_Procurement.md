@@ -1,4 +1,4 @@
-﻿# QA — Procurement (Vendor Quotations/RFQ, Orders, Receiving, Invoices & Payments)
+﻿# QA — Procurement (Vendor Quotations/RFQ, Orders, Receiving, Invoices & Payments) -t
 
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |

@@ -1,8 +1,8 @@
 ﻿# QA — Process Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Process Master | 2.6 | BUG-PROCESS | Yes | 7 | 1 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Process Master | 2.6 | BUG-PROCESS | Yes | No | 7 | 1 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -266,3 +266,4 @@ Severity scale:
 | --- | --- | --- |
 | Client-supplied `tenantid` (query/body) trusted without comparison to the token tenant | `GET /Process/GetProcesses`, `GetProcessById`, `CheckProcessDeletionImpact`; `POST SaveProcess`, `ImportProcesses`; `DELETE DeleteProcess` | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All `/api/Process/*` endpoints | `QA_RolesPermissions.md` |
+

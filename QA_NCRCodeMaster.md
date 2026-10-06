@@ -1,8 +1,8 @@
 ﻿# QA — NCR Code Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| NCR Code Master | 2.15 | BUG-NCRCODE | Yes | 1 | 2 | 4 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NCR Code Master | 2.15 | BUG-NCRCODE | Yes | Yes | 1 | 2 | 4 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -158,3 +158,4 @@ Severity scale:
 | Client-supplied `tenantId`/`TenantId` trusted without comparing to the token tenant | `GET NCRCode/GetNCRCodes?tenantId`, `GetNCRCodeById?tenantId`, `POST SaveNCRCode` (body `TenantId`), `POST SeedDefaultNCRCodes?tenantId`, `CheckNCRCodeDeletionImpact?tenantId`, `DELETE DeleteNCRCode?tenantId` | `QA_TenantLocationFramework.md` |
 | No server-side role/permission enforcement | All `NCRCodeController` endpoints (including seeding) | `QA_RolesPermissions.md` |
 | NCR stores a code-text snapshot | `QualityController.ResolveNcrCodeFieldsAsync` | `QA_QualityNCR.md` (see BUG-NCRCODE-003) |
+

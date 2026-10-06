@@ -1,8 +1,8 @@
 ﻿# QA — Job Template Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Job Template Master | 2.7 | BUG-JT | Yes | 8 | 1 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Job Template Master | 2.7 | BUG-JT | Yes | Yes | 8 | 1 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -296,3 +296,4 @@ Severity scale:
 | No server-side role/permission enforcement | All `/api/JobTemplate/*` endpoints | `QA_RolesPermissions.md` |
 | `UseStaticFiles` before authentication exposes all `wwwroot/uploads` content | `Program.cs` line 250 (shared by every upload feature) | Shared root cause; module impact logged as BUG-JT-004 |
 | Job order material requirements also accept product/raw-material ids without a tenant check | `JobOrderController.cs` lines 1155-1188 | Job Order audit (template lines propagate there, BUG-JT-002) |
+

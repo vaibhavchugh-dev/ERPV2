@@ -1,5 +1,4 @@
-﻿# QA — Payroll (Payroll Journals)
-
+﻿# QA — Payroll (Payroll Journals) -t
 | Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
 | --- | --- | --- | --- | --- | --- | --- |
 | Payroll (Payroll Journals) | 6.9 | BUG-PAY | Yes | 8 | 5 | 8 |

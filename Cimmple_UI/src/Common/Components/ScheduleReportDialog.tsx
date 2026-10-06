@@ -134,6 +134,15 @@ const ScheduleReportDialog: React.FC<ScheduleReportDialogProps> = ({
       toast.error("Custom period requires start and end dates.");
       return;
     }
+    if (
+      dateRange === "Custom" &&
+      customStartDate &&
+      customEndDate &&
+      new Date(customStartDate) > new Date(customEndDate)
+    ) {
+      toast.error("Start date must be on or before end date.");
+      return;
+    }
 
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const timeZoneId =

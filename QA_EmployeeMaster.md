@@ -1,8 +1,8 @@
 ﻿# QA — Employee Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Employee Master | 2.3 | BUG-EMP | Yes | 11 | 4 | 6 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Employee Master | 2.3 | BUG-EMP | Yes | — | 11 | 4 | 6 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -721,3 +721,4 @@ Wrap the database steps in a transaction (face enrolment can remain outside it).
 | The tenant id comes from the query or body and is not compared with the token's tenant. | `QA_TenantLocationFramework.md` | `GET /Employee/GetEmployees?tenantid` (`EmployeeController.cs` 47–224), `GET GetEmployeeById?tenantId` (226–298), `POST SaveEmployee` / `SaveEmployeeData` (`TenantID` in body, 300–330 → 400–731), `GET GetAllRoles?tenantid` (733–753), `POST ImportEmployees` (`Tenantid` in body, 755–1090), `GET CheckEmployeeDeletionImpact?tenantId` (1110–1219), `DELETE DeleteEmployee?tenantId` (1221–1255). |
 | No server-side role/permission check: any authenticated user can create employees, assign any role (including an admin role, which grants every permission and every location per BUG-AUTH-017), set passwords and delete employees. | `QA_RolesPermissions.md` | All endpoints above; `EmployeeController.cs` line 506 (`Role` stored as sent). |
 | Vendor-portal tokens are accepted by Employee Master endpoints. | `QA_VendorPortal.md` | Already listed in `QA_Authentication.md`; no `IsVendorPortal()` check in `EmployeeController`. |
+

@@ -1,8 +1,8 @@
 ﻿# QA — Customer Master
 
-| Module | Matrix section | Bug ID prefix | Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| Customer Master | 2.1 | BUG-CUST | Yes | 8 | 2 | 5 |
+| Module | Matrix section | Bug ID prefix | Tested | Fix Tested | Confirmed Bugs | Potential Bugs | Manual Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Customer Master | 2.1 | BUG-CUST | Yes | Yes | 8 | 2 | 5 |
 
 Source of test cases: `QA_TEST_MATRIX.md`. Method: static trace of the actual implementation (React UI → service → Axios → .NET controller → service/repository → EF Core → SQL Server, and back). No application code, configuration or database is changed during QA. Findings that depend on deployed configuration, data or a real browser go under **Needs Manual Verification**.
 
@@ -509,3 +509,4 @@ Add filtered unique indexes per tenant (normalised name, code), or serialise cod
 | --- | --- | --- |
 | The tenant id comes from the query or body and is not compared with the token's tenant. | `QA_TenantLocationFramework.md` | `GET /Customer/GetCustomerlist?tenantid` (`CustomerController.cs` 25–97), `GET GetCustomerById?tenantId` (99–158), `POST SaveCustomerData` (`TenantID` in body, 160–372), `POST ImportCustomers` (`Tenantid` in body, 374–614), `GET CheckCustomerDeletionImpact?tenantId` (733–923), `DELETE DeleteCustomer?tenantId` (925–964). The UI sends `tenantID` from localStorage (`Common/Services/CustomerService.ts`). |
 | No server-side role/permission check: any authenticated user (including a vendor-portal token) can list, create, import and delete customers. | `QA_RolesPermissions.md` | All six endpoints above. |
+

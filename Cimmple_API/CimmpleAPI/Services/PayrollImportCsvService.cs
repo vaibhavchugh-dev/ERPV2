@@ -238,7 +238,7 @@ namespace CimmpleAPI.Services
 
         private static void AddAmount(ManualPayrollAmounts a, string bucket, decimal money)
         {
-            money = Math.Abs(money); // treat parentheses/negatives as absolute contribution
+            // Preserve sign so correction rows (negative amounts) net correctly.
             switch (bucket)
             {
                 case "grossWages": a.GrossWages += money; break;
