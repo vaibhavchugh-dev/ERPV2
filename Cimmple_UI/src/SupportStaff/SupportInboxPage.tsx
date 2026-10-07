@@ -6,6 +6,7 @@ import {
   SupportTicketListItem,
 } from "../Common/Services/SupportTicketService";
 import { useFormatting } from "../Common/Hooks/useFormatting";
+import SupportHeader from "./SupportHeader";
 import "./SupportInbox.scss";
 
 function statusClass(status: string): string {
@@ -123,24 +124,9 @@ const SupportInboxPage: React.FC = () => {
     }
   };
 
-  const logout = () => {
-    SupportStaffAuth.clear();
-    window.location.href = "/support/login";
-  };
-
   return (
     <div className="support-inbox">
-      <header className="support-inbox__header">
-        <div>
-          <div className="support-inbox__brand">Cimmple Support</div>
-          <div className="support-inbox__user">
-            {user?.displayName || user?.username || "Staff"}
-          </div>
-        </div>
-        <button type="button" className="si-btn si-btn--ghost" onClick={logout}>
-          Sign out
-        </button>
-      </header>
+      <SupportHeader />
 
       <div className="support-inbox__body">
         <aside className="support-inbox__list">

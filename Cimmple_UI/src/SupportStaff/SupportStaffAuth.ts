@@ -7,6 +7,7 @@ export interface SupportStaffUser {
   username: string;
   displayName: string;
   portalType: string;
+  platformAdmin?: boolean;
   products: string[];
 }
 

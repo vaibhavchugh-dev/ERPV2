@@ -22,7 +22,12 @@ namespace CimmpleAPI.Controllers
                 return fromClaim;
             }
 
-            // Fallback for transitional clients; prefer claims after login is enforced
+            // A signed-in caller without a tenant claim (support staff) must not pick one via the header.
+            if (User?.Identity?.IsAuthenticated == true)
+            {
+                return 0;
+            }
+
             var tenantIdHeader = Request.Headers["tenantId"].FirstOrDefault();
             return int.TryParse(tenantIdHeader, out var headerTenantId) ? headerTenantId : 0;
         }
@@ -44,8 +49,8 @@ namespace CimmpleAPI.Controllers
                 return fromClaim;
             }
 
-            // Integration tokens represent a machine client, not a user; the header must not pick one.
-            if (IsIntegrationClient())
+            // Signed-in callers without a user claim (integration clients, support staff) must not pick one via the header.
+            if (User?.Identity?.IsAuthenticated == true)
             {
                 return null;
             }
@@ -72,6 +77,13 @@ namespace CimmpleAPI.Controllers
             var portal = User?.FindFirst("portalType")?.Value;
             return string.Equals(portal, "support", StringComparison.OrdinalIgnoreCase);
         }
+
+        protected const string PlatformAdminClaim = "platformAdmin";
+
+        /// <summary>Support staff flagged PlatformAdmin in Support:Staff config.</summary>
+        protected bool IsPlatformAdmin() =>
+            IsSupportStaff()
+            && string.Equals(User?.FindFirst(PlatformAdminClaim)?.Value, "true", StringComparison.OrdinalIgnoreCase);
 
         protected string? GetSupportStaffName()
         {

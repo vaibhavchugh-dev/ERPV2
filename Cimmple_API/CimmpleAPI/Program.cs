@@ -43,6 +43,7 @@ builder.Host.UseSerilog();
 builder.Services.AddControllers(options =>
     {
         options.Filters.Add<CimmpleAPI.Services.Auth.ErpPermissionAuthorizationFilter>();
+        options.Filters.Add<CimmpleAPI.Services.Auth.TenantScopeFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -102,6 +103,7 @@ builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.ConversationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
 builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();
+builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.TenantProvisioningService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 
 // Legacy user repository (UserController helpers)
@@ -266,6 +268,16 @@ try
 catch (Exception ex)
 {
     Log.Warning(ex, "Login schema check at startup failed; it is retried on login and refresh.");
+}
+
+try
+{
+    using var tenantScope = app.Services.CreateScope();
+    await TenantSchemaService.EnsureAsync(tenantScope.ServiceProvider.GetRequiredService<CimmpleDbContext>());
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Tenant registry check at startup failed; it is retried when a tenant is provisioned.");
 }
 
 // Configure the HTTP request pipeline

@@ -115,6 +115,44 @@ namespace CimmpleAPI.Services
             });
         }
 
+        public static async Task<(bool queued, string? error)> TryQueueTenantAdminInviteAsync(
+            EmailOutboxService outbox,
+            int tenantId,
+            IConfiguration? configuration,
+            string toEmail,
+            string displayName,
+            string companyName,
+            string userName,
+            string temporaryPassword)
+        {
+            if (string.IsNullOrWhiteSpace(toEmail))
+                return (false, "Administrator email is missing.");
+
+            LogBaseUrlWarning(configuration);
+            var loginUrl = ResolveLoginUrl(configuration, "/login");
+            var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
+            var safeCompany = WebUtility.HtmlEncode(companyName ?? "");
+            var safeUser = WebUtility.HtmlEncode(userName ?? "");
+            var safePwd = WebUtility.HtmlEncode(temporaryPassword ?? "");
+
+            var body =
+                $"<p>Hello {safeName},</p>" +
+                $"<p>Your Cimmple workspace for <strong>{safeCompany}</strong> is ready. You are its administrator and can sign in with:</p>" +
+                $"<p><strong>Username:</strong> {safeUser}<br/>" +
+                $"<strong>Temporary password:</strong> {safePwd}</p>" +
+                BuildSignInHtml(loginUrl) +
+                "<p>You will be asked to choose a new password the first time you sign in. " +
+                "After that you can add your team under User Management.</p>";
+
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
+            {
+                To = toEmail.Trim(),
+                Subject = "Your Cimmple workspace is ready",
+                Body = body,
+                IsHtml = true
+            }, skipNotificationGate: true);
+        }
+
         public static async Task<(bool queued, string? error)> TryQueuePasswordResetNoticeAsync(
             EmailOutboxService outbox,
             int tenantId,

@@ -295,6 +295,81 @@ namespace CimmpleAPI.Services.Auth
             return toAdd.Count;
         }
 
+        /// <summary>
+        /// Default assignments for one tenant: admin roles get every permission; other roles get Dashboard only.
+        /// With <paramref name="onlyRolesWithoutAssignments"/> roles that already have permissions are left alone;
+        /// otherwise every role's assignments in the tenant are replaced.
+        /// </summary>
+        public static async Task<(int AdminRoles, int NonAdminRoles, int Assignments)> AssignDefaultRolePermissionsAsync(
+            CimmpleDbContext context, int tenantId, bool onlyRolesWithoutAssignments)
+        {
+            var allPermissions = await context.PermissionMaster.AsNoTracking().ToListAsync();
+            if (allPermissions.Count == 0)
+                return (0, 0, 0);
+
+            var dashboard = allPermissions.FirstOrDefault(p =>
+                string.Equals(p.Url, "/home", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p.PermissionName, "Dashboard", StringComparison.OrdinalIgnoreCase));
+
+            var roles = await context.UserRole.AsNoTracking()
+                .Where(r => r.TenantId == tenantId)
+                .ToListAsync();
+            if (roles.Count == 0)
+                return (0, 0, 0);
+
+            var roleIds = roles.Select(r => r.RoleID).ToList();
+            var existing = await context.PermissionRole
+                .Where(pr => pr.TenantId == tenantId && roleIds.Contains(pr.RoleId))
+                .ToListAsync();
+
+            if (onlyRolesWithoutAssignments)
+            {
+                var assignedRoleIds = existing.Select(pr => pr.RoleId).ToHashSet();
+                roles = roles.Where(r => !assignedRoleIds.Contains(r.RoleID)).ToList();
+            }
+            else if (existing.Count > 0)
+            {
+                context.PermissionRole.RemoveRange(existing);
+                await context.SaveChangesAsync();
+            }
+
+            var toAdd = new List<PermissionRole>();
+            var adminRoles = 0;
+            var nonAdminRoles = 0;
+
+            foreach (var role in roles)
+            {
+                if (IsAdminRoleName(role.RoleName, role.RoleTag))
+                {
+                    adminRoles++;
+                    toAdd.AddRange(allPermissions.Select(perm => new PermissionRole
+                    {
+                        RoleId = role.RoleID,
+                        TenantId = tenantId,
+                        PermissionId = perm.PermissionId
+                    }));
+                }
+                else if (dashboard != null)
+                {
+                    nonAdminRoles++;
+                    toAdd.Add(new PermissionRole
+                    {
+                        RoleId = role.RoleID,
+                        TenantId = tenantId,
+                        PermissionId = dashboard.PermissionId
+                    });
+                }
+            }
+
+            if (toAdd.Count > 0)
+            {
+                await context.PermissionRole.AddRangeAsync(toAdd);
+                await context.SaveChangesAsync();
+            }
+
+            return (adminRoles, nonAdminRoles, toAdd.Count);
+        }
+
         internal static bool IsAdminRoleName(string? roleName, string? roleTag)
         {
             static bool Match(string? value) =>

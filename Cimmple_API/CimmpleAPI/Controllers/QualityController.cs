@@ -693,6 +693,12 @@ END");
         {
             try
             {
+                tenantId = GetTenantId();
+                if (tenantId <= 0)
+                {
+                    return BadRequest(new { error = new { message = "TenantId is required" } });
+                }
+
                 Console.WriteLine($"GetNCR called with id: {id}, tenantId: {tenantId}");
                 await EnsureNcrExternalColumnsAsync();
 
@@ -1929,8 +1935,10 @@ END");
                     return BadRequest(new { error = new { message = "file is required" } });
                 }
 
-                var ncr = _context.NonConformanceReports.AsNoTracking().FirstOrDefault(n => n.NcrId == ncrId);
-                if (ncr == null)
+                var tenantId = GetTenantId();
+                var ncr = _context.NonConformanceReports.AsNoTracking()
+                    .FirstOrDefault(n => n.NcrId == ncrId && n.TenantId == tenantId);
+                if (ncr == null || tenantId <= 0)
                 {
                     return NotFound(new { error = new { message = "NCR not found" } });
                 }

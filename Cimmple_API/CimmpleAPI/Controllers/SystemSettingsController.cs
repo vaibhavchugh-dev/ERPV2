@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Tenancy;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,36 +24,7 @@ namespace CimmpleAPI.Controllers
             _configuration = configuration;
         }
 
-        private static SystemSettings CreateDefaultSettings(int tenantId) => new SystemSettings
-        {
-            TenantId = tenantId,
-            DateFormat = "M/d/yyyy",
-            TimeFormat = "12",
-            Timezone = "America/New_York",
-            Locale = "en-US",
-            DefaultCurrency = "USD",
-            CurrencySymbol = "$",
-            DecimalPlaces = 2,
-            DecimalSeparator = ".",
-            ThousandsSeparator = ",",
-            MinPasswordLength = 8,
-            RequireUppercase = true,
-            RequireLowercase = true,
-            RequireNumbers = true,
-            RequireSpecialChars = false,
-            PasswordExpirationDays = 90,
-            PasswordHistoryCount = 5,
-            SessionTimeoutMinutes = 30,
-            MaxConcurrentSessions = 3,
-            FailedLoginAttempts = 5,
-            AccountLockoutMinutes = 15,
-            EmailDeliveryMode = SmtpSettingsResolver.ModeHosted,
-            SmtpPort = 587,
-            SmtpUseSsl = true,
-            DefaultPageSize = 10,
-            EnableEmailNotifications = true,
-            EnableInAppNotifications = true
-        };
+        private static SystemSettings CreateDefaultSettings(int tenantId) => TenantDefaults.CreateSystemSettings(tenantId);
 
         private static SystemSettings RedactSmtpPassword(SystemSettings settings)
         {
@@ -88,6 +60,7 @@ namespace CimmpleAPI.Controllers
 
         // GET: api/SystemSettings/GetSettings
         [HttpGet("GetSettings")]
+        [CimmpleAPI.Services.Auth.AllowTenantlessCaller]
         public async Task<IActionResult> GetSettings([FromQuery] int tenantId)
         {
             try
@@ -508,35 +481,17 @@ namespace CimmpleAPI.Controllers
 
                 if (entity == null)
                 {
-                    entity = new EntityMaster
-                    {
-                        Tenantid = dto.TenantId,
-                        company_name = dto.CompanyName ?? "",
-                        email = dto.Email ?? "",
-                        phone_number = dto.PhoneNumber ?? "",
-                        address = dto.Address ?? "",
-                        city = dto.City ?? "",
-                        state = dto.State ?? "",
-                        zip = dto.Zip ?? "",
-                        country = dto.Country ?? "",
-                        WebAddress = dto.WebAddress ?? "",
-                        registration_date = DateTime.UtcNow,
-                        first_name = "",
-                        last_name = "",
-                        pointofcontact = "",
-                        ContactEmail = dto.Email ?? "",
-                        apartment = "",
-                        entitycode = "",
-                        SaleTax = 0,
-                        QuotationPrefix = "QT",
-                        CustomerPrefix = "C",
-                        VendorPrefix = "V",
-                        ShippingPrefix = "SH",
-                        InvoicePrefix = "INV",
-                        timezoneui = "America/New_York",
-                        timezone = "America/New_York",
-                        coacount = 0
-                    };
+                    entity = TenantDefaults.CreateCompanyProfile(
+                        dto.TenantId,
+                        dto.CompanyName,
+                        dto.Email,
+                        phone: dto.PhoneNumber,
+                        country: dto.Country,
+                        webAddress: dto.WebAddress,
+                        address: dto.Address,
+                        city: dto.City,
+                        state: dto.State,
+                        zip: dto.Zip);
                     _context.EntityMaster.Add(entity);
                 }
                 else

@@ -2265,7 +2265,7 @@ namespace CimmpleAPI.Controllers
 
                 // Extract basic fields using TryGetProperty
                 int orderID = orderData.TryGetProperty("OrderID", out JsonElement orderIDElem) ? orderIDElem.GetInt32() : 0;
-                int tenantid = orderData.TryGetProperty("Tenantid", out JsonElement tenantidElem) ? tenantidElem.GetInt32() : 0;
+                int tenantid = GetTenantId();
                 int vendorID = orderData.TryGetProperty("VendorID", out JsonElement vendorIDElem) ? vendorIDElem.GetInt32() : 0;
 
                 if (vendorID <= 0)
@@ -3889,7 +3889,7 @@ namespace CimmpleAPI.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                int tenantId = receivingData.TryGetProperty("tenantid", out JsonElement tenantElem) ? tenantElem.GetInt32() : 0;
+                int tenantId = GetTenantId();
                 int orderDetailId = receivingData.TryGetProperty("orderDetailId", out JsonElement detailElem) ? detailElem.GetInt32() : 0;
                 int receivedQty = receivingData.TryGetProperty("receivedQty", out JsonElement qtyElem) ? qtyElem.GetInt32() : 0;
                 DateTime receivedDate = receivingData.TryGetProperty("receivedDate", out JsonElement dateElem) && dateElem.ValueKind == JsonValueKind.String && DateTime.TryParse(dateElem.GetString(), out var parsedDate)

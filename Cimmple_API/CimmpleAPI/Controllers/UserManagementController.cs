@@ -588,7 +588,8 @@ namespace CimmpleAPI.Controllers
 
                     if (clearExisting)
                     {
-                        var resetAssignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
+                        var resetAssignment = await ErpPermissionSeedService.AssignDefaultRolePermissionsAsync(
+                            _context, effectiveTenantId, onlyRolesWithoutAssignments: false);
                         return Ok(new
                         {
                             message = $"Reset role assignments for tenant {effectiveTenantId}. Added {missingPermissions.Count} missing permission definitions.",
@@ -596,9 +597,9 @@ namespace CimmpleAPI.Controllers
                             added = missingPermissions.Count,
                             clearExisting = true,
                             tenantId = effectiveTenantId,
-                            adminRolesAssigned = resetAssignment.adminRoles,
-                            nonAdminRolesAssigned = resetAssignment.nonAdminRoles,
-                            permissionAssignments = resetAssignment.assignments
+                            adminRolesAssigned = resetAssignment.AdminRoles,
+                            nonAdminRolesAssigned = resetAssignment.NonAdminRoles,
+                            permissionAssignments = resetAssignment.Assignments
                         });
                     }
 
@@ -613,9 +614,10 @@ namespace CimmpleAPI.Controllers
                 await _context.PermissionMaster.AddRangeAsync(permissionsToSeed);
                 await _context.SaveChangesAsync();
 
-                var assignment = await AssignDefaultRolePermissionsForTenantAsync(effectiveTenantId);
-                var assignMsg = assignment.adminRoles > 0 || assignment.nonAdminRoles > 0
-                    ? $" Assigned defaults for tenant {effectiveTenantId}: Admin roles ({assignment.adminRoles}) got all permissions; other roles ({assignment.nonAdminRoles}) got Dashboard only."
+                var assignment = await ErpPermissionSeedService.AssignDefaultRolePermissionsAsync(
+                    _context, effectiveTenantId, onlyRolesWithoutAssignments: false);
+                var assignMsg = assignment.AdminRoles > 0 || assignment.NonAdminRoles > 0
+                    ? $" Assigned defaults for tenant {effectiveTenantId}: Admin roles ({assignment.AdminRoles}) got all permissions; other roles ({assignment.NonAdminRoles}) got Dashboard only."
                     : "";
 
                 return Ok(new
@@ -624,9 +626,9 @@ namespace CimmpleAPI.Controllers
                     count = permissionsToSeed.Count,
                     clearExisting,
                     tenantId = effectiveTenantId,
-                    adminRolesAssigned = assignment.adminRoles,
-                    nonAdminRolesAssigned = assignment.nonAdminRoles,
-                    permissionAssignments = assignment.assignments
+                    adminRolesAssigned = assignment.AdminRoles,
+                    nonAdminRolesAssigned = assignment.NonAdminRoles,
+                    permissionAssignments = assignment.Assignments
                 });
             }
             catch (Exception ex)
@@ -639,75 +641,6 @@ namespace CimmpleAPI.Controllers
                 }
                 return StatusCode(500, new { message = "Error seeding permissions", error = ex.Message, details = ex.InnerException?.Message });
             }
-        }
-
-        /// <summary>
-        /// Resets assignments for one tenant: admin roles get every permission; others get Dashboard only.
-        /// </summary>
-        private async Task<(int adminRoles, int nonAdminRoles, int assignments)> AssignDefaultRolePermissionsForTenantAsync(int tenantId)
-        {
-            var allPermissions = await _context.PermissionMaster.AsNoTracking().ToListAsync();
-            if (allPermissions.Count == 0)
-                return (0, 0, 0);
-
-            var dashboard = allPermissions.FirstOrDefault(p =>
-                string.Equals(p.Url, "/home", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(p.PermissionName, "Dashboard", StringComparison.OrdinalIgnoreCase));
-
-            var roles = await _context.UserRole.AsNoTracking()
-                .Where(r => r.TenantId == tenantId)
-                .ToListAsync();
-            if (roles.Count == 0)
-                return (0, 0, 0);
-
-            var roleIds = roles.Select(r => r.RoleID).ToList();
-            var existing = await _context.PermissionRole
-                .Where(pr => pr.TenantId == tenantId && roleIds.Contains(pr.RoleId))
-                .ToListAsync();
-            if (existing.Count > 0)
-            {
-                _context.PermissionRole.RemoveRange(existing);
-                await _context.SaveChangesAsync();
-            }
-
-            var toAdd = new List<PermissionRole>();
-            var adminRoles = 0;
-            var nonAdminRoles = 0;
-
-            foreach (var role in roles)
-            {
-                if (ErpPermissionSeedService.IsAdminRoleName(role.RoleName, role.RoleTag))
-                {
-                    adminRoles++;
-                    foreach (var perm in allPermissions)
-                    {
-                        toAdd.Add(new PermissionRole
-                        {
-                            RoleId = role.RoleID,
-                            TenantId = tenantId,
-                            PermissionId = perm.PermissionId
-                        });
-                    }
-                }
-                else if (dashboard != null)
-                {
-                    nonAdminRoles++;
-                    toAdd.Add(new PermissionRole
-                    {
-                        RoleId = role.RoleID,
-                        TenantId = tenantId,
-                        PermissionId = dashboard.PermissionId
-                    });
-                }
-            }
-
-            if (toAdd.Count > 0)
-            {
-                await _context.PermissionRole.AddRangeAsync(toAdd);
-                await _context.SaveChangesAsync();
-            }
-
-            return (adminRoles, nonAdminRoles, toAdd.Count);
         }
 
         private static string NormalizeAccountStatus(string status)

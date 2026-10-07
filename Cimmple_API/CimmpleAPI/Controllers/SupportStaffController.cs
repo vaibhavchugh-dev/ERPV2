@@ -11,6 +11,7 @@ namespace CimmpleAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [AllowTenantlessCaller]
     public class SupportStaffController : ApiBaseController
     {
         private readonly SupportTicketService _tickets;
@@ -73,6 +74,10 @@ namespace CimmpleAPI.Controllers
                 new("supportStaff", "true"),
                 new("supportStaffName", displayName)
             };
+            if (staff.PlatformAdmin)
+            {
+                claims.Add(new Claim(PlatformAdminClaim, "true"));
+            }
 
             var (token, expires) = _jwt.CreateAccessToken(claims, sessionTimeoutMinutes: 480);
 
@@ -85,6 +90,7 @@ namespace CimmpleAPI.Controllers
                     username = staff.Username,
                     displayName,
                     portalType = "support",
+                    platformAdmin = staff.PlatformAdmin,
                     products = _tickets.GetConfiguredProducts()
                 }
             });
@@ -262,6 +268,8 @@ namespace CimmpleAPI.Controllers
             /// <summary>PBKDF2 hash from PasswordHasher.HashPassword (store hash only, leave Password empty).</summary>
             public string? PasswordHash { get; set; }
             public string? DisplayName { get; set; }
+            /// <summary>May create, suspend and configure client tenants.</summary>
+            public bool PlatformAdmin { get; set; }
         }
     }
 }

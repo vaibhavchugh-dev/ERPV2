@@ -197,6 +197,10 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError == null)
+            {
+                (stateError, stateStatus) = await CheckTenantUsableAsync(user.TenantID);
+            }
             if (stateError != null)
             {
                 return (null, stateError, stateStatus);
@@ -226,6 +230,10 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError == null)
+            {
+                (stateError, stateStatus) = await CheckTenantUsableAsync(user.TenantID);
+            }
             if (stateError != null)
             {
                 return (null, stateError, stateStatus);
@@ -468,6 +476,10 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var (stateError, stateStatus) = CheckAccountUsable(user);
+            if (stateError == null)
+            {
+                (stateError, stateStatus) = await CheckTenantUsableAsync(user.TenantID);
+            }
             if (stateError != null)
             {
                 return (null, stateError, stateStatus);
@@ -513,6 +525,36 @@ namespace CimmpleAPI.Services.Auth
             }
 
             return (null, 200);
+        }
+
+        /// <summary>Tenants missing from the registry (legacy data) are allowed; see TenantSchemaService.</summary>
+        private async Task<(string? error, int statusCode)> CheckTenantUsableAsync(int tenantId)
+        {
+            if (tenantId <= 0)
+            {
+                return (null, 200);
+            }
+
+            string? status;
+            try
+            {
+                status = await _db.Tenants.AsNoTracking()
+                    .Where(t => t.TenantId == tenantId)
+                    .Select(t => t.Status)
+                    .FirstOrDefaultAsync();
+            }
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+            {
+                return (null, 200);
+            }
+
+            return TenantStatus.Normalize(status) switch
+            {
+                TenantStatus.Provisioning => ("This account is still being set up. Please try again shortly.", 403),
+                TenantStatus.Suspended => ("This account has been suspended. Please contact Cimmple support.", 403),
+                TenantStatus.Cancelled => ("This account is no longer active. Please contact Cimmple support.", 403),
+                _ => (null, 200)
+            };
         }
 
         private static void ApplyPasswordExpiry(UserDetail user, SystemSettings settings)

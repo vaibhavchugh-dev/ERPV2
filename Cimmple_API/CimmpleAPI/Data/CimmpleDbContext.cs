@@ -107,6 +107,8 @@ namespace CimmpleAPI.Data
         public DbSet<VendorInvoicing> VendorInvoicing { get; set; }
         public DbSet<Payment> Payment { get; set; }
 
+        public DbSet<Tenant> Tenants { get; set; }
+
         // User Entities
         public DbSet<UserDetail> UserDetails { get; set; }
         public DbSet<UserRole> UserRole { get; set; }
@@ -802,6 +804,22 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.EntityType).HasMaxLength(64);
                 entity.Property(e => e.LinkPath).HasMaxLength(500);
                 entity.HasIndex(e => new { e.TenantId, e.RecipientUserId, e.IsRead, e.CreatedAt });
+            });
+
+            modelBuilder.Entity<Tenant>(entity =>
+            {
+                entity.ToTable("Tenant");
+                entity.HasKey(e => e.TenantId);
+                entity.Property(e => e.Name).HasMaxLength(200);
+                entity.Property(e => e.Code).HasMaxLength(50);
+                entity.Property(e => e.Status).HasMaxLength(20);
+                entity.Property(e => e.Plan).HasMaxLength(50);
+                entity.Property(e => e.ContactName).HasMaxLength(200);
+                entity.Property(e => e.ContactEmail).HasMaxLength(200);
+                entity.Property(e => e.Notes).HasMaxLength(2000);
+                entity.Property(e => e.LastProvisioningError).HasMaxLength(2000);
+                entity.Property(e => e.CreatedBy).HasMaxLength(100);
+                entity.HasIndex(e => e.Code).IsUnique().HasFilter("[Code] IS NOT NULL");
             });
 
             modelBuilder.Entity<EmailOutbox>(entity =>

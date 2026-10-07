@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services.Tenancy;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,23 +20,6 @@ namespace CimmpleAPI.Controllers
     public class CategoryController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
-
-        /// <summary>
-        /// Starter set provisioned on demand for a tenant. Values are only seeded for the
-        /// axes that are the same in every shop; the rest are left for the customer to fill.
-        /// </summary>
-        public static readonly (string Name, string Code, int DisplayOrder, string[] Values)[] DefaultCategoryTypes = new[]
-        {
-            ("Process", "PROCESS", 1, new[] { "Milling", "Turning", "Grinding", "Drilling", "Welding", "Assembly", "Finishing" }),
-            ("Material", "MATERIAL", 2, new[] { "Aluminium", "Steel", "Stainless Steel", "Titanium", "Brass", "Plastic" }),
-            ("Part Family", "PARTFAMILY", 3, new string[0]),
-            ("Machine", "MACHINE", 4, new string[0]),
-            ("Customer", "CUSTOMER", 5, new string[0]),
-            ("Production Type", "PRODTYPE", 6, new[] { "Prototype", "Batch Production", "Mass Production", "One-Off" }),
-            ("Inspection", "INSPECTION", 7, new[] { "First Article", "In-Process", "Final", "CMM" }),
-            ("Complexity", "COMPLEXITY", 8, new[] { "Low", "Medium", "High" }),
-            ("Product Line", "PRODUCTLINE", 9, new string[0])
-        };
 
         /// <summary>Matches the database column length of <c>CategoryValue.Name</c>.</summary>
         private const int MaxValueNameLength = 150;
@@ -153,61 +137,7 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "A valid tenant is required" });
                 }
 
-                var existingNames = _context.CategoryType
-                    .Where(t => t.Tenantid == request.Tenantid)
-                    .Select(t => t.Name)
-                    .ToList()
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Select(n => n!.ToLower())
-                    .ToHashSet();
-
-                int typesCreated = 0;
-                int valuesCreated = 0;
-
-                var existingCodes = _context.CategoryType
-                    .Where(t => t.Tenantid == request.Tenantid)
-                    .Select(t => t.Code)
-                    .ToList()
-                    .Where(c => !string.IsNullOrWhiteSpace(c))
-                    .Select(c => c!.Trim().ToLower())
-                    .ToHashSet();
-
-                foreach (var seed in DefaultCategoryTypes)
-                {
-                    if (existingNames.Contains(seed.Name.ToLower()) || existingCodes.Contains(seed.Code.ToLower()))
-                    {
-                        continue;
-                    }
-
-                    var type = new CategoryType
-                    {
-                        Tenantid = request.Tenantid,
-                        Name = seed.Name,
-                        Code = seed.Code,
-                        DisplayOrder = seed.DisplayOrder,
-                        AllowUserValues = true,
-                        IsSystem = true,
-                        IsActive = true
-                    };
-
-                    foreach (var (valueName, index) in seed.Values.Select((v, i) => (v, i)))
-                    {
-                        type.Values.Add(new CategoryValue
-                        {
-                            Tenantid = request.Tenantid,
-                            Name = valueName,
-                            DisplayOrder = index + 1,
-                            IsSystem = true,
-                            IsActive = true
-                        });
-                        valuesCreated++;
-                    }
-
-                    _context.CategoryType.Add(type);
-                    typesCreated++;
-                }
-
-                _context.SaveChanges();
+                var (typesCreated, valuesCreated) = CategoryDefaults.EnsureForTenant(_context, request.Tenantid);
 
                 return Ok(new { result = new { typesCreated, valuesCreated } });
             }

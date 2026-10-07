@@ -7,6 +7,7 @@ using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Pdf;
+using CimmpleAPI.Services.Tenancy;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -1101,8 +1102,8 @@ namespace CimmpleAPI.Controllers
             {
                 AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
                 var tenantId = GetTenantId();
-                EnsureDefaultPaymentTerms(tenantId);
-                EnsureDefaultApprovalLimits(tenantId);
+                AccountingDefaultsSeed.EnsurePaymentTerms(_context, tenantId);
+                AccountingDefaultsSeed.EnsureApprovalLimits(_context, tenantId);
 
                 var defaults = _context.AccountingDefaults.FirstOrDefault(d => d.TenantId == tenantId);
                 var paymentTerms = _context.PaymentTerms
@@ -2304,81 +2305,6 @@ namespace CimmpleAPI.Controllers
                 .FirstOrDefault() ?? "01-01";
 
             return AccountingRules.GetFiscalYearBounds(fy, calendarYearHint, DateTime.Now.Date);
-        }
-
-        private void EnsureDefaultPaymentTerms(int tenantId)
-        {
-            if (_context.PaymentTerms.Any(p => p.TenantId == tenantId))
-                return;
-
-            var now = DateTime.UtcNow;
-            var seeds = new[]
-            {
-                ("Net 15", 15, "Payment due within 15 days"),
-                ("Net 30", 30, "Payment due within 30 days"),
-                ("Net 45", 45, "Payment due within 45 days"),
-                ("Net 60", 60, "Payment due within 60 days")
-            };
-            foreach (var (name, days, desc) in seeds)
-            {
-                _context.PaymentTerms.Add(new PaymentTerm
-                {
-                    TenantId = tenantId,
-                    Name = name,
-                    Days = days,
-                    Description = desc,
-                    IsActive = true,
-                    CreatedDate = now,
-                    UpdatedDate = now
-                });
-            }
-            _context.SaveChanges();
-        }
-
-        private void EnsureDefaultApprovalLimits(int tenantId)
-        {
-            if (_context.ApApprovalLimits.Any(a => a.TenantId == tenantId))
-                return;
-
-            var roles = _context.UserRole
-                .Where(r => r.TenantId == tenantId || r.TenantId == 0)
-                .ToList();
-            if (roles.Count == 0)
-                return;
-
-            var defaults = new Dictionary<string, (decimal limit, bool dual)>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Staff"] = (500m, false),
-                ["Supervisor"] = (2500m, false),
-                ["Manager"] = (10000m, true),
-                ["Director"] = (50000m, true),
-                ["Admin"] = (100000m, true),
-                ["Administrator"] = (100000m, true)
-            };
-
-            var now = DateTime.UtcNow;
-            var added = false;
-            foreach (var role in roles)
-            {
-                var name = role.RoleName ?? "";
-                if (!defaults.TryGetValue(name, out var cfg))
-                    continue;
-                if (_context.ApApprovalLimits.Any(a => a.TenantId == tenantId && a.RoleId == role.RoleID && a.IsActive))
-                    continue;
-                _context.ApApprovalLimits.Add(new ApApprovalLimit
-                {
-                    TenantId = tenantId,
-                    RoleId = role.RoleID,
-                    LimitAmount = cfg.limit,
-                    RequiresDualApproval = cfg.dual,
-                    IsActive = true,
-                    CreatedDate = now,
-                    UpdatedDate = now
-                });
-                added = true;
-            }
-            if (added)
-                _context.SaveChanges();
         }
 
         private void UpsertPaymentTerms(int tenantId, PaymentTermRequest[] terms, DateTime now)

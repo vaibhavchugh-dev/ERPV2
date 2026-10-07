@@ -1185,7 +1185,9 @@ namespace CimmpleAPI.Controllers
                 }
                 else
                 {
+                    var tenantId = GetTenantId();
                     quotationsQuery = quotationsQuery.Where(q =>
+                        q.Tenantid == tenantId &&
                         q.vendorcode != null &&
                         q.vendorcode.ToLower() == vendorCode.ToLower());
                 }
@@ -1522,7 +1524,7 @@ namespace CimmpleAPI.Controllers
 
                 // Extract basic fields
                 int orderID = request.TryGetProperty("OrderID", out JsonElement orderIDElem) ? orderIDElem.GetInt32() : 0;
-                int tenantid = request.TryGetProperty("Tenantid", out JsonElement tenantidElem) ? tenantidElem.GetInt32() : 0;
+                int tenantid = GetTenantId();
                 int vendorID = request.TryGetProperty("VendorID", out JsonElement vendorIDElem) ? vendorIDElem.GetInt32() : 0;
 
                 var isVendorPortal = IsVendorPortal();
@@ -2834,8 +2836,8 @@ namespace CimmpleAPI.Controllers
                 }
 
                 int sourceQuotationId = request.TryGetProperty("SourceQuotationId", out JsonElement sourceIdElem) ? sourceIdElem.GetInt32() : 0;
-                int tenantid = request.TryGetProperty("Tenantid", out JsonElement tenantidElem) ? tenantidElem.GetInt32() : 0;
-                
+                int tenantid = GetTenantId();
+
                 if (sourceQuotationId <= 0 || tenantid <= 0)
                 {
                     return BadRequest(new { error = "Source quotation ID and tenant ID are required" });
@@ -3541,7 +3543,7 @@ namespace CimmpleAPI.Controllers
                 var detail = _context.VendorQuotationsDetails
                     .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo && d.Tenantid == tenantId)
                     ?? _context.VendorQuotationsDetails
-                        .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo);
+                        .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo && d.Tenantid == 0);
 
                 if (detail == null)
                 {
@@ -3691,7 +3693,7 @@ namespace CimmpleAPI.Controllers
                     .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo && d.Tenantid == tenantId)
                     ?? _context.VendorQuotationsDetails
                         .AsNoTracking()
-                        .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo);
+                        .FirstOrDefault(d => d.OrderID == orderId && d.ItemNo == itemNo && d.Tenantid == 0);
 
                 if (detail == null || string.IsNullOrEmpty(detail.AttachmentsJson))
                 {

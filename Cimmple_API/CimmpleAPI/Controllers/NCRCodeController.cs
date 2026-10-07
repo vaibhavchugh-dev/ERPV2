@@ -4,6 +4,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Data.Seeds;
+using CimmpleAPI.Services.Tenancy;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -30,9 +31,7 @@ namespace CimmpleAPI.Controllers
             return StatusCode(500, new { error = "An unexpected error occurred. Please try again." });
         }
 
-        private Task LockNcrCodesAsync(int tenantId) => _context.Database.ExecuteSqlRawAsync(@"DECLARE @r int;
-EXEC @r = sp_getapplock @Resource = {0}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 15000;
-IF @r < 0 THROW 51000, 'NCR code master is busy, please try again.', 1;", $"ncr-code-master-{tenantId}");
+        private Task LockNcrCodesAsync(int tenantId) => NcrCodeDefaults.LockNcrCodesAsync(_context, tenantId);
 
         [HttpGet("GetNCRCodes")]
         public IActionResult GetNCRCodes([FromQuery] int tenantId)
@@ -74,43 +73,13 @@ IF @r < 0 THROW 51000, 'NCR code master is busy, please try again.', 1;", $"ncr-
                 if (tenantId.HasValue && tenantId.Value != tokenTenantId)
                     return StatusCode(403, new { error = "Default NCR codes can only be seeded for your own tenant" });
 
-                await using var tx = await _context.Database.BeginTransactionAsync();
-                await LockNcrCodesAsync(tokenTenantId);
-
-                var existingCodes = await _context.NCRCodeMaster
-                    .AsNoTracking()
-                    .Where(c => c.TenantId == tokenTenantId && c.NCRCode != null)
-                    .Select(c => c.NCRCode!.ToLower())
-                    .ToListAsync();
-
-                var existingSet = new HashSet<string>(existingCodes, StringComparer.OrdinalIgnoreCase);
-                var now = DateTime.UtcNow;
-                var toInsert = NCRCodeSeedData.DefaultCodes
-                    .Where(c => !existingSet.Contains(c.Code))
-                    .Select(c => new NCRCodeMaster
-                    {
-                        NCRCode = c.Code,
-                        Description = c.Description,
-                        TenantId = tokenTenantId,
-                        CreatedBy = userId.Value,
-                        CreatedDate = now
-                    })
-                    .ToList();
-
-                if (toInsert.Count > 0)
-                {
-                    _context.NCRCodeMaster.AddRange(toInsert);
-                    await _context.SaveChangesAsync();
-                }
-
-                var total = await _context.NCRCodeMaster.CountAsync(c => c.TenantId == tokenTenantId);
-                await tx.CommitAsync();
+                var (inserted, total) = await NcrCodeDefaults.EnsureForTenantAsync(_context, tokenTenantId, userId.Value);
 
                 return Ok(new
                 {
                     message = "Default NCR codes seeded",
-                    inserted = toInsert.Count,
-                    skipped = NCRCodeSeedData.DefaultCodes.Length - toInsert.Count,
+                    inserted,
+                    skipped = NCRCodeSeedData.DefaultCodes.Length - inserted,
                     totalForTenant = total
                 });
             }
