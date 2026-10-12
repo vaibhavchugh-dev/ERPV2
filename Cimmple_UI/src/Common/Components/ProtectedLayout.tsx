@@ -23,9 +23,66 @@ const AccessDenied: React.FC = () => (
   </div>
 );
 
+const endSession = (reason: "idle" | "session") => {
+  try {
+    if (reason === "idle") {
+      localStorage.setItem("logOutFromIdlePopUp", "1");
+    } else {
+      localStorage.removeItem("logOutFromIdlePopUp");
+    }
+  } catch {
+    // ignore
+  }
+  if (reason === "idle") {
+    // Reads the refresh token synchronously, so it is safe to clear the session right after.
+    void AuthService.revokeSession("erp");
+  }
+  AuthService.clearSession("erp");
+  User.isAuthenticated = false;
+};
+
+/** Validates the stored session before any protected UI renders (e.g. a tab reopened hours later). */
+const useSessionGate = () => {
+  const [state, setState] = React.useState(() =>
+    User.isAuthenticated ? AuthService.getStoredSessionState() : "none"
+  );
+
+  React.useEffect(() => {
+    if (state === "idle") {
+      endSession("idle");
+      setState("none");
+      return;
+    }
+    if (state !== "expired") return;
+
+    let cancelled = false;
+    AuthService.refresh()
+      .catch(() => null)
+      .then((refreshed) => {
+        if (cancelled) return;
+        if (refreshed) {
+          setState("valid");
+        } else {
+          endSession("session");
+          setState("none");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state]);
+
+  return state;
+};
+
 export const ProtectedLayout: React.FC = () => {
-  if (!User.isAuthenticated || !localStorage.getItem("token")) {
+  const sessionState = useSessionGate();
+
+  if (sessionState === "none" || !localStorage.getItem("token")) {
     return <Redirect to="/login" />;
+  }
+  if (sessionState !== "valid") {
+    return <PageFallback />;
   }
 
   try {

@@ -1,5 +1,11 @@
 import React from "react";
-import { AuthService } from "../Services/AuthService";
+import {
+  AuthService,
+  DEFAULT_SESSION_TIMEOUT_MINUTES as DEFAULT_TIMEOUT_MINUTES,
+  LAST_ACTIVITY_KEY,
+  MAX_SESSION_TIMEOUT_MINUTES as MAX_TIMEOUT_MINUTES,
+  MIN_SESSION_TIMEOUT_MINUTES as MIN_TIMEOUT_MINUTES,
+} from "../Services/AuthService";
 import { User } from "../Services/User";
 import { useSettingsSafe } from "../Contexts/SettingsContext";
 
@@ -17,11 +23,6 @@ const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = [
 
 const CHECK_INTERVAL_MS = 30_000;
 const REFRESH_SKEW_MS = 2 * 60 * 1000;
-const MIN_TIMEOUT_MINUTES = 5;
-const MAX_TIMEOUT_MINUTES = 480;
-const DEFAULT_TIMEOUT_MINUTES = 30;
-/** Last user activity in any tab (ms epoch); tabs share one session, so idle is judged across all of them. */
-const LAST_ACTIVITY_KEY = "lastActivityAt";
 const ACTIVITY_WRITE_THROTTLE_MS = 5_000;
 const IDLE_REVOKE_WAIT_MS = 1_500;
 
