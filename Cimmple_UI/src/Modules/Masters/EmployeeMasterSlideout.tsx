@@ -12,6 +12,7 @@ import { COUNTRIES, US_STATES } from "../../Common/Components/MasterSlideout/Sha
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import PasswordInput from "../../Common/Components/PasswordInput";
+import { getKeepActiveReason } from "../../Common/Utils/accountProtection";
 import "./CustomerMasterSlideout.scss";
 
 interface EmployeeMasterSlideoutProps {
@@ -589,6 +590,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       return;
     }
 
+    if (keepActiveReason && formData.Status !== "Active") {
+      toast.error(keepActiveReason);
+      return;
+    }
+
     setLoading(true);
     try {
       const submitData: EmployeeMasterReq = { ...formData };
@@ -672,6 +678,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     }
     onClose();
   };
+
+  const keepActiveReason = getKeepActiveReason(
+    roles.find((r) => r.roleID === formData.Role)?.roleName,
+    employeeId
+  );
 
   if (loading && employeeId > 0) {
     return (
@@ -759,6 +770,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                   className={`form-input ${formData.Status === 'Active' ? 'status-active' : 'status-inactive'}`}
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
+                  title={keepActiveReason || undefined}
+                  disabled={!!keepActiveReason && formData.Status === "Active"}
+                  style={keepActiveReason && formData.Status === "Active" ? { cursor: "not-allowed" } : undefined}
                 >
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>

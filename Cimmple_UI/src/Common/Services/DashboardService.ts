@@ -58,6 +58,8 @@ export interface RecentActivity {
   action: string;
   description: string;
   timestamp: string;
+  /** True when timestamp is a calendar date (YYYY-MM-DD) without a time, e.g. a ship date. */
+  isDateOnly?: boolean;
   entityId: number;
   entityType: string;
 }

@@ -8,6 +8,7 @@ import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDialog';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 
 interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
@@ -181,7 +182,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
       alignItems: 'center',
       zIndex: 1050,
       padding: '1rem'
-    }}>
+    }} onClick={onBackdropClick(() => onClose())}>
       <div style={{
         backgroundColor: 'white',
         borderRadius: '0.5rem',

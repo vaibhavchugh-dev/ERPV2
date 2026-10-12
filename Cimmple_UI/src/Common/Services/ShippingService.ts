@@ -12,6 +12,8 @@ export interface ShippableItem {
   hasJobOrder: boolean;
   jobOrderStatus: string;
   quantityOnHand?: number | null;
+  /** Earliest allowed ship date (YYYY-MM-DD): job start date when a job exists, otherwise order date. */
+  minShipDate?: string | null;
 }
 
 export interface ShipmentLineItem {

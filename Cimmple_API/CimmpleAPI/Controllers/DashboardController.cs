@@ -648,8 +648,6 @@ namespace CimmpleAPI.Controllers
                 if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
-                var activities = new List<object>();
-
                 // Recent Job Orders — scoped via CustomerOrder.locationId
                 var recentJobOrdersQuery = _context.JobOrderMaster
                     .Where(j => j.Tenantid == tenantId);
@@ -754,7 +752,8 @@ namespace CimmpleAPI.Controllers
                         type = "invoice",
                         action = "generated",
                         description = $"Invoice {im.PrefixInvoiceNo}{im.InvoiceNo} generated",
-                        timestamp = im.createdDate ?? im.InvoiceDate,
+                        timestamp = (DateTime?)(im.createdDate ?? im.InvoiceDate),
+                        hasCreatedDate = im.createdDate != null,
                         entityId = im.Id,
                         entityType = "Invoice"
                     })
@@ -776,15 +775,38 @@ namespace CimmpleAPI.Controllers
                     })
                     .ToList();
 
-                activities.AddRange(recentJobOrders);
-                activities.AddRange(recentShipments);
-                activities.AddRange(recentInvoices);
-                activities.AddRange(recentNCRs);
+                // Job order / invoice / NCR creation times are saved with server-local DateTime.Now; shipments
+                // carry the user-picked ship date (no time). Emit UTC instants with "Z" and flag date-only rows
+                // so the client does not render a calendar date as "Xh ago".
+                static DateTime ServerLocalToUtc(DateTime value) =>
+                    DateTime.SpecifyKind(DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime(), DateTimeKind.Utc);
 
-                var sortedActivities = activities
-                    .Where(a => ((dynamic)a).timestamp != null)
-                    .OrderByDescending(a => ((dynamic)a).timestamp)
+                var rows = new List<(string type, string action, string description, DateTime sortKey, bool isDateOnly, int entityId, string entityType)>();
+                rows.AddRange(recentJobOrders.Select(a =>
+                    (a.type, a.action, a.description, ServerLocalToUtc(a.timestamp), false, a.entityId, a.entityType)));
+                rows.AddRange(recentShipments.Select(a =>
+                    (a.type, a.action, a.description, DateTime.SpecifyKind(a.timestamp.Date, DateTimeKind.Utc), true, a.entityId, a.entityType)));
+                rows.AddRange(recentInvoices
+                    .Where(a => a.timestamp.HasValue)
+                    .Select(a => a.hasCreatedDate
+                        ? (a.type, a.action, a.description, ServerLocalToUtc(a.timestamp!.Value), false, a.entityId, a.entityType)
+                        : (a.type, a.action, a.description, DateTime.SpecifyKind(a.timestamp!.Value.Date, DateTimeKind.Utc), true, a.entityId, a.entityType)));
+                rows.AddRange(recentNCRs.Select(a =>
+                    (a.type, a.action, a.description, ServerLocalToUtc(a.timestamp), false, a.entityId, a.entityType)));
+
+                var sortedActivities = rows
+                    .OrderByDescending(r => r.sortKey)
                     .Take(limit)
+                    .Select(r => (object)new
+                    {
+                        type = r.type,
+                        action = r.action,
+                        description = r.description,
+                        timestamp = r.isDateOnly ? r.sortKey.ToString("yyyy-MM-dd") : r.sortKey.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                        isDateOnly = r.isDateOnly,
+                        entityId = r.entityId,
+                        entityType = r.entityType
+                    })
                     .ToList();
 
                 return Ok(new { result = sortedActivities });

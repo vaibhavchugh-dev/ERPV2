@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { toast } from "react-toastify";
 import { CategoryService, CategoryTypeReq } from "../../Common/Services/CategoryService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import "./CustomerMasterSlideout.scss";
 
 interface CategoryTypeSlideoutProps {
@@ -18,9 +19,15 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
   const [formData, setFormData] = useState<CategoryTypeReq>({ ...categoryType });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [isDirty, setIsDirty] = useState(false);
+
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   const handleInputChange = (field: keyof CategoryTypeReq, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    setIsDirty(true);
 
     if (errors[field]) {
       setErrors((prev) => {
@@ -56,7 +63,7 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
   };
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div
         className="form-card"
         style={{ maxWidth: "560px", height: "auto" }}
@@ -64,7 +71,7 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
       >
         <div className="form-header">
           <h2>{formData.Id > 0 ? "Edit Category Type" : "Add Category Type"}</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -201,7 +208,7 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
           </div>
 
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Cancel
             </button>
             <button type="submit" className="btn-submit" disabled={saving}>

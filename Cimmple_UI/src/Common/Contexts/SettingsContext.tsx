@@ -61,6 +61,18 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         setSettings(safeSettings);
         applyRuntimeSettings(safeSettings);
       } catch (err: any) {
+        if (err?.response?.status === 403) {
+          // No System Settings page permission: load the tenant's display/notification preferences only.
+          try {
+            const runtime = await SystemSettingsService.GetRuntimeSettings();
+            const merged = { ...getDefaultSettings(tenantId), ...runtime } as SystemSettings;
+            setSettings(merged);
+            applyRuntimeSettings(merged);
+            return;
+          } catch (runtimeErr: any) {
+            console.warn('[SettingsContext] Failed to load runtime settings:', runtimeErr?.message);
+          }
+        }
         console.warn('[SettingsContext] Failed to load settings, using defaults:', err.message);
         // Use defaults in React, but keep any sessionTimeoutMinutes already set by login
         const defaults = getDefaultSettings(tenantId);

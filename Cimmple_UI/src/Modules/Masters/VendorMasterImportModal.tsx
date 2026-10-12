@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   VendorService,
   VendorImportRow,
@@ -73,6 +74,10 @@ const VendorMasterImportModal: React.FC<VendorMasterImportModalProps> = ({
   const [updateExisting, setUpdateExisting] = useState(true);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<VendorImportResult | null>(null);
+
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(previewRows.length > 0 && !result)) onClose();
+  };
 
   const validCount = useMemo(
     () => previewRows.filter((r) => r._errors.length === 0).length,
@@ -206,7 +211,7 @@ const VendorMasterImportModal: React.FC<VendorMasterImportModalProps> = ({
   };
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div
         className="form-card"
         onClick={(e) => e.stopPropagation()}
@@ -214,7 +219,7 @@ const VendorMasterImportModal: React.FC<VendorMasterImportModalProps> = ({
       >
         <div className="form-header">
           <h2>Import Vendors</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -345,7 +350,7 @@ const VendorMasterImportModal: React.FC<VendorMasterImportModalProps> = ({
         </div>
 
         <div className="form-actions" style={{ flexShrink: 0 }}>
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Close
           </button>
           <button

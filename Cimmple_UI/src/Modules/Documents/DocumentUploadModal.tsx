@@ -5,6 +5,7 @@ import {
   DEFAULT_UPLOAD_EXTENSIONS,
   validateSelectedFiles,
 } from "../../Common/Services/FileUploadHelper";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTimes, faUpload, faFile, faPlus } from "@fortawesome/free-solid-svg-icons";
 import "./DocumentUploadModal.scss";
@@ -43,6 +44,19 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  const isDirty =
+    !!file ||
+    !!documentName.trim() ||
+    !!description.trim() ||
+    !!tags.trim() ||
+    categoryId !== undefined ||
+    !!documentNumber.trim();
+
+  const handleDismiss = () => {
+    if (loading) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   const fileAcceptAttr = useMemo(
     () => DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(","),
@@ -145,7 +159,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleDismiss}>
       <div className="document-upload-modal" onClick={(e) => e.stopPropagation()}>
         {loading && (
           <div className="upload-loading-overlay" role="status" aria-live="polite">
@@ -155,7 +169,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
         )}
         <div className="modal-header">
           <h3>Upload Document</h3>
-          <button className="btn-close" onClick={onClose} disabled={loading}>
+          <button className="btn-close" onClick={handleDismiss} disabled={loading}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -348,7 +362,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
           </div>
 
           <div className="form-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>
+            <button type="button" className="btn btn-secondary" onClick={handleDismiss} disabled={loading}>
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={loading || !file}>

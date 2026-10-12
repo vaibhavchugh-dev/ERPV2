@@ -75,6 +75,13 @@ export class SystemSettingsService {
     return response.data;
   }
 
+  /** Display/notification preferences for the signed-in tenant (no System Settings permission required). */
+  public static async GetRuntimeSettings(): Promise<Partial<SystemSettings>> {
+    const url = `/SystemSettings/GetRuntimeSettings`;
+    const response = await Instense.get(url);
+    return response.data;
+  }
+
   public static async SaveSettings(settings: SystemSettings): Promise<{ message: string }> {
     const url = `/SystemSettings/SaveSettings`;
     const response = await Instense.post(url, settings);

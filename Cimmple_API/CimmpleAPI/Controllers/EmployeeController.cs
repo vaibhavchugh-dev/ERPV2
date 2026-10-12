@@ -524,6 +524,13 @@ namespace CimmpleAPI.Controllers
                     return accessError;
                 }
 
+                var deactivateBlockReason = AccountProtection.GetDeactivationBlockReason(
+                    _context, isNew ? 0 : employee.User_UniqueID, request.Role, employee.Status, GetUserId());
+                if (deactivateBlockReason != null)
+                {
+                    return BadRequest(new { error = deactivateBlockReason });
+                }
+
                 employee.Role = request.Role;
                 employee.EmployeeType = request.EmployeeType ?? "";
                 employee.EmployeeCategory = request.EmployeeCategory ?? "";
@@ -974,6 +981,24 @@ namespace CimmpleAPI.Controllers
                         var status = ParseEmployeeStatus(row.Status);
                         var employeeType = NormalizeEmployeeType(row.EmployeeType);
 
+                        if (match == null || request.UpdateExisting)
+                        {
+                            var importBlockReason = AccountProtection.GetDeactivationBlockReason(
+                                _context,
+                                match?.User_UniqueID ?? 0,
+                                roleId ?? match?.Role,
+                                status ?? match?.Status ?? "Active",
+                                GetUserId());
+                            if (importBlockReason != null)
+                            {
+                                rowResult.Status = "Error";
+                                rowResult.Message = importBlockReason;
+                                result.Failed++;
+                                rowResults.Add(rowResult);
+                                continue;
+                            }
+                        }
+
                         UserDetail employee;
                         bool isNew = match == null;
 
@@ -1251,6 +1276,13 @@ namespace CimmpleAPI.Controllers
                     });
                 }
 
+                var blockReason = GetEmployeeDeleteBlockReason(employee);
+                if (blockReason != null)
+                {
+                    impact.CanDelete = false;
+                    impact.BlockingReasons.Add(blockReason);
+                }
+
                 if (impact.CanDelete)
                 {
                     impact.Warnings.Add("This action cannot be undone");
@@ -1275,6 +1307,12 @@ namespace CimmpleAPI.Controllers
                 if (employee == null)
                 {
                     return NotFound(new { error = "Employee not found" });
+                }
+
+                var blockReason = GetEmployeeDeleteBlockReason(employee);
+                if (blockReason != null)
+                {
+                    return BadRequest(new { error = blockReason });
                 }
 
                 await _faceRecognition.RemoveEnrollmentAsync(tenantId, employeeId);
@@ -1324,6 +1362,9 @@ namespace CimmpleAPI.Controllers
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
         }
+
+        private string? GetEmployeeDeleteBlockReason(UserDetail employee) =>
+            AccountProtection.GetDeleteBlockReason(_context, employee.User_UniqueID, employee.Role, GetUserId());
 
         private IActionResult? ValidateEmployeeAccessFields(EmployeeMasterReq request)
         {

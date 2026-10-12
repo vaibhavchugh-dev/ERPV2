@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   EmployeeService,
   EmployeeImportRow,
@@ -69,6 +70,10 @@ const EmployeeMasterImportModal: React.FC<EmployeeMasterImportModalProps> = ({
   const [updateExisting, setUpdateExisting] = useState(true);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<EmployeeImportResult | null>(null);
+
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(previewRows.length > 0 && !result)) onClose();
+  };
   const [roles, setRoles] = useState<Role[]>([]);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [lookupsLoaded, setLookupsLoaded] = useState(false);
@@ -276,7 +281,7 @@ const EmployeeMasterImportModal: React.FC<EmployeeMasterImportModalProps> = ({
   };
 
   return (
-    <div className="slideout-overlay" onClick={onClose}>
+    <div className="slideout-overlay" onClick={handleDismiss}>
       <div
         className="form-card"
         onClick={(e) => e.stopPropagation()}
@@ -284,7 +289,7 @@ const EmployeeMasterImportModal: React.FC<EmployeeMasterImportModalProps> = ({
       >
         <div className="form-header">
           <h2>Import Employees</h2>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -446,7 +451,7 @@ const EmployeeMasterImportModal: React.FC<EmployeeMasterImportModalProps> = ({
         </div>
 
         <div className="form-actions" style={{ flexShrink: 0 }}>
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Close
           </button>
           <button

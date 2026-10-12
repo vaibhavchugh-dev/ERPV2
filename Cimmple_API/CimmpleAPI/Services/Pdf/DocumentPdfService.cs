@@ -16,6 +16,7 @@ namespace CimmpleAPI.Services.Pdf
         private readonly PdfService _pdfService;
         private readonly CimmpleDbContext _context;
         private readonly IWebHostEnvironment _environment;
+        private string _dateFormat = PdfDateFormatting.DefaultFormat;
 
         public DocumentPdfService(PdfService pdfService, CimmpleDbContext context, IWebHostEnvironment environment)
         {
@@ -42,6 +43,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(c => c.customer_id == quotation.CustomerID && c.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data
@@ -126,6 +128,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(c => c.customer_id == order.CustomerID && c.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data
@@ -262,6 +265,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(c => c.customer_id == order.CustomerID && c.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Join invoice details with order details to get full information
@@ -375,6 +379,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(v => v.vendor_id == invoice.vid && v.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data — join vendor order lines for PartNo / Unit / Date / Discount
@@ -484,6 +489,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(v => v.vendor_id == order.VendorID && v.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data
@@ -563,6 +569,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(v => v.vendor_id == quotation.VendorID && v.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data
@@ -649,6 +656,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(c => c.customer_id == order.CustomerID && c.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Build PDF data
@@ -728,6 +736,7 @@ namespace CimmpleAPI.Services.Pdf
                     .FirstOrDefaultAsync(o => o.OrderID == jobOrder.CustomerOrderID && o.Tenantid == tenantId);
 
                 // Get company info from Location or EntityMaster (fallback)
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
 
                 // Deserialize routing steps
@@ -901,6 +910,7 @@ namespace CimmpleAPI.Services.Pdf
                 if (ncr == null)
                     return new DocumentPdfResult { Error = "NCR not found" };
 
+                _dateFormat = await ResolveDateFormatAsync(tenantId);
                 var companyInfo = await GetCompanyInfo(tenantId, locationId);
                 var pdfData = new PdfDocumentData
                 {
@@ -1208,6 +1218,8 @@ END");
 
         private async Task ApplyCurrencySettingsAsync(PdfDocumentData pdfData, int tenantId)
         {
+            pdfData.DateFormat = _dateFormat;
+
             try
             {
                 await SystemSettingsSchemaService.EnsureTablesAsync(_context);
@@ -1475,7 +1487,24 @@ END");
 
         private string FormatDate(DateTime? date)
         {
-            return date?.ToString("MM/dd/yyyy") ?? "";
+            return PdfDateFormatting.Format(date, _dateFormat);
+        }
+
+        private async Task<string> ResolveDateFormatAsync(int tenantId)
+        {
+            try
+            {
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+                var format = await _context.SystemSettings.AsNoTracking()
+                    .Where(s => s.TenantId == tenantId)
+                    .Select(s => s.DateFormat)
+                    .FirstOrDefaultAsync();
+                return string.IsNullOrWhiteSpace(format) ? PdfDateFormatting.DefaultFormat : format.Trim();
+            }
+            catch
+            {
+                return PdfDateFormatting.DefaultFormat;
+            }
         }
 
         private static string FormatVendorOrderLineDescription(string? lineType, string? partName)

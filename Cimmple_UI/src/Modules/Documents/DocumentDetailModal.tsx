@@ -9,6 +9,8 @@ import {
   DEFAULT_UPLOAD_EXTENSIONS,
   validateSelectedFiles,
 } from "../../Common/Services/FileUploadHelper";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
+import { formatDateTime } from "../../Common/Utils/Formatting";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faTimes,
@@ -50,6 +52,20 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   const [tags, setTags] = useState(document.tags || "");
   const [documentNumber, setDocumentNumber] = useState(document.documentNumber || "");
   const [saving, setSaving] = useState(false);
+
+  const isDirty =
+    (editing &&
+      (documentName !== document.documentName ||
+        description !== (document.description || "") ||
+        categoryId !== document.categoryId ||
+        tags !== (document.tags || "") ||
+        documentNumber !== (document.documentNumber || ""))) ||
+    (showVersionUpload && (!!selectedFile || !!versionNotes.trim()));
+
+  const handleDismiss = () => {
+    if (saving || uploadingVersion) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   const fileAcceptAttr = useMemo(
     () => DEFAULT_UPLOAD_EXTENSIONS.map((ext) => `.${ext}`).join(","),
@@ -203,11 +219,11 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleDismiss}>
       <div className="document-detail-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>{document.documentName}</h3>
-          <button className="btn-close" onClick={onClose}>
+          <button className="btn-close" onClick={handleDismiss}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -250,7 +266,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
               )}
               <div className="info-row">
                 <label>Created:</label>
-                <span>{new Date(document.createdDate).toLocaleString()}</span>
+                <span>{formatDateTime(document.createdDate)}</span>
               </div>
               {document.description && (
                 <div className="info-row full-width">
@@ -364,7 +380,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                           <span className="current-badge">Current</span>
                         )}
                         <span className="version-date">
-                          {new Date(version.uploadedDate).toLocaleString()}
+                          {formatDateTime(version.uploadedDate)}
                         </span>
                       </div>
                       <div className="version-details">

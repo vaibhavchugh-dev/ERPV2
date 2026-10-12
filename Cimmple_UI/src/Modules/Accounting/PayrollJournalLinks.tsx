@@ -9,6 +9,7 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import PayrollJournalsHelp from "./PayrollJournalsHelp";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./JournalEntries.scss";
 
 type PayrollLinkRow = {
@@ -51,9 +52,7 @@ const ymd = (d: Date) => {
 
 const fmtDate = (v?: string | null) => {
   if (!v) return "—";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return v;
-  return d.toLocaleDateString();
+  return formatDateOnlyFromApi(v, true) || v;
 };
 
 const fmtMoney = (n?: number | null) =>

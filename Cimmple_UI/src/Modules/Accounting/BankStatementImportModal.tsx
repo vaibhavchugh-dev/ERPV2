@@ -404,7 +404,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
   onClose,
   onApplied,
 }) => {
-  const { formatCurrency, formatDateOnlyFromApi } = useFormatting();
+  const { formatCurrency, formatDateOnlyFromApi, formatDateTime } = useFormatting();
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [applying, setApplying] = useState(false);
@@ -890,7 +890,7 @@ const BankStatementImportModal: React.FC<BankStatementImportModalProps> = ({
             >
               <span>
                 Draft: {draftInfo.fileName} · saved{" "}
-                {new Date(draftInfo.savedAt).toLocaleString()}
+                {formatDateTime(draftInfo.savedAt)}
                 {pendingCount > 0 ? ` · ${pendingCount} still need a match` : ""}
               </span>
               <button

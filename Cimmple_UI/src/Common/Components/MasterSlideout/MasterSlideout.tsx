@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges, onBackdropClick } from "../../Utils/dismissGuard";
 import "./MasterSlideout.scss";
 
 // Field types supported
@@ -65,6 +66,11 @@ const MasterSlideout: React.FC<MasterSlideoutProps> = ({
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(tabs[0]?.id || '');
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [isDirty, setIsDirty] = useState(false);
+
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   useEffect(() => {
     if (entityId > 0 && loadData) {
@@ -85,6 +91,7 @@ const MasterSlideout: React.FC<MasterSlideoutProps> = ({
   };
 
   const handleInputChange = (name: string, value: any) => {
+    setIsDirty(true);
     setFormData((prev: any) => {
       const newData = {
         ...prev,
@@ -303,13 +310,13 @@ const MasterSlideout: React.FC<MasterSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="slideout-overlay" onClick={onBackdropClick(handleDismiss)}>
       <div className="form-card" onClick={(e) => e.stopPropagation()}>
         <form className="slideout-form" onSubmit={handleSubmit}>
           {/* Header */}
           <div className="form-header">
             <h2>{title}</h2>
-            <button type="button" className="btn-close" onClick={onClose}>
+            <button type="button" className="btn-close" onClick={handleDismiss}>
               ×
             </button>
           </div>
@@ -376,7 +383,7 @@ const MasterSlideout: React.FC<MasterSlideoutProps> = ({
 
             {/* Form Actions */}
             <div className="form-actions">
-              <button type="button" className="btn-cancel" onClick={onClose}>
+              <button type="button" className="btn-cancel" onClick={handleDismiss}>
                 Cancel
               </button>
               <button type="submit" className="btn-submit" disabled={loading}>

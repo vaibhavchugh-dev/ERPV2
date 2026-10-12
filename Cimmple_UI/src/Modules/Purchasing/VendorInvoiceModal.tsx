@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import { InvoiceableItemForVendor, CreateVendorInvoiceRequest, VendorInvoiceService } from '../../Common/Services/VendorInvoiceService';
 import { AccountingService } from '../../Common/Services/AccountingService';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { confirmDiscardChanges } from '../../Common/Utils/dismissGuard';
 
 interface VendorInvoiceModalProps {
   isOpen: boolean;
@@ -23,7 +24,13 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
 }) => {
   const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [invoiceNo, setInvoiceNo] = useState('');
+
+  const handleDismiss = () => {
+    if (loading) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(() => {
     const date = new Date();
@@ -247,7 +254,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           console.log('Modal overlay clicked - closing modal');
-          onClose();
+          handleDismiss();
         }
       }}
     >
@@ -283,7 +290,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
             type="button"
             onClick={() => {
               console.log('Close button clicked');
-              onClose();
+              handleDismiss();
             }}
             style={{
               background: 'none',
@@ -297,7 +304,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} onChange={() => setIsDirty(true)}>
           <div className="modal-body" style={{ padding: '1.5rem' }}>
             {/* Invoice Header Fields */}
             <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#f9fafb', borderRadius: '0.375rem' }}>
@@ -674,7 +681,7 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
           }}>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleDismiss}
               disabled={loading}
               style={{
                 padding: '0.5rem 1rem',

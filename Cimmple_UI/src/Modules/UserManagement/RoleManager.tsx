@@ -6,6 +6,7 @@ import {
   CreateRoleRequest,
   UpdateRoleRequest
 } from "../../Common/Services/UserManagementService";
+import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
 import "./RoleManager.scss";
 
 interface RoleManagerProps {
@@ -20,6 +21,7 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
+  const [formDirty, setFormDirty] = useState(false);
   const [formData, setFormData] = useState({
     roleName: "",
     description: "",
@@ -76,6 +78,7 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
       orderNo: roles.length + 1,
       resetPwd: "N"
     });
+    setFormDirty(false);
     setShowForm(true);
   };
 
@@ -88,7 +91,13 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
       orderNo: role.orderNo || 0,
       resetPwd: reset === "Y" || reset === "YES" ? "Y" : "N"
     });
+    setFormDirty(false);
     setShowForm(true);
+  };
+
+  const handleDismiss = () => {
+    if (saving) return;
+    if (confirmDiscardChanges(showForm && formDirty)) onClose();
   };
 
   const handleDelete = async (roleId: number) => {
@@ -181,11 +190,11 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
   }
 
   return (
-    <div className="role-manager-overlay">
+    <div className="role-manager-overlay" onClick={onBackdropClick(handleDismiss)}>
       <div className="role-manager-panel">
         <div className="role-manager-header">
           <h2>Manage Roles</h2>
-          <button className="close-button" onClick={onClose}>
+          <button className="close-button" onClick={handleDismiss}>
             <i className="fas fa-times"></i>
           </button>
         </div>
@@ -260,7 +269,7 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
               </div>
             </>
           ) : (
-            <form onSubmit={handleSubmit} className="role-form">
+            <form onSubmit={handleSubmit} onChange={() => setFormDirty(true)} className="role-form">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h3 style={{ margin: 0 }}>{editingRole ? 'Edit Role' : 'Create New Role'}</h3>
                 <button

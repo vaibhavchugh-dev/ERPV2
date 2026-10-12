@@ -13,6 +13,7 @@ import { CategoryService, CategoryType } from "../../Common/Services/CategorySer
 import { CategoryTagList } from "../../Common/Components/CategoryTagInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { useSettingsSafe } from "../../Common/Contexts/SettingsContext";
+import { formatDate as formatSystemDate } from "../../Common/Utils/Formatting";
 import JobTemplateMasterSlideout from "./JobTemplateMasterSlideout";
 import "./CustomerMaster.scss";
 import "./JobTemplateMaster.scss";
@@ -39,7 +40,7 @@ const COLUMN_PREFERENCE_KEY = "jobTemplateMaster.hiddenColumns";
 const formatDate = (value?: string | null): string => {
   if (!value) return "";
   const parsed = new Date(value);
-  return isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString();
+  return isNaN(parsed.getTime()) ? "" : formatSystemDate(value);
 };
 
 const JobTemplateMasterComponent: React.FC = () => {

@@ -198,7 +198,10 @@ namespace CimmpleAPI.Controllers
         /// Returns line items from the customer's most recent customer order (for "Repeat last order").
         /// </summary>
         [HttpGet("GetLastOrderLinesByCustomer")]
-        public IActionResult GetLastOrderLinesByCustomer([FromQuery] int tenantId, [FromQuery] int customerId)
+        public IActionResult GetLastOrderLinesByCustomer(
+            [FromQuery] int tenantId,
+            [FromQuery] int customerId,
+            [FromQuery] int excludeOrderId = 0)
         {
             try
             {
@@ -210,6 +213,7 @@ namespace CimmpleAPI.Controllers
                 var lastOrder = _context.CustomerOrder
                     .AsNoTracking()
                     .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
+                    .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
                     .OrderByDescending(o => o.OrderDate)
                     .ThenByDescending(o => o.OrderID)
                     .Select(o => new
@@ -263,7 +267,7 @@ namespace CimmpleAPI.Controllers
                         found = true,
                         orderId = lastOrder.OrderID,
                         orderNumber = lastOrder.PONumber,
-                        orderDate = lastOrder.OrderDate.ToString("MM/dd/yyyy"),
+                        orderDate = lastOrder.OrderDate.ToString("yyyy-MM-dd"),
                         lines
                     }
                 });

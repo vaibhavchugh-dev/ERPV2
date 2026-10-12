@@ -26,6 +26,9 @@ namespace CimmpleAPI.Services.Pdf.Models
         public int DecimalPlaces { get; set; } = 2;
         public string DecimalSeparator { get; set; } = ".";
         public string ThousandsSeparator { get; set; } = ",";
+
+        // .NET date format string (SystemSettings.DateFormat)
+        public string DateFormat { get; set; } = "MM/dd/yyyy";
         
         public List<PdfRoutingStep> RoutingSteps { get; set; } = new();
         public string RoutingTemplateCode { get; set; } = "";

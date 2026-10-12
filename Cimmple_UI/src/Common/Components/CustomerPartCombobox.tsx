@@ -4,7 +4,7 @@ import {
   CustomerPartOption,
   ProductMasterService,
 } from "../Services/ProductMasterService";
-import { formatCurrency } from "../Utils/Formatting";
+import { formatCurrency, formatDateOnlyFromApi } from "../Utils/Formatting";
 
 export type PartHistoryParty = "customer" | "vendor";
 
@@ -19,6 +19,10 @@ export interface CustomerPartComboboxProps {
   party?: PartHistoryParty;
   /** When set (vendor Tool/Service/Subcontract/Other), history is filtered by LineType */
   lineType?: string;
+  /** Customer quotation being edited — kept out of its own history */
+  excludeQuotationId?: number;
+  /** Customer order being edited — kept out of its own history */
+  excludeOrderId?: number;
   hasError?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -47,6 +51,8 @@ function CustomerPartCombobox({
   vendorSelected = false,
   party: partyProp,
   lineType,
+  excludeQuotationId = 0,
+  excludeOrderId = 0,
   hasError,
   placeholder,
   disabled,
@@ -133,10 +139,14 @@ function CustomerPartCombobox({
                 q: trimmedQ || undefined,
                 limit: 50,
                 lineType: lineType || undefined,
+                excludeQuotationId,
+                excludeOrderId,
               })
             : await ProductMasterService.GetPartsByCustomer(partyId, {
                 q: trimmedQ || undefined,
                 limit: 50,
+                excludeQuotationId,
+                excludeOrderId,
               });
         if (reqId !== requestIdRef.current) return;
         if (!trimmedQ) {
@@ -155,7 +165,7 @@ function CustomerPartCombobox({
         }
       }
     },
-    [party, partyId, partySelected, partyNoun, lineType, emitHistoryMatch]
+    [party, partyId, partySelected, partyNoun, lineType, excludeQuotationId, excludeOrderId, emitHistoryMatch]
   );
 
   const restoreUnfiltered = () => {
@@ -248,10 +258,14 @@ function CustomerPartCombobox({
                 q: trimmed,
                 limit: 20,
                 lineType: lineType || undefined,
+                excludeQuotationId,
+                excludeOrderId,
               })
             : await ProductMasterService.GetPartsByCustomer(partyId, {
                 q: trimmed,
                 limit: 20,
+                excludeQuotationId,
+                excludeOrderId,
               });
         if (cancelled) return;
         const match =
@@ -265,7 +279,7 @@ function CustomerPartCombobox({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [value, partyId, partySelected, party]);
+  }, [value, partyId, partySelected, party, excludeQuotationId, excludeOrderId]);
 
   useEffect(() => {
     if (!open) return;
@@ -475,7 +489,7 @@ function CustomerPartCombobox({
                   ) : null}
                   <div style={{ fontSize: "0.6875rem", color: "#9ca3af", marginTop: "0.25rem" }}>
                     {p.orderCount ? `${p.orderCount} order(s)` : "Never ordered"}
-                    {p.lastOrderedDate ? ` · last ${p.lastOrderedDate}` : ""}
+                    {p.lastOrderedDate ? ` · last ${formatDateOnlyFromApi(p.lastOrderedDate, true)}` : ""}
                     {p.lastOrderedQty != null ? ` · qty ${p.lastOrderedQty}` : ""}
                     {p.quotationCount ? ` · ${p.quotationCount} quote(s)` : ""}
                   </div>
@@ -528,14 +542,14 @@ export const formatPartHistoryHint = (part: CustomerPartOption | null | undefine
   if (part.lastOrderedPrice != null) {
     bits.push(
       `Last ordered ${formatMoney(part.lastOrderedPrice)}${
-        part.lastOrderedDate ? ` on ${part.lastOrderedDate}` : ""
+        part.lastOrderedDate ? ` on ${formatDateOnlyFromApi(part.lastOrderedDate, true)}` : ""
       }`
     );
   }
   if (part.lastQuotedPrice != null) {
     bits.push(
       `Last quoted ${formatMoney(part.lastQuotedPrice)}${
-        part.lastQuotedDate ? ` on ${part.lastQuotedDate}` : ""
+        part.lastQuotedDate ? ` on ${formatDateOnlyFromApi(part.lastQuotedDate, true)}` : ""
       }`
     );
   }

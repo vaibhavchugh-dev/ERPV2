@@ -4,6 +4,7 @@ import { useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { DocumentService, Document, DocumentCategory } from "../../Common/Services/DocumentService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { formatDate } from "../../Common/Utils/Formatting";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import DocumentUploadModal from "./DocumentUploadModal";
 import DocumentDetailModal from "./DocumentDetailModal";
@@ -453,7 +454,7 @@ const Documents: React.FC = () => {
                 </p>
                 {renderTagChips(document.tags)}
                 <p className="document-date">
-                  {new Date(document.createdDate).toLocaleDateString()}
+                  {formatDate(document.createdDate)}
                 </p>
               </div>
               <div className="document-actions">
@@ -539,7 +540,7 @@ const Documents: React.FC = () => {
                       ? `v${document.currentVersionNumber}`
                       : "-"}
                   </td>
-                  <td>{new Date(document.createdDate).toLocaleDateString()}</td>
+                  <td>{formatDate(document.createdDate)}</td>
                   <td>
                     <div className="action-buttons">
                       <button

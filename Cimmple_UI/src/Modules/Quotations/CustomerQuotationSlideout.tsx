@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   QuotationService,
   QuotationMasterReq,
@@ -35,6 +36,7 @@ import {
   todayDateOnlyDisplay,
   toHtmlDateInputValue,
   fromHtmlDateInputValue,
+  formatDateOnlyFromApi,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
@@ -537,26 +539,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         return;
       }
 
-      const today = new Date().toLocaleDateString("en-US", {
-        month: "2-digit",
-        day: "2-digit",
-        year: "2-digit",
-      });
-
-      const formatDue = (raw: string) => {
-        if (!raw) return today;
-        try {
-          const d = new Date(raw);
-          if (isNaN(d.getTime())) return today;
-          return d.toLocaleDateString("en-US", {
-            month: "2-digit",
-            day: "2-digit",
-            year: "2-digit",
-          });
-        } catch {
-          return today;
-        }
-      };
+      const today = todayDateOnlyDisplay();
+      const formatDue = (raw: string) => (raw ? formatDateOnlyFromApi(raw) || today : today);
 
       const blankOnly =
         formData.Details.length === 0 ||
@@ -603,7 +587,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           : `CO#${result.orderNumber}`;
       toast.success(
         `Added ${result.lines.length} line(s) from ${orderLabel}${
-          result.orderDate ? ` (${result.orderDate})` : ""
+          result.orderDate ? ` (${formatDateOnlyFromApi(result.orderDate, true)})` : ""
         }`
       );
     } catch (error: any) {
@@ -665,7 +649,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         ? Math.max(...prev.Details.map(d => d.ItemNo)) + 1 
         : 1;
       
-      const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+      const today = todayDateOnlyDisplay();
       const newDetail: QuotationDetailReq = {
         ID: 0,
         ItemNo: newItemNo,
@@ -750,6 +734,8 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       newErrors.OrderDate = "Quotation date is required";
     }
 
+    const quotationDateIso = toHtmlDateInputValue(formData.OrderDate);
+
     // Validate line items (ignore the empty starter row)
     const filledDetails = formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d));
     if (filledDetails.length === 0) {
@@ -780,23 +766,9 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           itemErrors.UnitPrice = "Unit price must be 0 or greater";
         }
 
-        const estDate = detail.LeadTime || detail.DueDate;
-        if (estDate) {
-          const isNewQuotation = (formData.OrderID > 0 ? formData.OrderID : quotationId) === 0;
-          const isNewLineItem = detail.ID === 0;
-          if (isNewQuotation || isNewLineItem) {
-            try {
-              const dateValue = new Date(estDate);
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              dateValue.setHours(0, 0, 0, 0);
-              if (dateValue < today) {
-                itemErrors.DueDate = "Est Date cannot be earlier than today";
-              }
-            } catch (e) {
-              // Invalid date format — skip
-            }
-          }
+        const estDateIso = toHtmlDateInputValue(detail.LeadTime || detail.DueDate);
+        if (estDateIso && quotationDateIso && estDateIso < quotationDateIso) {
+          itemErrors.DueDate = "Est Date cannot be earlier than the Quotation Date";
         }
 
         if (Object.keys(itemErrors).length > 0) {
@@ -1970,6 +1942,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                 value={detail.PartNo}
                                 customerId={formData.CustomerID}
                                 customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
+                                excludeQuotationId={formData.OrderID > 0 ? formData.OrderID : quotationId}
                                 hasError={hasPartError}
                                 scrollContainerSelector=".customer-quotation-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
@@ -2052,6 +2025,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                                   borderWidth: itemErrors.DueDate ? "2px" : "1px"
                                 }}
                                 value={convertToDateInputFormat(detail.LeadTime || detail.DueDate)}
+                                min={convertToDateInputFormat(formData.OrderDate) || undefined}
                                 onChange={(e) => {
                                   const estDate = convertFromDateInputFormat(e.target.value);
                                   handleDetailChange(index, "LeadTime", estDate);
@@ -3042,6 +3016,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   );
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
+  const [matrixDirty, setMatrixDirty] = useState(false);
   const historicalRowIdsRef = useRef<Set<number>>(
     new Set((initialMatrix?.breakdownPrices || []).map((bp) => bp.priceBreakdownId))
   );
@@ -3170,6 +3145,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   }, [quantities.length, includeInPrint.length]);
 
   const handleAddQuantity = () => {
+    setMatrixDirty(true);
     const newQuantity = quantities.length > 0 ? Math.max(...quantities) + 1 : 1;
     setQuantities([...quantities, newQuantity]);
     
@@ -3185,6 +3161,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
     if (quantityIndex < 5) {
       return;
     }
+    setMatrixDirty(true);
     setQuantities(quantities.filter((_, i) => i !== quantityIndex));
     setBreakdownPrices((prev) => prev.map(bp => ({
       ...bp,
@@ -3259,6 +3236,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   };
 
   const handleReset = () => {
+    setMatrixDirty(true);
     // Clear all price values
     setBreakdownPrices((prev) => prev.map(bp => ({
       ...bp,
@@ -3267,6 +3245,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
   };
 
   const handleTogglePrint = (columnIndex: number) => {
+    setMatrixDirty(true);
     const newIncludeInPrint = [...includeInPrint];
     newIncludeInPrint[columnIndex] = !newIncludeInPrint[columnIndex];
     setIncludeInPrint(newIncludeInPrint);
@@ -3303,12 +3282,21 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
 
   const columnTotals = getColumnTotals();
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(matrixDirty)) onClose();
+  };
+
   return (
-    <div className="price-breakdown-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
-      <div className="price-breakdown-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "90%", maxHeight: "90vh", overflow: "auto" }}>
+    <div className="price-breakdown-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
+      <div
+        className="price-breakdown-popup"
+        onClick={(e) => e.stopPropagation()}
+        onChange={() => setMatrixDirty(true)}
+        style={{ maxWidth: "90%", maxHeight: "90vh", overflow: "auto" }}
+      >
         <div className="price-breakdown-popup-header">
           <h3>Price Breakdown Matrix - {detail.PartNo || `Item #${detail.ItemNo}`}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -3594,35 +3582,19 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                                       });
                                     }}
                                     onKeyDown={(e) => {
-                                      if (e.key === "Tab" && !e.shiftKey) {
-                                        // Tab: Move down to next row in same column
-                                        e.preventDefault();
-                                        const currentRowIndex = priceBreakdowns.findIndex(pb => pb.id === item.id);
-                                        if (currentRowIndex < priceBreakdowns.length - 1) {
-                                          const nextRow = priceBreakdowns[currentRowIndex + 1];
-                                          const nextInput = document.querySelector(
-                                            `input[data-row-id="${nextRow.id}"][data-column-index="${originalIndex}"]`
-                                          ) as HTMLInputElement;
-                                          if (nextInput) {
-                                            nextInput.focus();
-                                            nextInput.select();
-                                          }
-                                        }
-                                      } else if (e.key === "Tab" && e.shiftKey) {
-                                        // Shift+Tab: Move up to previous row in same column
-                                        e.preventDefault();
-                                        const currentRowIndex = priceBreakdowns.findIndex(pb => pb.id === item.id);
-                                        if (currentRowIndex > 0) {
-                                          const prevRow = priceBreakdowns[currentRowIndex - 1];
-                                          const prevInput = document.querySelector(
-                                            `input[data-row-id="${prevRow.id}"][data-column-index="${originalIndex}"]`
-                                          ) as HTMLInputElement;
-                                          if (prevInput) {
-                                            prevInput.focus();
-                                            prevInput.select();
-                                          }
-                                        }
-                                      }
+                                      if (e.key !== "Tab") return;
+                                      // Tab / Shift+Tab: move across the row, wrapping to the next / previous row
+                                      const table = e.currentTarget.closest("table");
+                                      if (!table) return;
+                                      const inputs = Array.from(
+                                        table.querySelectorAll<HTMLInputElement>("input[data-row-id][data-column-index]")
+                                      );
+                                      const currentIndex = inputs.indexOf(e.currentTarget);
+                                      const targetIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+                                      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= inputs.length) return;
+                                      e.preventDefault();
+                                      inputs[targetIndex].focus();
+                                      inputs[targetIndex].select();
                                     }}
                                     data-row-id={item.id}
                                     data-column-index={originalIndex}
@@ -3678,7 +3650,7 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
             Reset
           </button>
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            <button type="button" className="btn-cancel" onClick={onClose}>
+            <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Cancel
             </button>
             <button type="button" className="btn-submit" onClick={handleSave}>
@@ -3710,12 +3682,16 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
     onSave(textValue);
   };
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(textValue !== value)) onClose();
+  };
+
   return (
-    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -3736,7 +3712,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
           />
         </div>
         <div className="text-editor-popup-footer">
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Cancel
           </button>
           <button type="button" className="btn-submit" onClick={handleSave}>

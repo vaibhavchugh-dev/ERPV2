@@ -462,6 +462,7 @@ const PaymentDashboard: React.FC = () => {
           ))}
         </div>
 
+        {filteredTransactions.length > 10 && (
         <div style={{ padding: '1rem 1.5rem', textAlign: 'center' }}>
           <button
             onClick={() => setShowAllTransactions((prev) => !prev)}
@@ -479,6 +480,7 @@ const PaymentDashboard: React.FC = () => {
             {showAllTransactions ? 'Show Top 10' : `View All Transactions (${filteredTransactions.length})`}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

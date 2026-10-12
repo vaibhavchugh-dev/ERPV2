@@ -537,7 +537,8 @@ export class OrderService {
   };
 
   public static GetLastOrderLinesByCustomer = async (
-    customerId: number
+    customerId: number,
+    excludeOrderId = 0
   ): Promise<{
     found: boolean;
     orderId: number;
@@ -566,7 +567,11 @@ export class OrderService {
 
     const url = `/Order/GetLastOrderLinesByCustomer`;
     return Instense.get(url, {
-      params: { tenantId: tenantID, customerId },
+      params: {
+        tenantId: tenantID,
+        customerId,
+        ...(excludeOrderId > 0 ? { excludeOrderId } : {}),
+      },
     }).then((response) => {
       const result = response.data?.result;
       if (!result) {

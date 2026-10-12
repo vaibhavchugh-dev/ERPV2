@@ -106,8 +106,12 @@ const CategoryMasterComponent: React.FC = () => {
   };
 
   const handleAddValue = async () => {
+    if (savingValue || selectedTypeId === 0) return;
     const name = newValueName.trim();
-    if (!name || selectedTypeId === 0) return;
+    if (!name) {
+      toast.error("Enter a value name to add");
+      return;
+    }
 
     setSavingValue(true);
     try {
@@ -321,11 +325,11 @@ const CategoryMasterComponent: React.FC = () => {
                 />
                 <button
                   type="button"
-                  className="btn-primary"
+                  className="btn-primary category-add-button"
                   onClick={handleAddValue}
-                  disabled={savingValue || newValueName.trim() === ""}
+                  disabled={savingValue}
                 >
-                  <span>Add</span>
+                  <span>{savingValue ? "Adding..." : "Add"}</span>
                 </button>
               </div>
             )}

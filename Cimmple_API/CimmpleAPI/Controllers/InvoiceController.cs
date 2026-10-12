@@ -63,6 +63,13 @@ namespace CimmpleAPI.Controllers
                     .GroupBy(jo => jo.CustomerOrderDetailID)
                     .ToDictionary(g => g.Key, g => g.First().Status ?? "Draft");
 
+                var minInvoiceDate = _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Select(o => (DateTime?)o.OrderDate)
+                    .FirstOrDefault()?
+                    .ToString("yyyy-MM-dd");
+
                 var invoiceableItems = detailsList.Select(d =>
                 {
                     var calculatedInvoicedQty = invoiceDetails.ContainsKey(d.ID) ? invoiceDetails[d.ID] : d.InvoicedQty;
@@ -85,7 +92,8 @@ namespace CimmpleAPI.Controllers
                         discount = d.Discount,
                         discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         hasJobOrder,
-                        jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order"
+                        jobOrderStatus = hasJobOrder ? jobOrdersByDetail[d.ID] : "No Job Order",
+                        minInvoiceDate
                     };
                 }).ToList();
 
@@ -111,6 +119,24 @@ namespace CimmpleAPI.Controllers
                     if (request.DueDate.HasValue && request.InvoiceDate.HasValue && request.DueDate.Value.Date < request.InvoiceDate.Value.Date)
                     {
                         return BadRequest(new { error = "Due Date cannot be earlier than Invoice Date." });
+                    }
+
+                    var orderDateForValidation = _context.CustomerOrder
+                        .AsNoTracking()
+                        .Where(o => o.OrderID == request.OrderId && o.Tenantid == tenantId)
+                        .Select(o => (DateTime?)o.OrderDate)
+                        .FirstOrDefault();
+
+                    if (orderDateForValidation == null)
+                        return BadRequest(new { error = $"Order {request.OrderId} not found" });
+
+                    var effectiveInvoiceDate = (request.InvoiceDate ?? DateTime.Now).Date;
+                    if (effectiveInvoiceDate < orderDateForValidation.Value.Date)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Invoice Date cannot be earlier than the Order Date ({orderDateForValidation.Value:yyyy-MM-dd})."
+                        });
                     }
 
                     // Validate all line items can be invoiced

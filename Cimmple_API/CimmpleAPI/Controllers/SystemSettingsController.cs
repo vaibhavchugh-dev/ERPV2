@@ -88,6 +88,53 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Display/notification preferences every signed-in tenant user needs (formatting, toasts, session timeout).
+        /// Tenant always comes from the token; security and SMTP fields are never returned.
+        /// </summary>
+        [HttpGet("GetRuntimeSettings")]
+        [CimmpleAPI.Services.Auth.SkipErpPermissionCheck]
+        public async Task<IActionResult> GetRuntimeSettings()
+        {
+            var tenantId = GetTenantId();
+            if (tenantId <= 0)
+                return BadRequest(new { message = "Tenant is required" });
+
+            SystemSettings settings;
+            try
+            {
+                await SystemSettingsSchemaService.EnsureTablesAsync(_context);
+                settings = await LoadSettingsForTenantAsync(tenantId);
+            }
+            catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
+            {
+                settings = CreateDefaultSettings(tenantId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GetRuntimeSettings] Error: {ex.Message}");
+                return StatusCode(500, new { message = "Error retrieving system settings" });
+            }
+
+            return Ok(new
+            {
+                tenantId,
+                settings.DateFormat,
+                settings.TimeFormat,
+                settings.Timezone,
+                settings.Locale,
+                settings.DefaultCurrency,
+                settings.CurrencySymbol,
+                settings.DecimalPlaces,
+                settings.DecimalSeparator,
+                settings.ThousandsSeparator,
+                settings.SessionTimeoutMinutes,
+                settings.DefaultPageSize,
+                settings.EnableEmailNotifications,
+                settings.EnableInAppNotifications
+            });
+        }
+
         private async Task<SystemSettings> LoadSettingsForTenantAsync(int tenantId)
         {
             var settings = await _context.SystemSettings

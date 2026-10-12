@@ -172,7 +172,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
                 row.RelativeItem().Text(text =>
                 {
                     text.Span("Generated ").FontSize(8).FontColor(MediumText);
-                    text.Span(System.DateTime.Now.ToString("MM/dd/yyyy HH:mm")).FontSize(8).FontColor(MediumText);
+                    text.Span($"{FormatDate(System.DateTime.Now)} {System.DateTime.Now:HH:mm}").FontSize(8).FontColor(MediumText);
                 });
                 row.RelativeItem().AlignRight().Text(text =>
                 {
