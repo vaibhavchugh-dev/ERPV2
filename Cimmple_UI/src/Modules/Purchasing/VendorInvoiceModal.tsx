@@ -3,7 +3,15 @@ import { toast } from 'react-toastify';
 import { InvoiceableItemForVendor, CreateVendorInvoiceRequest, VendorInvoiceService } from '../../Common/Services/VendorInvoiceService';
 import { AccountingService } from '../../Common/Services/AccountingService';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { todayIsoInTenantTimezone } from '../../Common/Utils/Formatting';
 import { confirmDiscardChanges } from '../../Common/Utils/dismissGuard';
+
+const addDaysToIsoDate = (isoDate: string, days: number): string => {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(y, m - 1, d + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
 
 interface VendorInvoiceModalProps {
   isOpen: boolean;
@@ -31,12 +39,8 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
     if (loading) return;
     if (confirmDiscardChanges(isDirty)) onClose();
   };
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dueDate, setDueDate] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 30); // Default 30 days
-    return date.toISOString().split('T')[0];
-  });
+  const [invoiceDate, setInvoiceDate] = useState(() => todayIsoInTenantTimezone());
+  const [dueDate, setDueDate] = useState(() => addDaysToIsoDate(todayIsoInTenantTimezone(), 30));
   const [paymentMethod, setPaymentMethod] = useState('');
   const [notes, setNotes] = useState('');
   const [taxRate, setTaxRate] = useState(0);
@@ -74,12 +78,15 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
       const initialDiscountInputs: { [key: number]: string } = {};
 
       selectedItems.forEach(item => {
+        const isPartialLine =
+          (item.invoicedQty || 0) > 0 || (item.availableQty || 0) < (item.qtyOrdered || 0);
+        const initialDiscount = isPartialLine ? 0 : item.discount || 0;
         initialQuantities[item.id] = item.availableQty;
         initialUnitPrices[item.id] = item.unitPrice;
-        initialDiscounts[item.id] = item.discount;
+        initialDiscounts[item.id] = initialDiscount;
         initialQuantityInputs[item.id] = item.availableQty.toString();
         initialPriceInputs[item.id] = item.unitPrice.toString();
-        initialDiscountInputs[item.id] = item.discount.toString();
+        initialDiscountInputs[item.id] = isPartialLine ? "" : initialDiscount.toString();
       });
 
       setQuantities(initialQuantities);
@@ -132,6 +139,11 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
 
   const subtotal = calculateSubtotal();
 
+  const minInvoiceDate =
+    selectedItems.find(item => item.minInvoiceDate)?.minInvoiceDate ||
+    invoiceableItems.find(item => item.minInvoiceDate)?.minInvoiceDate ||
+    '';
+
   useEffect(() => {
     if (taxAmountManual) return;
     const computed = Math.round((subtotal * (taxRate / 100)) * 100) / 100;
@@ -176,8 +188,14 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
         setLoading(false);
         return;
       }
-      if (new Date(dueDate) < new Date(invoiceDate)) {
-        toast.warning('Due Date cannot be before Invoice Date.');
+      if (dueDate < invoiceDate) {
+        toast.warning('Due Date cannot be earlier than Invoice Date.');
+        setLoading(false);
+        return;
+      }
+
+      if (minInvoiceDate && invoiceDate < minInvoiceDate) {
+        toast.error(`Invoice Date cannot be earlier than the Order Date (${minInvoiceDate}).`);
         setLoading(false);
         return;
       }
@@ -361,10 +379,11 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                   <input
                     type="date"
                     value={invoiceDate}
+                    min={minInvoiceDate || undefined}
                     onChange={(e) => {
                       const next = e.target.value;
                       setInvoiceDate(next);
-                      if (dueDate && next && new Date(dueDate) < new Date(next)) {
+                      if (dueDate && next && dueDate < next) {
                         setDueDate(next);
                       }
                     }}
@@ -385,7 +404,15 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                     type="date"
                     value={dueDate}
                     min={invoiceDate || undefined}
-                    onChange={(e) => setDueDate(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (invoiceDate && next && next < invoiceDate) {
+                        toast.warning('Due Date cannot be earlier than Invoice Date.');
+                        setDueDate(invoiceDate);
+                        return;
+                      }
+                      setDueDate(next);
+                    }}
                     style={{
                       width: '100%',
                       padding: '0.5rem',
@@ -631,6 +658,10 @@ const VendorInvoiceModal: React.FC<VendorInvoiceModalProps> = ({
                           }}
                           onBlur={(e) => {
                             const val = e.target.value;
+                            if (val.trim() === '') {
+                              handleDiscountChange(item.id, 0);
+                              return;
+                            }
                             const numVal = parseFloat(val) || 0;
                             const isAmount = (item.discountType || "Percent") === "Amount";
                             const clampedVal = isAmount

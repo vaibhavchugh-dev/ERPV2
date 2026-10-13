@@ -34,10 +34,11 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.UserDetails,
                         uwm => uwm.UserId,
                         ud => ud.User_UniqueID,
-                        (uwm, ud) => new { uwm.WorkstationId, ud.UserName })
+                        (uwm, ud) => new { uwm.WorkstationId, ud.UserName, ud.FirstName, ud.LastName, ud.Email })
                     .ToList()
                     .GroupBy(x => x.WorkstationId)
-                    .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(x => x.UserName)));
+                    .ToDictionary(g => g.Key, g => string.Join(", ",
+                        g.Select(x => UserDisplayName(x.UserName, x.FirstName, x.LastName, x.Email))));
 
                 var workstations = _context.WorkstationMaster
                     .Where(w => w.TenantId == tenantid)
@@ -79,14 +80,16 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.UserDetails,
                         uwm => uwm.UserId,
                         ud => ud.User_UniqueID,
-                        (uwm, ud) => new
-                        {
-                            id = uwm.Id,
-                            userId = uwm.UserId,
-                            userName = ud.UserName,
-                            workstationId = uwm.WorkstationId,
-                            tenantId = uwm.TenantId
-                        })
+                        (uwm, ud) => new { uwm, ud.UserName, ud.FirstName, ud.LastName, ud.Email })
+                    .ToList()
+                    .Select(x => new
+                    {
+                        id = x.uwm.Id,
+                        userId = x.uwm.UserId,
+                        userName = UserDisplayName(x.UserName, x.FirstName, x.LastName, x.Email),
+                        workstationId = x.uwm.WorkstationId,
+                        tenantId = x.uwm.TenantId
+                    })
                     .ToList();
 
                 var result = new
@@ -403,14 +406,16 @@ namespace CimmpleAPI.Controllers
                     .Join(_context.UserDetails,
                         uwm => uwm.UserId,
                         ud => ud.User_UniqueID,
-                        (uwm, ud) => new
-                        {
-                            id = uwm.Id,
-                            userId = uwm.UserId,
-                            userName = ud.UserName,
-                            workstationId = uwm.WorkstationId,
-                            tenantId = uwm.TenantId
-                        })
+                        (uwm, ud) => new { uwm, ud.UserName, ud.FirstName, ud.LastName, ud.Email })
+                    .ToList()
+                    .Select(x => new
+                    {
+                        id = x.uwm.Id,
+                        userId = x.uwm.UserId,
+                        userName = UserDisplayName(x.UserName, x.FirstName, x.LastName, x.Email),
+                        workstationId = x.uwm.WorkstationId,
+                        tenantId = x.uwm.TenantId
+                    })
                     .ToList();
 
                 return Ok(new { result = mappings });
@@ -421,6 +426,15 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>"First Last", else username, else email.</summary>
+        private static string UserDisplayName(string? userName, string? firstName, string? lastName, string? email)
+        {
+            var fullName = $"{firstName?.Trim()} {lastName?.Trim()}".Trim();
+            if (!string.IsNullOrEmpty(fullName)) return fullName;
+            if (!string.IsNullOrWhiteSpace(userName)) return userName.Trim();
+            return email?.Trim() ?? "";
+        }
+
         [HttpGet("GetAllUsers")]
         public IActionResult GetAllUsers([FromQuery] int tenantid)
         {
@@ -429,10 +443,12 @@ namespace CimmpleAPI.Controllers
                 var users = _context.UserDetails
                     .Where(u => u.TenantID == tenantid
                                 && (u.VendorId == null || u.VendorId == 0))
+                    .Select(u => new { u.User_UniqueID, u.UserName, u.FirstName, u.LastName, u.Email })
+                    .ToList()
                     .Select(u => new
                     {
                         user_UniqueID = u.User_UniqueID,
-                        userName = u.UserName,
+                        userName = UserDisplayName(u.UserName, u.FirstName, u.LastName, u.Email),
                         email = u.Email ?? ""
                     })
                     .ToList();

@@ -2306,11 +2306,13 @@ namespace CimmpleAPI.Controllers
 
                 // Extract QuotationNo with detailed logging
                 string extractedQuotationNo = "";
+                bool quotationNoProvided = false;
                 if (orderData.TryGetProperty("QuotationNo", out JsonElement quotationNoElem))
                 {
                     if (quotationNoElem.ValueKind == JsonValueKind.String)
                     {
-                        extractedQuotationNo = quotationNoElem.GetString() ?? "";
+                        extractedQuotationNo = (quotationNoElem.GetString() ?? "").Trim();
+                        quotationNoProvided = true;
                         Console.WriteLine($"SaveVendorOrder: Found QuotationNo in JSON: '{extractedQuotationNo}'");
                     }
                     else
@@ -2322,9 +2324,11 @@ namespace CimmpleAPI.Controllers
                 {
                     Console.WriteLine($"SaveVendorOrder: QuotationNo property not found in JSON");
                     // Try alternative property names
-                    if (orderData.TryGetProperty("quotationNo", out JsonElement quotationNoLowerElem))
+                    if (orderData.TryGetProperty("quotationNo", out JsonElement quotationNoLowerElem)
+                        && quotationNoLowerElem.ValueKind == JsonValueKind.String)
                     {
-                        extractedQuotationNo = quotationNoLowerElem.GetString() ?? "";
+                        extractedQuotationNo = (quotationNoLowerElem.GetString() ?? "").Trim();
+                        quotationNoProvided = true;
                         Console.WriteLine($"SaveVendorOrder: Found quotationNo (lowercase) in JSON: '{extractedQuotationNo}'");
                     }
                 }
@@ -2449,8 +2453,8 @@ namespace CimmpleAPI.Controllers
                         return NotFound(new { error = "Vendor order not found" });
                     }
 
-                    // Preserve QuotationNo if not provided or empty in the request
-                    if (string.IsNullOrEmpty(extractedQuotationNo) && !string.IsNullOrEmpty(existingOrder.QuotationNo))
+                    // Preserve QuotationNo only when the request omits it (an empty value clears it)
+                    if (!quotationNoProvided && !string.IsNullOrEmpty(existingOrder.QuotationNo))
                     {
                         order.QuotationNo = existingOrder.QuotationNo;
                         Console.WriteLine($"SaveVendorOrder: Preserving existing QuotationNo: '{order.QuotationNo}'");
@@ -2492,7 +2496,7 @@ namespace CimmpleAPI.Controllers
                     {
                         existingOrder.QuotationId = order.QuotationId;
                     }
-                    if (!string.IsNullOrEmpty(extractedQuotationNo))
+                    if (quotationNoProvided)
                     {
                         existingOrder.QuotationNo = order.QuotationNo;
                     }
@@ -2758,7 +2762,17 @@ namespace CimmpleAPI.Controllers
                             .ToDictionaryAsync(g => g.Key, g => g.Sum(r => r.ReceivedQty));
                     var receiveStatus = DeriveVendorReceiveStatus(
                         linkedDetails, receivedByDetail, savedOrder.MaterialType, savedOrder.Status ?? "Draft");
-                    if (!string.Equals(savedOrder.Status, receiveStatus, StringComparison.OrdinalIgnoreCase)
+                    var hasReceiptsOrInvoices = receivedByDetail.Values.Any(q => q > 0)
+                        || linkedDetails.Any(d => d.InvoicedQty > 0);
+                    if (hasReceiptsOrInvoices
+                        && string.Equals(savedOrder.Status ?? "Draft", "Draft", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Received/invoiced orders cannot go back to Draft (it would drop them from Vendor Receiving).
+                        savedOrder.Status = string.Equals(receiveStatus, "Draft", StringComparison.OrdinalIgnoreCase)
+                            ? "Sent"
+                            : receiveStatus;
+                    }
+                    else if (!string.Equals(savedOrder.Status, receiveStatus, StringComparison.OrdinalIgnoreCase)
                         && (string.Equals(savedOrder.Status, "Sent", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(savedOrder.Status, "Partially Received", StringComparison.OrdinalIgnoreCase)
                             || string.Equals(savedOrder.Status, "Fully Received", StringComparison.OrdinalIgnoreCase)
@@ -4299,6 +4313,8 @@ namespace CimmpleAPI.Controllers
                     .GroupBy(i => i.VendorOrderDetailID)
                     .ToDictionaryAsync(g => g.Key, g => g.Sum(i => i.InvoicedQty));
 
+                var minInvoiceDate = vendorOrder.OrderDate.ToString("yyyy-MM-dd");
+
                 var invoiceableItems = detailsList.Select(d => {
                     var receivedQty = receivedTotals.ContainsKey(d.ID) ? receivedTotals[d.ID] : (d.ReceivedQty ?? 0);
                     var invoicedQty = invoicedTotals.ContainsKey(d.ID) ? invoicedTotals[d.ID] : 0;
@@ -4317,7 +4333,8 @@ namespace CimmpleAPI.Controllers
                         invoiceStatus = d.InvoiceStatus ?? "Not Invoiced",
                         unitPrice = d.UnitPrice,
                         discount = d.Discount,
-                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType
+                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
+                        minInvoiceDate
                     };
                 }).ToList();
 
@@ -4375,6 +4392,18 @@ namespace CimmpleAPI.Controllers
 
                     var invoiceDateValue = request.InvoiceDate ?? DateTime.Now;
                     var dueDateValue = request.DueDate ?? invoiceDateValue.AddDays(30);
+
+                    if (dueDateValue.Date < invoiceDateValue.Date)
+                        return BadRequest(new { error = "Due Date cannot be earlier than Invoice Date." });
+
+                    if (invoiceDateValue.Date < vendorOrder.OrderDate.Date)
+                    {
+                        return BadRequest(new
+                        {
+                            error = $"Invoice Date cannot be earlier than the Order Date ({vendorOrder.OrderDate:yyyy-MM-dd})."
+                        });
+                    }
+
                     var accountingPeriod = $"{invoiceDateValue:yyyyMM}";
 
                     var accountsPayableAccountId = GlAccountResolutionService.ResolveAccountsPayable(
@@ -4516,7 +4545,7 @@ namespace CimmpleAPI.Controllers
                             OrderId = request.OrderId,
                             VendorOrderDetailID = item.OrderDetailId,
                             OrderDate = vendorOrder.OrderDate,
-                            Description = detail.PartName ?? "",
+                            Description = VendorOrderLineDescription(detail.PartName, detail.PartNo),
                             VendorPoNumber = vendorOrder.VendorPoNumber ?? "",
                             Amount = lineTotal,
                             qty = item.QtyToInvoice,
@@ -4885,6 +4914,21 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"Found {invoices.Count} invoice masters for tenant {tenantId}");
 
+                // Older invoice lines (e.g. Tool lines with no item name) were saved with a blank description.
+                var blankDetailIds = invoiceDetails
+                    .Where(d => string.IsNullOrWhiteSpace(d.Description) && (d.VendorOrderDetailID ?? 0) > 0)
+                    .Select(d => d.VendorOrderDetailID!.Value)
+                    .Distinct()
+                    .ToList();
+                var orderLineDescriptions = blankDetailIds.Count == 0
+                    ? new Dictionary<int, string>()
+                    : (await _context.VendorOrderDetails
+                        .AsNoTracking()
+                        .Where(d => blankDetailIds.Contains(d.ID) && d.Tenantid == tenantId)
+                        .Select(d => new { d.ID, d.PartName, d.PartNo })
+                        .ToListAsync())
+                        .ToDictionary(d => d.ID, d => VendorOrderLineDescription(d.PartName, d.PartNo));
+
                 // Build the response
                 var result = invoices.Select(im => new
                 {
@@ -4903,7 +4947,11 @@ namespace CimmpleAPI.Controllers
                         {
                             orderDetailId = id.VendorOrderDetailID,
                             qtyInvoiced = id.qty ?? 0,
-                            description = id.Description ?? "",
+                            description = !string.IsNullOrWhiteSpace(id.Description)
+                                ? id.Description
+                                : orderLineDescriptions.TryGetValue(id.VendorOrderDetailID ?? 0, out var lineDesc)
+                                    ? lineDesc
+                                    : "",
                             amount = id.Amount
                         }).ToList()
                 })
@@ -4922,6 +4970,13 @@ namespace CimmpleAPI.Controllers
         }
 
         // Helper methods
+        /// <summary>Item name, or Part No / Tool name when the item name is blank (Tool, Service, Other lines).</summary>
+        private static string VendorOrderLineDescription(string? partName, string? partNo)
+        {
+            if (!string.IsNullOrWhiteSpace(partName)) return partName.Trim();
+            return (partNo ?? "").Trim();
+        }
+
         private async Task<int> GetReceivedQtyForVendorOrderDetail(int orderDetailId, int tenantId)
         {
             var receivedQty = await _context.VendorReceiving

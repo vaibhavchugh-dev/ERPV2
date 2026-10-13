@@ -169,6 +169,8 @@ export interface VendorQuotationMasterReq {
   QuotationType?: string;
   LocationId?: number;
   convertedOrderId?: number;
+  /** VendorOrder.OrderID for opening the converted order slideout (convertedOrderId holds the PONumber). */
+  convertedOrderOrderId?: number | null;
   ParentQuotationID?: number;
   AdditionalNotes?: string;
   Details: QuotationDetailReq[];
@@ -986,6 +988,28 @@ export class QuotationService {
     });
   };
 
+  public static CopyAttachmentsToVendorOrder = async (
+    quotationId: number,
+    orderId: number,
+    attachmentIds: number[]
+  ): Promise<{ count: number }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    const url = `/Quotation/CopyAttachmentsToVendorOrder`;
+    return Instense.post(
+      url,
+      { AttachmentIds: attachmentIds },
+      { params: { quotationId, orderId, tenantId: tenantID } }
+    ).then((response) => {
+      const result = response.data.result;
+      return { count: result?.count || 0 };
+    });
+  };
+
   public static DeleteQuotation = async (
     quotationId: number
   ): Promise<any> => {
@@ -1200,6 +1224,7 @@ export class QuotationService {
         QuotationType: result.QuotationType || result.quotationType || "Material",
         LocationId: result.LocationId || result.locationId,
         convertedOrderId: result.convertedOrderId,
+        convertedOrderOrderId: result.convertedOrderOrderId ?? null,
         ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
         AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
         Details: details,

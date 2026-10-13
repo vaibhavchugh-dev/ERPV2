@@ -938,6 +938,119 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Copies selected vendor quotation attachment blobs into the VendorOrders folder and writes VendorOrderAttachment rows.
+        /// </summary>
+        [HttpPost("CopyAttachmentsToVendorOrder")]
+        public async Task<IActionResult> CopyAttachmentsToVendorOrder(
+            [FromQuery] int quotationId,
+            [FromQuery] int orderId,
+            [FromQuery] int tenantId,
+            [FromBody] CopyAttachmentsToOrderRequest? request)
+        {
+            try
+            {
+                if (IsVendorPortal())
+                {
+                    return StatusCode(403, new { error = "Not allowed from the vendor portal" });
+                }
+
+                var quotation = await _context.VendorQuotations
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                var order = await _context.VendorOrders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (quotation == null || order == null)
+                {
+                    return NotFound(new { error = "Vendor quotation or vendor order not found" });
+                }
+
+                var sourceAttachments = new List<QuotationAttachmentDto>();
+                if (!string.IsNullOrEmpty(quotation.AttachmentsJson))
+                {
+                    try
+                    {
+                        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                        sourceAttachments = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(
+                                                quotation.AttachmentsJson, jsonOptions)
+                                            ?? new List<QuotationAttachmentDto>();
+                    }
+                    catch
+                    {
+                        sourceAttachments = new List<QuotationAttachmentDto>();
+                    }
+                }
+
+                var selectedIds = request?.AttachmentIds ?? new List<int>();
+                if (selectedIds.Count > 0)
+                {
+                    sourceAttachments = sourceAttachments.Where(a => selectedIds.Contains(a.Id)).ToList();
+                }
+
+                int createdBy = GetUserId() ?? 0;
+                int copiedCount = 0;
+
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    var sourceBlob = !string.IsNullOrEmpty(srcAtt.UploadFile) ? srcAtt.UploadFile : srcAtt.FileUrl;
+                    if (string.IsNullOrEmpty(sourceBlob))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = 1;
+                    if (_context.VendorOrderAttachments.Any())
+                    {
+                        nextFileUniqueNo = _context.VendorOrderAttachments.Max(x => x.FileUniqueno) + 1;
+                        if (nextFileUniqueNo <= 1)
+                        {
+                            nextFileUniqueNo = _context.VendorOrderAttachments.Max(x => x.Id) + 1;
+                        }
+                    }
+                    var ext = Path.GetExtension(sourceBlob) ?? "";
+                    var blobName = $"{nextFileUniqueNo}{ext}";
+
+                    var sourceInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.VendorQuotationsFolder, sourceBlob, createdBy);
+                    var destInfo = ModuleFileStorage.CreateFileInfo(
+                        tenantId, ModuleFileStorage.VendorOrdersFolder, blobName, createdBy);
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(_context, _configuration, sourceInfo, destInfo);
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    _context.VendorOrderAttachments.Add(new VendorOrderAttachment
+                    {
+                        OrderID = orderId,
+                        Name = srcAtt.Name ?? "",
+                        Size = srcAtt.Size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        FileUrl = blobName,
+                        TenantID = tenantId,
+                        createdby = createdBy,
+                        CreatedDate = DateTime.UtcNow
+                    });
+                    await _context.SaveChangesAsync();
+                    copiedCount++;
+                }
+
+                return Ok(new { result = new { message = "Attachments copied", count = copiedCount } });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
         [HttpDelete("DeleteQuotation")]
         public async Task<IActionResult> DeleteQuotation([FromQuery] int quotationId, [FromQuery] int tenantId)
         {
@@ -1425,6 +1538,18 @@ namespace CimmpleAPI.Controllers
                     comments = null;
                 }
 
+                int? convertedOrderOrderId = null;
+                if (quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0)
+                {
+                    var convertedPo = quotation.convertedOrderId.Value;
+                    var quotationTenantId = quotation.Tenantid;
+                    convertedOrderOrderId = _context.VendorOrders
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == quotationTenantId && o.PONumber == convertedPo)
+                        .Select(o => (int?)o.OrderID)
+                        .FirstOrDefault();
+                }
+
                 var result = new
                 {
                     OrderID = quotation.OrderID,
@@ -1450,6 +1575,7 @@ namespace CimmpleAPI.Controllers
                     AdditionalNotes = quotation.AdditionalNotes ?? "",
                     LocationId = quotation.locationid,
                     convertedOrderId = quotation.convertedOrderId,
+                    convertedOrderOrderId,
                     ParentQuotationID = quotation.ParentQuotationID,
                     Details = details,
                     Attachments = attachments != null ? attachments.Select(a => new
@@ -1719,7 +1845,17 @@ namespace CimmpleAPI.Controllers
 
                 quotation.TotalAmount = request.TryGetProperty("TotalAmount", out JsonElement totalAmountElem) ? totalAmountElem.GetDecimal() : 0;
                 var previousVqStatus = quotation.Status;
-                quotation.Status = request.TryGetProperty("Status", out JsonElement statusElem) ? statusElem.GetString() ?? "Draft" : "Draft";
+                var requestedVqStatus = request.TryGetProperty("Status", out JsonElement statusElem) ? statusElem.GetString() ?? "Draft" : "Draft";
+                var previousVqStatusTrimmed = (previousVqStatus ?? "").Trim();
+                if (string.Equals(requestedVqStatus, "Draft", StringComparison.OrdinalIgnoreCase)
+                    && (quotation.isconverted == 1
+                        || IsVendorPortalLockedStatus(previousVqStatusTrimmed)
+                        || previousVqStatusTrimmed.Equals("Responded", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // Responded/accepted/converted quotations cannot be reverted to Draft.
+                    requestedVqStatus = string.IsNullOrEmpty(previousVqStatusTrimmed) ? "Converted" : previousVqStatusTrimmed;
+                }
+                quotation.Status = requestedVqStatus;
                 quotation.shippingInstructions = request.TryGetProperty("ShippingInstructions", out JsonElement shippingInstructionsElem) ? shippingInstructionsElem.GetString() ?? "" : "";
                 quotation.contactName = request.TryGetProperty("BuyerName", out JsonElement buyerNameElem) ? buyerNameElem.GetString() ?? "" : "";
                 quotation.VendorOrderType = request.TryGetProperty("QuotationType", out JsonElement quotationTypeElem2) ? quotationTypeElem2.GetString() ?? "Material" : "Material";

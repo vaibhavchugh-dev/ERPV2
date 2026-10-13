@@ -39,6 +39,30 @@ type Props = {
   amountColumnLabel?: string;
 };
 
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  "job-status": "Job order status",
+  job: "Job order",
+  process: "Process",
+  customer: "Customer",
+  invoice: "Invoice",
+  "invoice-period": "Invoice period",
+  location: "Location",
+  quotation: "Quotation",
+  vendor: "Vendor",
+  "vendor-part": "Vendor part",
+  "vendor-po": "Vendor order",
+  "po-month": "Purchase orders by month",
+  ncr: "NCR",
+  "ncr-bucket": "NCR group",
+  "inventory-item": "Inventory item",
+  "stock-date": "Stock movements by date",
+  "stock-type": "Stock movements by type",
+};
+
+function entityTypeLabel(entityType: string): string {
+  return ENTITY_TYPE_LABELS[entityType] || entityType;
+}
+
 function emptyMessage(meta: OperationalDrillMeta): string {
   switch (meta.entityType) {
     case "job-status":
@@ -161,10 +185,10 @@ const OperationalReportDrillDrawer: React.FC<Props> = ({
           <div>
             <div className="rpt-drill-kicker">Drill-down</div>
             <h3>{meta.title || "Details"}</h3>
+            {/* entityId is the internal DB key (used for links only); never display it. */}
             {meta.entityType && (
               <p className="rpt-drill-meta">
-                {meta.entityType}
-                {meta.entityId ? ` · #${meta.entityId}` : ""}
+                {entityTypeLabel(meta.entityType)}
                 {meta.entityKey ? ` · ${meta.entityKey}` : ""}
               </p>
             )}

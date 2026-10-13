@@ -58,6 +58,15 @@ import "./VendorOrderSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 
+/** Statuses that keep an order on Vendor Receiving; saving must not drop these back to Draft. */
+const SENT_OR_LATER_STATUSES = [
+  "Sent",
+  "Partially Received",
+  "Fully Received",
+  "Receiving",
+  "Completed",
+];
+
 interface VendorOrderSlideoutProps {
   orderId: number;
   onClose: (refreshList?: boolean) => void;
@@ -1326,21 +1335,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     }
   };
 
+  const isSentOrLater = SENT_OR_LATER_STATUSES.includes((formData.Status || "").trim());
+  const hasReceiptsOrInvoices = (formData.Details || []).some(
+    (d) => isDetailReceived(d) || isDetailInvoiced(d)
+  );
+
   const resolveSaveStatus = (mode: "draft" | "submit"): string => {
-    if (mode === "draft") {
-      return "Draft";
-    }
     const current = (formData.Status || "").trim();
-    if (
-      current === "Sent" ||
-      current === "Partially Received" ||
-      current === "Fully Received" ||
-      current === "Receiving" ||
-      current === "Completed"
-    ) {
+    if (SENT_OR_LATER_STATUSES.includes(current)) {
       return current;
     }
-    return "Sent";
+    return mode === "draft" ? "Draft" : "Sent";
   };
 
   const handleSave = async (mode: "draft" | "submit") => {
@@ -1416,7 +1421,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           (d.InvoiceStatus && d.InvoiceStatus !== "Not Invoiced")
       ).length;
 
-      if (mode === "draft") {
+      if (status === "Draft") {
         toast.success(orderId > 0 ? "Order saved as draft" : "Order created as draft");
       } else if (status === "Sent" && formData.Status !== "Sent") {
         toast.success("Order marked as Sent — available in Receiving");
@@ -1603,7 +1608,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
                 >
-                  <option value="Draft">Draft</option>
+                  <option
+                    value="Draft"
+                    disabled={hasReceiptsOrInvoices && formData.Status !== "Draft"}
+                    title={
+                      hasReceiptsOrInvoices
+                        ? "Items have already been received or invoiced"
+                        : undefined
+                    }
+                  >
+                    Draft
+                  </option>
                   <option value="Sent">Sent</option>
                   <option value="Partially Received">Partially Received</option>
                   <option value="Fully Received">Fully Received</option>
@@ -1741,6 +1756,27 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="QuotationNo">Quotation #</label>
+                <div className="input-group">
+                  <div className="input-group-prepend">
+                    <span className="input-group-icon">📄</span>
+                  </div>
+                  <input
+                    type="text"
+                    id="QuotationNo"
+                    name="QuotationNo"
+                    className="form-input"
+                    placeholder="Enter quotation number if converted from quotation"
+                    value={formData.QuotationNo || ""}
+                    onChange={(e) => handleInputChange("QuotationNo", e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-group" />
             </div>
 
             {/* Line Items - Same structure as VendorQuotationSlideout */}
@@ -2719,7 +2755,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               disabled={loading}
               onClick={() => handleSave("draft")}
             >
-              {savingAction === "draft" ? "Saving..." : "Save as Draft"}
+              {savingAction === "draft" ? "Saving..." : isSentOrLater ? "Save" : "Save as Draft"}
             </button>
             <button
               type="button"

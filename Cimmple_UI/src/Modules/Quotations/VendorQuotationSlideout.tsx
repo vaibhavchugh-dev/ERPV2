@@ -11,6 +11,7 @@ import {
 import { VendorService } from "../../Common/Services/VendorService";
 import { JobOrderService, JobOrderMaster } from "../../Common/Services/JobOrderService";
 import { VendorOrderService } from "../../Common/Services/VendorOrderService";
+import VendorOrderSlideout from "../Purchasing/VendorOrderSlideout";
 import {
   VENDOR_ORDER_LINE_TYPES,
   DEFAULT_VENDOR_ORDER_LINE_TYPE,
@@ -48,6 +49,7 @@ import {
   toDateOnlyApiString,
   toHtmlDateInputValue,
   todayDateOnlyDisplay,
+  todayIsoInTenantTimezone,
 } from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
@@ -57,6 +59,11 @@ import {
 import "./VendorQuotationSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+
+/** Statuses that saving must keep; "Save" must not drop these back to Draft. */
+const SENT_OR_LATER_STATUSES = ["Sent", "Responded", "Accepted", "Rejected", "Converted"];
+/** Once the vendor has responded or the quote is converted, it cannot be reverted to Draft. */
+const DRAFT_LOCKED_STATUSES = ["Responded", "Accepted", "Rejected", "Converted"];
 
 interface VendorQuotationSlideoutProps {
   quotationId: number;
@@ -119,6 +126,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [loading, setLoading] = useState(false);
   const [isHydrating, setIsHydrating] = useState(quotationId > 0);
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
+  const [savedStatus, setSavedStatus] = useState("");
   const [isStateChanged, setIsStateChanged] = useState(false);
   const listNeedsRefreshRef = useRef(false);
   const [showDeletionDialog, setShowDeletionDialog] = useState(false);
@@ -148,6 +156,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [defaultExpenseGlcode, setDefaultExpenseGlcode] = useState("");
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [vendorEmail, setVendorEmail] = useState("");
+  const [showConvertToOrderDialog, setShowConvertToOrderDialog] = useState(false);
+  const [selectedLineItems, setSelectedLineItems] = useState<Set<number>>(new Set());
+  const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set());
+  const [showOrderSlideout, setShowOrderSlideout] = useState(false);
   // Refs for job order input fields
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   // Store display values for numeric fields (as strings) to allow clearing
@@ -431,6 +443,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           QuotationType: result.QuotationType || "Material",
         };
         setFormData(formDataWithDetails);
+        setSavedStatus((formDataWithDetails.Status || "").trim());
         setPartHistoryByRow(new Map());
         if (formDataWithDetails.VendorID && formDataWithDetails.VendorID > 0) {
           try {
@@ -898,6 +911,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
+  /** Only uploaded attachments can be copied to the vendor order. */
+  const convertibleAttachments = attachments.filter((a) => !a.isPending && a.id > 0);
+
   const handleConvertToOrder = async () => {
     if (!quotationId || quotationId <= 0) {
       toast.error("Invalid quotation ID. Please refresh and try again.");
@@ -916,13 +932,32 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       return;
     }
 
-    if (!window.confirm("Convert this vendor quotation to an order?")) {
+    // Initialize selection: all items and saved attachments selected by default
+    setSelectedLineItems(new Set(formData.Details.map((d) => d.ItemNo)));
+    setSelectedAttachments(new Set(convertibleAttachments.map((a) => a.id)));
+    setShowConvertToOrderDialog(true);
+  };
+
+  const getDetailLineTotal = (detail: QuotationDetailReq): number => {
+    const subtotal = (detail.QtyOrdered || 0) * (detail.UnitPrice || 0);
+    const discountAmount =
+      detail.DiscountType === "Amount"
+        ? Math.min(detail.Discount || 0, subtotal)
+        : (subtotal * (detail.Discount || 0)) / 100;
+    return subtotal - discountAmount;
+  };
+
+  const performConvertToOrder = async () => {
+    if (selectedLineItems.size === 0) {
+      toast.error("Please select at least one line item to convert");
       return;
     }
 
+    setShowConvertToOrderDialog(false);
     setLoading(true);
     try {
       const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
+      const selectedDetails = formData.Details.filter((d) => selectedLineItems.has(d.ItemNo));
 
       // Convert quotation data to vendor order format
       const quotationNumber = formData.PONumber < 1000
@@ -935,7 +970,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       });
 
       // Use today's date for order date (date of conversion) - format as YYYY-MM-DD
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayIsoInTenantTimezone();
       
       const vendorOrderData = {
         OrderID: 0, // New order
@@ -947,7 +982,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         Address: formData.Address,
         VendorPoNumber: formData.VendorPoNumber,
         OrderDate: today, // Use today's date (date of conversion) in YYYY-MM-DD format
-        TotalAmount: formData.TotalAmount,
+        TotalAmount: selectedDetails.reduce((sum, d) => sum + getDetailLineTotal(d), 0),
         UserId: formData.UserId,
         UserToken: formData.UserToken,
         Status: "Draft", // Start as draft
@@ -958,13 +993,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         VendorRefNo: formData.VendorRefNo,
         OrderType: "Vendor",
         MaterialType: deriveOrderMaterialType(
-          (formData.Details || [])
+          selectedDetails
             .filter((d) => !isBlankQuoteOrOrderLine(d))
             .map((d) => d.LineType || lineTypeFromQuotationType(formData.QuotationType))
         ),
         QuotationId: quotationId, // Link to original quotation (use prop, not formData.OrderID)
         QuotationNo: quotationNumber, // Quotation number for reference
-        Details: formData.Details.map(detail => {
+        Details: selectedDetails.map(detail => {
           // Extract JobId from JobNumber if possible (e.g., "JO#1001" -> 1001)
           let jobId = 0;
           if (detail.JobNumber) {
@@ -1002,16 +1037,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             Received: "No", // Required field - default to "No"
           };
         }),
-        Attachments: (attachments || [])
-          .filter((a) => !a.isPending)
-          .map((a) => ({
-            id: 0,
-            name: a.name || "",
-            size: a.size || 0,
-            fileUrl: a.fileUrl || a.uploadFile || "",
-            fileUniqueno: a.fileUniqueno || 0,
-            uploadFile: a.uploadFile || a.fileUrl || "",
-          })), // Copy attachment metadata refs; blobs remain on VQ until convert copies them
+        Attachments: [], // Files are copied via CopyAttachmentsToVendorOrder after order is created
         Comments: [], // Don't copy comments
       };
 
@@ -1043,24 +1069,34 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
       const result = await VendorOrderService.SaveVendorOrder(vendorOrderData);
 
-      // Backend SaveVendorOrder already updates quotation status and convertedOrderId with PONumber
-      // DO NOT call SaveVendorQuotation here as it may overwrite the correct value set by backend
-      // The backend update happens in OrderController.SaveVendorOrder at line 1144-1146
-      console.log("[VendorQuotationSlideout] Order created - Backend should have already updated quotation:", {
-        orderID: result.id,
-        poNumber: result.poNumber,
-        message: "Backend sets quotation.convertedOrderId = order.PONumber automatically"
-      });
-      
-      if (result.poNumber === null || result.poNumber === undefined) {
-        console.error("[VendorQuotationSlideout] ERROR: Backend did not return poNumber! This indicates a backend issue.");
-        console.error("[VendorQuotationSlideout] The quotation may not have been updated correctly by backend.");
+      if (result && result.id > 0) {
+        const selectedAttachmentIdList = Array.from(selectedAttachments).filter((id) => id > 0);
+        if (selectedAttachmentIdList.length > 0) {
+          try {
+            await QuotationService.CopyAttachmentsToVendorOrder(
+              quotationId,
+              result.id,
+              selectedAttachmentIdList
+            );
+          } catch (copyErr: any) {
+            console.error("Error copying attachments to vendor order:", copyErr);
+            toast.warning("Order created, but some attachments could not be copied");
+          }
+        }
+
+        // Backend SaveVendorOrder already updates quotation status and convertedOrderId (PONumber).
+        // Do not call SaveVendorQuotation here; reload instead.
+        listNeedsRefreshRef.current = true;
+        await loadQuotation();
+
+        const poNumber = result.poNumber ?? result.id;
+        const orderNumber = poNumber < 1000 ? `VO#${poNumber + 999}` : `VO#${poNumber}`;
+        toast.success(`Quotation converted to vendor order successfully! Order Number: ${orderNumber}`, {
+          autoClose: 5000,
+        });
+      } else {
+        toast.error("Failed to create vendor order");
       }
-
-      toast.success("Quotation converted to vendor order successfully");
-
-      // Close the slideout after successful conversion
-      onClose(true);
     } catch (error: any) {
       console.error("Error converting quotation to vendor order:", error);
       toast.error(`Error converting quotation: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
@@ -1422,21 +1458,19 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
   };
 
+  const isSentOrLater = SENT_OR_LATER_STATUSES.includes((formData.Status || "").trim());
+  const isDraftLocked =
+    DRAFT_LOCKED_STATUSES.includes(savedStatus) || Number(formData.convertedOrderId || 0) > 0;
+
   const resolveSaveStatus = (mode: "draft" | "submit"): string => {
-    if (mode === "draft") {
-      return "Draft";
-    }
     const current = (formData.Status || "").trim();
-    if (
-      current === "Sent" ||
-      current === "Responded" ||
-      current === "Accepted" ||
-      current === "Converted" ||
-      current === "Rejected"
-    ) {
+    if (SENT_OR_LATER_STATUSES.includes(current)) {
       return current;
     }
-    return "Sent";
+    if (isDraftLocked) {
+      return savedStatus;
+    }
+    return mode === "draft" ? "Draft" : "Sent";
   };
 
   const handleSave = async (mode: "draft" | "submit") => {
@@ -1507,7 +1541,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
       setDeletedAttachmentIds([]);
 
-      if (mode === "draft") {
+      if (status === "Draft") {
         toast.success(quotationId > 0 ? "Quotation saved as draft" : "Quotation created as draft");
       } else if (status === "Sent" && formData.Status !== "Sent") {
         toast.success("Quotation marked as Sent");
@@ -1524,6 +1558,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           OrderID: savedId,
           Status: status,
         }));
+        setSavedStatus(status);
         if (wasNew) {
           onSaved?.(savedId);
         }
@@ -1598,6 +1633,27 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             {quotationId > 0 && formData.PONumber > 0 && (
               <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
                 Quotation Number: {formData.PONumber < 1000 ? `VQ#${formData.PONumber + 999}` : `VQ#${formData.PONumber}`}
+                {formData.convertedOrderId && formData.convertedOrderId > 0 ? (
+                  <span style={{ marginLeft: "1rem", color: "#10b981", fontWeight: 500 }}>
+                    → Converted to Order:{" "}
+                    <span
+                      style={{
+                        cursor: formData.convertedOrderOrderId ? "pointer" : "default",
+                        textDecoration: formData.convertedOrderOrderId ? "underline" : "none",
+                      }}
+                      onClick={() => {
+                        if (formData.convertedOrderOrderId) {
+                          setShowOrderSlideout(true);
+                        }
+                      }}
+                      title={formData.convertedOrderOrderId ? "Click to view order" : undefined}
+                    >
+                      {formData.convertedOrderId < 1000
+                        ? `VO#${formData.convertedOrderId + 999}`
+                        : `VO#${formData.convertedOrderId}`}
+                    </span>
+                  </span>
+                ) : null}
               </div>
             )}
           </div>
@@ -1704,7 +1760,17 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
                 >
-                  <option value="Draft">Draft</option>
+                  <option
+                    value="Draft"
+                    disabled={isDraftLocked && formData.Status !== "Draft"}
+                    title={
+                      isDraftLocked
+                        ? "The vendor has responded or the quotation is converted"
+                        : undefined
+                    }
+                  >
+                    Draft
+                  </option>
                   <option value="Sent">Sent</option>
                   <option value="Responded">Responded</option>
                   <option value="Accepted">Accepted</option>
@@ -2600,7 +2666,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               disabled={loading}
               onClick={() => handleSave("draft")}
             >
-              {savingAction === "draft" ? "Saving..." : "Save as Draft"}
+              {savingAction === "draft" ? "Saving..." : isSentOrLater ? "Save" : "Save as Draft"}
             </button>
             <button
               type="button"
@@ -2785,6 +2851,269 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           </div>,
           document.body
         )}
+
+      {/* Convert to Order Selection Dialog */}
+      {showConvertToOrderDialog &&
+        createPortal(
+          <div
+            className="text-editor-popup-overlay multi-vendor-dialog-overlay"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowConvertToOrderDialog(false);
+            }}
+          >
+            <div className="text-editor-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "800px" }}>
+              <div className="text-editor-popup-header">
+                <h3>Convert Quotation to Order - Select Items & Attachments</h3>
+                <button type="button" className="btn-close" onClick={() => setShowConvertToOrderDialog(false)}>
+                  ×
+                </button>
+              </div>
+              <div className="text-editor-popup-content">
+                <p style={{ marginBottom: "1rem", color: "#6b7280" }}>
+                  Select which line items and attachments to include in the order. All items are selected by default.
+                </p>
+
+                <div style={{ marginBottom: "1rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLineItems(new Set(formData.Details.map((d) => d.ItemNo)))}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#6366f1",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLineItems(new Set())}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      backgroundColor: "#6b7280",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Deselect All
+                  </button>
+                  <span style={{ marginLeft: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
+                    {selectedLineItems.size} of {formData.Details.length} items selected
+                  </span>
+                </div>
+
+                <div style={{ maxHeight: "400px", overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: "0.5rem" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#f3f4f6", borderBottom: "2px solid #e5e7eb" }}>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "50px" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedLineItems.size === formData.Details.length && formData.Details.length > 0}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedLineItems(new Set(formData.Details.map((d) => d.ItemNo)));
+                              } else {
+                                setSelectedLineItems(new Set());
+                              }
+                            }}
+                            style={{ cursor: "pointer" }}
+                          />
+                        </th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Item #</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Part No</th>
+                        <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600 }}>Description</th>
+                        <th style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem", fontWeight: 600 }}>Qty</th>
+                        <th style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem", fontWeight: 600 }}>Unit Price</th>
+                        <th style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem", fontWeight: 600 }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {formData.Details.map((detail, index) => {
+                        const isSelected = selectedLineItems.has(detail.ItemNo);
+                        return (
+                          <tr
+                            key={index}
+                            style={{
+                              borderBottom: "1px solid #e5e7eb",
+                              backgroundColor: isSelected ? "#f0f9ff" : "transparent",
+                            }}
+                          >
+                            <td style={{ padding: "0.75rem" }}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  const newSelection = new Set(selectedLineItems);
+                                  if (e.target.checked) {
+                                    newSelection.add(detail.ItemNo);
+                                  } else {
+                                    newSelection.delete(detail.ItemNo);
+                                  }
+                                  setSelectedLineItems(newSelection);
+                                }}
+                                style={{ cursor: "pointer" }}
+                              />
+                            </td>
+                            <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{detail.ItemNo}</td>
+                            <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{detail.PartNo || "-"}</td>
+                            <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{getFirstLine(detail.PartName || "") || "-"}</td>
+                            <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem" }}>{detail.QtyOrdered}</td>
+                            <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem" }}>
+                              {formatCurrency(detail.UnitPrice)}
+                            </td>
+                            <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem", fontWeight: 600 }}>
+                              {formatCurrency(getDetailLineTotal(detail))}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600, borderTop: "2px solid #e5e7eb" }}>
+                        <td colSpan={6} style={{ padding: "0.75rem", textAlign: "right" }}>Selected Items Total:</td>
+                        <td style={{ padding: "0.75rem", textAlign: "right" }}>
+                          {formatCurrency(
+                            formData.Details
+                              .filter((d) => selectedLineItems.has(d.ItemNo))
+                              .reduce((sum, d) => sum + getDetailLineTotal(d), 0)
+                          )}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Attachments Section */}
+                {convertibleAttachments.length > 0 && (
+                  <>
+                    <div style={{ marginTop: "1.5rem", marginBottom: "0.75rem" }}>
+                      <h4 style={{ fontSize: "0.875rem", fontWeight: 600, color: "#374151", marginBottom: "0.5rem" }}>
+                        Attachments
+                      </h4>
+                      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAttachments(new Set(convertibleAttachments.map((a) => a.id)))}
+                          style={{
+                            padding: "0.5rem 1rem",
+                            backgroundColor: "#6366f1",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "0.375rem",
+                            fontSize: "0.875rem",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAttachments(new Set())}
+                          style={{
+                            padding: "0.5rem 1rem",
+                            backgroundColor: "#6b7280",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "0.375rem",
+                            fontSize: "0.875rem",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Deselect All
+                        </button>
+                        <span style={{ marginLeft: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
+                          {selectedAttachments.size} of {convertibleAttachments.length} attachments selected
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ maxHeight: "200px", overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: "0.5rem", padding: "0.75rem" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                        {convertibleAttachments.map((attachment) => {
+                          const isSelected = selectedAttachments.has(attachment.id);
+                          const toggle = () => {
+                            const newSelection = new Set(selectedAttachments);
+                            if (isSelected) {
+                              newSelection.delete(attachment.id);
+                            } else {
+                              newSelection.add(attachment.id);
+                            }
+                            setSelectedAttachments(newSelection);
+                          };
+                          return (
+                            <div
+                              key={attachment.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.75rem",
+                                padding: "0.5rem",
+                                backgroundColor: isSelected ? "#f0f9ff" : "transparent",
+                                borderRadius: "0.375rem",
+                                cursor: "pointer",
+                              }}
+                              onClick={toggle}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={toggle}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ cursor: "pointer" }}
+                              />
+                              <span style={{ fontSize: "1.25rem" }}>📎</span>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: "0.875rem", fontWeight: 500, color: "#374151" }}>
+                                  {attachment.name}
+                                </div>
+                                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                                  {((attachment.size || 0) / 1024).toFixed(2)} KB
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="text-editor-popup-footer">
+                <button type="button" className="btn-cancel" onClick={() => setShowConvertToOrderDialog(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-submit"
+                  onClick={performConvertToOrder}
+                  disabled={selectedLineItems.size === 0 || loading}
+                >
+                  Convert to Order ({selectedLineItems.size} items)
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Converted Vendor Order Slideout */}
+      {showOrderSlideout && formData.convertedOrderOrderId ? (
+        <div onClick={(e) => e.stopPropagation()}>
+          <VendorOrderSlideout
+            orderId={formData.convertedOrderOrderId}
+            onClose={() => setShowOrderSlideout(false)}
+          />
+        </div>
+      ) : null}
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog

@@ -13,6 +13,7 @@ export interface InvoiceableItemForVendor {
   unitPrice: number;
   discount: number;
   discountType?: "Percent" | "Amount" | string;
+  minInvoiceDate?: string;
 }
 
 export interface VendorInvoiceLineItem {
