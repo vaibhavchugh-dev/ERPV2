@@ -6,6 +6,7 @@ import {
   validatePasswordAgainstPolicy,
 } from "../../Common/Utils/passwordPolicy";
 import { getCachedSettings } from "../../Common/Utils/settingsRuntime";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import "./ResetPasswordModal.scss";
 
 export interface ResetPasswordUser {
@@ -113,7 +114,9 @@ const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({ user, onClose, 
     <div
       className="reset-password-modal-overlay"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !loading) onClose();
+        if (e.target === e.currentTarget && !loading && confirmDiscardChanges(!!newPassword || !!confirmPassword)) {
+          onClose();
+        }
       }}
       role="presentation"
     >

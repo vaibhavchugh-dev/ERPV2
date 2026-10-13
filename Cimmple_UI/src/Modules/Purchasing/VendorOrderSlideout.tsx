@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   VendorOrderService,
   VendorOrderMasterReq,
@@ -48,7 +49,11 @@ import {
   ProductMaster,
 } from "../../Common/Services/ProductMasterService";
 import { RawMaterial } from "../../Common/Services/InventoryService";
-import { toHtmlDateInputValue } from "../../Common/Utils/Formatting";
+import {
+  formatDateOnlyFromApi,
+  toHtmlDateInputValue,
+  todayDateOnlyDisplay,
+} from "../../Common/Utils/Formatting";
 import "./VendorOrderSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
@@ -663,7 +668,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
         ? Math.max(...details.map(d => d.ItemNo)) + 1
         : 1;
 
-      const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+      const today = todayDateOnlyDisplay();
       const newDetail: VendorOrderDetailReq = {
         ID: 0,
         ItemNo: newItemNo,
@@ -1897,6 +1902,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                     !!formData.VendorID && formData.VendorID > 0
                                   }
                                   lineType={lineType}
+                                  excludeOrderId={formData.OrderID > 0 ? formData.OrderID : orderId}
                                   disabled={isInvoiced}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) =>
@@ -2597,15 +2603,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               Invoice #{invoice.invoiceNo}
                             </div>
                             <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                              {new Date(invoice.invoiceDate).toLocaleDateString('en-US', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric'
-                              })} • Due: {new Date(invoice.dueDate).toLocaleDateString('en-US', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric'
-                              })}
+                              {formatDateOnlyFromApi(invoice.invoiceDate, true)} • Due: {formatDateOnlyFromApi(invoice.dueDate, true)}
                             </div>
                             <div style={{ fontSize: "0.75rem", fontWeight: "500", color: invoice.status === "Paid" ? "#10b981" : invoice.status === "Overdue" ? "#ef4444" : "#f59e0b" }}>
                               Status: {invoice.status}
@@ -2787,8 +2785,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                   <div className="invoice-details">
                     <h3>INVOICE</h3>
                     <p><strong>Invoice #:</strong> {selectedInvoiceForPrint.invoiceNo}</p>
-                    <p><strong>Date:</strong> {new Date(selectedInvoiceForPrint.invoiceDate).toLocaleDateString('en-US')}</p>
-                    <p><strong>Due Date:</strong> {new Date(selectedInvoiceForPrint.dueDate).toLocaleDateString('en-US')}</p>
+                    <p><strong>Date:</strong> {formatDateOnlyFromApi(selectedInvoiceForPrint.invoiceDate, true)}</p>
+                    <p><strong>Due Date:</strong> {formatDateOnlyFromApi(selectedInvoiceForPrint.dueDate, true)}</p>
                     <p><strong>Status:</strong> {selectedInvoiceForPrint.status}</p>
                   </div>
                 </div>
@@ -2918,12 +2916,16 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
     onSave(textValue);
   };
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(textValue !== value)) onClose();
+  };
+
   return (
-    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -2944,7 +2946,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
           />
         </div>
         <div className="text-editor-popup-footer">
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Cancel
           </button>
           <button type="button" className="btn-submit" onClick={handleSave}>

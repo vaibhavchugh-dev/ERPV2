@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   JobOrderService,
   JobOrderMasterReq,
@@ -265,6 +266,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     TemplateName: "",
     Revision: 1,
   });
+  const saveAsTemplateInitialRef = useRef("");
 
   useEffect(() => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -1443,12 +1445,21 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           : `JO${formData.JobOrderNumber}`
         : "JO";
     const partHint = (formData.PartNo || formData.PartName || "Router").trim();
-    setSaveAsTemplateForm({
+    const initialForm = {
       TemplateCode: `${joLabel}-${partHint}`.replace(/\s+/g, "-").slice(0, 40),
       TemplateName: `${partHint} Router`.slice(0, 100),
       Revision: 1,
-    });
+    };
+    saveAsTemplateInitialRef.current = JSON.stringify(initialForm);
+    setSaveAsTemplateForm(initialForm);
     setShowSaveAsTemplateDialog(true);
+  };
+
+  const dismissSaveAsTemplateDialog = () => {
+    if (savingAsTemplate) return;
+    if (confirmDiscardChanges(JSON.stringify(saveAsTemplateForm) !== saveAsTemplateInitialRef.current)) {
+      setShowSaveAsTemplateDialog(false);
+    }
   };
 
   const handleSaveAsTemplate = async () => {
@@ -4002,7 +4013,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
       {/* Save Router as Job Template */}
       {showSaveAsTemplateDialog && (
-        <div className="text-editor-popup-overlay" onClick={() => !savingAsTemplate && setShowSaveAsTemplateDialog(false)}>
+        <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); dismissSaveAsTemplateDialog(); }}>
           <div className="text-editor-popup jo-save-template-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="text-editor-popup-header">
               <h3>Save Router as Job Template</h3>
@@ -4010,7 +4021,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 type="button"
                 className="btn-close"
                 disabled={savingAsTemplate}
-                onClick={() => setShowSaveAsTemplateDialog(false)}
+                onClick={dismissSaveAsTemplateDialog}
               >
                 ×
               </button>
@@ -4068,7 +4079,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 type="button"
                 className="btn-cancel"
                 disabled={savingAsTemplate}
-                onClick={() => setShowSaveAsTemplateDialog(false)}
+                onClick={dismissSaveAsTemplateDialog}
               >
                 Cancel
               </button>
@@ -4683,12 +4694,16 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
     onSave(textValue);
   };
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(textValue !== value)) onClose();
+  };
+
   return (
-    <div className="text-editor-popup-overlay" onClick={onClose}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -4709,7 +4724,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
           />
         </div>
         <div className="text-editor-popup-footer">
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Cancel
           </button>
           <button type="button" className="btn-submit" onClick={handleSave}>

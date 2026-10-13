@@ -3,6 +3,15 @@ import { toast } from 'react-toastify';
 import { InvoiceableItem, CreateInvoiceRequest, InvoiceService } from '../../Common/Services/InvoiceService';
 import { AccountingService } from '../../Common/Services/AccountingService';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { todayIsoInTenantTimezone } from '../../Common/Utils/Formatting';
+import { confirmDiscardChanges } from '../../Common/Utils/dismissGuard';
+
+const addDaysToIsoDate = (isoDate: string, days: number): string => {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(y, m - 1, d + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
 
 interface InvoiceModalProps {
   isOpen: boolean;
@@ -23,12 +32,14 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
 }) => {
   const { formatCurrency } = useFormatting();
   const [loading, setLoading] = useState(false);
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dueDate, setDueDate] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 30); // Default 30 days
-    return date.toISOString().split('T')[0];
-  });
+  const [isDirty, setIsDirty] = useState(false);
+
+  const handleDismiss = () => {
+    if (loading) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
+  const [invoiceDate, setInvoiceDate] = useState(() => todayIsoInTenantTimezone());
+  const [dueDate, setDueDate] = useState(() => addDaysToIsoDate(todayIsoInTenantTimezone(), 30));
   const [notes, setNotes] = useState('');
   const [taxRate, setTaxRate] = useState(0);
   const [taxAmount, setTaxAmount] = useState(0);
@@ -66,12 +77,15 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       const initialDiscountInputs: { [key: number]: string } = {};
 
       selectedItems.forEach(item => {
+        const isPartialLine =
+          (item.invoicedQty || 0) > 0 || (item.availableQty || 0) < (item.qtyOrdered || 0);
+        const initialDiscount = isPartialLine ? 0 : item.discount || 0;
         initialQuantities[item.id] = item.availableQty;
         initialUnitPrices[item.id] = item.unitPrice;
-        initialDiscounts[item.id] = item.discount;
+        initialDiscounts[item.id] = initialDiscount;
         initialQuantityInputs[item.id] = item.availableQty.toString();
         initialPriceInputs[item.id] = item.unitPrice.toString();
-        initialDiscountInputs[item.id] = item.discount.toString();
+        initialDiscountInputs[item.id] = isPartialLine ? "" : initialDiscount.toString();
       });
 
       setQuantities(initialQuantities);
@@ -124,6 +138,11 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
 
   const subtotal = calculateSubtotal();
 
+  const minInvoiceDate =
+    selectedItems.find(item => item.minInvoiceDate)?.minInvoiceDate ||
+    invoiceableItems.find(item => item.minInvoiceDate)?.minInvoiceDate ||
+    '';
+
   useEffect(() => {
     if (taxAmountManual) return;
     const computed = Math.round((subtotal * (taxRate / 100)) * 100) / 100;
@@ -155,6 +174,12 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
 
       if (dueDate && invoiceDate && dueDate < invoiceDate) {
         toast.warning('Due Date cannot be earlier than Invoice Date.');
+        setLoading(false);
+        return;
+      }
+
+      if (minInvoiceDate && invoiceDate && invoiceDate < minInvoiceDate) {
+        toast.error(`Invoice Date cannot be earlier than the Order Date (${minInvoiceDate}).`);
         setLoading(false);
         return;
       }
@@ -230,7 +255,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           e.stopPropagation();
-          onClose();
+          handleDismiss();
         }
       }}
     >
@@ -266,7 +291,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
             type="button"
             onClick={() => {
               console.log('Close button clicked');
-              onClose();
+              handleDismiss();
             }}
             style={{
               background: 'none',
@@ -280,7 +305,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} onChange={() => setIsDirty(true)}>
           <div className="modal-body" style={{ padding: '1.5rem' }}>
             {/* Items to Invoice */}
             <div style={{ marginBottom: '1.5rem' }}>
@@ -416,6 +441,10 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
                           }}
                           onBlur={(e) => {
                             const val = e.target.value;
+                            if (val.trim() === '') {
+                              handleDiscountChange(item.id, 0);
+                              return;
+                            }
                             const numVal = parseFloat(val) || 0;
                             const isAmount = (item.discountType || "Percent") === "Amount";
                             const clampedVal = isAmount
@@ -469,6 +498,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   <input
                     type="date"
                     value={invoiceDate}
+                    min={minInvoiceDate || undefined}
                     onChange={(e) => {
                       const newInvDate = e.target.value;
                       setInvoiceDate(newInvDate);
@@ -643,7 +673,7 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
               type="button"
               onClick={() => {
                 console.log('Cancel button clicked');
-                onClose();
+                handleDismiss();
               }}
               disabled={loading}
               style={{

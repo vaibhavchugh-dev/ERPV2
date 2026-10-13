@@ -8,6 +8,8 @@ import {
   Permission
 } from "../../Common/Services/UserManagementService";
 import { AuthService } from "../../Common/Services/AuthService";
+import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
+import { getKeepActiveReason } from "../../Common/Utils/accountProtection";
 import "./UserManagementSlideout.scss";
 
 interface UserManagementSlideoutProps {
@@ -29,6 +31,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
   const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
   const [showPermissionViewer, setShowPermissionViewer] = useState(false);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [userData, setUserData] = useState<UserDetail>({
     userUniqueID: 0,
     firstName: "",
@@ -122,7 +125,13 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     }
   };
 
+  const handleDismiss = () => {
+    if (saving) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
+
   const handleInputChange = (field: keyof UserDetail, value: any) => {
+    setIsDirty(true);
     // Ensure role is a valid number or undefined
     if (field === 'role') {
       const numValue = value === null || value === '' || isNaN(value) ? undefined : Number(value);
@@ -146,11 +155,19 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     }
   };
 
+  const keepActiveReason = getKeepActiveReason(
+    roles.find((r) => Number(r.id) === Number(userData.role))?.name || userData.roleName,
+    userData.userUniqueID
+  );
+
   const validateForm = (): string[] => {
     const errors: string[] = [];
 
     // Only validate account management fields
     if (!userData.status?.trim()) errors.push("Status is required");
+    if (keepActiveReason && userData.status && userData.status !== "Active") {
+      errors.push(keepActiveReason);
+    }
     
     // Validate role - must be a positive number
     const roleValue = userData.role;
@@ -207,7 +224,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       onSave();
     } catch (error: any) {
       console.error('Error saving user:', error);
-      toast.error(`Error saving user: ${error.message || 'Unknown error'}`);
+      toast.error(`Error saving user: ${error?.response?.data?.message || error.message || 'Unknown error'}`);
     } finally {
       setSaving(false);
     }
@@ -336,11 +353,19 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
             onChange={(e) => handleInputChange("status", e.target.value)}
             className="form-select"
             required
+            title={keepActiveReason || undefined}
+            disabled={!!keepActiveReason && (userData.status || "Active") === "Active"}
+            style={keepActiveReason && (userData.status || "Active") === "Active" ? { cursor: "not-allowed" } : undefined}
           >
             <option value="Active">Active</option>
             <option value="Inactive">Inactive</option>
             <option value="Pending">Pending</option>
           </select>
+          {keepActiveReason && (
+            <small style={{ display: "block", marginTop: "0.25rem", color: "#6b7280" }}>
+              {keepActiveReason}
+            </small>
+          )}
         </div>
       </div>
 
@@ -398,11 +423,11 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
   }
 
   return (
-    <div className="slideout-overlay">
+    <div className="slideout-overlay" onClick={onBackdropClick(handleDismiss)}>
       <div className="slideout-panel">
         <div className="slideout-header">
           <h2>Manage User Account</h2>
-          <button className="slideout-close" onClick={onClose}>
+          <button className="slideout-close" onClick={handleDismiss}>
             <i className="fas fa-times"></i>
           </button>
         </div>
@@ -430,7 +455,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
         <div className="slideout-footer">
           <button
             className="btn btn-secondary"
-            onClick={onClose}
+            onClick={handleDismiss}
             disabled={saving}
           >
             Cancel
@@ -450,7 +475,11 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       </div>
 
       {showPermissionViewer && (
-        <div className="slideout-overlay" style={{ zIndex: 10001 }}>
+        <div
+          className="slideout-overlay"
+          style={{ zIndex: 10001 }}
+          onClick={onBackdropClick(() => setShowPermissionViewer(false))}
+        >
           <div className="slideout-panel" style={{ maxWidth: '600px', maxHeight: '80vh' }}>
             <div className="slideout-header">
               <h3>

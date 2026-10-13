@@ -92,7 +92,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
         if (location.LogoUrl) {
           setLogoUrl(location.LogoUrl);
           // Set preview from URL - construct full URL from backend host
-          const backendHost = API_ROOT.backendHost.replace('/api', ''); // Remove /api suffix
+          const backendHost = API_ROOT.backendHost.replace(/\/api\/?$/, '');
           setLogoPreview(`${backendHost}${location.LogoUrl}`);
         } else {
           setLogoUrl(null);

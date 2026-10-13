@@ -246,7 +246,20 @@ namespace CimmpleAPI.Controllers
 
                 // User Management focuses on account management only (roles, permissions, status, security)
                 // Profile data (name, email, phone, address) should be managed via Employee Master
-                
+
+                var effectiveRole = userDto.Role.HasValue
+                    ? (userDto.Role.Value > 0 ? userDto.Role : null)
+                    : user.Role;
+                var effectiveStatus = !string.IsNullOrWhiteSpace(userDto.Status)
+                    ? NormalizeAccountStatus(userDto.Status)
+                    : user.Status;
+                var deactivateBlockReason = AccountProtection.GetDeactivationBlockReason(
+                    _context, user.User_UniqueID, effectiveRole, effectiveStatus, GetUserId());
+                if (deactivateBlockReason != null)
+                {
+                    return BadRequest(new { message = deactivateBlockReason });
+                }
+
                 if (userDto.Role.HasValue)
                 {
                     user.Role = userDto.Role.Value > 0 ? userDto.Role : null;
@@ -300,6 +313,13 @@ namespace CimmpleAPI.Controllers
                 if (user == null)
                 {
                     return NotFound(new { message = "User not found" });
+                }
+
+                var deleteBlockReason = AccountProtection.GetDeleteBlockReason(
+                    _context, user.User_UniqueID, user.Role, GetUserId());
+                if (deleteBlockReason != null)
+                {
+                    return BadRequest(new { message = deleteBlockReason });
                 }
 
                 // Soft delete - set status to inactive instead of hard delete

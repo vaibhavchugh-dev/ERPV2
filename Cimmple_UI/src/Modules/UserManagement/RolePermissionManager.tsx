@@ -6,6 +6,7 @@ import {
   PermissionDetail,
   AssignPermissionsRequest
 } from "../../Common/Services/UserManagementService";
+import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
 import "./RolePermissionManager.scss";
 
 interface RolePermissionManagerProps {
@@ -26,6 +27,12 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   const [allPermissions, setAllPermissions] = useState<PermissionDetail[]>([]);
   const [selectedPermissions, setSelectedPermissions] = useState<Set<number>>(new Set());
   const [roleName, setRoleName] = useState<string>("");
+  const [isDirty, setIsDirty] = useState(false);
+
+  const handleDismiss = () => {
+    if (saving) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -68,6 +75,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   }, [loadData]);
 
   const handlePermissionToggle = (permissionId: number) => {
+    setIsDirty(true);
     setSelectedPermissions(prev => {
       const newSet = new Set(prev);
       if (newSet.has(permissionId)) {
@@ -80,6 +88,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   };
 
   const handleSelectAll = () => {
+    setIsDirty(true);
     if (selectedPermissions.size === allPermissions.length) {
       setSelectedPermissions(new Set());
     } else {
@@ -133,7 +142,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   }
 
   return (
-    <div className="role-permission-manager-overlay">
+    <div className="role-permission-manager-overlay" onClick={onBackdropClick(handleDismiss)}>
       <div className="role-permission-manager-panel">
         <div className="role-permission-manager-header">
           <h2>Manage Permissions: {roleName}</h2>
@@ -218,7 +227,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                 🌱 Seed Permissions
               </button>
             )}
-            <button className="close-button" onClick={onClose}>
+            <button className="close-button" onClick={handleDismiss}>
               <i className="fas fa-times"></i>
             </button>
           </div>
@@ -358,7 +367,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
         <div className="role-permission-manager-footer">
           <button
             className="btn btn-secondary"
-            onClick={onClose}
+            onClick={handleDismiss}
             disabled={saving}
           >
             Cancel

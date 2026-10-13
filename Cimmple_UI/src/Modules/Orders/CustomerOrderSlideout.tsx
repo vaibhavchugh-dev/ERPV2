@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   OrderService,
   OrderMasterReq,
@@ -34,6 +35,7 @@ import {
   todayDateOnlyDisplay,
   toHtmlDateInputValue,
   fromHtmlDateInputValue,
+  formatDateOnlyFromApi,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
@@ -579,32 +581,17 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
     setRepeatingLastOrder(true);
     try {
-      const result = await OrderService.GetLastOrderLinesByCustomer(formData.CustomerID);
+      const result = await OrderService.GetLastOrderLinesByCustomer(
+        formData.CustomerID,
+        formData.OrderID > 0 ? formData.OrderID : orderId
+      );
       if (!result.found || result.lines.length === 0) {
         toast.info("No previous order found for this customer");
         return;
       }
 
-      const today = new Date().toLocaleDateString("en-US", {
-        month: "2-digit",
-        day: "2-digit",
-        year: "2-digit",
-      });
-
-      const formatDue = (raw: string) => {
-        if (!raw) return today;
-        try {
-          const d = new Date(raw);
-          if (isNaN(d.getTime())) return today;
-          return d.toLocaleDateString("en-US", {
-            month: "2-digit",
-            day: "2-digit",
-            year: "2-digit",
-          });
-        } catch {
-          return today;
-        }
-      };
+      const today = todayDateOnlyDisplay();
+      const formatDue = (raw: string) => (raw ? formatDateOnlyFromApi(raw) || today : today);
 
       const blankOnly =
         formData.Details.length === 0 ||
@@ -662,7 +649,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           : `CO#${result.orderNumber}`;
       toast.success(
         `Added ${result.lines.length} line(s) from ${orderLabel}${
-          result.orderDate ? ` (${result.orderDate})` : ""
+          result.orderDate ? ` (${formatDateOnlyFromApi(result.orderDate, true)})` : ""
         }`
       );
     } catch (error: any) {
@@ -724,7 +711,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         ? Math.max(...prev.Details.map(d => d.ItemNo)) + 1 
         : 1;
       
-      const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+      const today = todayDateOnlyDisplay();
       const newDetail: OrderDetailReq = {
         ID: 0,
         ItemNo: newItemNo,
@@ -990,6 +977,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       newErrors.OrderDate = "Order date is required";
     }
 
+    const orderDateIso = toHtmlDateInputValue(formData.OrderDate);
+
     // Validate line items (ignore the empty starter row)
     const filledDetails = formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d));
     if (filledDetails.length === 0) {
@@ -1020,30 +1009,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           itemErrors.UnitPrice = "Unit price must be 0 or greater";
         }
 
-        // DueDate/LeadTime validation - only for NEW orders or NEW line items
-        // Existing orders/line items may have past dates from when they were created
-        // and already have jobs/shipments associated with them
-        const estDate = detail.LeadTime || detail.DueDate;
-        if (estDate) {
-          // Only validate date for new orders or new line items
-          const isNewOrder = (formData.OrderID > 0 ? formData.OrderID : orderId) === 0;
-          const isNewLineItem = detail.ID === 0;
-          
-          if (isNewOrder || isNewLineItem) {
-            try {
-              const dateValue = new Date(estDate);
-              const today = new Date();
-              today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
-              dateValue.setHours(0, 0, 0, 0);
-              if (dateValue < today) {
-                itemErrors.DueDate = "Due Date cannot be earlier than today";
-              }
-            } catch (e) {
-              // Invalid date format - ignore for now, or add validation if needed
-            }
-          }
-          // For existing orders/line items, skip date validation
-          // They may have been created in the past and already have jobs/shipments
+        const dueDateIso = toHtmlDateInputValue(detail.LeadTime || detail.DueDate);
+        if (dueDateIso && orderDateIso && dueDateIso < orderDateIso) {
+          itemErrors.DueDate = "Due Date cannot be earlier than the Order Date";
         }
 
         if (Object.keys(itemErrors).length > 0) {
@@ -1896,6 +1864,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 value={detail.PartNo}
                                 customerId={formData.CustomerID}
                                 customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
+                                excludeOrderId={effectiveOrderId}
                                 hasError={hasPartError}
                                 scrollContainerSelector=".customer-order-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
@@ -1978,6 +1947,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   borderWidth: itemErrors.DueDate ? "2px" : "1px"
                                 }}
                                 value={convertToDateInputFormat(detail.LeadTime || detail.DueDate)}
+                                min={convertToDateInputFormat(formData.OrderDate) || undefined}
                                 onChange={(e) => {
                                   const estDate = convertFromDateInputFormat(e.target.value);
                                   handleDetailChange(index, "LeadTime", estDate);
@@ -2616,11 +2586,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                             Shipment #{shipment.shipmentNo}
                           </div>
                           <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {new Date(shipment.shipmentDate).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric'
-                            })}
+                            {formatDateOnlyFromApi(shipment.shipmentDate, true)}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start" }}>
@@ -2738,15 +2704,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                             Invoice #{invoice.invoiceNo}
                           </div>
                           <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                            {new Date(invoice.invoiceDate).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric'
-                            })} • Due: {new Date(invoice.dueDate).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric'
-                            })}
+                            {formatDateOnlyFromApi(invoice.invoiceDate, true)} • Due: {formatDateOnlyFromApi(invoice.dueDate, true)}
                           </div>
                           <div style={{ fontSize: "0.75rem", fontWeight: "500", color: invoice.status === "Paid" ? "#10b981" : invoice.status === "Overdue" ? "#ef4444" : "#f59e0b" }}>
                             Status: {invoice.status}
@@ -3022,12 +2980,16 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
     onSave(textValue);
   };
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(textValue !== value)) onClose();
+  };
+
   return (
-    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -3048,7 +3010,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
           />
         </div>
         <div className="text-editor-popup-footer">
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Cancel
           </button>
           <button type="button" className="btn-submit" onClick={handleSave}>

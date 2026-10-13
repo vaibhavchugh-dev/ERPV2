@@ -25,7 +25,7 @@ import {
   faFilter
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { formatCurrency } from "../../Common/Utils/Formatting";
+import { formatCurrency, formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import {
   BarChart,
   Bar,
@@ -137,9 +137,23 @@ const Dashboard: React.FC = () => {
     return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
   }, [revenueTrends]);
 
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
+  const formatDate = (dateString: string, isDateOnly?: boolean): string => {
+    if (!dateString) return "";
     const now = new Date();
+
+    if (isDateOnly) {
+      const [y, m, d] = dateString.slice(0, 10).split("-").map(Number);
+      const day = new Date(y, m - 1, d);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const dayDiff = Math.round((today.getTime() - day.getTime()) / 86400000);
+      if (dayDiff === 0) return "Today";
+      if (dayDiff === 1) return "Yesterday";
+      if (dayDiff > 1 && dayDiff < 7) return `${dayDiff}d ago`;
+      return day.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    }
+
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return "";
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
@@ -531,7 +545,7 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div className="activity-content">
                       <div className="activity-description">{activity.description}</div>
-                      <div className="activity-time">{formatDate(activity.timestamp)}</div>
+                      <div className="activity-time">{formatDate(activity.timestamp, activity.isDateOnly)}</div>
                     </div>
                   </div>
                 ))}
@@ -645,7 +659,7 @@ const Dashboard: React.FC = () => {
                             <div className="deadline-title">{deadline.title}</div>
                             <div className="deadline-description">{deadline.description}</div>
                             <div className="deadline-date">
-                              Due: {new Date(deadline.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              Due: {formatDateOnlyFromApi(deadline.dueDate, true)}
                             </div>
                           </div>
                         </div>

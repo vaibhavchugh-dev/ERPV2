@@ -10,6 +10,7 @@ import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDi
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 import {
   getApiErrorMessage,
   isApiForbidden,
@@ -596,7 +597,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
       alignItems: 'center',
       zIndex: 1050,
       padding: '1rem'
-    }}>
+    }} onClick={onBackdropClick(() => onClose())}>
       <div style={{
         backgroundColor: 'white',
         borderRadius: '0.5rem',

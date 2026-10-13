@@ -15,6 +15,7 @@ import {
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import NonConformanceReportSlideout from "./NonConformanceReportSlideout";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./Quality.scss";
 
 const DEFAULT_FILTERS = {
@@ -226,15 +227,7 @@ const Quality: React.FC = () => {
 
   const formatDate = (dateStr: string): string => {
     if (!dateStr) return "";
-    try {
-      return new Date(dateStr).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    } catch {
-      return dateStr;
-    }
+    return formatDateOnlyFromApi(dateStr, true) || dateStr;
   };
 
   const getStatusBadge = (status: NCRStatus) => {

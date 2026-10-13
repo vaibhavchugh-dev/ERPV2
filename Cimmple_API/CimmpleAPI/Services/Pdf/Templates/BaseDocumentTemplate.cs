@@ -509,7 +509,7 @@ namespace CimmpleAPI.Services.Pdf.Templates
 
         protected string FormatDate(DateTime? date)
         {
-            return date?.ToString("MM/dd/yyyy") ?? "";
+            return PdfDateFormatting.Format(date, DocumentData.DateFormat);
         }
 
         // Abstract method for document-specific content

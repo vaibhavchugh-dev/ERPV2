@@ -9,6 +9,8 @@ import {
 } from "../../Common/Services/VendorReceivingService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./VendorReceivingDetail.scss";
 
 interface VendorReceivingDetailProps {
@@ -142,10 +144,16 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     };
   }, [orderId]);
 
+  const handleDismiss = () => {
+    if (receiving) return;
+    const hasUnsavedReceipts = Array.from(receivingForms.values()).some((f) => f.receivedQty > 0);
+    if (confirmDiscardChanges(hasUnsavedReceipts)) onClose(listNeedsRefreshRef.current);
+  };
+
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (ignoreBackdropClickRef.current) return;
-    onClose(listNeedsRefreshRef.current);
+    handleDismiss();
   };
 
   const reloadOrder = async () => {
@@ -338,15 +346,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
 
   const formatDate = (dateStr: string): string => {
     if (!dateStr) return "";
-    try {
-      const date = new Date(dateStr);
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const year = String(date.getFullYear());
-      return `${month}/${day}/${year}`;
-    } catch {
-      return dateStr;
-    }
+    return formatDateOnlyFromApi(dateStr, true) || dateStr;
   };
 
   const getStatusBadge = (status: string) => {
@@ -405,7 +405,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
               {order.vendorName} • Order Date: {formatDate(order.orderDate)}
             </p>
           </div>
-          <button className="btn-close" onClick={() => onClose(listNeedsRefreshRef.current)}>
+          <button className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -609,7 +609,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                     {(receivingHistory.get(detail.id) || []).map((entry) => (
                                       <li key={entry.id}>
                                         <span>
-                                          {new Date(entry.receivedDate).toLocaleDateString()} · Qty {entry.receivedQty}
+                                          {formatDate(entry.receivedDate)} · Qty {entry.receivedQty}
                                         </span>
                                         <span>{entry.notes?.trim() || "No notes entered"}</span>
                                       </li>

@@ -257,7 +257,7 @@ export class ProductMasterService {
 
   public static GetPartsByCustomer = async (
     customerId: number,
-    options?: { q?: string; limit?: number }
+    options?: { q?: string; limit?: number; excludeQuotationId?: number; excludeOrderId?: number }
   ): Promise<CustomerPartOption[]> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
@@ -273,6 +273,12 @@ export class ProductMasterService {
     };
     if (options?.q && options.q.trim()) {
       params.q = options.q.trim();
+    }
+    if (options?.excludeQuotationId && options.excludeQuotationId > 0) {
+      params.excludeQuotationId = options.excludeQuotationId;
+    }
+    if (options?.excludeOrderId && options.excludeOrderId > 0) {
+      params.excludeOrderId = options.excludeOrderId;
     }
 
     return Instense.get(url, { params }).then((response) => {
@@ -300,7 +306,13 @@ export class ProductMasterService {
 
   public static GetPartsByVendor = async (
     vendorId: number,
-    options?: { q?: string; limit?: number; lineType?: string }
+    options?: {
+      q?: string;
+      limit?: number;
+      lineType?: string;
+      excludeQuotationId?: number;
+      excludeOrderId?: number;
+    }
   ): Promise<CustomerPartOption[]> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
@@ -319,6 +331,12 @@ export class ProductMasterService {
     }
     if (options?.lineType && options.lineType.trim()) {
       params.lineType = options.lineType.trim();
+    }
+    if (options?.excludeQuotationId && options.excludeQuotationId > 0) {
+      params.excludeQuotationId = options.excludeQuotationId;
+    }
+    if (options?.excludeOrderId && options.excludeOrderId > 0) {
+      params.excludeOrderId = options.excludeOrderId;
     }
 
     return Instense.get(url, { params }).then((response) => {

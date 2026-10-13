@@ -19,6 +19,7 @@ import {
 import { APP_VERSION } from "../Constants/AppVersion";
 import { useActiveLocation } from "../Hooks/useActiveLocation";
 import { useFormatting } from "../Hooks/useFormatting";
+import { confirmDiscardChanges } from "../Utils/dismissGuard";
 import "./ContactSupportDialog.scss";
 
 interface ContactSupportDialogProps {
@@ -61,6 +62,13 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [followUp, setFollowUp] = useState("");
   const [replying, setReplying] = useState(false);
+
+  const isDirty = !!subject.trim() || !!description.trim() || !!attachment || !!followUp.trim();
+
+  const handleDismiss = () => {
+    if (sending || replying) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -234,7 +242,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
   return (
     <div
       className="contact-support-overlay"
-      onClick={onClose}
+      onClick={handleDismiss}
       role="presentation"
     >
       <div
@@ -252,7 +260,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
           <button
             type="button"
             className="contact-support-close"
-            onClick={onClose}
+            onClick={handleDismiss}
             aria-label="Close"
           >
             <FontAwesomeIcon icon={faTimes} />
@@ -489,7 +497,7 @@ const ContactSupportDialog: React.FC<ContactSupportDialogProps> = ({
 
         {tab === "new" && (
           <div className="contact-support-footer">
-            <button type="button" className="btn-secondary" onClick={onClose}>
+            <button type="button" className="btn-secondary" onClick={handleDismiss}>
               Cancel
             </button>
             <button

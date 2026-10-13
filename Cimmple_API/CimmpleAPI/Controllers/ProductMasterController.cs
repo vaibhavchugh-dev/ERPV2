@@ -54,7 +54,7 @@ namespace CimmpleAPI.Controllers
                         avgUnitPrice = g.Average(x => x.d.UnitPrice),
                         minUnitPrice = g.Min(x => x.d.UnitPrice),
                         maxUnitPrice = g.Max(x => x.d.UnitPrice),
-                        orderCount = g.Count(),
+                        orderCount = g.Select(x => x.d.OrderID).Distinct().Count(),
                         firstOrderDate = g.Min(x => x.o.OrderDate),
                         lastOrderDate = g.Max(x => x.o.OrderDate),
                         productId = g.Where(x => x.d.productid.HasValue).Select(x => x.d.productid).FirstOrDefault()
@@ -87,7 +87,7 @@ namespace CimmpleAPI.Controllers
                         avgUnitPrice = g.Average(x => x.d.UnitPrice),
                         minUnitPrice = g.Min(x => x.d.UnitPrice),
                         maxUnitPrice = g.Max(x => x.d.UnitPrice),
-                        quotationCount = g.Count(),
+                        quotationCount = g.Select(x => x.d.OrderID).Distinct().Count(),
                         productId = g.Where(x => x.d.productid.HasValue).Select(x => x.d.productid).FirstOrDefault()
                     })
                     .ToList();
@@ -289,7 +289,9 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int tenantId,
             [FromQuery] int customerId,
             [FromQuery] string? q = null,
-            [FromQuery] int limit = 50)
+            [FromQuery] int limit = 50,
+            [FromQuery] int excludeQuotationId = 0,
+            [FromQuery] int excludeOrderId = 0)
         {
             try
             {
@@ -306,6 +308,7 @@ namespace CimmpleAPI.Controllers
                 var quotations = _context.QuotationOrder
                     .AsNoTracking()
                     .Where(x => x.Tenantid == tenantId && x.CustomerID == customerId)
+                    .Where(x => excludeQuotationId <= 0 || x.OrderID != excludeQuotationId)
                     .Select(x => new { x.OrderID, x.OrderDate })
                     .ToList();
                 var quotationIds = quotations.Select(x => x.OrderID).ToList();
@@ -314,6 +317,7 @@ namespace CimmpleAPI.Controllers
                 var orders = _context.CustomerOrder
                     .AsNoTracking()
                     .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
+                    .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
                     .Select(o => new { o.OrderID, o.OrderDate })
                     .ToList();
                 var orderIds = orders.Select(o => o.OrderID).ToList();
@@ -432,12 +436,12 @@ namespace CimmpleAPI.Controllers
                                 ?? latestQuote?.line.productId,
                             lastQuotedPrice = lastQuotedPrice,
                             lastQuotedDate = latestQuote != null
-                                ? latestQuote.docDate.ToString("MM/dd/yyyy")
+                                ? latestQuote.docDate.ToString("yyyy-MM-dd")
                                 : (string?)null,
                             lastOrderedPrice = lastOrderedPrice,
                             lastOrderedQty = latestOrder?.line.qty,
                             lastOrderedDate = latestOrder != null
-                                ? latestOrder.docDate.ToString("MM/dd/yyyy")
+                                ? latestOrder.docDate.ToString("yyyy-MM-dd")
                                 : (string?)null,
                             suggestedQty = suggestedQty,
                             orderCount = oLines.Select(l => l.orderId).Distinct().Count(),
@@ -485,7 +489,9 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int vendorId,
             [FromQuery] string? q = null,
             [FromQuery] string? lineType = null,
-            [FromQuery] int limit = 50)
+            [FromQuery] int limit = 50,
+            [FromQuery] int excludeQuotationId = 0,
+            [FromQuery] int excludeOrderId = 0)
         {
             try
             {
@@ -503,6 +509,7 @@ namespace CimmpleAPI.Controllers
                 var quotations = _context.VendorQuotations
                     .AsNoTracking()
                     .Where(x => x.Tenantid == tenantId && x.VendorID == vendorId)
+                    .Where(x => excludeQuotationId <= 0 || x.OrderID != excludeQuotationId)
                     .Select(x => new { x.OrderID, x.OrderDate })
                     .ToList();
                 var quotationIds = quotations.Select(x => x.OrderID).ToList();
@@ -511,6 +518,7 @@ namespace CimmpleAPI.Controllers
                 var orders = _context.VendorOrders
                     .AsNoTracking()
                     .Where(o => o.Tenantid == tenantId && o.VendorID == vendorId)
+                    .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
                     .Select(o => new { o.OrderID, o.OrderDate })
                     .ToList();
                 var orderIds = orders.Select(o => o.OrderID).ToList();
@@ -677,12 +685,12 @@ namespace CimmpleAPI.Controllers
                                 ?? latestQuote?.line.productId,
                             lastQuotedPrice = lastQuotedPrice,
                             lastQuotedDate = latestQuote != null && latestQuote.docDate > DateTime.MinValue
-                                ? latestQuote.docDate.ToString("MM/dd/yyyy")
+                                ? latestQuote.docDate.ToString("yyyy-MM-dd")
                                 : (string?)null,
                             lastOrderedPrice = lastOrderedPrice,
                             lastOrderedQty = latestOrder?.line.qty,
                             lastOrderedDate = latestOrder != null && latestOrder.docDate > DateTime.MinValue
-                                ? latestOrder.docDate.ToString("MM/dd/yyyy")
+                                ? latestOrder.docDate.ToString("yyyy-MM-dd")
                                 : (string?)null,
                             suggestedQty = suggestedQty,
                             orderCount = oLines.Select(l => l.orderId).Distinct().Count(),

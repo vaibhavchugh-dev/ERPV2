@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   QuotationService,
   VendorQuotationMasterReq,
@@ -43,7 +44,11 @@ import {
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
-import { toDateOnlyApiString, toHtmlDateInputValue } from "../../Common/Utils/Formatting";
+import {
+  toDateOnlyApiString,
+  toHtmlDateInputValue,
+  todayDateOnlyDisplay,
+} from "../../Common/Utils/Formatting";
 import {
   VendorPartCombobox,
   formatPartHistoryHint,
@@ -653,7 +658,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         ? Math.max(...details.map(d => d.ItemNo)) + 1 
         : 1;
       
-      const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+      const today = todayDateOnlyDisplay();
       const newDetail: QuotationDetailReq = {
         ID: 0,
         ItemNo: newItemNo,
@@ -1972,6 +1977,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 vendorId={formData.VendorID}
                                 vendorSelected={!!formData.VendorID && formData.VendorID > 0}
                                 lineType={lineType}
+                                excludeQuotationId={formData.OrderID > 0 ? formData.OrderID : quotationId}
                                 scrollContainerSelector=".vendor-quotation-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
                                 onSelectPart={(part) => applyVendorPart(index, part)}
@@ -2832,12 +2838,16 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
     onSave(textValue);
   };
 
+  const handleDismiss = () => {
+    if (confirmDiscardChanges(textValue !== value)) onClose();
+  };
+
   return (
-    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+    <div className="text-editor-popup-overlay" onClick={(e) => { e.stopPropagation(); handleDismiss(); }}>
       <div className="text-editor-popup" onClick={(e) => e.stopPropagation()}>
         <div className="text-editor-popup-header">
           <h3>{title}</h3>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
@@ -2858,7 +2868,7 @@ const TextEditorPopup: React.FC<TextEditorPopupProps> = ({ title, value, onSave,
           />
         </div>
         <div className="text-editor-popup-footer">
-          <button type="button" className="btn-cancel" onClick={onClose}>
+          <button type="button" className="btn-cancel" onClick={handleDismiss}>
             Cancel
           </button>
           <button type="button" className="btn-submit" onClick={handleSave}>

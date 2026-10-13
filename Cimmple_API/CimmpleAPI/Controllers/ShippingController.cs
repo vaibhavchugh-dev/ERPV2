@@ -56,10 +56,16 @@ namespace CimmpleAPI.Controllers
                 var jobOrdersByDetail = _context.JobOrderMaster
                     .AsNoTracking()
                     .Where(jo => jo.Tenantid == tenantId && orderDetailIds.Contains(jo.CustomerOrderDetailID))
-                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status, jo.JobOrderID })
+                    .Select(jo => new { jo.CustomerOrderDetailID, jo.Status, jo.JobOrderID, jo.CreatedDate })
                     .ToList()
                     .GroupBy(jo => jo.CustomerOrderDetailID)
                     .ToDictionary(g => g.Key, g => g.First());
+
+                var orderDate = _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Select(o => (DateTime?)o.OrderDate)
+                    .FirstOrDefault();
 
                 var productIds = detailsList
                     .Where(d => d.productid.HasValue && d.productid.Value > 0)
@@ -95,7 +101,10 @@ namespace CimmpleAPI.Controllers
                         shippingStatus = d.ShippingStatus,
                         hasJobOrder,
                         jobOrderStatus = hasJobOrder ? (jobOrdersByDetail[d.ID].Status ?? "Draft") : "No Job Order",
-                        quantityOnHand = onHand
+                        quantityOnHand = onHand,
+                        minShipDate = hasJobOrder
+                            ? jobOrdersByDetail[d.ID].CreatedDate.ToString("yyyy-MM-dd")
+                            : orderDate?.ToString("yyyy-MM-dd")
                     };
                 }).ToList();
 
@@ -137,6 +146,26 @@ namespace CimmpleAPI.Controllers
 
                         if (jobOrder != null && jobOrder.Status != "Completed")
                             return BadRequest(new { error = $"Job Order for item {detail.ItemNo} is not completed. Status: {jobOrder.Status}" });
+
+                        if (request.ShipDate.HasValue)
+                        {
+                            var shipDate = request.ShipDate.Value.Date;
+                            if (jobOrder != null)
+                            {
+                                if (shipDate < jobOrder.CreatedDate.Date)
+                                    return BadRequest(new { error = $"Ship Date cannot be earlier than the Job Start Date ({jobOrder.CreatedDate:yyyy-MM-dd}) of Job Order {jobOrder.JobOrderNumber} for item {detail.ItemNo}." });
+                            }
+                            else
+                            {
+                                var orderDate = _context.CustomerOrder
+                                    .AsNoTracking()
+                                    .Where(o => o.OrderID == detail.OrderID && o.Tenantid == tenantId)
+                                    .Select(o => (DateTime?)o.OrderDate)
+                                    .FirstOrDefault();
+                                if (orderDate.HasValue && shipDate < orderDate.Value.Date)
+                                    return BadRequest(new { error = $"Ship Date cannot be earlier than the Order Date ({orderDate.Value:yyyy-MM-dd}) for item {detail.ItemNo}." });
+                            }
+                        }
                     }
 
                     // Generate shipment number

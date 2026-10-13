@@ -646,7 +646,7 @@ const RawMaterialMaster: React.FC = () => {
         );
       case "action":
         return (
-          <>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "nowrap" }}>
             <button
               type="button"
               className="btn-small"
@@ -661,7 +661,7 @@ const RawMaterialMaster: React.FC = () => {
             >
               {material.isActive === false ? "Activate" : "Deactivate"}
             </button>
-          </>
+          </div>
         );
       default:
         return "";

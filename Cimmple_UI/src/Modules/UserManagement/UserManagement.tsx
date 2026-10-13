@@ -7,6 +7,7 @@ import UserManagementSlideout from "./UserManagementSlideout";
 import RolePermissionManager from "./RolePermissionManager";
 import RoleManager from "./RoleManager";
 import ResetPasswordModal, { ResetPasswordUser } from "./ResetPasswordModal";
+import { formatDate } from "../../Common/Utils/Formatting";
 import "./UserManagement.scss";
 
 const UserManagementComponent: React.FC = () => {
@@ -162,7 +163,7 @@ const UserManagementComponent: React.FC = () => {
       loadUsers();
     } catch (error: any) {
       console.error('[UserManagement] Error deleting user:', error);
-      toast.error(`Error deactivating user: ${error.message || 'Unknown error'}`);
+      toast.error(`Error deactivating user: ${error?.response?.data?.message || error.message || 'Unknown error'}`);
     }
   };
 
@@ -347,7 +348,7 @@ const UserManagementComponent: React.FC = () => {
                           </div>
                         </td>
                         <td>{getStatusBadge(user.status)}</td>
-                        <td>{user.createDate ? new Date(user.createDate).toLocaleDateString() : '-'}</td>
+                        <td>{user.createDate ? formatDate(user.createDate) : '-'}</td>
                         <td>
                           <div className="action-buttons">
                             <button

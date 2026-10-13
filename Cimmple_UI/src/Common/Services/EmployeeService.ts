@@ -386,6 +386,13 @@ export class EmployeeService {
     }).then((response) => {
       const result = response.data.result;
       return result;
+    }).catch((error: any) => {
+      throw new Error(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          error.message ||
+          "Failed to delete employee"
+      );
     });
   };
 }

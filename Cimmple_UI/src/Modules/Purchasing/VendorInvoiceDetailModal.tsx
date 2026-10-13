@@ -9,6 +9,7 @@ import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Compone
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 import {
   getApiErrorMessage,
   isApiForbidden,
@@ -37,7 +38,7 @@ interface PaymentModalProps {
 }
 
 const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPaymentComplete }) => {
-  const { formatCurrency } = useFormatting();
+  const { formatCurrency, formatDate } = useFormatting();
   const [loading, setLoading] = useState(false);
   const normalizePaymentMethod = (method?: string): string => {
     const raw = (method || '').trim();
@@ -213,7 +214,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                     Total: {formatCurrency(invoice.totalAmount)}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    Due: {new Date(invoice.dueDate).toLocaleDateString()}
+                    Due: {formatDate(invoice.dueDate)}
                   </div>
                 </div>
               </div>
@@ -672,7 +673,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
       alignItems: 'center',
       zIndex: 1050,
       padding: '1rem'
-    }}>
+    }} onClick={onBackdropClick(() => onClose())}>
       <div style={{
         backgroundColor: 'white',
         borderRadius: '0.5rem',

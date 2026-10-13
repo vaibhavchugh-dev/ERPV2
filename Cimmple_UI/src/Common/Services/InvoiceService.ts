@@ -15,6 +15,8 @@ export interface InvoiceableItem {
   discountType?: "Percent" | "Amount" | string;
   hasJobOrder: boolean;
   jobOrderStatus: string;
+  /** Earliest allowed invoice date (YYYY-MM-DD) — the order date. */
+  minInvoiceDate?: string | null;
 }
 
 export interface InvoiceLineItem {

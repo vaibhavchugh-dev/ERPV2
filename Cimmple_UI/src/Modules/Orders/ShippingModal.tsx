@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { ShippableItem, CreateShipmentRequest, ShippingService } from '../../Common/Services/ShippingService';
+import { todayIsoInTenantTimezone } from '../../Common/Utils/Formatting';
+import { confirmDiscardChanges } from '../../Common/Utils/dismissGuard';
 
 interface ShippingModalProps {
   isOpen: boolean;
@@ -20,12 +22,13 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
   onShipmentCreated
 }) => {
   const [loading, setLoading] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [courier, setCourier] = useState('FedEx');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [boxes, setBoxes] = useState<number | undefined>(1);
   const [packingType, setPackingType] = useState('Standard');
   const [terms, setTerms] = useState('');
-  const [shipDate, setShipDate] = useState(new Date().toISOString().split('T')[0]);
+  const [shipDate, setShipDate] = useState(() => todayIsoInTenantTimezone());
   const [notes, setNotes] = useState('');
   const [quantities, setQuantities] = useState<{ [key: number]: number }>({});
   const [quantityInputs, setQuantityInputs] = useState<{ [key: number]: string }>({});
@@ -43,6 +46,16 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
       setQuantityInputs(initialInputs);
     }
   }, [selectedItems]);
+
+  const handleDismiss = () => {
+    if (loading) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
+
+  const minShipDate = selectedItems.reduce<string>(
+    (latest, item) => (item.minShipDate && item.minShipDate > latest ? item.minShipDate : latest),
+    ''
+  );
 
   const handleQuantityChange = (itemId: number, qty: number) => {
     setQuantities(prev => ({
@@ -70,6 +83,15 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
       if (lineItems.length === 0) {
         console.log('No items to ship, showing warning');
         toast.warning('Please specify quantities to ship for at least one item.');
+        setLoading(false);
+        return;
+      }
+
+      if (minShipDate && shipDate < minShipDate) {
+        const hasJob = selectedItems.some(item => item.hasJobOrder);
+        toast.error(
+          `Ship Date cannot be earlier than the ${hasJob ? 'Job Start Date' : 'Order Date'} (${minShipDate}).`
+        );
         setLoading(false);
         return;
       }
@@ -138,7 +160,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
         // Only close if clicking directly on overlay, not on modal content
         if (e.target === e.currentTarget) {
           e.stopPropagation();
-          onClose();
+          handleDismiss();
         }
       }}
     >
@@ -175,7 +197,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
             type="button"
             onClick={() => {
               console.log('Close button clicked');
-              onClose();
+              handleDismiss();
             }}
             style={{
               background: 'none',
@@ -191,6 +213,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
 
         <form
         onSubmit={handleSubmit}
+        onChange={() => setIsDirty(true)}
         onClick={(e) => {
           e.stopPropagation();
           console.log('Form clicked - preventing bubble');
@@ -299,6 +322,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                     value={courier}
                     onChange={(e) => {
                       e.stopPropagation();
+                      setIsDirty(true);
                       setCourier(e.target.value);
                     }}
                     onClick={(e) => e.stopPropagation()}
@@ -326,6 +350,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                     value={trackingNumber}
                     onChange={(e) => {
                       e.stopPropagation();
+                      setIsDirty(true);
                       setTrackingNumber(e.target.value);
                     }}
                     onClick={(e) => e.stopPropagation()}
@@ -382,6 +407,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
                   <input
                     type="date"
                     value={shipDate}
+                    min={minShipDate || undefined}
                     onChange={(e) => setShipDate(e.target.value)}
                     required
                     style={{
@@ -445,7 +471,7 @@ const ShippingModal: React.FC<ShippingModalProps> = ({
               onClick={(e) => {
                 e.stopPropagation();
                 console.log('Cancel button clicked');
-                onClose();
+                handleDismiss();
               }}
               disabled={loading}
               style={{

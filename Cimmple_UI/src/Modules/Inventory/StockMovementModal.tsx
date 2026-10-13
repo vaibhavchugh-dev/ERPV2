@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "react-toastify";
+import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   InventoryService,
   InventoryBalance,
@@ -163,6 +164,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
     shipments: [],
   });
   const [loading, setLoading] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>(fallbackProducts);
@@ -754,20 +756,25 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
       ? "Reserve for job"
       : "Adjust Stock";
 
+  const handleDismiss = () => {
+    if (loading) return;
+    if (confirmDiscardChanges(isDirty)) onClose();
+  };
+
   return (
-    <div className="stock-movement-overlay" onClick={onClose}>
+    <div className="stock-movement-overlay" onClick={handleDismiss}>
       <div
         className="stock-movement-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <h2>{title}</h2>
-          <button className="btn-close" onClick={onClose}>
+          <button className="btn-close" onClick={handleDismiss}>
             ×
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="modal-body">
+        <form onSubmit={handleSubmit} onChange={() => setIsDirty(true)} className="modal-body">
           <div className="form-row">
             <label>Material Type</label>
             <select
@@ -1135,7 +1142,7 @@ const StockMovementModal: React.FC<StockMovementModalProps> = ({
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="btn-secondary" onClick={onClose}>
+            <button type="button" className="btn-secondary" onClick={handleDismiss}>
               Cancel
             </button>
             <button type="submit" className="btn-primary" disabled={loading}>
