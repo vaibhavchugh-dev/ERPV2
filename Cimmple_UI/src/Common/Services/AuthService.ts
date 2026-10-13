@@ -47,6 +47,18 @@ const TOKEN_KEY = "token";
 const REFRESH_KEY = "refreshToken";
 const PERMS_KEY = "permissions";
 const LOCATIONS_KEY = "allowedLocations";
+/** Last user activity in any tab (ms epoch); tabs share one session, so idle is judged across all of them. */
+export const LAST_ACTIVITY_KEY = "lastActivityAt";
+export const MIN_SESSION_TIMEOUT_MINUTES = 5;
+export const MAX_SESSION_TIMEOUT_MINUTES = 480;
+export const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
+
+/**
+ * - none: no ERP session stored
+ * - idle: longer than Session Timeout since the last activity in any tab
+ * - expired: access token past expiry, but not idle (a refresh may restore it)
+ */
+export type StoredSessionState = "none" | "valid" | "idle" | "expired";
 
 export class AuthService {
   public static persistSession(response: LoginResponse, portal: "erp" | "vendor" = "erp") {
@@ -207,6 +219,45 @@ export class AuthService {
     }
   }
 
+  public static markActivity() {
+    try {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+    } catch {
+      // ignore
+    }
+  }
+
+  /** Judged from localStorage alone so it can run before any protected UI renders. */
+  public static getStoredSessionState(): StoredSessionState {
+    if (!localStorage.getItem(TOKEN_KEY)) return "none";
+
+    let storage: { sessionTimeoutMinutes?: number; expiresAtUtc?: string } = {};
+    try {
+      storage = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    } catch {
+      // ignore malformed storage
+    }
+
+    const timeoutMinutes = Math.max(
+      MIN_SESSION_TIMEOUT_MINUTES,
+      Math.min(
+        MAX_SESSION_TIMEOUT_MINUTES,
+        Number(storage.sessionTimeoutMinutes) || DEFAULT_SESSION_TIMEOUT_MINUTES
+      )
+    );
+    const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY)) || 0;
+    if (lastActivity > 0 && Date.now() - lastActivity >= timeoutMinutes * 60 * 1000) {
+      return "idle";
+    }
+
+    const expiresAtMs = storage.expiresAtUtc ? Date.parse(storage.expiresAtUtc) : NaN;
+    if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+      return "expired";
+    }
+
+    return "valid";
+  }
+
   public static getPermissions(): AuthPermission[] {
     try {
       return JSON.parse(localStorage.getItem(PERMS_KEY) || "[]");
@@ -278,6 +329,8 @@ export class AuthService {
     if (tenantId && tenantId > 0) body.tenantId = tenantId;
     const { data } = await Instense.post<LoginResponse>("/Auth/Login", body);
     AuthService.persistSession(data, "erp");
+    // Not in persistSession: background token refreshes must not reset the idle clock.
+    AuthService.markActivity();
     return data;
   }
 
