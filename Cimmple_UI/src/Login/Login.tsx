@@ -6,6 +6,7 @@ import { AuthService } from "../Common/Services/AuthService";
 import { protectedRoutes } from "../Common/Routes";
 import { useSettings } from "../Common/Contexts/SettingsContext";
 import { toast } from "react-toastify";
+import { preloadShell } from "../Common/preloadShell";
 import "./Login.scss";
 
 export const Login: React.FC = () => {
@@ -20,6 +21,7 @@ export const Login: React.FC = () => {
   const [idleLogOutMessage, setIdleLogOutMessage] = React.useState("");
 
   React.useEffect(() => {
+    preloadShell();
     User.UnderMaintenance().then((result: any) => {
       if (result?.message === "success" && result?.result === 1) {
         window.location.href = window.location.origin + "/Under-Maintenance";

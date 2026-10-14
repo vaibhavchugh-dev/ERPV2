@@ -1,12 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace CimmpleAPI.Controllers
 {
@@ -14,17 +16,27 @@ namespace CimmpleAPI.Controllers
     [Route("api/[controller]")]
     public class DashboardController : ApiBaseController
     {
-        private readonly CimmpleDbContext _context;
+        private static readonly TimeSpan MetricsCacheDuration = TimeSpan.FromSeconds(60);
 
-        public DashboardController(CimmpleDbContext context)
+        private readonly CimmpleDbContext _context;
+        private readonly DbContextOptions<CimmpleDbContext> _dbOptions;
+        private readonly IMemoryCache _cache;
+
+        public DashboardController(
+            CimmpleDbContext context,
+            DbContextOptions<CimmpleDbContext> dbOptions,
+            IMemoryCache cache)
         {
             _context = context;
+            _dbOptions = dbOptions;
+            _cache = cache;
         }
 
         [HttpGet("GetMetrics")]
-        public IActionResult GetMetrics(
+        public async Task<IActionResult> GetMetrics(
             [FromQuery] string dateRange = "This Month",
-            [FromQuery] int? locationId = null)
+            [FromQuery] int? locationId = null,
+            [FromQuery] bool refresh = false)
         {
             try
             {
@@ -47,315 +59,230 @@ namespace CimmpleAPI.Controllers
                 if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
                     return forbid!;
 
+                var scopeKey = filterLocationId?.ToString()
+                    ?? (restrictToLocationIds == null ? "all" : "r" + string.Join(",", restrictToLocationIds.OrderBy(id => id)));
+                var cacheKey = $"dashboard-metrics:{tenantId}:{scopeKey}:{dateRange}:{DateTime.Now:yyyyMMdd}";
+                if (!refresh && _cache.TryGetValue(cacheKey, out object? cachedMetrics) && cachedMetrics != null)
+                {
+                    return Ok(new { result = cachedMetrics });
+                }
+
                 var dateFilter = GetDateRangeFilter(dateRange);
                 var today = DateTime.Now.Date;
+                var tomorrow = today.AddDays(1);
                 var weekStart = today.AddDays(-(int)today.DayOfWeek);
                 var rangeStart = dateFilter.startDate.Date;
-                var rangeEnd = dateFilter.endDate.Date;
+                // Exclusive upper bound: compare columns directly (no .Date) so SQL Server can use indexes.
+                var rangeEndExclusive = dateFilter.endDate.Date.AddDays(1);
+                var loc = filterLocationId;
+                var allowed = restrictToLocationIds;
 
-                // JobOrderMaster has no locationId — scope via related CustomerOrder.locationId
-                var jobOrdersQuery = _context.JobOrderMaster.Where(j => j.Tenantid == tenantId);
-                if (filterLocationId.HasValue)
+                // Every query is a network round trip to the database, so independent groups run concurrently.
+                // Each group gets its own DbContext because a context cannot be used by two queries at once.
+                var jobCountsTask = WithContextAsync(async db =>
                 {
-                    var locId = filterLocationId.Value;
-                    jobOrdersQuery = jobOrdersQuery.Where(j =>
-                        _context.CustomerOrder.Any(co =>
-                            co.OrderID == j.CustomerOrderID &&
-                            co.locationId == locId));
-                }
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    jobOrdersQuery = allowed.Count == 0
-                        ? jobOrdersQuery.Where(_ => false)
-                        : jobOrdersQuery.Where(j =>
-                            _context.CustomerOrder.Any(co =>
-                                co.OrderID == j.CustomerOrderID &&
-                                allowed.Contains(co.locationId)));
-                }
-
-                // Production Metrics
-                var activeJobOrders = jobOrdersQuery
-                    .Where(j => j.Status != null &&
-                               (j.Status == "In Progress" || j.Status == "Pending" || j.Status == "Assigned"))
-                    .Count();
-
-                var jobsCompletedToday = jobOrdersQuery
-                    .Where(j => (j.Status == "Completed" || j.Status == "Shipped") &&
-                               j.ModifiedDate.HasValue &&
-                               j.ModifiedDate.Value.Date == today)
-                    .Count();
-
-                var jobsCompletedThisWeek = jobOrdersQuery
-                    .Where(j => (j.Status == "Completed" || j.Status == "Shipped") &&
-                               j.ModifiedDate.HasValue &&
-                               j.ModifiedDate.Value.Date >= weekStart &&
-                               j.ModifiedDate.Value.Date <= today)
-                    .Count();
-
-                // On-time delivery: jobs due in the selected period, completed on/before due date
-                var jobsDueInPeriod = jobOrdersQuery
-                    .Where(j => j.DueDate.Date >= rangeStart &&
-                               j.DueDate.Date <= rangeEnd &&
-                               j.Status != null &&
-                               j.Status != "Cancelled" &&
-                               j.Status != "Canceled")
-                    .ToList();
-
-                var onTimeCount = jobsDueInPeriod.Count(j =>
-                {
-                    var isComplete = j.Status == "Completed" || j.Status == "Shipped";
-                    if (!isComplete) return false;
-                    var completedOn = (j.ModifiedDate ?? j.CreatedDate).Date;
-                    return completedOn <= j.DueDate.Date;
+                    var jobs = ScopeJobOrders(db, tenantId, loc, allowed);
+                    var active = await jobs.CountAsync(j => j.Status != null &&
+                        (j.Status == "In Progress" || j.Status == "Pending" || j.Status == "Assigned"));
+                    var completedToday = await jobs.CountAsync(j => (j.Status == "Completed" || j.Status == "Shipped") &&
+                        j.ModifiedDate >= today && j.ModifiedDate < tomorrow);
+                    var completedThisWeek = await jobs.CountAsync(j => (j.Status == "Completed" || j.Status == "Shipped") &&
+                        j.ModifiedDate >= weekStart && j.ModifiedDate < tomorrow);
+                    return (active, completedToday, completedThisWeek);
                 });
 
-                var onTimeDeliveryRate = jobsDueInPeriod.Count > 0
-                    ? (decimal)onTimeCount / jobsDueInPeriod.Count * 100
-                    : 0;
-
-                // Financial Metrics — InvoiceMaster has no locationId; filter via InvoiceDetail -> CustomerOrder
-                var unpaidCustomerInvoicesQuery = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId && !im.IsVoided);
-                if (filterLocationId.HasValue)
+                var jobPeriodTask = WithContextAsync(async db =>
                 {
-                    var locId = filterLocationId.Value;
-                    unpaidCustomerInvoicesQuery = unpaidCustomerInvoicesQuery.Where(im =>
-                        _context.InvoiceDetail.Any(id =>
-                            id.InvoiceId == im.Id &&
-                            _context.CustomerOrder.Any(co =>
-                                co.OrderID == id.OrderId &&
-                                co.Tenantid == tenantId &&
-                                co.locationId == locId)));
-                }
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    unpaidCustomerInvoicesQuery = allowed.Count == 0
-                        ? unpaidCustomerInvoicesQuery.Where(_ => false)
-                        : unpaidCustomerInvoicesQuery.Where(im =>
-                            _context.InvoiceDetail.Any(id =>
-                                id.InvoiceId == im.Id &&
-                                _context.CustomerOrder.Any(co =>
-                                    co.OrderID == id.OrderId &&
-                                    co.Tenantid == tenantId &&
-                                    allowed.Contains(co.locationId))));
-                }
+                    var jobs = ScopeJobOrders(db, tenantId, loc, allowed);
+                    // On-time delivery: jobs due in the selected period, completed on/before due date
+                    var due = await jobs
+                        .Where(j => j.DueDate >= rangeStart &&
+                                    j.DueDate < rangeEndExclusive &&
+                                    j.Status != null &&
+                                    j.Status != "Cancelled" &&
+                                    j.Status != "Canceled")
+                        .Select(j => new { j.Status, j.ModifiedDate, j.CreatedDate, j.DueDate })
+                        .ToListAsync();
+                    var onTime = due.Count(j =>
+                        (j.Status == "Completed" || j.Status == "Shipped") &&
+                        (j.ModifiedDate ?? j.CreatedDate).Date <= j.DueDate.Date);
+                    var onTimeRate = due.Count > 0 ? (decimal)onTime / due.Count * 100 : 0;
+                    var jobsInPeriod = await jobs.CountAsync(j => j.OrderDate >= rangeStart && j.OrderDate < rangeEndExclusive);
+                    return (onTimeRate, jobsInPeriod);
+                });
 
-                var unpaidCustomerInvoices = unpaidCustomerInvoicesQuery
-                    .ToList()
-                    .Select(im =>
+                var customerInvoiceTask = WithContextAsync(async db =>
+                {
+                    var unpaid = await ScopeCustomerInvoices(db,
+                            db.InvoiceMaster.Where(im => im.TenantId == tenantId && !im.IsVoided),
+                            tenantId, loc, allowed)
+                        .Select(im => new { im.TotalAmount, im.PaidAmount, im.PaymentDate })
+                        .ToListAsync();
+                    var receivables = unpaid.Sum(im => OpenBalance(im.TotalAmount, im.PaidAmount, im.PaymentDate));
+
+                    var revenue = await ScopeCustomerInvoices(db,
+                            db.InvoiceMaster.Where(im => im.TenantId == tenantId &&
+                                                         !im.IsVoided &&
+                                                         im.InvoiceDate >= dateFilter.startDate &&
+                                                         im.InvoiceDate <= dateFilter.endDate),
+                            tenantId, loc, allowed)
+                        .SumAsync(im => (decimal?)im.TotalAmount) ?? 0;
+                    return (receivables, revenue);
+                });
+
+                var vendorTask = WithContextAsync(async db =>
+                {
+                    var unpaidQuery = db.VendorInvoiceMaster
+                        .Where(vim => vim.TenantId == tenantId &&
+                                      vim.isPaid != 1 &&
+                                      vim.isPaid != 2 &&
+                                      vim.voideddate == null);
+                    var pendingQuery = db.VendorOrders
+                        .Where(vo => vo.Tenantid == tenantId &&
+                                     vo.Status != null &&
+                                     (vo.Status == "Pending" || vo.Status == "Draft"));
+                    if (loc.HasValue)
                     {
-                        var paid = im.PaidAmount > 0
-                            ? im.PaidAmount
-                            : (im.PaymentDate.HasValue ? im.TotalAmount : 0m);
-                        var balance = im.TotalAmount - paid;
-                        return balance > 0.009m ? balance : 0m;
-                    })
-                    .Where(b => b > 0)
-                    .ToList();
-                var totalReceivables = unpaidCustomerInvoices.Sum();
-
-                var unpaidVendorInvoicesQuery = _context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId &&
-                                 vim.isPaid != 1 &&
-                                 vim.isPaid != 2 &&
-                                 vim.voideddate == null);
-                if (filterLocationId.HasValue)
-                    unpaidVendorInvoicesQuery = unpaidVendorInvoicesQuery.Where(vim => vim.locationId == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    unpaidVendorInvoicesQuery = allowed.Count == 0
-                        ? unpaidVendorInvoicesQuery.Where(_ => false)
-                        : unpaidVendorInvoicesQuery.Where(vim => allowed.Contains(vim.locationId));
-                }
-
-                var unpaidVendorInvoices = unpaidVendorInvoicesQuery
-                    .ToList()
-                    .Select(vim =>
+                        var locId = loc.Value;
+                        unpaidQuery = unpaidQuery.Where(vim => vim.locationId == locId);
+                        pendingQuery = pendingQuery.Where(vo => vo.LocationId == locId);
+                    }
+                    else if (allowed != null)
                     {
-                        var paid = vim.PaidAmount > 0
-                            ? vim.PaidAmount
-                            : (vim.Paydate.HasValue ? vim.TotalAmount : 0m);
-                        var balance = vim.TotalAmount - paid;
-                        return balance > 0.009m ? balance : 0m;
-                    })
-                    .Where(b => b > 0)
-                    .ToList();
-                var totalPayables = unpaidVendorInvoices.Sum();
+                        var ids = allowed.ToList();
+                        unpaidQuery = ids.Count == 0 ? unpaidQuery.Where(_ => false) : unpaidQuery.Where(vim => ids.Contains(vim.locationId));
+                        pendingQuery = ids.Count == 0
+                            ? pendingQuery.Where(_ => false)
+                            : pendingQuery.Where(vo => vo.LocationId.HasValue && ids.Contains(vo.LocationId.Value));
+                    }
 
-                var revenueThisMonthQuery = _context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId &&
-                               !im.IsVoided &&
-                               im.InvoiceDate >= dateFilter.startDate &&
-                               im.InvoiceDate <= dateFilter.endDate);
-                if (filterLocationId.HasValue)
+                    var unpaid = await unpaidQuery
+                        .Select(vim => new { vim.TotalAmount, vim.PaidAmount, vim.Paydate })
+                        .ToListAsync();
+                    var payables = unpaid.Sum(vim => OpenBalance(vim.TotalAmount, vim.PaidAmount, vim.Paydate));
+                    var pendingVendorOrders = await pendingQuery.CountAsync();
+                    return (payables, pendingVendorOrders);
+                });
+
+                var cashFlowTask = Task.Run(() =>
                 {
-                    var locId = filterLocationId.Value;
-                    revenueThisMonthQuery = revenueThisMonthQuery.Where(im =>
-                        _context.InvoiceDetail.Any(id =>
-                            id.InvoiceId == im.Id &&
-                            _context.CustomerOrder.Any(co =>
-                                co.OrderID == id.OrderId &&
-                                co.Tenantid == tenantId &&
-                                co.locationId == locId)));
-                }
-                else if (restrictToLocationIds != null)
+                    using var db = new CimmpleDbContext(_dbOptions);
+                    return CashFlowMetricsCalculator.Calculate(db, tenantId, dateFilter, loc, allowed);
+                });
+
+                var qualityTask = WithContextAsync(async db =>
                 {
-                    var allowed = restrictToLocationIds.ToList();
-                    revenueThisMonthQuery = allowed.Count == 0
-                        ? revenueThisMonthQuery.Where(_ => false)
-                        : revenueThisMonthQuery.Where(im =>
-                            _context.InvoiceDetail.Any(id =>
-                                id.InvoiceId == im.Id &&
-                                _context.CustomerOrder.Any(co =>
-                                    co.OrderID == id.OrderId &&
-                                    co.Tenantid == tenantId &&
-                                    allowed.Contains(co.locationId))));
-                }
-                var revenueThisMonth = revenueThisMonthQuery.Sum(im => (decimal?)im.TotalAmount) ?? 0;
-
-                var cashFlow = CashFlowMetricsCalculator.Calculate(
-                    _context, tenantId, dateFilter, filterLocationId, restrictToLocationIds);
-                var cashIn = cashFlow.cashIn;
-                var cashOut = cashFlow.cashOut;
-                var netCashFlow = cashIn - cashOut;
-
-                var openNcrBase = ApplyNcrSiteFilter(
-                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
-                        (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval")),
-                    tenantId, filterLocationId, restrictToLocationIds);
-                var openNCRs = openNcrBase.Count();
-
-                var ncrResolvedThisWeek = ApplyNcrSiteFilter(
-                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
-                        n.Status == "Closed" &&
-                        n.ClosedDate != null &&
-                        n.ClosedDate.Value.Date >= rangeStart &&
-                        n.ClosedDate.Value.Date <= rangeEnd),
-                    tenantId, filterLocationId, restrictToLocationIds).Count();
-
-                var totalJobOrdersForDefect = jobOrdersQuery
-                    .Where(j => j.OrderDate.Date >= rangeStart &&
-                               j.OrderDate.Date <= rangeEnd)
-                    .Count();
-
-                var totalNCRs = ApplyNcrSiteFilter(
-                    _context.NonConformanceReports.Where(n => n.TenantId == tenantId &&
-                        n.ReportedDate.Date >= rangeStart &&
-                        n.ReportedDate.Date <= rangeEnd),
-                    tenantId, filterLocationId, restrictToLocationIds).Count();
-
-                var defectRate = totalJobOrdersForDefect > 0
-                    ? (decimal)totalNCRs / totalJobOrdersForDefect * 100
-                    : 0;
-
-                // Operational Metrics
-                var pendingCustomerOrdersQuery = _context.CustomerOrder
-                    .Where(co => co.Tenantid == tenantId &&
-                               co.Status != null &&
-                               (co.Status == "Pending" || co.Status == "Draft"));
-                if (filterLocationId.HasValue)
-                    pendingCustomerOrdersQuery = pendingCustomerOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    pendingCustomerOrdersQuery = allowed.Count == 0
-                        ? pendingCustomerOrdersQuery.Where(_ => false)
-                        : pendingCustomerOrdersQuery.Where(co => allowed.Contains(co.locationId));
-                }
-                var pendingCustomerOrders = pendingCustomerOrdersQuery.Count();
-
-                var pendingVendorOrdersQuery = _context.VendorOrders
-                    .Where(vo => vo.Tenantid == tenantId &&
-                               vo.Status != null &&
-                               (vo.Status == "Pending" || vo.Status == "Draft"));
-                if (filterLocationId.HasValue)
-                    pendingVendorOrdersQuery = pendingVendorOrdersQuery.Where(vo => vo.LocationId == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    pendingVendorOrdersQuery = allowed.Count == 0
-                        ? pendingVendorOrdersQuery.Where(_ => false)
-                        : pendingVendorOrdersQuery.Where(vo => vo.LocationId.HasValue && allowed.Contains(vo.LocationId.Value));
-                }
-                var pendingVendorOrders = pendingVendorOrdersQuery.Count();
+                    var open = await ApplyNcrSiteFilter(db,
+                        db.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                            (n.Status == "Open" || n.Status == "Under_Investigation" || n.Status == "Pending_Approval")),
+                        tenantId, loc, allowed).CountAsync();
+                    var resolved = await ApplyNcrSiteFilter(db,
+                        db.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                            n.Status == "Closed" &&
+                            n.ClosedDate >= rangeStart &&
+                            n.ClosedDate < rangeEndExclusive),
+                        tenantId, loc, allowed).CountAsync();
+                    var reported = await ApplyNcrSiteFilter(db,
+                        db.NonConformanceReports.Where(n => n.TenantId == tenantId &&
+                            n.ReportedDate >= rangeStart &&
+                            n.ReportedDate < rangeEndExclusive),
+                        tenantId, loc, allowed).CountAsync();
+                    return (open, resolved, reported);
+                });
 
                 // Overdue shipments = unshipped (or under-shipped) lines past promised due date
-                var activeOrdersQuery = _context.CustomerOrder
-                    .Where(co => co.Tenantid == tenantId &&
-                                 co.Status != "Cancelled" &&
-                                 co.Status != "Canceled" &&
-                                 co.Status != "Completed" &&
-                                 co.Status != "Shipped" &&
-                                 co.Status != "Fully Invoiced");
-                if (filterLocationId.HasValue)
-                    activeOrdersQuery = activeOrdersQuery.Where(co => co.locationId == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
+                var overdueShipmentsTask = WithContextAsync(async db =>
                 {
-                    var allowed = restrictToLocationIds.ToList();
-                    activeOrdersQuery = allowed.Count == 0
-                        ? activeOrdersQuery.Where(_ => false)
-                        : activeOrdersQuery.Where(co => allowed.Contains(co.locationId));
-                }
+                    var activeOrderIds = ScopeCustomerOrders(
+                            db.CustomerOrder.Where(co => co.Tenantid == tenantId &&
+                                                         co.Status != "Cancelled" &&
+                                                         co.Status != "Canceled" &&
+                                                         co.Status != "Completed" &&
+                                                         co.Status != "Shipped" &&
+                                                         co.Status != "Fully Invoiced"),
+                            loc, allowed)
+                        .Select(co => co.OrderID);
 
-                var activeOrderIds = activeOrdersQuery
-                    .Select(co => co.OrderID)
-                    .ToList();
+                    var overdueDetailsQuery = db.CustomerOrderDetails
+                        .Where(d => d.Tenantid == tenantId &&
+                                    activeOrderIds.Contains(d.OrderID) &&
+                                    d.DueDate < today);
 
-                // Shipping has no locationId; shipped qty lookup stays tenant-scoped (orders already location-filtered)
-                var shippedByDetail = _context.ShippingDetails
-                    .Where(sd => sd.OrderDetailID.HasValue)
-                    .Join(_context.Shipping.Where(s => s.TenantId == tenantId),
-                        sd => sd.ShipmentId,
-                        s => s.Id,
-                        (sd, s) => new { DetailId = sd.OrderDetailID!.Value, sd.ShippedQty })
-                    .GroupBy(x => x.DetailId)
-                    .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
+                    var overdueDetails = await overdueDetailsQuery
+                        .Select(d => new { d.ID, d.ShippedQty, d.QtyOrdered })
+                        .ToListAsync();
 
-                var overdueShipments = _context.CustomerOrderDetails
-                    .Where(d => d.Tenantid == tenantId &&
-                                activeOrderIds.Contains(d.OrderID) &&
-                                d.DueDate.Date < today)
-                    .AsEnumerable()
-                    .Count(d =>
+                    // Shipping has no locationId; shipped qty lookup stays tenant-scoped (orders already location-filtered).
+                    var shippedByDetail = await db.ShippingDetails
+                        .Where(sd => sd.OrderDetailID.HasValue &&
+                                     overdueDetailsQuery.Select(d => d.ID).Contains(sd.OrderDetailID.Value))
+                        .Join(db.Shipping.Where(s => s.TenantId == tenantId),
+                            sd => sd.ShipmentId,
+                            s => s.Id,
+                            (sd, s) => new { DetailId = sd.OrderDetailID!.Value, sd.ShippedQty })
+                        .GroupBy(x => x.DetailId)
+                        .Select(g => new { DetailId = g.Key, Qty = g.Sum(x => x.ShippedQty) })
+                        .ToDictionaryAsync(x => x.DetailId, x => x.Qty);
+
+                    return overdueDetails.Count(d =>
                     {
                         var shipped = shippedByDetail.TryGetValue(d.ID, out var qty) ? qty : d.ShippedQty;
                         return shipped < d.QtyOrdered;
                     });
+                });
 
-                // Sales Metrics
-                var quotationsThisMonthQuery = _context.QuotationOrder
-                    .Where(q => q.Tenantid == tenantId &&
-                               q.OrderDate >= dateFilter.startDate &&
-                               q.OrderDate <= dateFilter.endDate);
-                if (filterLocationId.HasValue)
-                    quotationsThisMonthQuery = quotationsThisMonthQuery.Where(q => q.Locationid == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
+                var salesTask = WithContextAsync(async db =>
                 {
-                    var allowed = restrictToLocationIds.ToList();
-                    quotationsThisMonthQuery = allowed.Count == 0
-                        ? quotationsThisMonthQuery.Where(_ => false)
-                        : quotationsThisMonthQuery.Where(q => q.Locationid.HasValue && allowed.Contains(q.Locationid.Value));
-                }
-                var quotationsThisMonth = quotationsThisMonthQuery.Count();
+                    var pendingCustomerOrders = await ScopeCustomerOrders(
+                            db.CustomerOrder.Where(co => co.Tenantid == tenantId &&
+                                                         co.Status != null &&
+                                                         (co.Status == "Pending" || co.Status == "Draft")),
+                            loc, allowed)
+                        .CountAsync();
 
-                var ordersThisMonthQuery = _context.CustomerOrder
-                    .Where(co => co.Tenantid == tenantId &&
-                               co.OrderDate >= dateFilter.startDate &&
-                               co.OrderDate <= dateFilter.endDate);
-                if (filterLocationId.HasValue)
-                    ordersThisMonthQuery = ordersThisMonthQuery.Where(co => co.locationId == filterLocationId.Value);
-                else if (restrictToLocationIds != null)
-                {
-                    var allowed = restrictToLocationIds.ToList();
-                    ordersThisMonthQuery = allowed.Count == 0
-                        ? ordersThisMonthQuery.Where(_ => false)
-                        : ordersThisMonthQuery.Where(co => allowed.Contains(co.locationId));
-                }
-                var ordersThisMonth = ordersThisMonthQuery.Count();
+                    var quotationsQuery = db.QuotationOrder
+                        .Where(q => q.Tenantid == tenantId &&
+                                    q.OrderDate >= dateFilter.startDate &&
+                                    q.OrderDate <= dateFilter.endDate);
+                    if (loc.HasValue)
+                    {
+                        var locId = loc.Value;
+                        quotationsQuery = quotationsQuery.Where(q => q.Locationid == locId);
+                    }
+                    else if (allowed != null)
+                    {
+                        var ids = allowed.ToList();
+                        quotationsQuery = ids.Count == 0
+                            ? quotationsQuery.Where(_ => false)
+                            : quotationsQuery.Where(q => q.Locationid.HasValue && ids.Contains(q.Locationid.Value));
+                    }
+                    var quotations = await quotationsQuery.CountAsync();
 
+                    var orders = await ScopeCustomerOrders(
+                            db.CustomerOrder.Where(co => co.Tenantid == tenantId &&
+                                                         co.OrderDate >= dateFilter.startDate &&
+                                                         co.OrderDate <= dateFilter.endDate),
+                            loc, allowed)
+                        .CountAsync();
+                    return (pendingCustomerOrders, quotations, orders);
+                });
+
+                await Task.WhenAll(jobCountsTask, jobPeriodTask, customerInvoiceTask, vendorTask,
+                    cashFlowTask, qualityTask, overdueShipmentsTask, salesTask);
+
+                var (activeJobOrders, jobsCompletedToday, jobsCompletedThisWeek) = await jobCountsTask;
+                var (onTimeDeliveryRate, totalJobOrdersForDefect) = await jobPeriodTask;
+                var (totalReceivables, revenueThisMonth) = await customerInvoiceTask;
+                var (totalPayables, pendingVendorOrders) = await vendorTask;
+                var (cashIn, cashOut) = await cashFlowTask;
+                var (openNCRs, ncrResolvedThisWeek, totalNCRs) = await qualityTask;
+                var overdueShipments = await overdueShipmentsTask;
+                var (pendingCustomerOrders, quotationsThisMonth, ordersThisMonth) = await salesTask;
+
+                var netCashFlow = cashIn - cashOut;
+                var defectRate = totalJobOrdersForDefect > 0
+                    ? (decimal)totalNCRs / totalJobOrdersForDefect * 100
+                    : 0;
                 var conversionRate = quotationsThisMonth > 0
                     ? (decimal)ordersThisMonth / quotationsThisMonth * 100
                     : 0;
@@ -395,6 +322,7 @@ namespace CimmpleAPI.Controllers
                     }
                 };
 
+                _cache.Set(cacheKey, (object)metrics, MetricsCacheDuration);
                 return Ok(new { result = metrics });
             }
             catch (Exception ex)
@@ -407,6 +335,86 @@ namespace CimmpleAPI.Controllers
                 }
                 return StatusCode(500, new { error = ex.Message, details = ex.StackTrace });
             }
+        }
+
+        private async Task<T> WithContextAsync<T>(Func<CimmpleDbContext, Task<T>> work)
+        {
+            await using var db = new CimmpleDbContext(_dbOptions);
+            return await work(db);
+        }
+
+        private static decimal OpenBalance(decimal total, decimal paidAmount, DateTime? paidOn)
+        {
+            var paid = paidAmount > 0 ? paidAmount : (paidOn.HasValue ? total : 0m);
+            var balance = total - paid;
+            return balance > 0.009m ? balance : 0m;
+        }
+
+        // JobOrderMaster has no locationId — scope via related CustomerOrder.locationId
+        private static IQueryable<JobOrderMaster> ScopeJobOrders(
+            CimmpleDbContext db, int tenantId, int? locationId, IReadOnlyList<int>? allowed)
+        {
+            var jobs = db.JobOrderMaster.Where(j => j.Tenantid == tenantId);
+            if (locationId.HasValue)
+            {
+                var locId = locationId.Value;
+                return jobs.Where(j => db.CustomerOrder.Any(co =>
+                    co.OrderID == j.CustomerOrderID && co.locationId == locId));
+            }
+            if (allowed != null)
+            {
+                var ids = allowed.ToList();
+                return ids.Count == 0
+                    ? jobs.Where(_ => false)
+                    : jobs.Where(j => db.CustomerOrder.Any(co =>
+                        co.OrderID == j.CustomerOrderID && ids.Contains(co.locationId)));
+            }
+            return jobs;
+        }
+
+        // InvoiceMaster has no locationId; filter via InvoiceDetail -> CustomerOrder
+        private static IQueryable<InvoiceMaster> ScopeCustomerInvoices(
+            CimmpleDbContext db, IQueryable<InvoiceMaster> invoices, int tenantId, int? locationId, IReadOnlyList<int>? allowed)
+        {
+            if (locationId.HasValue)
+            {
+                var locId = locationId.Value;
+                return invoices.Where(im => db.InvoiceDetail.Any(id =>
+                    id.InvoiceId == im.Id &&
+                    db.CustomerOrder.Any(co =>
+                        co.OrderID == id.OrderId &&
+                        co.Tenantid == tenantId &&
+                        co.locationId == locId)));
+            }
+            if (allowed != null)
+            {
+                var ids = allowed.ToList();
+                return ids.Count == 0
+                    ? invoices.Where(_ => false)
+                    : invoices.Where(im => db.InvoiceDetail.Any(id =>
+                        id.InvoiceId == im.Id &&
+                        db.CustomerOrder.Any(co =>
+                            co.OrderID == id.OrderId &&
+                            co.Tenantid == tenantId &&
+                            ids.Contains(co.locationId))));
+            }
+            return invoices;
+        }
+
+        private static IQueryable<CustomerOrder> ScopeCustomerOrders(
+            IQueryable<CustomerOrder> orders, int? locationId, IReadOnlyList<int>? allowed)
+        {
+            if (locationId.HasValue)
+            {
+                var locId = locationId.Value;
+                return orders.Where(co => co.locationId == locId);
+            }
+            if (allowed != null)
+            {
+                var ids = allowed.ToList();
+                return ids.Count == 0 ? orders.Where(_ => false) : orders.Where(co => ids.Contains(co.locationId));
+            }
+            return orders;
         }
 
         [HttpGet("GetProductionStatus")]
@@ -468,7 +476,7 @@ namespace CimmpleAPI.Controllers
                     .ToList();
 
                 var overdueJobs = jobOrdersQuery
-                    .Where(j => j.DueDate.Date < DateTime.Now.Date &&
+                    .Where(j => j.DueDate < DateTime.Now.Date &&
                                j.Status != null &&
                                j.Status != "Completed" &&
                                j.Status != "Shipped" &&
@@ -1476,23 +1484,31 @@ namespace CimmpleAPI.Controllers
             IQueryable<NonConformanceReport> q,
             int tenantId,
             int? filterLocationId,
+            IReadOnlyList<int>? restrictToLocationIds) =>
+            ApplyNcrSiteFilter(_context, q, tenantId, filterLocationId, restrictToLocationIds);
+
+        private static IQueryable<NonConformanceReport> ApplyNcrSiteFilter(
+            CimmpleDbContext db,
+            IQueryable<NonConformanceReport> q,
+            int tenantId,
+            int? filterLocationId,
             IReadOnlyList<int>? restrictToLocationIds)
         {
             if (filterLocationId is int loc)
             {
                 return q.Where(n =>
                     (n.JobOrderId != null && n.JobOrderId > 0 &&
-                     _context.JobOrderMaster.Any(j =>
+                     db.JobOrderMaster.Any(j =>
                          j.JobOrderID == n.JobOrderId && j.Tenantid == tenantId &&
-                         _context.CustomerOrder.Any(o =>
+                         db.CustomerOrder.Any(o =>
                              o.OrderID == j.CustomerOrderID &&
                              o.Tenantid == tenantId &&
                              o.locationId == loc))) ||
                     ((n.JobOrderId == null || n.JobOrderId <= 0) &&
-                     _context.UserDetails.Any(u =>
+                     db.UserDetails.Any(u =>
                          u.User_UniqueID == n.ReportedBy && u.TenantID == tenantId &&
                          ((u.DefaultLocationId != null && u.DefaultLocationId == loc) ||
-                          _context.UserMapping.Any(m =>
+                          db.UserMapping.Any(m =>
                               m.userId == u.User_UniqueID && m.locationId == loc)))));
             }
 
@@ -1500,17 +1516,17 @@ namespace CimmpleAPI.Controllers
             {
                 return q.Where(n =>
                     (n.JobOrderId != null && n.JobOrderId > 0 &&
-                     _context.JobOrderMaster.Any(j =>
+                     db.JobOrderMaster.Any(j =>
                          j.JobOrderID == n.JobOrderId && j.Tenantid == tenantId &&
-                         _context.CustomerOrder.Any(o =>
+                         db.CustomerOrder.Any(o =>
                              o.OrderID == j.CustomerOrderID &&
                              o.Tenantid == tenantId &&
                              allowed.Contains(o.locationId)))) ||
                     ((n.JobOrderId == null || n.JobOrderId <= 0) &&
-                     _context.UserDetails.Any(u =>
+                     db.UserDetails.Any(u =>
                          u.User_UniqueID == n.ReportedBy && u.TenantID == tenantId &&
                          ((u.DefaultLocationId != null && allowed.Contains(u.DefaultLocationId.Value)) ||
-                          _context.UserMapping.Any(m =>
+                          db.UserMapping.Any(m =>
                               m.userId == u.User_UniqueID && allowed.Contains(m.locationId))))));
             }
 

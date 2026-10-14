@@ -7,8 +7,13 @@ import { ChangePassword } from "./Login/ChangePassword";
 import { UnderMaintenance } from "./Login/UnderMaintenance";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
 import { installGlobalEscapeToClose } from "./Common/Utils/escapeToClose";
+import { preloadShell } from "./Common/preloadShell";
 import "./App.scss";
 import moment from "moment-timezone";
+
+if (localStorage.getItem("token")) {
+  preloadShell();
+}
 
 const ProtectedLayout = React.lazy(() =>
   import("./Common/Components/ProtectedLayout").then((m) => ({ default: m.ProtectedLayout }))
@@ -17,8 +22,9 @@ const VendorProtectedLayout = React.lazy(() => import("./VendorPortal/VendorProt
 const SupportProtectedLayout = React.lazy(() => import("./SupportStaff/SupportProtectedLayout"));
 
 const RouteFallback: React.FC = () => (
-  <div className="route-loading" style={{ padding: "2rem", textAlign: "center" }}>
-    Loading…
+  <div className="page-loading" role="status" style={{ minHeight: "100vh" }}>
+    <div className="loading-spinner" />
+    <p>Loading…</p>
   </div>
 );
 

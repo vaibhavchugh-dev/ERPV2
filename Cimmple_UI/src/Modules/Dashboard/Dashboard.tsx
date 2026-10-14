@@ -9,23 +9,18 @@ import {
   faShieldAlt,
   faShoppingCart,
   faTruck,
-  faChartLine,
   faChartBar,
-  faChartPie,
-  faUsers,
   faBox,
   faFileInvoice,
   faCalendar,
-  faClock,
   faArrowUp,
-  faArrowDown,
   faSync,
   faPlus,
-  faEye,
+  faSpinner,
   faUpload
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { formatCurrency, formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import {
   BarChart,
   Bar,
@@ -61,7 +56,8 @@ const Dashboard: React.FC = () => {
   const history = useHistory();
   const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [widgetsLoading, setWidgetsLoading] = useState(true);
   const [dateRange, setDateRange] = useState("This Month");
   const [productionPeriod, setProductionPeriod] = useState("This Week");
   const [revenuePeriod, setRevenuePeriod] = useState("30days");
@@ -75,51 +71,88 @@ const Dashboard: React.FC = () => {
   const [qualityStatus, setQualityStatus] = useState<QualityStatus[]>([]);
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<UpcomingDeadline[]>([]);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, [dateRange, locationIdParam]);
-
-  useEffect(() => {
-    DashboardService.GetProductionStatus(productionPeriod, locationIdParam).then((d) => d && setProductionStatus(d));
-  }, [productionPeriod, locationIdParam]);
-
-  useEffect(() => {
-    DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam).then((d) => d && setRevenueTrends(d));
-  }, [revenuePeriod, locationIdParam]);
-
-  const loadDashboardData = async () => {
-    setLoading(true);
-    let metricsFailed = false;
-
-    // Critical path: unblock the shell as soon as metrics arrive.
+  // Every section loads independently and in parallel; nothing waits on the KPI metrics call.
+  const loadMetrics = async (refresh = false) => {
+    setMetricsLoading(true);
     try {
-      const metricsData = await DashboardService.GetMetrics(dateRange, locationIdParam);
+      const metricsData = await DashboardService.GetMetrics(dateRange, locationIdParam, refresh);
       if (metricsData) setMetrics(metricsData);
     } catch (error) {
-      metricsFailed = true;
       console.error("Error loading dashboard metrics:", error);
       toast.error("Failed to load dashboard metrics");
     } finally {
-      setLoading(false);
+      setMetricsLoading(false);
     }
+  };
 
-    // Secondary widgets load in parallel and paint as each completes.
-    const secondary = [
-      DashboardService.GetProductionStatus(productionPeriod, locationIdParam).then((d) => d && setProductionStatus(d)),
-      DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam).then((d) => d && setRevenueTrends(d)),
+  const loadWidgets = async () => {
+    setWidgetsLoading(true);
+    const results = await Promise.allSettled([
       DashboardService.GetRecentActivities(20, locationIdParam).then((d) => d && setRecentActivities(d)),
       DashboardService.GetAlerts(locationIdParam).then((d) => d && setAlerts(d)),
       DashboardService.GetTopCustomers(5, locationIdParam).then((d) => d && setTopCustomers(d)),
       DashboardService.GetTopProducts(5, locationIdParam).then((d) => d && setTopProducts(d)),
       DashboardService.GetQualityStatus(locationIdParam).then((d) => d && setQualityStatus(d)),
       DashboardService.GetUpcomingDeadlines(7, locationIdParam).then((d) => d && setUpcomingDeadlines(d)),
-    ];
-
-    const results = await Promise.allSettled(secondary);
-    if (!metricsFailed && results.some((r) => r.status === "rejected")) {
+    ]);
+    setWidgetsLoading(false);
+    if (results.some((r) => r.status === "rejected")) {
       console.error("Some dashboard widgets failed to load", results);
     }
   };
+
+  const loadProductionStatus = () =>
+    DashboardService.GetProductionStatus(productionPeriod, locationIdParam)
+      .then((d) => setProductionStatus(d || { jobOrdersByStatus: [], overdueJobs: 0 }))
+      .catch((error) => {
+        console.error("Error loading production status:", error);
+        setProductionStatus({ jobOrdersByStatus: [], overdueJobs: 0 });
+      });
+
+  const loadRevenueTrends = () =>
+    DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam)
+      .then((d) => setRevenueTrends(d || { revenue: [], expenses: [] }))
+      .catch((error) => {
+        console.error("Error loading revenue trends:", error);
+        setRevenueTrends({ revenue: [], expenses: [] });
+      });
+
+  const refreshAll = () => {
+    void loadMetrics(true);
+    void loadWidgets();
+    void loadProductionStatus();
+    void loadRevenueTrends();
+  };
+
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    void loadMetrics();
+  }, [dateRange, locationIdParam]);
+
+  useEffect(() => {
+    void loadWidgets();
+  }, [locationIdParam]);
+
+  useEffect(() => {
+    void loadProductionStatus();
+  }, [productionPeriod, locationIdParam]);
+
+  useEffect(() => {
+    void loadRevenueTrends();
+  }, [revenuePeriod, locationIdParam]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+
+  const renderEmpty = (loading: boolean, message: string) =>
+    loading ? (
+      <div className="widget-loading" role="status">
+        <FontAwesomeIcon icon={faSpinner} spin />
+        <span>Loading…</span>
+      </div>
+    ) : (
+      <div className="widget-empty">{message}</div>
+    );
+
+  const anyLoading = metricsLoading || widgetsLoading || !productionStatus || !revenueTrends;
 
   const revenueExpenseChartData = React.useMemo(() => {
     if (!revenueTrends) return [];
@@ -238,19 +271,9 @@ const Dashboard: React.FC = () => {
 
   const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
 
-  if (loading) {
-    return (
-      <div className="dashboard">
-        <div className="dashboard-loading">
-          <FontAwesomeIcon icon={faSync} spin />
-          <p>Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="dashboard">
+    <div className="dashboard" aria-busy={anyLoading}>
+      {anyLoading && <div className="dashboard-progress" role="progressbar" aria-label="Loading dashboard" />}
       {/* Header */}
       <div className="dashboard-header">
         <div>
@@ -281,15 +304,15 @@ const Dashboard: React.FC = () => {
               </option>
             ))}
           </select>
-          <button onClick={loadDashboardData} className="dashboard-refresh-btn">
-            <FontAwesomeIcon icon={faSync} />
+          <button type="button" onClick={refreshAll} className="dashboard-refresh-btn">
+            <FontAwesomeIcon icon={faSync} spin={metricsLoading || widgetsLoading} />
             Refresh
           </button>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="dashboard-kpis">
+      <div className={`dashboard-kpis${metricsLoading && !metrics ? " is-loading" : ""}`}>
         {/* Production KPIs */}
         <div className="kpi-card" onClick={() => history.push("/job-orders")}>
           <div className="kpi-icon" style={{ backgroundColor: "#eff6ff" }}>
@@ -402,7 +425,7 @@ const Dashboard: React.FC = () => {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="widget-empty">No production data available</div>
+              renderEmpty(!productionStatus, "No production data available")
             )}
           </div>
         </div>
@@ -436,7 +459,7 @@ const Dashboard: React.FC = () => {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="widget-empty">No quality data available</div>
+              renderEmpty(widgetsLoading, "No quality data available")
             )}
           </div>
         </div>
@@ -468,7 +491,7 @@ const Dashboard: React.FC = () => {
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="widget-empty">No revenue or expense data available</div>
+              renderEmpty(!revenueTrends, "No revenue or expense data available")
             )}
           </div>
         </div>
@@ -491,7 +514,7 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="widget-empty">No customer data available</div>
+              renderEmpty(widgetsLoading, "No customer data available")
             )}
           </div>
         </div>
@@ -514,7 +537,7 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="widget-empty">No product data available</div>
+              renderEmpty(widgetsLoading, "No product data available")
             )}
           </div>
         </div>
@@ -542,7 +565,7 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="widget-empty">No recent activities</div>
+              renderEmpty(widgetsLoading, "No recent activities")
             )}
           </div>
         </div>
@@ -593,7 +616,7 @@ const Dashboard: React.FC = () => {
         <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Alerts & Notifications</h3>
-            <span className="alert-badge">{alerts.length}</span>
+            {!widgetsLoading && <span className="alert-badge">{alerts.length}</span>}
           </div>
           <div className="widget-content">
             {alerts.length > 0 ? (
@@ -624,7 +647,7 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="widget-empty">No alerts</div>
+              renderEmpty(widgetsLoading, "No alerts")
             )}
           </div>
         </div>
@@ -638,7 +661,7 @@ const Dashboard: React.FC = () => {
               <>
                 <div className="widget-header">
                   <h3>Upcoming Deadlines</h3>
-                  <span className="deadline-badge">{filteredDeadlines.length}</span>
+                  {!widgetsLoading && <span className="deadline-badge">{filteredDeadlines.length}</span>}
                 </div>
                 <div className="widget-content">
                   {filteredDeadlines.length > 0 ? (
@@ -663,7 +686,7 @@ const Dashboard: React.FC = () => {
                       ))}
                     </div>
                   ) : (
-                    <div className="widget-empty">No upcoming deadlines</div>
+                    renderEmpty(widgetsLoading, "No upcoming deadlines")
                   )}
                 </div>
               </>

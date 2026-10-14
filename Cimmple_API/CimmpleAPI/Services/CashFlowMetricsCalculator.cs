@@ -37,10 +37,25 @@ namespace CimmpleAPI.Services
 
             if (allowedLocations != null)
             {
+                // Only invoice numbers referenced by this period's payments affect the result below,
+                // so look up just those instead of every invoice in the tenant.
+                var paymentNumbers = paymentRows
+                    .Select(t => t.invoiceNo?.Trim() ?? "")
+                    .Where(n => n.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var paymentInvoiceInts = paymentNumbers
+                    .Select(n => int.TryParse(n, out var value) ? value : (int?)null)
+                    .Where(v => v.HasValue)
+                    .Select(v => v!.Value)
+                    .ToList();
+
                 var customerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var allCustomerNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var customerInvoices = context.InvoiceMaster
-                    .Where(im => im.TenantId == tenantId)
+                    .Where(im => im.TenantId == tenantId &&
+                                 (paymentInvoiceInts.Contains(im.InvoiceNo) ||
+                                  paymentNumbers.Contains(im.PrefixInvoiceNo.Trim())))
                     .Select(im => new
                     {
                         im.Id,
@@ -70,7 +85,9 @@ namespace CimmpleAPI.Services
                 var vendorNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var allVendorNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var vendorInvoices = context.VendorInvoiceMaster
-                    .Where(vim => vim.TenantId == tenantId)
+                    .Where(vim => vim.TenantId == tenantId &&
+                                  (paymentNumbers.Contains(vim.InvoiceNo.Trim()) ||
+                                   paymentNumbers.Contains(vim.prefixinvoiceno.Trim())))
                     .Select(vim => new { vim.InvoiceNo, vim.prefixinvoiceno, vim.locationId })
                     .ToList();
                 foreach (var invoice in vendorInvoices)

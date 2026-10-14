@@ -110,7 +110,8 @@ export interface UpcomingDeadline {
 export class DashboardService {
   public static GetMetrics = async (
     dateRange: string = "This Month",
-    locationId?: number
+    locationId?: number,
+    refresh = false
   ): Promise<DashboardMetrics | null> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     const tenantID = storage?.tenantID || 0;
@@ -121,6 +122,7 @@ export class DashboardService {
         tenantId: tenantID,
         dateRange,
         ...(locationId != null ? { locationId } : {}),
+        ...(refresh ? { refresh: true } : {}),
       },
     }).then((response) => {
       return response.data.result as DashboardMetrics;

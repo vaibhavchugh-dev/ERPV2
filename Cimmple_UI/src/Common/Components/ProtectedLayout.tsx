@@ -6,8 +6,9 @@ import Layout from "./Layout";
 import { protectedRoutes } from "../Routes";
 
 const PageFallback: React.FC = () => (
-  <div className="page-loading" style={{ padding: "2rem", textAlign: "center" }}>
-    Loading…
+  <div className="page-loading" role="status">
+    <div className="loading-spinner" />
+    <p>Loading…</p>
   </div>
 );
 
