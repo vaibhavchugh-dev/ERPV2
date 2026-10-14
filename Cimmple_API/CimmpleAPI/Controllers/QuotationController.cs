@@ -698,10 +698,18 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Quotation not found" });
                 }
 
+                if (source.Locationid.HasValue && source.Locationid.Value > 0 &&
+                    !CanAccessLocation(source.Locationid.Value))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                }
+
                 var sourceDetails = _context.QuotationOrderDetails
                     .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
                     .OrderBy(d => d.ItemNo)
                     .ToList();
+
+                var today = DateTime.Today;
 
                 var existingQuotations = _context.QuotationOrder
                     .Where(q => q.Tenantid == tenantId)
@@ -717,15 +725,15 @@ namespace CimmpleAPI.Controllers
                     customercode = source.customercode ?? "",
                     CustomerName = source.CustomerName ?? "",
                     address = source.address ?? "",
-                    CustomerPoNumber = source.CustomerPoNumber ?? "",
-                    OrderDate = source.OrderDate.Date,
+                    CustomerPoNumber = "",
+                    OrderDate = today,
                     TotalAmount = source.TotalAmount,
-                    UserId = source.UserId,
+                    UserId = GetUserId() ?? source.UserId,
                     UserToken = source.UserToken,
                     Status = "Draft",
                     shippingInstructions = source.shippingInstructions ?? "",
-                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
-                    ExternalOrderDate = source.ExternalOrderDate,
+                    ExternalCustomerPO = "",
+                    ExternalOrderDate = null,
                     BuyerName = source.BuyerName ?? "",
                     CustomerRefNo = "",
                     isConverted = 0,
@@ -746,7 +754,7 @@ namespace CimmpleAPI.Controllers
                         ItemNo = detail.ItemNo,
                         partname = detail.partname ?? "",
                         PartNo = detail.PartNo ?? "",
-                        DueDate = detail.DueDate,
+                        DueDate = DocumentDuplication.ShiftDueDate(detail.DueDate, source.OrderDate, today),
                         JobNumber = detail.JobNumber ?? "",
                         JobDesc = detail.JobDesc ?? "",
                         QtyOrdered = detail.QtyOrdered,
@@ -757,7 +765,8 @@ namespace CimmpleAPI.Controllers
                         DiscountType = detail.DiscountType,
                         Tenantid = tenantId,
                         productid = detail.productid,
-                        leadTime = detail.leadTime ?? "",
+                        // Display-format date string; blank so the UI falls back to the shifted DueDate.
+                        leadTime = "",
                         notes = detail.notes ?? "",
                         QuantityTiers = detail.QuantityTiers
                     });
@@ -770,6 +779,7 @@ namespace CimmpleAPI.Controllers
                     .ToList();
 
                 int createdBy = GetUserId() ?? source.UserId;
+                int attachmentsCopied = 0;
                 foreach (var srcAtt in sourceAttachments)
                 {
                     if (string.IsNullOrEmpty(srcAtt.UploadFile))
@@ -807,12 +817,22 @@ namespace CimmpleAPI.Controllers
                         createdby = createdBy
                     });
                     _context.SaveChanges();
+                    attachmentsCopied++;
                 }
 
                 SyncQuotationAttachmentsJson(duplicate);
                 _context.SaveChanges();
 
-                return Ok(new { result = new { id = duplicate.OrderID, message = "Quotation duplicated successfully" } });
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = duplicate.OrderID,
+                        message = "Quotation duplicated successfully",
+                        attachmentsCopied,
+                        attachmentsTotal = sourceAttachments.Count
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -2961,6 +2981,224 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// Creates a Draft copy of a vendor quotation for the same vendor, dated today. Prices are cleared so the
+        /// vendor quotes again; send/convert state, comments, vendor references and job links are not carried over.
+        /// Header and line attachments are copied as independent files.
+        /// </summary>
+        [HttpPost("DuplicateVendorQuotation")]
+        public async Task<IActionResult> DuplicateVendorQuotation([FromQuery] int quotationId)
+        {
+            try
+            {
+                int tenantId = GetTenantId();
+                var source = _context.VendorQuotations
+                    .AsNoTracking()
+                    .FirstOrDefault(q => q.OrderID == quotationId && q.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Vendor quotation not found" });
+                }
+
+                if (source.locationid.HasValue && source.locationid.Value > 0 &&
+                    !CanAccessLocation(source.locationid.Value))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                }
+
+                var sourceDetails = _context.VendorQuotationsDetails
+                    .AsNoTracking()
+                    .Where(d => d.OrderID == quotationId && d.Tenantid == tenantId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToList();
+
+                var today = DateTime.Today;
+                var sourceDate = (source.OrderDate ?? today).Date;
+                int createdBy = GetUserId() ?? source.UserId;
+                int maxPoNumber = _context.VendorQuotations
+                    .Where(q => q.Tenantid == tenantId)
+                    .Max(q => (int?)q.PONumber) ?? 0;
+
+                var duplicate = new VendorQuotations
+                {
+                    Tenantid = tenantId,
+                    PONumber = Math.Max(1000, maxPoNumber + 1),
+                    VendorID = source.VendorID,
+                    vendorcode = source.vendorcode ?? "",
+                    VendorName = source.VendorName ?? "",
+                    address = source.address ?? "",
+                    VendorPoNumber = "",
+                    OrderDate = today,
+                    DueDate = source.DueDate.HasValue
+                        ? DocumentDuplication.ShiftDueDate(source.DueDate.Value, sourceDate, today)
+                        : today,
+                    TotalAmount = 0,
+                    UserId = createdBy,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    shippingInstructions = source.shippingInstructions ?? "",
+                    contactName = source.contactName ?? "",
+                    VendorOrderType = source.VendorOrderType ?? "Material",
+                    ship_via = source.ship_via ?? "",
+                    isSent = false,
+                    isconverted = 0,
+                    locationid = source.locationid,
+                    AdditionalNotes = source.AdditionalNotes ?? "",
+                    IsResponseOnly = false
+                };
+                _context.VendorQuotations.Add(duplicate);
+                _context.SaveChanges();
+
+                var header = await CopyVendorQuotationAttachmentsAsync(
+                    source.AttachmentsJson, tenantId, $"VQ{duplicate.OrderID}_", createdBy);
+                duplicate.AttachmentsJson = header.Json;
+                int attachmentsCopied = header.Copied;
+                int attachmentsTotal = header.Total;
+                int jobLinksRemoved = 0;
+
+                foreach (var detail in sourceDetails)
+                {
+                    if (detail.JobId > 0 || !string.IsNullOrWhiteSpace(detail.JobNumber) || (detail.jobdetailId ?? 0) > 0)
+                    {
+                        jobLinksRemoved++;
+                    }
+
+                    var lineAttachments = await CopyVendorQuotationAttachmentsAsync(
+                        detail.AttachmentsJson, tenantId, $"VQ{duplicate.OrderID}_L{detail.ItemNo}_", createdBy);
+                    attachmentsCopied += lineAttachments.Copied;
+                    attachmentsTotal += lineAttachments.Total;
+
+                    _context.VendorQuotationsDetails.Add(new VendorQuotationsDetails
+                    {
+                        OrderID = duplicate.OrderID,
+                        Tenantid = tenantId,
+                        ItemNo = detail.ItemNo,
+                        itemname = detail.itemname ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = detail.DueDate.HasValue
+                            ? DocumentDuplication.ShiftDueDate(detail.DueDate.Value, sourceDate, today)
+                            : (DateTime?)null,
+                        JobId = 0,
+                        JobNumber = "",
+                        JobDesc = "",
+                        jobdetailId = null,
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "EA",
+                        UnitPrice = 0,
+                        JobPriority = detail.JobPriority,
+                        Discount = 0,
+                        DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
+                        productid = detail.productid,
+                        RawMaterialId = detail.RawMaterialId,
+                        LineType = detail.LineType,
+                        notes = detail.notes ?? "",
+                        glcode = detail.glcode ?? "",
+                        Groupid = detail.Groupid,
+                        IsAdditionItem = detail.IsAdditionItem,
+                        Received = "",
+                        AttachmentsJson = lineAttachments.Json
+                    });
+                }
+                _context.SaveChanges();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = duplicate.OrderID,
+                        message = "Vendor quotation duplicated successfully",
+                        jobLinksRemoved,
+                        attachmentsCopied,
+                        attachmentsTotal
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Copies the files listed in a vendor quotation AttachmentsJson (header or line) to new blobs.
+        /// </summary>
+        /// <remarks>
+        /// Blob names must be unique within the tenant's VendorQuotations folder; callers pass a prefix that
+        /// includes the new quotation id.
+        /// </remarks>
+        private async Task<(string? Json, int Copied, int Total)> CopyVendorQuotationAttachmentsAsync(
+            string? attachmentsJson, int tenantId, string blobPrefix, int createdBy)
+        {
+            if (string.IsNullOrEmpty(attachmentsJson))
+            {
+                return (null, 0, 0);
+            }
+
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true,
+                WriteIndented = false
+            };
+
+            List<QuotationAttachmentDto>? sourceAttachments;
+            try
+            {
+                sourceAttachments = JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(attachmentsJson, jsonOptions);
+            }
+            catch
+            {
+                return (null, 0, 0);
+            }
+
+            if (sourceAttachments == null || sourceAttachments.Count == 0)
+            {
+                return (null, 0, 0);
+            }
+
+            var copies = new List<QuotationAttachmentDto>();
+            foreach (var attachment in sourceAttachments)
+            {
+                var sourceBlob = !string.IsNullOrEmpty(attachment.UploadFile) ? attachment.UploadFile : attachment.FileUrl;
+                if (string.IsNullOrEmpty(sourceBlob))
+                {
+                    continue;
+                }
+
+                int nextId = copies.Count + 1;
+                var blobName = $"{blobPrefix}{nextId}{Path.GetExtension(sourceBlob)}";
+                var copied = await ModuleFileStorage.CopyBlobAsync(
+                    _context,
+                    _configuration,
+                    ModuleFileStorage.CreateFileInfo(tenantId, ModuleFileStorage.VendorQuotationsFolder, sourceBlob, createdBy),
+                    ModuleFileStorage.CreateFileInfo(tenantId, ModuleFileStorage.VendorQuotationsFolder, blobName, createdBy));
+                if (!copied)
+                {
+                    continue;
+                }
+
+                copies.Add(new QuotationAttachmentDto
+                {
+                    Id = nextId,
+                    Name = attachment.Name,
+                    Size = attachment.Size,
+                    FileUrl = blobName,
+                    FileUniqueno = nextId,
+                    UploadFile = blobName,
+                    PageNo = string.IsNullOrEmpty(attachment.PageNo) ? "0" : attachment.PageNo,
+                    CreatedBy = createdBy,
+                    FileCode = attachment.FileCode
+                });
+            }
+
+            return (copies.Count > 0 ? JsonSerializer.Serialize(copies, jsonOptions) : null, copies.Count, sourceAttachments.Count);
+        }
+
         [HttpPost("DuplicateVendorQuotationForVendors")]
         public IActionResult DuplicateVendorQuotationForVendors([FromBody] JsonElement request)
         {
@@ -3434,7 +3672,8 @@ namespace CimmpleAPI.Controllers
 
                     var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
                     var displayName = Path.GetFileName(file.FileName);
-                    var blobName = $"{nextFileUniqueNo}{ext}";
+                    // nextFileUniqueNo is only unique within this quotation; the folder is shared by the tenant.
+                    var blobName = $"VQ{orderId}_{nextFileUniqueNo}{ext}";
 
                     var fileInfo = ModuleFileStorage.CreateFileInfo(
                         tenantId,
@@ -3723,7 +3962,8 @@ namespace CimmpleAPI.Controllers
 
                     var ext = Path.GetExtension(file.FileName)?.ToLowerInvariant() ?? "";
                     var displayName = Path.GetFileName(file.FileName);
-                    var blobName = $"L{itemNo}_{nextFileUniqueNo}{ext}";
+                    // nextFileUniqueNo is only unique within this line; the folder is shared by the tenant.
+                    var blobName = $"VQ{orderId}_L{itemNo}_{nextFileUniqueNo}{ext}";
 
                     var fileInfo = ModuleFileStorage.CreateFileInfo(
                         tenantId,

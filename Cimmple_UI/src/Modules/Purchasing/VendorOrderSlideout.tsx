@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   VendorOrderService,
@@ -929,39 +930,31 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
   const handleDuplicate = async () => {
     if (orderId <= 0) return;
-    if (!window.confirm("Create a duplicate of this order?")) return;
+    const confirmText =
+      "Create a Draft copy of this purchase order dated today?\n\n" +
+      "Due dates move forward by the same lead time. Vendor references, quotation link, job links and comments are not copied." +
+      (isStateChanged ? "\n\nUnsaved changes on this order are not included." : "");
+    if (!window.confirm(confirmText)) return;
 
     setLoading(true);
     try {
-      const order = await VendorOrderService.GetVendorOrderById(orderId);
-      if (order) {
-        const duplicatedOrder: VendorOrderMasterReq = {
-          ...order,
-          OrderID: 0,
-          PONumber: 0,
-          Status: "Draft",
-          VendorRefNo: "",
-          ParentQuotationID: undefined,
-          QuotationId: 0,
-          QuotationNo: "",
-          Details: (order.Details || []).map((d) => ({
-            ...d,
-            ID: 0,
-            OrderID: 0,
-            ShippedQty: 0,
-            ShippingStatus: "Not Started",
-            InvoicedQty: 0,
-            InvoiceStatus: "Not Invoiced",
-            Received: "No",
-          })),
-        };
-        await VendorOrderService.SaveVendorOrder(duplicatedOrder);
-        toast.success("Order duplicated successfully");
+      const result = await VendorOrderService.DuplicateVendorOrder(orderId);
+      listNeedsRefreshRef.current = true;
+      const notes = duplicateResultNotes(result);
+      if (notes.length > 0) {
+        toast.warning(`Order duplicated. ${notes.join(" ")}`, { autoClose: 8000 });
+      } else {
+        toast.success("Order duplicated. You are now viewing the copy.");
+      }
+      if (result.id > 0 && onSaved) {
+        setIsStateChanged(false);
+        onSaved(result.id);
+      } else {
         onClose(true);
       }
     } catch (error: any) {
       console.error("Error duplicating order:", error);
-      toast.error("Error duplicating order");
+      toast.error(error.response?.data?.message || error.response?.data?.error || "Error duplicating order");
     } finally {
       setLoading(false);
     }

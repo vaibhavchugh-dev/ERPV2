@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   QuotationService,
@@ -36,7 +37,6 @@ import {
   todayDateOnlyDisplay,
   toHtmlDateInputValue,
   fromHtmlDateInputValue,
-  formatDateOnlyFromApi,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
@@ -129,8 +129,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
   const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
-  const [repeatingLastOrder, setRepeatingLastOrder] = useState(false);
-  
   // Default unit options for combobox
   const defaultUnitOptions = [
     "EA", "PC", "PCS", "SET", "PKG", "BOX", "PALLET",
@@ -524,78 +522,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
       return next;
     });
     setIsStateChanged(true);
-  };
-
-  const handleRepeatLastOrder = async () => {
-    if (!formData.CustomerID || formData.CustomerID <= 0) {
-      toast.error("Select a customer first");
-      return;
-    }
-    setRepeatingLastOrder(true);
-    try {
-      const result = await OrderService.GetLastOrderLinesByCustomer(formData.CustomerID);
-      if (!result.found || result.lines.length === 0) {
-        toast.info("No previous order found for this customer");
-        return;
-      }
-
-      const today = todayDateOnlyDisplay();
-      const formatDue = (raw: string) => (raw ? formatDateOnlyFromApi(raw) || today : today);
-
-      const blankOnly =
-        formData.Details.length === 0 ||
-        (formData.Details.length === 1 &&
-          !formData.Details[0].PartNo?.trim() &&
-          !formData.Details[0].PartName?.trim());
-
-      const newLines: QuotationDetailReq[] = result.lines.map((l, i) => ({
-        ID: 0,
-        ItemNo: i + 1,
-        PartName: l.partName,
-        PartNo: l.partNo,
-        DueDate: formatDue(l.dueDate),
-        JobNumber: "",
-        JobDesc: "",
-        QtyOrdered: l.qtyOrdered || 1,
-        Unit: l.unit || "EA",
-        UnitPrice: l.unitPrice || 0,
-        JobPriority: 0,
-        Discount: l.discount || 0,
-        DiscountType: (l.discountType === "Amount" ? "Amount" : "Percent") as DiscountType,
-        ProductId: l.productId,
-        LeadTime: formatDue(l.leadTime) || today,
-        Notes: l.notes || "",
-      }));
-
-      setFormData((prev) => {
-        const Details = blankOnly ? newLines : [...prev.Details, ...newLines.map((l, i) => ({
-          ...l,
-          ItemNo: (prev.Details.length > 0
-            ? Math.max(...prev.Details.map((d) => d.ItemNo))
-            : 0) + i + 1,
-        }))];
-        const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
-        return { ...prev, Details, TotalAmount };
-      });
-      setPriceBreakdownMatrixData(new Map());
-      setPartHistoryByRow(new Map());
-      setIsStateChanged(true);
-
-      const orderLabel =
-        result.orderNumber < 1000
-          ? `CO#${result.orderNumber + 999}`
-          : `CO#${result.orderNumber}`;
-      toast.success(
-        `Added ${result.lines.length} line(s) from ${orderLabel}${
-          result.orderDate ? ` (${formatDateOnlyFromApi(result.orderDate, true)})` : ""
-        }`
-      );
-    } catch (error: any) {
-      console.error("Error repeating last order:", error);
-      toast.error(error?.message || "Failed to load last order");
-    } finally {
-      setRepeatingLastOrder(false);
-    }
   };
 
   const handleDetailChange = (index: number, field: keyof QuotationDetailReq, value: any) => {
@@ -1349,13 +1275,28 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const handleDuplicate = async () => {
     const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
     if (id <= 0) return;
-    if (!window.confirm("Create a duplicate of this quotation?")) return;
+    const confirmText =
+      "Create a Draft copy of this quotation dated today?\n\n" +
+      "Line due dates move forward by the same lead time. Customer PO and comments are not copied." +
+      (isStateChanged ? "\n\nUnsaved changes on this quotation are not included." : "");
+    if (!window.confirm(confirmText)) return;
 
     setLoading(true);
     try {
-      await QuotationService.DuplicateQuotation(id);
-      toast.success("Quotation duplicated successfully (including file copies)");
-      onClose(true);
+      const result = await QuotationService.DuplicateQuotation(id);
+      listNeedsRefreshRef.current = true;
+      const notes = duplicateResultNotes(result);
+      if (notes.length > 0) {
+        toast.warning(`Quotation duplicated. ${notes.join(" ")}`, { autoClose: 8000 });
+      } else {
+        toast.success("Quotation duplicated. You are now viewing the copy.");
+      }
+      if (result.id > 0 && onSaved) {
+        setIsStateChanged(false);
+        onSaved(result.id);
+      } else {
+        onClose(true);
+      }
     } catch (error: any) {
       console.error("Error duplicating quotation:", error);
       toast.error(`Error duplicating quotation: ${error.message || "Unknown error"}`);
@@ -1834,39 +1775,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3>Line Items</h3>
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    onClick={handleRepeatLastOrder}
-                    disabled={
-                      repeatingLastOrder ||
-                      !formData.CustomerID ||
-                      formData.CustomerID <= 0
-                    }
-                    title={
-                      formData.CustomerID
-                        ? "Add lines from this customer's most recent order"
-                        : "Select a customer first"
-                    }
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.5rem",
-                      padding: "0.5rem 1rem",
-                      backgroundColor: "#ffffff",
-                      color: "#374151",
-                      border: "1px solid #d1d5db",
-                      borderRadius: "0.375rem",
-                      fontSize: "0.875rem",
-                      fontWeight: 500,
-                      cursor:
-                        repeatingLastOrder || !formData.CustomerID
-                          ? "not-allowed"
-                          : "pointer",
-                      opacity: repeatingLastOrder || !formData.CustomerID ? 0.6 : 1,
-                    }}
-                  >
-                    {repeatingLastOrder ? "Loading…" : "Repeat last order"}
-                  </button>
                   <button
                     type="button"
                     onClick={handleAddDetail}

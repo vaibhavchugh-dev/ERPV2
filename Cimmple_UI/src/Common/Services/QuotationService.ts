@@ -1,6 +1,7 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
 import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
+import { DuplicateResult, toDuplicateResult } from "../Utils/documentDuplication";
 
 export interface PriceBreakdownMatrix {
   quantities: number[]; // Quantity values for column headers (e.g., [1, 5, 10, 25])
@@ -947,7 +948,7 @@ export class QuotationService {
 
   public static DuplicateQuotation = async (
     quotationId: number
-  ): Promise<{ id: number; message: string }> => {
+  ): Promise<DuplicateResult> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
@@ -957,13 +958,14 @@ export class QuotationService {
     const url = `/Quotation/DuplicateQuotation`;
     return Instense.post(url, null, {
       params: { quotationId, tenantId: tenantID },
-    }).then((response) => {
-      const result = response.data.result;
-      return {
-        id: result?.id || 0,
-        message: result?.message || "Quotation duplicated successfully",
-      };
-    });
+    }).then((response) => toDuplicateResult(response.data.result, "Quotation duplicated successfully"));
+  };
+
+  public static DuplicateVendorQuotation = async (quotationId: number): Promise<DuplicateResult> => {
+    const url = `/Quotation/DuplicateVendorQuotation`;
+    return Instense.post(url, null, { params: { quotationId } }).then((response) =>
+      toDuplicateResult(response.data.result, "Vendor quotation duplicated successfully")
+    );
   };
 
   public static CopyAttachmentsToOrder = async (

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   QuotationService,
@@ -880,32 +881,32 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
   const handleDuplicate = async () => {
     if (quotationId <= 0) return;
-    if (!window.confirm("Create a duplicate of this quotation?")) return;
+    const confirmText =
+      "Create a Draft copy of this quotation dated today?\n\n" +
+      "Prices and discounts are cleared so the vendor can quote again. Due dates move forward by the same lead time. " +
+      "Vendor references, job links and comments are not copied." +
+      (isStateChanged ? "\n\nUnsaved changes on this quotation are not included." : "");
+    if (!window.confirm(confirmText)) return;
 
     setLoading(true);
     try {
-      const quotation = await QuotationService.GetVendorQuotationById(quotationId);
-      if (quotation) {
-        const duplicatedQuotation: VendorQuotationMasterReq = {
-          ...quotation,
-          OrderID: 0,
-          PONumber: 0,
-          Status: "Draft",
-          VendorRefNo: "",
-          convertedOrderId: undefined,
-          ParentQuotationID: undefined,
-          Details: (quotation.Details || []).map((d) => ({
-            ...d,
-            ID: 0,
-          })),
-        };
-        await QuotationService.SaveVendorQuotation(duplicatedQuotation);
-        toast.success("Quotation duplicated successfully");
+      const result = await QuotationService.DuplicateVendorQuotation(quotationId);
+      listNeedsRefreshRef.current = true;
+      const notes = duplicateResultNotes(result);
+      if (notes.length > 0) {
+        toast.warning(`Quotation duplicated. ${notes.join(" ")}`, { autoClose: 8000 });
+      } else {
+        toast.success("Quotation duplicated. You are now viewing the copy.");
+      }
+      if (result.id > 0 && onSaved) {
+        setIsStateChanged(false);
+        onSaved(result.id);
+      } else {
         onClose(true);
       }
     } catch (error: any) {
       console.error("Error duplicating quotation:", error);
-      toast.error("Error duplicating quotation");
+      toast.error(error.response?.data?.message || error.response?.data?.error || "Error duplicating quotation");
     } finally {
       setLoading(false);
     }

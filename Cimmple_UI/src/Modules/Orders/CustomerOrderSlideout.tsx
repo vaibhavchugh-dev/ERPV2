@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
+import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import {
   OrderService,
@@ -15,6 +16,8 @@ import { ShippingService, ShippableItem, Shipment } from "../../Common/Services/
 import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/InvoiceService";
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
+import CopyFromPastOrderDialog, { CopyFromPastOrderResult } from "./CopyFromPastOrderDialog";
+import { formatPrefixedDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
@@ -126,7 +129,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   // Store display values for numeric fields (as strings) to allow clearing
   const [numericDisplayValues, setNumericDisplayValues] = useState<Map<string, string>>(new Map());
   const [partHistoryByRow, setPartHistoryByRow] = useState<Map<number, CustomerPartOption | null>>(new Map());
-  const [repeatingLastOrder, setRepeatingLastOrder] = useState(false);
+  const [showCopyDialog, setShowCopyDialog] = useState(false);
+  /** "Copied from" notes, written to the order's comments only when the order is saved. */
+  const [pendingCopyNotes, setPendingCopyNotes] = useState<string[]>([]);
   const [showJobOrderSlideout, setShowJobOrderSlideout] = useState(false);
   const [selectedJobOrderId, setSelectedJobOrderId] = useState<number>(0);
   const [jobOrderDetailIds, setJobOrderDetailIds] = useState<Map<number, number>>(new Map()); // Map of detail ID to job order ID
@@ -574,90 +579,64 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     setIsStateChanged(true);
   };
 
-  const handleRepeatLastOrder = async () => {
-    if (!formData.CustomerID || formData.CustomerID <= 0) {
-      toast.error("Select a customer first");
-      return;
-    }
-    setRepeatingLastOrder(true);
-    try {
-      const result = await OrderService.GetLastOrderLinesByCustomer(
-        formData.CustomerID,
-        formData.OrderID > 0 ? formData.OrderID : orderId
-      );
-      if (!result.found || result.lines.length === 0) {
-        toast.info("No previous order found for this customer");
-        return;
-      }
+  const handleCopyFromPastOrder = (result: CopyFromPastOrderResult) => {
+    const replace = result.mode === "replace";
 
-      const today = todayDateOnlyDisplay();
-      const formatDue = (raw: string) => (raw ? formatDateOnlyFromApi(raw) || today : today);
+    const newLines: OrderDetailReq[] = result.lines.map((l) => ({
+      ID: 0,
+      ItemNo: 0,
+      PartName: l.partName,
+      PartNo: l.partNo,
+      DueDate: l.dueDate,
+      JobNumber: "",
+      JobDesc: "",
+      QtyOrdered: l.qtyOrdered,
+      Unit: l.unit || "EA",
+      UnitPrice: l.unitPrice,
+      JobPriority: 0,
+      Discount: l.discount || 0,
+      DiscountType: l.discountType,
+      ProductId: l.productId,
+      LeadTime: l.dueDate,
+      Notes: l.notes || "",
+      ShippedQty: 0,
+      ShippingStatus: "Not Started",
+      InvoicedQty: 0,
+      InvoiceStatus: "Not Invoiced",
+    }));
 
-      const blankOnly =
-        formData.Details.length === 0 ||
-        (formData.Details.length === 1 &&
-          !formData.Details[0].PartNo?.trim() &&
-          !formData.Details[0].PartName?.trim());
+    setFormData((prev) => {
+      const kept = replace
+        ? []
+        : prev.Details.filter((d) => d.ID > 0 || !isBlankQuoteOrOrderLine(d));
+      const lastItemNo = kept.length > 0 ? Math.max(...kept.map((d) => d.ItemNo)) : 0;
+      const Details = [
+        ...kept,
+        ...newLines.map((l, i) => ({ ...l, ItemNo: lastItemNo + i + 1 })),
+      ];
+      const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
+      return { ...prev, Details, TotalAmount };
+    });
+    if (replace) setPartHistoryByRow(new Map());
+    setLineItemErrors(new Map());
+    setErrors((prev) => {
+      const { Details: _details, ...rest } = prev;
+      return rest;
+    });
+    setIsStateChanged(true);
+    setShowCopyDialog(false);
 
-      const newLines: OrderDetailReq[] = result.lines.map((l, i) => ({
-        ID: 0,
-        ItemNo: i + 1,
-        PartName: l.partName,
-        PartNo: l.partNo,
-        DueDate: formatDue(l.dueDate),
-        JobNumber: "",
-        JobDesc: "",
-        QtyOrdered: l.qtyOrdered || 1,
-        Unit: l.unit || "EA",
-        UnitPrice: l.unitPrice || 0,
-        JobPriority: 0,
-        Discount: l.discount || 0,
-        DiscountType: l.discountType === "Amount" ? "Amount" : "Percent",
-        ProductId: l.productId,
-        LeadTime: formatDue(l.leadTime) || today,
-        Notes: l.notes || "",
-        ShippedQty: 0,
-        ShippingStatus: "Not Started",
-        InvoicedQty: 0,
-        InvoiceStatus: "Not Invoiced",
-      }));
-
-      setFormData((prev) => {
-        const Details = blankOnly
-          ? newLines
-          : [
-              ...prev.Details,
-              ...newLines.map((l, i) => ({
-                ...l,
-                ItemNo:
-                  (prev.Details.length > 0
-                    ? Math.max(...prev.Details.map((d) => d.ItemNo))
-                    : 0) +
-                  i +
-                  1,
-              })),
-            ];
-        const TotalAmount = Details.reduce((sum, d) => sum + calculateLineTotal(d), 0);
-        return { ...prev, Details, TotalAmount };
-      });
-      setPartHistoryByRow(new Map());
-      setIsStateChanged(true);
-
-      const orderLabel =
-        result.orderNumber < 1000
-          ? `CO#${result.orderNumber + 999}`
-          : `CO#${result.orderNumber}`;
-      toast.success(
-        `Added ${result.lines.length} line(s) from ${orderLabel}${
-          result.orderDate ? ` (${formatDateOnlyFromApi(result.orderDate, true)})` : ""
-        }`
-      );
-    } catch (error: any) {
-      console.error("Error repeating last order:", error);
-      toast.error(error?.message || "Failed to load last order");
-    } finally {
-      setRepeatingLastOrder(false);
-    }
+    const sourceLabel = formatPrefixedDocNumber("CO", result.sourceOrder.orderNumber);
+    const sourceDate = result.sourceOrder.orderDate
+      ? ` (${formatDateOnlyFromApi(result.sourceOrder.orderDate, true)})`
+      : "";
+    setPendingCopyNotes((prev) => [
+      ...prev,
+      `${result.lines.length} line(s) copied from ${sourceLabel}${sourceDate}`,
+    ]);
+    toast.success(
+      `${replace ? "Replaced lines with" : "Added"} ${result.lines.length} line(s) from ${sourceLabel}`
+    );
   };
 
   const handleDetailChange = (index: number, field: keyof OrderDetailReq, value: any) => {
@@ -1065,12 +1044,21 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           createdBy: a.createdBy || 0,
         }));
 
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      let nextCommentId = (comments || []).reduce((m, c) => Math.max(m, c.id || 0), 0) + 1;
+      const copyNoteComments: EntityComment[] = pendingCopyNotes.map((text) => ({
+        id: nextCommentId++,
+        text,
+        createdAt: new Date().toISOString(),
+        createdBy: storage?.userName || "User",
+      }));
+
       const formDataToSave: OrderMasterReq = {
         ...formData,
         Details: formData.Details.filter((d) => !isBlankQuoteOrOrderLine(d)),
         Attachments: persistedAttachments,
         DeletedAttachmentIds: deletedAttachmentIds,
-        Comments: comments || [],
+        Comments: [...(comments || []), ...copyNoteComments],
       };
       
       // Validate that we have the minimum required data
@@ -1092,6 +1080,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
       revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
       setDeletedAttachmentIds([]);
+      if (copyNoteComments.length > 0) {
+        setComments(formDataToSave.Comments || []);
+        setPendingCopyNotes([]);
+      }
 
       toast.success("Order saved successfully");
 
@@ -1463,13 +1455,29 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const handleDuplicate = async () => {
     const id = formData.OrderID > 0 ? formData.OrderID : orderId;
     if (id <= 0) return;
-    if (!window.confirm("Create a duplicate of this order?")) return;
+    const confirmText =
+      "Create a Draft copy of this order dated today?\n\n" +
+      "Line due dates move forward by the same lead time. Customer PO, job links and comments are not copied." +
+      (isStateChanged ? "\n\nUnsaved changes on this order are not included." : "");
+    if (!window.confirm(confirmText)) return;
 
     setLoading(true);
     try {
-      await OrderService.DuplicateOrder(id);
-      toast.success("Order duplicated successfully (including file copies)");
-      onClose(true);
+      const result = await OrderService.DuplicateOrder(id);
+      listNeedsRefreshRef.current = true;
+      const notes = duplicateResultNotes(result);
+      if (notes.length > 0) {
+        toast.warning(`Order duplicated. ${notes.join(" ")}`, { autoClose: 8000 });
+      } else {
+        toast.success("Order duplicated. You are now viewing the copy.");
+      }
+      if (result.id > 0 && onSaved) {
+        setIsStateChanged(false);
+        setPendingCopyNotes([]);
+        onSaved(result.id);
+      } else {
+        onClose(true);
+      }
     } catch (error: any) {
       console.error("Error duplicating order:", error);
       toast.error(`Error duplicating order: ${error.message || "Unknown error"}`);
@@ -1509,11 +1517,21 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   const effectiveOrderId = formData.OrderID > 0 ? formData.OrderID : orderId;
 
+  const canCopyFromPastOrder = ![
+    "Partially Shipped",
+    "Shipped",
+    "Partially Invoiced",
+    "Fully Invoiced",
+    "Completed",
+    "Cancelled",
+  ].includes(formData.Status);
+  const existingLines = formData.Details.filter((d) => d.ID > 0 || !isBlankQuoteOrOrderLine(d));
+
   return (
     <div
       className="customer-order-slideout-overlay"
       onClick={() => {
-        if (!showShippingModal && !showInvoiceModal && !showTextEditorPopup) {
+        if (!showShippingModal && !showInvoiceModal && !showTextEditorPopup && !showCopyDialog) {
           handleCancel();
         }
       }}
@@ -1753,39 +1771,34 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3>Line Items</h3>
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    onClick={handleRepeatLastOrder}
-                    disabled={
-                      repeatingLastOrder ||
-                      !formData.CustomerID ||
-                      formData.CustomerID <= 0
-                    }
-                    title={
-                      formData.CustomerID
-                        ? "Add lines from this customer's most recent order"
-                        : "Select a customer first"
-                    }
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.5rem",
-                      padding: "0.5rem 1rem",
-                      backgroundColor: "#ffffff",
-                      color: "#374151",
-                      border: "1px solid #d1d5db",
-                      borderRadius: "0.375rem",
-                      fontSize: "0.875rem",
-                      fontWeight: 500,
-                      cursor:
-                        repeatingLastOrder || !formData.CustomerID
-                          ? "not-allowed"
-                          : "pointer",
-                      opacity: repeatingLastOrder || !formData.CustomerID ? 0.6 : 1,
-                    }}
-                  >
-                    {repeatingLastOrder ? "Loading…" : "Repeat last order"}
-                  </button>
+                  {canCopyFromPastOrder && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCopyDialog(true)}
+                      disabled={!formData.CustomerID || formData.CustomerID <= 0}
+                      title={
+                        formData.CustomerID
+                          ? "Add lines from one of this customer's past orders"
+                          : "Select a customer first"
+                      }
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        padding: "0.5rem 1rem",
+                        backgroundColor: "#ffffff",
+                        color: "#374151",
+                        border: "1px solid #d1d5db",
+                        borderRadius: "0.375rem",
+                        fontSize: "0.875rem",
+                        fontWeight: 500,
+                        cursor: !formData.CustomerID ? "not-allowed" : "pointer",
+                        opacity: !formData.CustomerID ? 0.6 : 1,
+                      }}
+                    >
+                      Copy from past order
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleAddDetail}
@@ -2919,6 +2932,19 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           onInvoiceCreated={handleInvoiceCreated}
         />
       )}
+
+      <CopyFromPastOrderDialog
+        isOpen={showCopyDialog}
+        customerId={formData.CustomerID}
+        customerName={formData.CustomerName}
+        excludeOrderId={effectiveOrderId}
+        orderDate={formData.OrderDate}
+        existingPartNos={existingLines.map((d) => d.PartNo || "")}
+        hasExistingLines={existingLines.length > 0}
+        canReplace={existingLines.every((d) => d.ID <= 0)}
+        onCancel={() => setShowCopyDialog(false)}
+        onConfirm={handleCopyFromPastOrder}
+      />
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog

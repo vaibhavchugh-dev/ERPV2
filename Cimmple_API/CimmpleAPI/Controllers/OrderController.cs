@@ -195,13 +195,15 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// Returns line items from the customer's most recent customer order (for "Repeat last order").
+        /// Recent orders for a customer that can be used as a source for "Copy from past order".
+        /// Excludes cancelled orders, orders in locations the user cannot access, and orders with no copyable lines.
         /// </summary>
-        [HttpGet("GetLastOrderLinesByCustomer")]
-        public IActionResult GetLastOrderLinesByCustomer(
+        [HttpGet("GetRecentOrdersByCustomer")]
+        public IActionResult GetRecentOrdersByCustomer(
             [FromQuery] int tenantId,
             [FromQuery] int customerId,
-            [FromQuery] int excludeOrderId = 0)
+            [FromQuery] int excludeOrderId = 0,
+            [FromQuery] int limit = 10)
         {
             try
             {
@@ -210,64 +212,147 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Customer is required" });
                 }
 
-                var lastOrder = _context.CustomerOrder
-                    .AsNoTracking()
-                    .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
-                    .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
+                if (limit <= 0) limit = 10;
+                if (limit > 50) limit = 50;
+
+                var orders = CopyableCustomerOrders(tenantId, customerId, excludeOrderId)
                     .OrderByDescending(o => o.OrderDate)
                     .ThenByDescending(o => o.OrderID)
+                    .Take(limit)
+                    .Select(o => new { o.OrderID, o.PONumber, o.OrderDate, o.Status, o.TotalAmount })
+                    .ToList();
+
+                var orderIds = orders.Select(o => o.OrderID).ToList();
+                var lineCounts = _context.CustomerOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.Tenantid == tenantId && orderIds.Contains(d.OrderID))
+                    .Where(d => d.PartNo == null || (!d.PartNo.Contains("#JO") && !d.PartNo.Contains("JO#")))
+                    .GroupBy(d => d.OrderID)
+                    .Select(g => new { OrderID = g.Key, Count = g.Count() })
+                    .ToDictionary(x => x.OrderID, x => x.Count);
+
+                var result = orders
+                    .Where(o => lineCounts.ContainsKey(o.OrderID))
                     .Select(o => new
                     {
-                        o.OrderID,
-                        o.PONumber,
-                        o.OrderDate
+                        orderId = o.OrderID,
+                        orderNumber = o.PONumber,
+                        orderDate = o.OrderDate.ToString("yyyy-MM-dd"),
+                        status = string.IsNullOrWhiteSpace(o.Status) ? "Draft" : o.Status,
+                        totalAmount = o.TotalAmount,
+                        lineCount = lineCounts[o.OrderID]
                     })
+                    .ToList();
+
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
+        }
+
+        /// <summary>
+        /// Lines of a past customer order prepared for copying into a new order: job-number lines are skipped,
+        /// the current product master price is resolved, and due dates are returned as lead days rather than dates.
+        /// </summary>
+        [HttpGet("GetOrderLinesForCopy")]
+        public IActionResult GetOrderLinesForCopy([FromQuery] int tenantId, [FromQuery] int orderId)
+        {
+            try
+            {
+                var order = _context.CustomerOrder
+                    .AsNoTracking()
+                    .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                    .Select(o => new { o.OrderID, o.PONumber, o.OrderDate, o.CustomerID, o.locationId })
                     .FirstOrDefault();
 
-                if (lastOrder == null)
+                if (order == null)
                 {
-                    return Ok(new
-                    {
-                        result = new
-                        {
-                            found = false,
-                            orderId = 0,
-                            orderNumber = 0,
-                            orderDate = "",
-                            lines = Array.Empty<object>()
-                        }
-                    });
+                    return NotFound(new { error = "Order not found" });
                 }
 
-                var lines = _context.CustomerOrderDetails
-                    .AsNoTracking()
-                    .Where(d => d.OrderID == lastOrder.OrderID && d.Tenantid == tenantId)
+                if (order.locationId > 0 && !CanAccessLocation(order.locationId))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                }
+
+                var sourceLines = CopyableOrderLines(tenantId, order.OrderID)
                     .OrderBy(d => d.ItemNo)
                     .Select(d => new
                     {
-                        itemNo = d.ItemNo,
-                        partNo = d.PartNo ?? "",
-                        partName = d.partname ?? "",
-                        unit = d.Unit ?? "EA",
-                        qtyOrdered = d.QtyOrdered,
-                        unitPrice = d.UnitPrice,
-                        discount = d.Discount,
-                        discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
-                        productId = d.productid,
-                        notes = d.notes ?? "",
-                        leadTime = d.leadTime ?? "",
-                        dueDate = d.DueDate.ToString("yyyy-MM-dd")
+                        d.ItemNo,
+                        d.PartNo,
+                        d.partname,
+                        d.Unit,
+                        d.QtyOrdered,
+                        d.UnitPrice,
+                        d.Discount,
+                        d.DiscountType,
+                        d.productid,
+                        d.notes,
+                        d.DueDate
                     })
                     .ToList();
+
+                var productIds = sourceLines
+                    .Where(l => l.productid.HasValue && l.productid.Value > 0)
+                    .Select(l => l.productid!.Value)
+                    .Distinct()
+                    .ToList();
+                var partNos = sourceLines
+                    .Select(l => (l.PartNo ?? "").Trim())
+                    .Where(p => p.Length > 0)
+                    .Distinct()
+                    .ToList();
+
+                var products = _context.ProductMaster
+                    .AsNoTracking()
+                    .Where(p => p.tenantid == tenantId
+                        && (productIds.Contains(p.Id) || (p.partno != null && partNos.Contains(p.partno))))
+                    .Select(p => new { p.Id, p.partno, p.UnitPrice, p.Noofday, p.customerid })
+                    .ToList();
+
+                var lines = sourceLines.Select(l =>
+                {
+                    var partNo = (l.PartNo ?? "").Trim();
+                    var product = (l.productid is int pid && pid > 0
+                            ? products.FirstOrDefault(p => p.Id == pid)
+                            : null)
+                        ?? (partNo.Length > 0
+                            ? products
+                                .Where(p => string.Equals((p.partno ?? "").Trim(), partNo, StringComparison.OrdinalIgnoreCase))
+                                .OrderByDescending(p => p.customerid == order.CustomerID)
+                                .FirstOrDefault()
+                            : null);
+
+                    var sourceLeadDays = Math.Max(0, (l.DueDate.Date - order.OrderDate.Date).Days);
+
+                    return new
+                    {
+                        itemNo = l.ItemNo,
+                        partNo,
+                        partName = l.partname ?? "",
+                        unit = string.IsNullOrWhiteSpace(l.Unit) ? "EA" : l.Unit,
+                        qtyOrdered = l.QtyOrdered,
+                        lastPrice = l.UnitPrice,
+                        currentPrice = product != null && product.UnitPrice > 0 ? product.UnitPrice : (decimal?)null,
+                        discount = l.Discount,
+                        discountType = string.IsNullOrWhiteSpace(l.DiscountType) ? "Percent" : l.DiscountType,
+                        productId = product?.Id,
+                        productMissing = product == null && l.productid.HasValue && l.productid.Value > 0,
+                        notes = l.notes ?? "",
+                        leadDays = sourceLeadDays > 0 ? sourceLeadDays : Math.Max(0, product?.Noofday ?? 0)
+                    };
+                }).ToList();
 
                 return Ok(new
                 {
                     result = new
                     {
-                        found = true,
-                        orderId = lastOrder.OrderID,
-                        orderNumber = lastOrder.PONumber,
-                        orderDate = lastOrder.OrderDate.ToString("yyyy-MM-dd"),
+                        orderId = order.OrderID,
+                        orderNumber = order.PONumber,
+                        orderDate = order.OrderDate.ToString("yyyy-MM-dd"),
                         lines
                     }
                 });
@@ -276,6 +361,35 @@ namespace CimmpleAPI.Controllers
             {
                 return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
             }
+        }
+
+        private IQueryable<CustomerOrder> CopyableCustomerOrders(int tenantId, int customerId, int excludeOrderId)
+        {
+            var query = _context.CustomerOrder
+                .AsNoTracking()
+                .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
+                .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
+                .Where(o => o.Status == null || o.Status != "Cancelled");
+
+            TryResolveListLocationFilter(null, out _, out _, out var restrictToLocationIds);
+            if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                query = allowed.Count == 0
+                    ? query.Where(o => false)
+                    : query.Where(o => allowed.Contains(o.locationId));
+            }
+
+            return query;
+        }
+
+        /// <remarks>Job numbers (JO#/#JO) were historically typed into PartNo; those are not repeatable parts.</remarks>
+        private IQueryable<CustomerOrderDetails> CopyableOrderLines(int tenantId, int orderId)
+        {
+            return _context.CustomerOrderDetails
+                .AsNoTracking()
+                .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
+                .Where(d => d.PartNo == null || (!d.PartNo.Contains("#JO") && !d.PartNo.Contains("JO#")));
         }
 
         [HttpGet("GetOrderById")]
@@ -1737,10 +1851,18 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Order not found" });
                 }
 
+                if (source.locationId > 0 && !CanAccessLocation(source.locationId))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                }
+
                 var sourceDetails = _context.CustomerOrderDetails
                     .Where(d => d.OrderID == orderId && d.Tenantid == tenantId)
                     .OrderBy(d => d.ItemNo)
                     .ToList();
+
+                var today = DateTime.Today;
+                var jobLinksRemoved = sourceDetails.Count(d => !string.IsNullOrWhiteSpace(d.JobNumber));
 
                 var existingOrders = _context.CustomerOrder.Where(o => o.Tenantid == tenantId).ToList();
                 int nextPONumber = existingOrders.Any()
@@ -1754,15 +1876,15 @@ namespace CimmpleAPI.Controllers
                     customercode = source.customercode ?? "",
                     CustomerName = source.CustomerName ?? "",
                     address = source.address ?? "",
-                    CustomerPoNumber = source.CustomerPoNumber ?? "",
-                    OrderDate = DateTime.Now.Date,
+                    CustomerPoNumber = "",
+                    OrderDate = today,
                     TotalAmount = source.TotalAmount,
-                    UserId = source.UserId,
+                    UserId = GetUserId() ?? source.UserId,
                     UserToken = source.UserToken,
                     Status = "Draft",
                     shippingInstructions = source.shippingInstructions ?? "",
-                    ExternalCustomerPO = source.ExternalCustomerPO ?? "",
-                    ExternalOrderDate = source.ExternalOrderDate,
+                    ExternalCustomerPO = "",
+                    ExternalOrderDate = null,
                     BuyerName = source.BuyerName ?? "",
                     quotationId = null,
                     QuotationNo = "",
@@ -1782,9 +1904,10 @@ namespace CimmpleAPI.Controllers
                         ItemNo = detail.ItemNo,
                         partname = detail.partname ?? "",
                         PartNo = detail.PartNo ?? "",
-                        DueDate = detail.DueDate,
-                        JobNumber = detail.JobNumber ?? "",
-                        JobDesc = detail.JobDesc ?? "",
+                        DueDate = DocumentDuplication.ShiftDueDate(detail.DueDate, source.OrderDate, today),
+                        // A new order needs its own job orders; the source's job numbers belong to the old order.
+                        JobNumber = "",
+                        JobDesc = "",
                         QtyOrdered = detail.QtyOrdered,
                         Unit = detail.Unit ?? "",
                         UnitPrice = detail.UnitPrice,
@@ -1793,7 +1916,8 @@ namespace CimmpleAPI.Controllers
                         DiscountType = detail.DiscountType,
                         Tenantid = tenantId,
                         productid = detail.productid,
-                        leadTime = detail.leadTime ?? "",
+                        // Display-format date string; blank so the UI falls back to the shifted DueDate.
+                        leadTime = "",
                         notes = detail.notes ?? "",
                         ShippedQty = 0,
                         ShippingStatus = "Not Started",
@@ -1904,7 +2028,17 @@ namespace CimmpleAPI.Controllers
                     _context.SaveChanges();
                 }
 
-                return Ok(new { result = new { id = duplicate.OrderID, message = "Order duplicated successfully" } });
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = duplicate.OrderID,
+                        message = "Order duplicated successfully",
+                        jobLinksRemoved,
+                        attachmentsCopied = copiedDtos.Count,
+                        attachmentsTotal = sourceAttachments.Count
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -1920,6 +2054,192 @@ namespace CimmpleAPI.Controllers
         // =============================================
         // VENDOR ORDER ENDPOINTS
         // =============================================
+
+        /// <summary>
+        /// Creates a Draft copy of a vendor order for the same vendor, dated today. Receiving, invoicing,
+        /// quotation links, vendor references, comments and job links are not carried over.
+        /// Attachments are copied as independent files.
+        /// </summary>
+        [HttpPost("DuplicateVendorOrder")]
+        public async Task<IActionResult> DuplicateVendorOrder([FromQuery] int orderId)
+        {
+            try
+            {
+                await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+
+                int tenantId = GetTenantId();
+                var source = await _context.VendorOrders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OrderID == orderId && o.Tenantid == tenantId);
+                if (source == null)
+                {
+                    return NotFound(new { error = "Vendor order not found" });
+                }
+
+                if (source.LocationId.HasValue && source.LocationId.Value > 0 &&
+                    !CanAccessLocation(source.LocationId.Value))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                }
+
+                var sourceDetails = await _context.VendorOrderDetails
+                    .AsNoTracking()
+                    .Where(d => d.OrderID == orderId)
+                    .OrderBy(d => d.ItemNo)
+                    .ToListAsync();
+
+                var today = DateTime.Today;
+                int createdBy = GetUserId() ?? source.UserId;
+                int maxPoNumber = await _context.VendorOrders
+                    .Where(o => o.Tenantid == tenantId)
+                    .MaxAsync(o => (int?)o.PONumber) ?? 0;
+
+                var duplicate = new VendorOrder
+                {
+                    Tenantid = tenantId,
+                    VendorID = source.VendorID,
+                    VendorCode = source.VendorCode ?? "",
+                    PONumber = maxPoNumber + 1,
+                    VendorName = source.VendorName ?? "",
+                    Address = source.Address ?? "",
+                    VendorPoNumber = "",
+                    OrderDate = today,
+                    TotalAmount = source.TotalAmount,
+                    UserId = createdBy,
+                    UserToken = source.UserToken,
+                    Status = "Draft",
+                    ShippingInstructions = source.ShippingInstructions ?? "",
+                    ExternalVendorPO = "",
+                    ExternalOrderDate = source.ExternalOrderDate.HasValue
+                        ? DocumentDuplication.ShiftDueDate(source.ExternalOrderDate.Value, source.OrderDate, today)
+                        : null,
+                    BuyerName = source.BuyerName ?? "",
+                    VendorRefNo = "",
+                    OrderType = source.OrderType ?? "Vendor",
+                    MaterialType = source.MaterialType ?? "Material",
+                    LocationId = source.LocationId,
+                    convertedOrderId = null,
+                    ParentQuotationID = null,
+                    QuotationId = null,
+                    QuotationNo = "",
+                    AdditionalNotes = source.AdditionalNotes ?? ""
+                };
+                _context.VendorOrders.Add(duplicate);
+                await _context.SaveChangesAsync();
+
+                int jobLinksRemoved = sourceDetails.Count(IsVendorOrderLineJobTied);
+                foreach (var detail in sourceDetails)
+                {
+                    var dueDate = DocumentDuplication.ShiftDueDate(detail.DueDateDateTime, source.OrderDate, today);
+                    _context.VendorOrderDetails.Add(new VendorOrderDetail
+                    {
+                        OrderID = duplicate.OrderID,
+                        Tenantid = tenantId,
+                        ItemNo = detail.ItemNo,
+                        PartName = detail.PartName ?? "",
+                        PartNo = detail.PartNo ?? "",
+                        DueDate = dueDate.ToString("yyyy-MM-dd"),
+                        DueDateDateTime = dueDate,
+                        // Job-tied lines receive against the job; a copy must not book into the old job.
+                        JobId = 0,
+                        JobNumber = "",
+                        JobDesc = "",
+                        QtyOrdered = detail.QtyOrdered,
+                        Unit = detail.Unit ?? "",
+                        UnitPrice = detail.UnitPrice,
+                        JobPriority = detail.JobPriority,
+                        Discount = detail.Discount,
+                        DiscountType = detail.DiscountType,
+                        ProductId = detail.ProductId,
+                        RawMaterialId = detail.RawMaterialId,
+                        LeadTime = "",
+                        Notes = detail.Notes ?? "",
+                        ShippedQty = 0,
+                        ShippingStatus = "Not Started",
+                        InvoicedQty = 0,
+                        InvoiceStatus = "Not Invoiced",
+                        glcode = detail.glcode ?? "",
+                        Received = "No",
+                        ReceivedQty = null,
+                        LineType = detail.LineType
+                    });
+                }
+                await _context.SaveChangesAsync();
+
+                var sourceAttachments = await _context.VendorOrderAttachments
+                    .AsNoTracking()
+                    .Where(a => a.OrderID == orderId && a.TenantID == tenantId)
+                    .OrderBy(a => a.Id)
+                    .ToListAsync();
+
+                int attachmentsCopied = 0;
+                foreach (var srcAtt in sourceAttachments)
+                {
+                    var sourceBlob = !string.IsNullOrEmpty(srcAtt.UploadFile) ? srcAtt.UploadFile : srcAtt.FileUrl;
+                    if (string.IsNullOrEmpty(sourceBlob))
+                    {
+                        continue;
+                    }
+
+                    int nextFileUniqueNo = 1;
+                    if (await _context.VendorOrderAttachments.AnyAsync())
+                    {
+                        nextFileUniqueNo = await _context.VendorOrderAttachments.MaxAsync(x => x.FileUniqueno) + 1;
+                        if (nextFileUniqueNo <= 1)
+                        {
+                            nextFileUniqueNo = await _context.VendorOrderAttachments.MaxAsync(x => x.Id) + 1;
+                        }
+                    }
+                    var blobName = $"{nextFileUniqueNo}{Path.GetExtension(sourceBlob)}";
+
+                    var copied = await ModuleFileStorage.CopyBlobAsync(
+                        _context,
+                        _configuration,
+                        ModuleFileStorage.CreateFileInfo(tenantId, ModuleFileStorage.VendorOrdersFolder, sourceBlob, createdBy),
+                        ModuleFileStorage.CreateFileInfo(tenantId, ModuleFileStorage.VendorOrdersFolder, blobName, createdBy));
+                    if (!copied)
+                    {
+                        continue;
+                    }
+
+                    _context.VendorOrderAttachments.Add(new VendorOrderAttachment
+                    {
+                        OrderID = duplicate.OrderID,
+                        Name = srcAtt.Name ?? "",
+                        Size = srcAtt.Size,
+                        FileUniqueno = nextFileUniqueNo,
+                        UploadFile = blobName,
+                        FileUrl = blobName,
+                        TenantID = tenantId,
+                        createdby = createdBy,
+                        CreatedDate = DateTime.UtcNow
+                    });
+                    await _context.SaveChangesAsync();
+                    attachmentsCopied++;
+                }
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = duplicate.OrderID,
+                        message = "Vendor order duplicated successfully",
+                        jobLinksRemoved,
+                        attachmentsCopied,
+                        attachmentsTotal = sourceAttachments.Count
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                var errorMessage = ex.Message;
+                if (ex.InnerException != null)
+                {
+                    errorMessage += " | Inner Exception: " + ex.InnerException.Message;
+                }
+                return StatusCode(500, new { error = errorMessage, stackTrace = ex.StackTrace });
+            }
+        }
 
         [HttpGet("GetVendorOrders")]
         public async Task<IActionResult> GetVendorOrders([FromQuery] int tenantId, [FromQuery] int? locationId = null)

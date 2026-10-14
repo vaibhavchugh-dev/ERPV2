@@ -1,6 +1,7 @@
 import Instense from "./Axios-config";
 import { formatDateOnlyFromApi, toDateOnlyApiString } from "../Utils/Formatting";
 import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
+import { DuplicateResult, toDuplicateResult } from "../Utils/documentDuplication";
 
 export interface OrderAttachment {
   id: number;
@@ -24,6 +25,35 @@ export interface OrderComment {
   createdAt: string;
   createdBy: string;
   mentionedUserIds?: number[];
+}
+
+export interface CopySourceOrder {
+  orderId: number;
+  orderNumber: number;
+  orderDate: string;
+  status: string;
+  totalAmount: number;
+  lineCount: number;
+}
+
+export interface CopySourceLine {
+  itemNo: number;
+  partNo: string;
+  partName: string;
+  unit: string;
+  qtyOrdered: number;
+  /** Unit price on the source order. */
+  lastPrice: number;
+  /** Product master price, when the part is linked to a product with a price set. */
+  currentPrice: number | null;
+  discount: number;
+  discountType: "Percent" | "Amount";
+  productId?: number;
+  /** The source line was linked to a product that no longer exists. */
+  productMissing: boolean;
+  notes: string;
+  /** Days between order date and due date on the source line (or product lead time). */
+  leadDays: number;
 }
 
 export interface OrderMaster {
@@ -517,7 +547,7 @@ export class OrderService {
 
   public static DuplicateOrder = async (
     orderId: number
-  ): Promise<{ id: number; message: string }> => {
+  ): Promise<DuplicateResult> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
@@ -527,46 +557,20 @@ export class OrderService {
     const url = `/Order/DuplicateOrder`;
     return Instense.post(url, null, {
       params: { orderId, tenantId: tenantID },
-    }).then((response) => {
-      const result = response.data.result;
-      return {
-        id: result?.id || 0,
-        message: result?.message || "Order duplicated successfully",
-      };
-    });
+    }).then((response) => toDuplicateResult(response.data.result, "Order duplicated successfully"));
   };
 
-  public static GetLastOrderLinesByCustomer = async (
+  public static GetRecentOrdersByCustomer = async (
     customerId: number,
     excludeOrderId = 0
-  ): Promise<{
-    found: boolean;
-    orderId: number;
-    orderNumber: number;
-    orderDate: string;
-    lines: Array<{
-      itemNo: number;
-      partNo: string;
-      partName: string;
-      unit: string;
-      qtyOrdered: number;
-      unitPrice: number;
-      discount: number;
-      discountType: string;
-      productId?: number;
-      notes: string;
-      leadTime: string;
-      dueDate: string;
-    }>;
-  }> => {
+  ): Promise<CopySourceOrder[]> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
     if (tenantID === 0 && process.env.NODE_ENV === "development") {
       tenantID = 1;
     }
 
-    const url = `/Order/GetLastOrderLinesByCustomer`;
-    return Instense.get(url, {
+    return Instense.get(`/Order/GetRecentOrdersByCustomer`, {
       params: {
         tenantId: tenantID,
         customerId,
@@ -574,12 +578,36 @@ export class OrderService {
       },
     }).then((response) => {
       const result = response.data?.result;
+      if (!Array.isArray(result)) return [];
+      return result.map((o: any) => ({
+        orderId: o.orderId || 0,
+        orderNumber: o.orderNumber || 0,
+        orderDate: o.orderDate || "",
+        status: o.status || "Draft",
+        totalAmount: o.totalAmount || 0,
+        lineCount: o.lineCount || 0,
+      }));
+    });
+  };
+
+  public static GetOrderLinesForCopy = async (
+    orderId: number
+  ): Promise<{ orderId: number; orderNumber: number; orderDate: string; lines: CopySourceLine[] }> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+
+    return Instense.get(`/Order/GetOrderLinesForCopy`, {
+      params: { tenantId: tenantID, orderId },
+    }).then((response) => {
+      const result = response.data?.result;
       if (!result) {
-        return { found: false, orderId: 0, orderNumber: 0, orderDate: "", lines: [] };
+        return { orderId, orderNumber: 0, orderDate: "", lines: [] };
       }
       return {
-        found: !!result.found,
-        orderId: result.orderId || 0,
+        orderId: result.orderId || orderId,
         orderNumber: result.orderNumber || 0,
         orderDate: result.orderDate || "",
         lines: Array.isArray(result.lines)
@@ -589,13 +617,14 @@ export class OrderService {
               partName: l.partName || "",
               unit: l.unit || "EA",
               qtyOrdered: l.qtyOrdered || 0,
-              unitPrice: l.unitPrice || 0,
+              lastPrice: l.lastPrice || 0,
+              currentPrice: l.currentPrice ?? null,
               discount: l.discount || 0,
               discountType: l.discountType === "Amount" ? "Amount" : "Percent",
-              productId: l.productId,
+              productId: l.productId ?? undefined,
+              productMissing: !!l.productMissing,
               notes: l.notes || "",
-              leadTime: l.leadTime || "",
-              dueDate: l.dueDate || "",
+              leadDays: l.leadDays || 0,
             }))
           : [],
       };

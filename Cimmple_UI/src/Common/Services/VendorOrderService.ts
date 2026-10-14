@@ -2,6 +2,7 @@ import Instense from "./Axios-config";
 import { defaultLineTypeForOrder } from "../Constants/vendorOrderLineTypes";
 import { toDateOnlyApiString, toHtmlDateInputValue } from "../Utils/Formatting";
 import { appendFilesToFormData, postMultipart } from "./FileUploadHelper";
+import { DuplicateResult, toDuplicateResult } from "../Utils/documentDuplication";
 
 export interface VendorOrderMaster {
   orderID: number;
@@ -280,6 +281,13 @@ export class VendorOrderService {
       })),
       Comments: result.Comments || result.comments || [],
     } as VendorOrderMasterReq;
+  };
+
+  public static DuplicateVendorOrder = async (orderId: number): Promise<DuplicateResult> => {
+    const url = `/Order/DuplicateVendorOrder`;
+    return Instense.post(url, null, { params: { orderId } }).then((response) =>
+      toDuplicateResult(response.data.result, "Vendor order duplicated successfully")
+    );
   };
 
   public static SaveVendorOrder = async (
