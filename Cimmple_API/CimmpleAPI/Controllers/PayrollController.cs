@@ -243,7 +243,7 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new
                     {
-                        error = "Unable to resolve payroll bank GL account. Set Default Payroll Bank in Accounting Setup or flag a Bank Master as payroll default."
+                        error = "Unable to resolve payroll bank GL account. Set Default Payroll Bank in Accounting Setup (or flag a Bank Master as payroll default) and make sure that bank has a COA in Bank Master."
                     });
                 }
 
@@ -458,7 +458,7 @@ namespace CimmpleAPI.Controllers
                 {
                     return BadRequest(new
                     {
-                        error = "Unable to resolve payroll bank GL account. Set Default Payroll Bank in Accounting Setup."
+                        error = "Unable to resolve payroll bank GL account. Set Default Payroll Bank in Accounting Setup and make sure that bank has a COA in Bank Master."
                     });
                 }
 

@@ -17,10 +17,16 @@ export function getBankDisplayName(bank: BankMaster): string {
   return name;
 }
 
+/** Banks without a COA cannot post payments; older API responses omit the flag, so treat missing as usable. */
+export function bankHasGlAccount(bank: BankMaster): boolean {
+  return bank.hasGlAccount !== false;
+}
+
 export function pickDefaultBankId(banks: BankMaster[]): number {
-  if (!banks.length) return 0;
-  const primary = banks.find((b) => b.isprimary);
-  return primary?.id ?? banks[0].id;
+  const usable = banks.filter(bankHasGlAccount);
+  if (!usable.length) return 0;
+  const primary = usable.find((b) => b.isprimary);
+  return primary?.id ?? usable[0].id;
 }
 
 /**
@@ -48,7 +54,7 @@ export function useCompanyBanks() {
       const list = active.length ? active : result || [];
       setBanks(list);
       setBankId((current) => {
-        if (current && list.some((b) => b.id === current)) return current;
+        if (current && list.some((b) => b.id === current && bankHasGlAccount(b))) return current;
         return pickDefaultBankId(list);
       });
     } catch (error) {

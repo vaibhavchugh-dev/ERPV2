@@ -197,6 +197,24 @@ namespace CimmpleAPI.Controllers
                     .Where(vid => vid.InvoiceId == invoiceId)
                     .ToList();
 
+                // Detail.OrderId is the internal VendorOrder.OrderID; display uses PONumber (VO#).
+                var lineOrderIds = invoiceDetails
+                    .Select(d => d.OrderId)
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToList();
+                var poNumberByOrderId = _context.VendorOrders
+                    .AsNoTracking()
+                    .Where(o => lineOrderIds.Contains(o.OrderID) && o.Tenantid == tenantId)
+                    .Select(o => new { o.OrderID, o.PONumber })
+                    .ToDictionary(o => o.OrderID, o => o.PONumber);
+                var orderNumbers = lineOrderIds
+                    .Where(poNumberByOrderId.ContainsKey)
+                    .Select(id => poNumberByOrderId[id])
+                    .OrderBy(po => po)
+                    .Select(po => $"VO#{(po < 1000 ? po + 999 : po)}")
+                    .ToList();
+
                 var result = new
                 {
                     id = invoice.Id,
@@ -204,6 +222,8 @@ namespace CimmpleAPI.Controllers
                     vendorName = invoice.VendorName,
                     vendorCode = invoice.VendorCode,
                     vendorId = invoice.vid,
+                    orderId = lineOrderIds.Count == 1 ? lineOrderIds[0] : (int?)null,
+                    orderNumber = orderNumbers.Count > 0 ? string.Join(", ", orderNumbers) : null,
                     invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
@@ -715,21 +735,52 @@ namespace CimmpleAPI.Controllers
                     if (paymentAmount > balanceDue + 0.009m)
                         return BadRequest(new { error = $"Payment amount cannot exceed remaining balance of {balanceDue:0.00}." });
 
-                    var bankId = request.BankId ?? invoice.Bankid;
-                    if (!bankId.HasValue || bankId.Value <= 0)
+                    var isCardPayment = IsCreditCardMethod(request.PaymentMethod);
+                    int? bankId = null;
+                    int paymentAccountId;
+                    if (isCardPayment)
                     {
-                        return BadRequest(new
+                        // Card payments credit the card liability; cash leaves the bank only when the card bill is paid.
+                        if (!request.CreditCardId.HasValue || request.CreditCardId.Value <= 0)
                         {
-                            error = "Select a bank account before recording this payment."
-                        });
+                            return BadRequest(new { error = "Select a company credit card before recording this payment." });
+                        }
+                        var cardExists = _context.CreditCardMaster
+                            .AsNoTracking()
+                            .Any(c => c.Id == request.CreditCardId.Value && c.TenantId == tenantId && c.Status == 1);
+                        if (!cardExists)
+                        {
+                            return BadRequest(new { error = "Selected credit card was not found or is inactive." });
+                        }
+                        var cardAccountId = GlAccountResolutionService.ResolveCreditCard(_context, tenantId, request.CreditCardId);
+                        if (!cardAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "This credit card is not mapped to an active Chart of Accounts entry. Set its COA in Credit Card Master first."
+                            });
+                        }
+                        paymentAccountId = cardAccountId.Value;
                     }
-                    var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
-                    if (!bankAccountId.HasValue)
+                    else
                     {
-                        return BadRequest(new
+                        bankId = request.BankId ?? invoice.Bankid;
+                        if (!bankId.HasValue || bankId.Value <= 0)
                         {
-                            error = "Unable to determine a bank GL account for this payment. Configure bank COA mapping first."
-                        });
+                            return BadRequest(new
+                            {
+                                error = "Select a bank account before recording this payment."
+                            });
+                        }
+                        var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, bankId);
+                        if (!bankAccountId.HasValue)
+                        {
+                            return BadRequest(new
+                            {
+                                error = "The selected bank is not mapped to an active Chart of Accounts entry. Set its COA in Bank Master first."
+                            });
+                        }
+                        paymentAccountId = bankAccountId.Value;
                     }
 
                     var accountsPayableAccountId = GlAccountResolutionService.ResolveAccountsPayable(_context, tenantId, invoice.vid);
@@ -756,7 +807,9 @@ namespace CimmpleAPI.Controllers
                     var newPaidTotal = Math.Round(alreadyPaid + paymentAmount, 2);
                     var isFullyPaid = newPaidTotal >= invoice.TotalAmount - 0.009m;
 
-                    invoice.PaymentMethod = request.PaymentMethod ?? invoice.PaymentMethod ?? "";
+                    invoice.PaymentMethod = isCardPayment
+                        ? CreditCardPaymentMethod
+                        : request.PaymentMethod ?? invoice.PaymentMethod ?? "";
                     invoice.CkNo = request.CheckNo ?? invoice.CkNo ?? "";
                     invoice.CkDate = request.CheckDate ?? invoice.CkDate;
                     invoice.PvrNo = request.PvrNo ?? invoice.PvrNo;
@@ -789,7 +842,7 @@ namespace CimmpleAPI.Controllers
                     _context.JournalEntries.Add(journalHeader);
                     _context.SaveChanges();
 
-                    // Debit AP / credit bank.
+                    // Debit AP / credit bank (or the card liability for card payments).
                     _context.JournalEntryFrom.Add(new JournalDetailsFrom
                     {
                         JournalEntryId = journalHeader.Id,
@@ -800,7 +853,7 @@ namespace CimmpleAPI.Controllers
                     _context.JournalEntryTo.Add(new JournalDetailsTo
                     {
                         JournalEntryId = journalHeader.Id,
-                        AccountId = bankAccountId.Value,
+                        AccountId = paymentAccountId,
                         Amount = paymentAmount,
                         Description = description
                     });
@@ -849,6 +902,48 @@ namespace CimmpleAPI.Controllers
                     transaction.Rollback();
                     return StatusCode(500, new { error = ex.Message });
                 }
+            }
+        }
+
+        private const string CreditCardPaymentMethod = "Credit Card";
+
+        private static bool IsCreditCardMethod(string? method)
+        {
+            var value = (method ?? "").Trim();
+            return value.Equals(CreditCardPaymentMethod, StringComparison.OrdinalIgnoreCase)
+                || value.Equals("Card", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Active company cards for the vendor payment form. Served here so AP users don't need Credit Card
+        /// Master access just to pay a bill.
+        /// </summary>
+        [HttpGet("GetPaymentCreditCards")]
+        public IActionResult GetPaymentCreditCards()
+        {
+            try
+            {
+                var tenantId = GetTenantId();
+                var cards = _context.CreditCardMaster
+                    .AsNoTracking()
+                    .Where(c => c.TenantId == tenantId && c.Status == 1)
+                    .OrderByDescending(c => c.IsPrimary)
+                    .ThenBy(c => c.NickName)
+                    .Select(c => new
+                    {
+                        id = c.Id,
+                        nickName = c.NickName ?? "",
+                        cardType = c.CardType ?? "",
+                        lastFourDigits = c.LastFourDigits ?? "",
+                        isPrimary = c.IsPrimary ?? false
+                    })
+                    .ToList();
+
+                return Ok(new { result = cards });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
             }
         }
 
@@ -1111,6 +1206,8 @@ namespace CimmpleAPI.Controllers
         public int? PvrNo { get; set; }
         public string Series { get; set; }
         public int? BankId { get; set; }
+        /// <summary>Company card from Credit Card Master; required when PaymentMethod is Credit Card.</summary>
+        public int? CreditCardId { get; set; }
         public decimal? PaymentAmount { get; set; }
     }
 }

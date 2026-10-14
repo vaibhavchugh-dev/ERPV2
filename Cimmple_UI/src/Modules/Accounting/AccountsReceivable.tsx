@@ -160,7 +160,6 @@ const BulkARPaymentModal: React.FC<BulkARPaymentModalProps> = ({ invoices, onClo
             <option value="ACH">ACH</option>
             <option value="Wire">Wire</option>
             <option value="Cash">Cash</option>
-            <option value="Credit Card">Credit Card</option>
           </select>
           <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, marginBottom: "0.25rem" }}>
             Payment Date

@@ -34,15 +34,15 @@ namespace CimmpleAPI.Services
         {
             try
             {
-                var unpaidInvoicesQuery = context.InvoiceMaster
+                var cutoff = asOfDate.Date.AddDays(1);
+                var invoicesQuery = context.InvoiceMaster.AsNoTracking()
                     .Where(im => im.TenantId == tenantId &&
                                  !im.IsVoided &&
-                                 im.PaidAmount < im.TotalAmount - 0.009m &&
-                                 im.InvoiceDate <= asOfDate);
+                                 im.InvoiceDate < cutoff);
                 if (locationId.HasValue)
                 {
                     var locId = locationId.Value;
-                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(im =>
+                    invoicesQuery = invoicesQuery.Where(im =>
                         context.InvoiceDetail.Any(id =>
                             id.InvoiceId == im.Id &&
                             context.CustomerOrder.Any(co =>
@@ -51,7 +51,40 @@ namespace CimmpleAPI.Services
                                 co.locationId == locId)));
                 }
 
-                var unpaidInvoices = unpaidInvoicesQuery.ToList();
+                var invoices = invoicesQuery
+                    .Select(im => new
+                    {
+                        im.Id,
+                        im.InvoiceNo,
+                        im.PrefixInvoiceNo,
+                        im.InvoiceDate,
+                        im.DueDate,
+                        im.TotalAmount,
+                        im.PaidAmount,
+                        im.PaymentDate
+                    })
+                    .ToList();
+
+                // Balance as of the report date, so past dates are not affected by later payments.
+                var ledger = InvoiceBalanceAsOfService.LoadCustomerPayments(context, tenantId);
+                var unpaidInvoices = invoices
+                    .Select(im => new
+                    {
+                        im.Id,
+                        im.InvoiceNo,
+                        im.PrefixInvoiceNo,
+                        im.InvoiceDate,
+                        im.DueDate,
+                        OpenBalance = Math.Round(InvoiceBalanceAsOfService.OpenAsOf(
+                            im.TotalAmount,
+                            im.PaidAmount,
+                            im.PaymentDate,
+                            im.InvoiceDate,
+                            ledger.For(InvoiceBalanceAsOfService.CustomerInvoiceKeys(im.PrefixInvoiceNo, im.InvoiceNo)),
+                            asOfDate), 2)
+                    })
+                    .Where(im => im.OpenBalance > 0.009m)
+                    .ToList();
 
                 var invoiceIds = unpaidInvoices.Select(i => i.Id).ToList();
                 var customerByInvoice = (
@@ -64,9 +97,7 @@ namespace CimmpleAPI.Services
                  .ToDictionary(g => g.Key, g => g.First());
 
                 var items = unpaidInvoices.Select(im =>
-                    new AccountingRules.AgingItem(
-                        im.DueDate,
-                        AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount)));
+                    new AccountingRules.AgingItem(im.DueDate, im.OpenBalance));
 
                 var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
                 var total = buckets.Sum(b => b.Amount);
@@ -86,7 +117,7 @@ namespace CimmpleAPI.Services
                             dueDate = im.DueDate.ToString("yyyy-MM-dd"),
                             customerId = cust?.CustomerID,
                             customerName = cust?.CustomerName ?? "",
-                            openBalance = AccountingRules.OpenBalance(im.TotalAmount, im.PaidAmount),
+                            openBalance = im.OpenBalance,
                             linkPath = "/orders/customer-invoices"
                         };
                     })
@@ -116,20 +147,55 @@ namespace CimmpleAPI.Services
         {
             try
             {
-                var unpaidInvoicesQuery = context.VendorInvoiceMaster
+                var cutoff = asOfDate.Date.AddDays(1);
+                var invoicesQuery = context.VendorInvoiceMaster.AsNoTracking()
                     .Where(vim => vim.TenantId == tenantId &&
                                   vim.voideddate == null &&
-                                  vim.PaidAmount < vim.TotalAmount - 0.009m &&
-                                  vim.InvoiceDate <= asOfDate);
+                                  vim.InvoiceDate < cutoff);
                 if (locationId.HasValue)
-                    unpaidInvoicesQuery = unpaidInvoicesQuery.Where(vim => vim.locationId == locationId.Value);
+                    invoicesQuery = invoicesQuery.Where(vim => vim.locationId == locationId.Value);
 
-                var unpaidInvoices = unpaidInvoicesQuery.ToList();
+                var invoices = invoicesQuery
+                    .Select(vim => new
+                    {
+                        vim.Id,
+                        vim.InvoiceNo,
+                        vim.prefixinvoiceno,
+                        vim.InvoiceDate,
+                        vim.DueDate,
+                        vim.TotalAmount,
+                        vim.PaidAmount,
+                        vim.Paydate,
+                        vim.vid,
+                        vim.VendorName
+                    })
+                    .ToList();
+
+                // Balance as of the report date, so past dates are not affected by later payments.
+                var ledger = InvoiceBalanceAsOfService.LoadVendorPayments(context, tenantId);
+                var unpaidInvoices = invoices
+                    .Select(vim => new
+                    {
+                        vim.Id,
+                        vim.InvoiceNo,
+                        vim.prefixinvoiceno,
+                        vim.InvoiceDate,
+                        vim.DueDate,
+                        vim.vid,
+                        vim.VendorName,
+                        OpenBalance = Math.Round(InvoiceBalanceAsOfService.OpenAsOf(
+                            vim.TotalAmount,
+                            vim.PaidAmount,
+                            vim.Paydate,
+                            vim.InvoiceDate,
+                            ledger.For(InvoiceBalanceAsOfService.VendorInvoiceKeys(vim.prefixinvoiceno, vim.InvoiceNo), vim.vid),
+                            asOfDate), 2)
+                    })
+                    .Where(vim => vim.OpenBalance > 0.009m)
+                    .ToList();
 
                 var items = unpaidInvoices.Select(vim =>
-                    new AccountingRules.AgingItem(
-                        vim.DueDate,
-                        AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount)));
+                    new AccountingRules.AgingItem(vim.DueDate, vim.OpenBalance));
 
                 var buckets = AccountingRules.CalculateAgingBuckets(items, asOfDate);
                 var total = buckets.Sum(b => b.Amount);
@@ -146,7 +212,7 @@ namespace CimmpleAPI.Services
                         dueDate = vim.DueDate.ToString("yyyy-MM-dd"),
                         vendorId = vim.vid,
                         vendorName = vim.VendorName ?? "",
-                        openBalance = AccountingRules.OpenBalance(vim.TotalAmount, vim.PaidAmount),
+                        openBalance = vim.OpenBalance,
                         linkPath = "/purchasing/vendor-invoices"
                     })
                     .GroupBy(x => x.bucket)

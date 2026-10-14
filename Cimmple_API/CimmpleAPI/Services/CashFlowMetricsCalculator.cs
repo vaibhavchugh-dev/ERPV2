@@ -112,8 +112,10 @@ namespace CimmpleAPI.Services
             var cashIn = paymentRows
                 .Where(t => t.isCustomer == 1)
                 .Sum(t => t.Amount ?? 0);
+            // Card payments credit the card liability; cash leaves only when the card bill is paid.
             var cashOut = paymentRows
-                .Where(t => t.isCustomer == 0 || t.isCustomer == null)
+                .Where(t => (t.isCustomer == 0 || t.isCustomer == null) &&
+                            !string.Equals(t.PaymentMethod, "Credit Card", StringComparison.OrdinalIgnoreCase))
                 .Sum(t => Math.Abs(t.Amount ?? 0));
 
             // Include historical paid invoices that have no payment transaction row.
@@ -151,6 +153,7 @@ namespace CimmpleAPI.Services
                               vim.Paydate != null &&
                               vim.Paydate >= rangeStart &&
                               vim.Paydate <= rangeEnd &&
+                              (vim.PaymentMethod == null || vim.PaymentMethod != "Credit Card") &&
                               !context.Transactions.Any(t =>
                                   t.TenantId == tenantId &&
                                   (t.isCustomer == 0 || t.isCustomer == null) &&

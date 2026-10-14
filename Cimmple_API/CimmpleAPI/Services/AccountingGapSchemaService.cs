@@ -342,6 +342,8 @@ END
                             t.TransactionType != null &&
                             EF.Functions.Like(t.TransactionType, "%Payment%") &&
                             (t.BankId == null || t.BankId <= 0) &&
+                            // Card payments have no bank by design; cash moves when the card bill is paid.
+                            (t.PaymentMethod == null || t.PaymentMethod != "Credit Card") &&
                             t.invoiceNo != null &&
                             t.invoiceNo != "")
                 .Select(t => new { t.TransactionID, t.invoiceNo, t.isCustomer })

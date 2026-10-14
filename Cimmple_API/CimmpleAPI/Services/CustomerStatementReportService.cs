@@ -104,11 +104,16 @@ public static class CustomerStatementReportService
                 .ToList();
 
             var invoiceNos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var invoiceIdByNo = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var inv in distinctInvoices)
             {
                 invoiceNos.Add(inv.InvoiceNo.ToString());
+                invoiceIdByNo.TryAdd(inv.InvoiceNo.ToString(), inv.Id);
                 if (!string.IsNullOrWhiteSpace(inv.PrefixInvoiceNo))
+                {
                     invoiceNos.Add(inv.PrefixInvoiceNo.Trim());
+                    invoiceIdByNo[inv.PrefixInvoiceNo.Trim()] = inv.Id;
+                }
             }
 
             // Opening: invoices before start with open balance contribution
@@ -187,6 +192,9 @@ public static class CustomerStatementReportService
                     Charges = 0,
                     Payments = amt,
                     Balance = running,
+                    InvoiceId = invoiceIdByNo.TryGetValue(pay.invoiceNo?.Trim() ?? "", out var paidInvoiceId)
+                        ? paidInvoiceId
+                        : null,
                     TransactionId = pay.TransactionID,
                     LinkPath = "/orders/customer-invoices"
                 });

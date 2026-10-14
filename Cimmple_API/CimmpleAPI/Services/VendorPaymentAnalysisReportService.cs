@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace CimmpleAPI.Services;
 
 /// <summary>
-/// Vendor payment analysis: cash paid by vendor in period plus open AP snapshot.
+/// Vendor payment analysis: payments by vendor in the period plus open AP as of the period end.
 /// </summary>
 public static class VendorPaymentAnalysisReportService
 {
@@ -18,6 +18,7 @@ public static class VendorPaymentAnalysisReportService
         public string Description { get; set; } = "";
         public decimal Amount { get; set; }
         public int? TransactionId { get; set; }
+        public int? InvoiceId { get; set; }
         public string LinkPath { get; set; } = "/purchasing/vendor-invoices";
     }
 
@@ -39,6 +40,7 @@ public static class VendorPaymentAnalysisReportService
         public decimal PaymentsInPeriod { get; set; }
         public int PaymentCount { get; set; }
         public decimal OpenApBalance { get; set; }
+        public string OpenApAsOf { get; set; } = "";
         public decimal InvoicesPaidAmountInPeriod { get; set; }
         public List<PaymentLineDto> Payments { get; set; } = new();
         public List<OpenInvoiceDto> OpenInvoices { get; set; } = new();
@@ -53,6 +55,8 @@ public static class VendorPaymentAnalysisReportService
         public List<VendorRowDto> Vendors { get; set; } = new();
         public decimal TotalPaymentsInPeriod { get; set; }
         public decimal TotalOpenAp { get; set; }
+        /// <summary>Open AP is a balance as of this date (the period end), not activity within the period.</summary>
+        public string OpenApAsOf { get; set; } = "";
         public string? SummaryNote { get; set; }
     }
 
@@ -91,12 +95,27 @@ public static class VendorPaymentAnalysisReportService
                 ));
 
         var invoiceToVendor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        // Vendor invoice numbers are only unique per vendor, so ids are keyed by (vendor, number).
+        var invoiceIdByVendorAndNo = new Dictionary<(int Vid, string No), int>();
         foreach (var vim in vendorInvoices)
         {
-            if (!string.IsNullOrWhiteSpace(vim.InvoiceNo))
-                invoiceToVendor[vim.InvoiceNo.Trim()] = vim.vid;
-            if (!string.IsNullOrWhiteSpace(vim.prefixinvoiceno))
-                invoiceToVendor[vim.prefixinvoiceno.Trim()] = vim.vid;
+            foreach (var no in new[] { vim.InvoiceNo, vim.prefixinvoiceno })
+            {
+                if (string.IsNullOrWhiteSpace(no))
+                    continue;
+                var key = no.Trim().ToUpperInvariant();
+                invoiceToVendor[key] = vim.vid;
+                invoiceIdByVendorAndNo[(vim.vid, key)] = vim.Id;
+            }
+        }
+
+        int? ResolvePaymentInvoiceId(int vid, string? invoiceNo)
+        {
+            if (vid <= 0 || string.IsNullOrWhiteSpace(invoiceNo))
+                return null;
+            return invoiceIdByVendorAndNo.TryGetValue((vid, invoiceNo.Trim().ToUpperInvariant()), out var id)
+                ? id
+                : null;
         }
 
         var payByVendor = new Dictionary<int, List<Transactions>>();
@@ -120,20 +139,44 @@ public static class VendorPaymentAnalysisReportService
             list.Add(t);
         }
 
-        var openInvoicesByVendor = vendorInvoices
-            .Where(v => v.PaidAmount < v.TotalAmount - Epsilon)
-            .GroupBy(v => v.vid)
+        // Open AP is a balance as of the period end; paid-in-period is the change in paid amount across the period.
+        var ledger = InvoiceBalanceAsOfService.LoadVendorPayments(db, tenantId);
+        var endCutoff = endDate.Date.AddDays(1);
+        var dayBeforeStart = start.AddDays(-1);
+        var invoiceBalances = vendorInvoices
+            .Select(v =>
+            {
+                var invoicePayments = ledger.For(
+                    InvoiceBalanceAsOfService.VendorInvoiceKeys(v.prefixinvoiceno, v.InvoiceNo), v.vid);
+                var paidAtEnd = InvoiceBalanceAsOfService.PaidAsOf(
+                    v.TotalAmount, v.PaidAmount, v.Paydate, v.InvoiceDate, invoicePayments, endDate);
+                var paidBeforeStart = InvoiceBalanceAsOfService.PaidAsOf(
+                    v.TotalAmount, v.PaidAmount, v.Paydate, v.InvoiceDate, invoicePayments, dayBeforeStart);
+                return new
+                {
+                    Invoice = v,
+                    OpenAtEnd = v.InvoiceDate < endCutoff
+                        ? Math.Round(Math.Max(0m, v.TotalAmount - paidAtEnd), 2)
+                        : 0m,
+                    PaidInPeriod = Math.Round(Math.Max(0m, paidAtEnd - paidBeforeStart), 2)
+                };
+            })
+            .ToList();
+
+        var openInvoicesByVendor = invoiceBalances
+            .Where(b => b.OpenAtEnd > Epsilon)
+            .GroupBy(b => b.Invoice.vid)
             .ToDictionary(
                 g => g.Key,
-                g => g.Select(v => new OpenInvoiceDto
+                g => g.Select(b => new OpenInvoiceDto
                 {
-                    InvoiceId = v.Id,
-                    InvoiceNo = !string.IsNullOrWhiteSpace(v.prefixinvoiceno)
-                        ? v.prefixinvoiceno!
-                        : (v.InvoiceNo ?? v.Id.ToString()),
-                    InvoiceDate = v.InvoiceDate.ToString("yyyy-MM-dd"),
-                    DueDate = v.DueDate.ToString("yyyy-MM-dd"),
-                    OpenBalance = AccountingRules.OpenBalance(v.TotalAmount, v.PaidAmount),
+                    InvoiceId = b.Invoice.Id,
+                    InvoiceNo = !string.IsNullOrWhiteSpace(b.Invoice.prefixinvoiceno)
+                        ? b.Invoice.prefixinvoiceno!
+                        : (b.Invoice.InvoiceNo ?? b.Invoice.Id.ToString()),
+                    InvoiceDate = b.Invoice.InvoiceDate.ToString("yyyy-MM-dd"),
+                    DueDate = b.Invoice.DueDate.ToString("yyyy-MM-dd"),
+                    OpenBalance = b.OpenAtEnd,
                     LinkPath = "/purchasing/vendor-invoices"
                 }).OrderBy(x => x.DueDate).ToList());
 
@@ -141,10 +184,10 @@ public static class VendorPaymentAnalysisReportService
             kv => kv.Key,
             kv => kv.Value.Sum(x => x.OpenBalance));
 
-        var paidInPeriodByVendor = vendorInvoices
-            .Where(v => v.Paydate != null && v.Paydate.Value.Date >= start && v.Paydate.Value.Date <= endDate.Date)
-            .GroupBy(v => v.vid)
-            .ToDictionary(g => g.Key, g => g.Sum(v => v.PaidAmount > 0 ? v.PaidAmount : v.TotalAmount));
+        var paidInPeriodByVendor = invoiceBalances
+            .Where(b => b.PaidInPeriod > Epsilon)
+            .GroupBy(b => b.Invoice.vid)
+            .ToDictionary(g => g.Key, g => g.Sum(b => b.PaidInPeriod));
 
         var vendorIds = payByVendor.Keys
             .Union(openByVendor.Keys)
@@ -193,6 +236,7 @@ public static class VendorPaymentAnalysisReportService
                     Description = p.Description ?? "Vendor payment",
                     Amount = p.Amount ?? 0,
                     TransactionId = p.TransactionID,
+                    InvoiceId = ResolvePaymentInvoiceId(vid, p.invoiceNo),
                     LinkPath = "/purchasing/vendor-invoices"
                 })
                 .ToList();
@@ -205,6 +249,7 @@ public static class VendorPaymentAnalysisReportService
                 PaymentsInPeriod = payAmount,
                 PaymentCount = payList.Count,
                 OpenApBalance = open,
+                OpenApAsOf = endDate.Date.ToString("yyyy-MM-dd"),
                 InvoicesPaidAmountInPeriod = invPaid,
                 Payments = paymentLines,
                 OpenInvoices = openInvs ?? new List<OpenInvoiceDto>()
@@ -225,8 +270,9 @@ public static class VendorPaymentAnalysisReportService
             Vendors = rows,
             TotalPaymentsInPeriod = rows.Sum(r => r.PaymentsInPeriod),
             TotalOpenAp = rows.Sum(r => r.OpenApBalance),
+            OpenApAsOf = endDate.Date.ToString("yyyy-MM-dd"),
             SummaryNote = rows.Count == 0
-                ? "No vendor payment or open AP activity for this period/location."
+                ? $"No vendor payments in this period and no open AP as of {endDate.Date:yyyy-MM-dd} for this location."
                 : null
         };
     }

@@ -206,7 +206,8 @@ namespace CimmpleAPI.Controllers
                         b.Balance,
                         b.RoutingNumber,
                         b.NickName,
-                        b.LastReconciledDate
+                        b.LastReconciledDate,
+                        b.isprimary
                     })
                     .ToList();
                 var bankIds = bankRows.Select(b => b.Id).ToList();
@@ -232,6 +233,8 @@ namespace CimmpleAPI.Controllers
                         })
                         .ToDictionary(x => x.BankId, x => x.Activity);
 
+                var banksWithGl = GlAccountResolutionService.GetBankIdsWithGlAccount(_context, tenantid, bankIds);
+
                 var banks = bankRows
                     .Select(b =>
                     {
@@ -252,7 +255,9 @@ namespace CimmpleAPI.Controllers
                             currentBalance = opening + activity,
                             routingNumber = b.RoutingNumber,
                             nickName = b.NickName,
-                            lastReconciledDate = b.LastReconciledDate
+                            lastReconciledDate = b.LastReconciledDate,
+                            isprimary = b.isprimary ?? false,
+                            hasGlAccount = banksWithGl.Contains(b.Id)
                         };
                     })
                     .ToList();
@@ -354,7 +359,6 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "Check Series is required" });
                 }
 
-                // COA is optional - only validate length if provided
                 if (!string.IsNullOrWhiteSpace(request.coa) && request.coa.Length != 4)
                 {
                     return BadRequest(new { error = "COA must be exactly 4 characters" });
@@ -367,6 +371,19 @@ namespace CimmpleAPI.Controllers
                 if (request.Id > 0 && existingBank == null)
                 {
                     return NotFound(new { error = "Bank not found. It may have been deleted." });
+                }
+
+                // Payments post to the bank's COA; an active bank without one cannot be used for GL posting.
+                var isActiveBank = !string.Equals((request.status ?? "Active").Trim(), "Inactive", StringComparison.OrdinalIgnoreCase);
+                if (isActiveBank && string.IsNullOrWhiteSpace(request.coa))
+                {
+                    var hasLegacyMapping = existingBank != null &&
+                        _context.BankCOAMapping.Any(m => m.bankid == existingBank.Id &&
+                            _context.ChartofAccounts.Any(c => c.AccountID == m.accountid && c.Tenantid == request.TenantID && c.IsActive));
+                    if (!hasLegacyMapping)
+                    {
+                        return BadRequest(new { error = "Chart of Accounts is required for an active bank", coa = "required" });
+                    }
                 }
 
                 BankMaster bank;
@@ -499,7 +516,7 @@ namespace CimmpleAPI.Controllers
                 bank.Balance = request.Balance;
                 bank.startingcheck = request.startingcheck;
                 bank.checkseries = request.checkseries;
-                bank.coa = request.coa ?? string.Empty; // Required in DB, but optional in UI
+                bank.coa = request.coa ?? string.Empty;
                 bank.status = request.status ?? "Active";
                 bank.isprimary = request.isprimary ?? false;
                 bank.ispayrollDefault = request.ispayrollDefault ?? false;
