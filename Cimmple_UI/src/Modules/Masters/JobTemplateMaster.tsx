@@ -5,6 +5,8 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import { PAGE_SIZE_OPTIONS, useListPageSize } from "../../Common/Hooks/useListPageSize";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import {
   JobTemplateService,
   JobTemplate,
@@ -82,6 +84,9 @@ const JobTemplateMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -181,6 +186,7 @@ const JobTemplateMasterComponent: React.FC = () => {
   const handleSort = (column?: string) => {
     if (!column) return;
 
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -192,14 +198,7 @@ const JobTemplateMasterComponent: React.FC = () => {
 
   const getSortIcon = (column?: string) => {
     if (!column) return null;
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const toggleCategoryFilter = (categoryValueId: number) => {
@@ -368,18 +367,6 @@ const JobTemplateMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={statusFilter}
             onChange={(e) => {
@@ -464,7 +451,7 @@ const JobTemplateMasterComponent: React.FC = () => {
 
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -501,7 +488,7 @@ const JobTemplateMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 templates.map((template) => (
-                  <tr key={template.id} onClick={() => handleRowClick(template)}>
+                  <tr key={template.id} className="clickable" onClick={() => handleRowClick(template)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(template, column.key)}</td>
                     ))}

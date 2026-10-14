@@ -5,6 +5,7 @@ import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumn
 import { PriceBreakdownService, PriceBreakdownMaster, PriceBreakdownMasterReq } from "../../Common/Services/PriceBreakdownService";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import "./CustomerMaster.scss";
 
 interface EditablePriceBreakdown extends PriceBreakdownMaster {
@@ -186,26 +187,8 @@ const PriceBreakdownMasterComponent: React.FC = () => {
           <input
             type="text"
             className="form-input"
-            style={{
-              width: "100%",
-              padding: "0.625rem 0.75rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-              color: "#111827",
-              backgroundColor: "#ffffff",
-              transition: "all 0.15s",
-            }}
             value={priceBreakdown.itemName || ""}
             onChange={(e) => handleInputChange(index, "itemName", e.target.value)}
-            onFocus={(e) => {
-              e.target.style.borderColor = "#6366f1";
-              e.target.style.boxShadow = "0 0 0 3px rgba(99, 102, 241, 0.1)";
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = "#d1d5db";
-              e.target.style.boxShadow = "none";
-            }}
             placeholder="Enter item name"
             maxLength={500}
             data-pb-item-index={index}
@@ -238,24 +221,12 @@ const PriceBreakdownMasterComponent: React.FC = () => {
         );
       case "actions":
         return (
-          <button
-            type="button"
+          <DeleteIconButton
             onClick={(e) => {
               e.stopPropagation();
               handleDeleteRow(index);
             }}
-            className="btn-icon btn-icon-danger"
-            style={{
-              padding: "0.25rem 0.5rem",
-              fontSize: "0.875rem",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            title="Delete"
-          >
-            ×
-          </button>
+          />
         );
       default:
         return null;

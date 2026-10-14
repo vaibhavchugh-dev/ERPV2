@@ -4,6 +4,8 @@ import { toast } from "react-toastify";
 import { WorkstationService, WorkstationMaster } from "../../Common/Services/WorkstationService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
 import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
@@ -39,6 +41,9 @@ const WorkstationMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -107,6 +112,7 @@ const WorkstationMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof WorkstationMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -169,14 +175,7 @@ const WorkstationMasterComponent: React.FC = () => {
   } = useClientPagination(sortedWorkstations, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof WorkstationMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (workstation: WorkstationMaster, key: string): React.ReactNode => {
@@ -265,18 +264,6 @@ const WorkstationMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -292,7 +279,7 @@ const WorkstationMasterComponent: React.FC = () => {
       {/* Workstations Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -323,7 +310,7 @@ const WorkstationMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedWorkstations.map((workstation) => (
-                  <tr key={workstation.id} onClick={() => handleRowClick(workstation)}>
+                  <tr key={workstation.id} className="clickable" onClick={() => handleRowClick(workstation)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(workstation, column.key)}</td>
                     ))}

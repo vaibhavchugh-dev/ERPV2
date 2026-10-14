@@ -1200,8 +1200,10 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                             type="button"
                             className="photo-delete-btn"
                             onClick={() => handleDeleteStoredPhoto(index)}
+                            title="Delete photo"
+                            aria-label="Delete photo"
                           >
-                            <FontAwesomeIcon icon={faTimes} />
+                            <FontAwesomeIcon icon={faTrash} />
                           </button>
                         </div>
                       ))}
@@ -1212,8 +1214,10 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                             type="button"
                             className="photo-delete-btn"
                             onClick={() => handleDeletePendingPhoto(photo.id)}
+                            title="Delete photo"
+                            aria-label="Delete photo"
                           >
-                            <FontAwesomeIcon icon={faTimes} />
+                            <FontAwesomeIcon icon={faTrash} />
                           </button>
                         </div>
                       ))}

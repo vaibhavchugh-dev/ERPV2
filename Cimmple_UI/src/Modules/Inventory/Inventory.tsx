@@ -14,6 +14,8 @@ import { LocationService } from "../../Common/Services/LocationService";
 import { AuthService } from "../../Common/Services/AuthService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import SortIndicator from "../../Common/Components/SortIndicator";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
 import StockMovementModal from "./StockMovementModal";
 import "./Inventory.scss";
 
@@ -145,7 +147,10 @@ const Inventory: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<string>("locationName");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
+  const { tableRef: balancesTableRef, lockColumnWidths } = useLockedColumnWidths();
+
   const handleSort = (column: string) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -154,10 +159,9 @@ const Inventory: React.FC = () => {
     }
   };
 
-  const sortIndicator = (column: string) => {
-    if (sortColumn !== column) return " ⇅";
-    return sortDirection === "asc" ? " ↑" : " ↓";
-  };
+  const sortIndicator = (column: string) => (
+    <SortIndicator active={sortColumn === column} direction={sortDirection} />
+  );
 
   // Seed search from report drill-down: ?search=
   useEffect(() => {
@@ -489,7 +493,7 @@ const Inventory: React.FC = () => {
 
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="inventory-table">
+          <table className="inventory-table" ref={balancesTableRef}>
             <thead>
               <tr>
                 <th className="sortable" onClick={() => handleSort("partNo")}>

@@ -11,6 +11,7 @@ import { getDefaultSystemSettings } from "../../Common/Utils/defaultSystemSettin
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
@@ -1276,14 +1277,10 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
                           <span>Default</span>
                         </label>
                         {contacts.length > 1 && (
-                          <button
-                            type="button"
-                            className="btn-icon btn-icon-danger"
+                          <DeleteIconButton
+                            label="Delete contact"
                             onClick={() => handleDeleteContact(index)}
-                            title="Delete"
-                          >
-                            🗑️
-                          </button>
+                          />
                         )}
                       </div>
                     </div>

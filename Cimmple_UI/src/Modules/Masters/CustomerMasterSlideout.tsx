@@ -9,6 +9,7 @@ import {
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import "./CustomerMasterSlideout.scss";
 
 interface CustomerMasterSlideoutProps {
@@ -1041,14 +1042,10 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
                           <span>Default</span>
                         </label>
                         {contacts.length > 1 && (
-                          <button
-                            type="button"
-                            className="btn-icon btn-icon-danger"
+                          <DeleteIconButton
+                            label="Delete contact"
                             onClick={() => handleDeleteContact(index)}
-                            title="Delete"
-                          >
-                            🗑️
-                          </button>
+                          />
                         )}
                       </div>
                     </div>

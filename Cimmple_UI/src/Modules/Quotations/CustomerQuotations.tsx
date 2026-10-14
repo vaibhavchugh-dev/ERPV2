@@ -152,7 +152,7 @@ const CustomerQuotations: React.FC = () => {
       key: "quotationNumber",
       label: "Quotation #",
       sortable: true,
-      render: (value: any) => formatQuotationNumber(value),
+      render: (value: any) => <span className="entity-number">{formatQuotationNumber(value)}</span>,
     },
     {
       key: "customerName",

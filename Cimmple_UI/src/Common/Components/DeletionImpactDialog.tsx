@@ -1,4 +1,6 @@
 import React from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTrash } from '@fortawesome/free-solid-svg-icons';
 import './DeletionImpactDialog.scss';
 
 export interface ImpactedEntity {
@@ -118,11 +120,12 @@ const DeletionImpactDialog: React.FC<DeletionImpactDialogProps> = ({
                                   onClick={() => handleDeleteDependency(dependency.entityType, item.id, item.deleteEndpoint)}
                                   disabled={isLoading || (deletingDependency?.type === dependency.entityType && deletingDependency?.id === item.id)}
                                   title={`Delete ${item.name}`}
+                                  aria-label={`Delete ${item.name}`}
                                 >
                                   {deletingDependency?.type === dependency.entityType && deletingDependency?.id === item.id ? (
                                     <span className="spinner-small"></span>
                                   ) : (
-                                    '×'
+                                    <FontAwesomeIcon icon={faTrash} />
                                   )}
                                 </button>
                               )}

@@ -18,6 +18,9 @@ import {
 } from "../../Common/Services/ReportScheduleService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { useTableSort } from "../../Common/Hooks/useTableSort";
+import SortableTh from "../../Common/Components/SortableTh";
+import { rowClickHandler } from "../../Common/Utils/rowClick";
 import "./ScheduledReports.scss";
 
 const freqLabel = (s: ReportScheduleDto) => {
@@ -30,6 +33,19 @@ const freqLabel = (s: ReportScheduleDto) => {
     return `Monthly (day ${s.dayOfMonth ?? 1} @ ${time})`;
   }
   return `Daily @ ${time}`;
+};
+
+const getScheduleSortValue = (s: ReportScheduleDto, key: string): unknown => {
+  switch (key) {
+    case "schedule":
+      return freqLabel(s);
+    case "nextRunUtc":
+      return s.isEnabled ? s.nextRunUtc : null;
+    case "status":
+      return s.isEnabled ? "Enabled" : "Paused";
+    default:
+      return s[key as keyof ReportScheduleDto];
+  }
 };
 
 const ScheduledReports: React.FC = () => {
@@ -58,6 +74,12 @@ const ScheduledReports: React.FC = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  const { sortedRows: sortedItems, sortKey, sortDirection, toggleSort, tableRef } = useTableSort(
+    items,
+    getScheduleSortValue
+  );
+  const sortProps = { activeKey: sortKey, direction: sortDirection, onSort: toggleSort };
 
   const toggleEnabled = async (item: ReportScheduleDto) => {
     setBusyId(item.id);
@@ -125,12 +147,6 @@ const ScheduledReports: React.FC = () => {
           className="filter-select"
           value={masterListFilter.value}
           onChange={(e) => masterListFilter.onChange(e.target.value)}
-          style={{
-            padding: "0.5rem 2rem 0.5rem 0.75rem",
-            border: "1px solid #d1d5db",
-            borderRadius: "0.5rem",
-            fontSize: "0.875rem",
-          }}
         >
           {masterListFilter.options.map((opt) => (
             <option key={opt.value || "all"} value={opt.value}>
@@ -149,24 +165,34 @@ const ScheduledReports: React.FC = () => {
         </div>
       ) : (
         <div className="sr-table-wrap">
-          <table className="sr-table">
+          <table className="sr-table" ref={tableRef}>
             <thead>
               <tr>
-                <th>Report</th>
+                <SortableTh sortKey="reportName" {...sortProps}>Report</SortableTh>
                 <th>Filters</th>
-                <th>Schedule</th>
+                <SortableTh sortKey="schedule" {...sortProps}>Schedule</SortableTh>
                 <th>Recipients</th>
-                <th title="Time the report was generated and email was queued (not inbox delivery)">Last queued</th>
-                <th>Next run</th>
-                <th>Status</th>
+                <SortableTh
+                  sortKey="lastRunUtc"
+                  {...sortProps}
+                  title="Time the report was generated and email was queued (not inbox delivery)"
+                >
+                  Last queued
+                </SortableTh>
+                <SortableTh sortKey="nextRunUtc" {...sortProps}>Next run</SortableTh>
+                <SortableTh sortKey="status" {...sortProps}>Status</SortableTh>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {sortedItems.map((item) => {
                 const busy = busyId === item.id;
                 return (
-                  <tr key={item.id} className={!item.isEnabled ? "is-disabled" : undefined}>
+                  <tr
+                    key={item.id}
+                    className={`clickable${!item.isEnabled ? " is-disabled" : ""}`}
+                    onClick={rowClickHandler(() => setEditing(item))}
+                  >
                     <td>
                       <div className="sr-name">{item.reportName}</div>
                       <div className="sr-meta">

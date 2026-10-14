@@ -176,17 +176,15 @@ const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId
                 <label htmlFor="NCRCode">
                   NCR Code <span style={{ color: "#dc2626" }}>*</span>
                 </label>
-                <div className={`input-group ${errors.NCRCode ? "has-error" : ""}`}>
-                  <input
-                    id="NCRCode"
-                    className="form-input"
-                    value={formData.NCRCode}
-                    maxLength={50}
-                    onChange={(e) => handleInputChange("NCRCode", e.target.value)}
-                    placeholder="e.g. DIM-001"
-                  />
-                </div>
-                {errors.NCRCode && <span className="error-text">{errors.NCRCode}</span>}
+                <input
+                  id="NCRCode"
+                  className={`form-input${errors.NCRCode ? " error" : ""}`}
+                  value={formData.NCRCode}
+                  maxLength={50}
+                  onChange={(e) => handleInputChange("NCRCode", e.target.value)}
+                  placeholder="e.g. DIM-001"
+                />
+                {errors.NCRCode && <span className="error-message">{errors.NCRCode}</span>}
               </div>
             </div>
 

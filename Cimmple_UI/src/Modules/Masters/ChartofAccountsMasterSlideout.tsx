@@ -495,7 +495,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
       <div className="form-group">
         <label htmlFor={label}>{label}</label>
         {showAddNew ? (
-          <div className="input-group" style={{ display: "flex", gap: "0.5rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
             <input
               type="text"
               className="form-input"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { UserManagementService, UserManagement as UserManagementType, UserQueryParams, PaginatedUsersResponse, Role } from "../../Common/Services/UserManagementService";
@@ -8,6 +8,9 @@ import RolePermissionManager from "./RolePermissionManager";
 import RoleManager from "./RoleManager";
 import ResetPasswordModal, { ResetPasswordUser } from "./ResetPasswordModal";
 import { formatDate } from "../../Common/Utils/Formatting";
+import SortableTh from "../../Common/Components/SortableTh";
+import { useTableSort } from "../../Common/Hooks/useTableSort";
+import { rowClickHandler } from "../../Common/Utils/rowClick";
 import "./UserManagement.scss";
 
 const UserManagementComponent: React.FC = () => {
@@ -37,8 +40,6 @@ const UserManagementComponent: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterValue, setFilterValue] = useState("all");
-  const [sortColumn, setSortColumn] = useState<keyof UserManagementType | null>(null);
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [pagination, setPagination] = useState({
     totalCount: 0,
     pageNumber: 1,
@@ -122,7 +123,6 @@ const UserManagementComponent: React.FC = () => {
       if (result && result.users) {
         setUsers(result.users);
         setPagination(result.pagination);
-        setSortColumn(null);
         console.log('[UserManagement] Loaded', result.users.length, 'users');
       } else {
         console.warn('[UserManagement] Invalid response from API:', result);
@@ -184,32 +184,20 @@ const UserManagementComponent: React.FC = () => {
     });
   };
 
-  const handleSort = (column: keyof UserManagementType) => {
-    const direction = sortColumn === column && sortDirection === "asc" ? "desc" : "asc";
-    setSortColumn(column);
-    setSortDirection(direction);
-
-    const sorted = [...users].sort((a, b) => {
-      let aVal: string | number | undefined;
-      let bVal: string | number | undefined;
-      if (column === "role") {
-        aVal = getRoleName(a.role, a.roleName);
-        bVal = getRoleName(b.role, b.roleName);
-      } else {
-        aVal = a[column] as string | number | undefined;
-        bVal = b[column] as string | number | undefined;
-      }
-
-      if (aVal === null || aVal === undefined) return 1;
-      if (bVal === null || bVal === undefined) return -1;
-
-      if (aVal < bVal) return direction === "asc" ? -1 : 1;
-      if (aVal > bVal) return direction === "asc" ? 1 : -1;
-      return 0;
-    });
-
-    setUsers(sorted);
-  };
+  const getUserSortValue = useCallback(
+    (user: UserManagementType, key: string): unknown => {
+      if (key === "role") return getRoleName(user.role, user.roleName);
+      if (key === "fullName") return `${user.firstName || ""} ${user.lastName || ""}`.trim();
+      return user[key as keyof UserManagementType];
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rolesMap]
+  );
+  const { sortedRows: sortedUsers, sortKey, sortDirection, toggleSort, tableRef } = useTableSort(
+    users,
+    getUserSortValue
+  );
+  const sortProps = { activeKey: sortKey, direction: sortDirection, onSort: toggleSort };
 
   const handlePageChange = (page: number) => {
     setPagination(prev => ({ ...prev, pageNumber: page }));
@@ -296,40 +284,32 @@ const UserManagementComponent: React.FC = () => {
             </div>
           ) : (
             <>
-              <table className="data-table">
+              <table className="data-table" ref={tableRef}>
                 <thead>
                   <tr>
-                    <th onClick={() => handleSort('userName')} className="sortable">
-                      Username {sortColumn === 'userName' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
-                    <th onClick={() => handleSort('firstName')} className="sortable">
-                      Full Name {sortColumn === 'firstName' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
-                    <th onClick={() => handleSort('email')} className="sortable">
-                      Email {sortColumn === 'email' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
-                    <th onClick={() => handleSort('role')} className="sortable">
-                      Role {sortColumn === 'role' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
-                    <th onClick={() => handleSort('status')} className="sortable">
-                      Status {sortColumn === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
-                    <th onClick={() => handleSort('createDate')} className="sortable">
-                      Created Date {sortColumn === 'createDate' && (sortDirection === 'asc' ? '↑' : '↓')}
-                    </th>
+                    <SortableTh sortKey="userName" {...sortProps}>Username</SortableTh>
+                    <SortableTh sortKey="fullName" {...sortProps}>Full Name</SortableTh>
+                    <SortableTh sortKey="email" {...sortProps}>Email</SortableTh>
+                    <SortableTh sortKey="role" {...sortProps}>Role</SortableTh>
+                    <SortableTh sortKey="status" {...sortProps}>Status</SortableTh>
+                    <SortableTh sortKey="createDate" {...sortProps}>Created Date</SortableTh>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.length === 0 ? (
+                  {sortedUsers.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="no-data">
                         {loading ? 'Loading...' : 'No users found'}
                       </td>
                     </tr>
                   ) : (
-                    users.map((user) => (
-                      <tr key={user.userUniqueID}>
+                    sortedUsers.map((user) => (
+                      <tr
+                        key={user.userUniqueID}
+                        className="clickable"
+                        onClick={rowClickHandler(() => handleEditUser(user.userUniqueID))}
+                      >
                         <td>{user.userName || '-'}</td>
                         <td>{`${user.firstName || ''} ${user.lastName || ''}`.trim() || '-'}</td>
                         <td>{user.email || '-'}</td>

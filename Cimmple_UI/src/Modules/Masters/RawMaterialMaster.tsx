@@ -3,6 +3,8 @@ import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import {
   InventoryService,
   RawMaterial,
@@ -22,6 +24,7 @@ import {
 } from "../../Common/Constants/unitsOfMeasure";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { rowClickHandler } from "../../Common/Utils/rowClick";
 import "./CustomerMaster.scss";
 import "./RawMaterialMaster.scss";
 import "../Inventory/Inventory.scss";
@@ -148,6 +151,9 @@ const RawMaterialMaster: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   const loadLocations = async () => {
     const tid = getTenantId();
@@ -472,6 +478,7 @@ const RawMaterialMaster: React.FC = () => {
   };
 
   const handleSort = (column: RawMaterialSortKey) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -544,14 +551,7 @@ const RawMaterialMaster: React.FC = () => {
   }, [filteredMaterials, sortColumn, sortDirection]);
 
   const getSortIcon = (column: RawMaterialSortKey) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const {
@@ -1271,7 +1271,7 @@ const RawMaterialMaster: React.FC = () => {
 
       <div className="table-card">
         <div className="table-wrapper" style={{ overflowX: "auto" }}>
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -1303,7 +1303,7 @@ const RawMaterialMaster: React.FC = () => {
                 </tr>
               ) : (
                 pagedMaterials.map((material) => (
-                  <tr key={material.id}>
+                  <tr key={material.id} className="clickable" onClick={rowClickHandler(() => handleEdit(material))}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(material, column.key)}</td>
                     ))}

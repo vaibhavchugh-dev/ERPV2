@@ -33,6 +33,7 @@ import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs
 import DeletionImpactDialog, {
   DeletionImpactResult,
 } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { InventoryService, RawMaterial } from "../../Common/Services/InventoryService";
 import "./JobTemplateMasterSlideout.scss";
 
@@ -1471,14 +1472,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                               />
                             </td>
                             <td>
-                              <button
-                                type="button"
-                                className="jt-icon-button is-danger"
-                                title="Remove material"
+                              <DeleteIconButton
+                                label="Remove material"
                                 onClick={() => handleRemoveMaterial(index)}
-                              >
-                                🗑
-                              </button>
+                              />
                             </td>
                           </tr>
                         );
@@ -1753,14 +1750,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                               >
                                 ↓
                               </button>
-                              <button
-                                type="button"
-                                className="jt-icon-button is-danger"
-                                title="Delete operation"
+                              <DeleteIconButton
+                                label="Delete operation"
                                 onClick={() => handleRemoveOperation(index)}
-                              >
-                                🗑
-                              </button>
+                              />
                             </div>
                           </td>
                         </tr>

@@ -198,22 +198,7 @@ const CustomerShipments: React.FC = () => {
       label: "Shipment #",
       sortable: true,
       align: "left" as const,
-      render: (value: any, row: CustomerShipmentSummary) => (
-        <button
-          className="link-button"
-          onClick={() => handleViewShipment(row)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#2563eb',
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            fontWeight: '500'
-          }}
-        >
-          {value}
-        </button>
-      ),
+      render: (value: any) => <span className="entity-number">{value}</span>,
     },
     {
       key: "orderNumber",
@@ -358,6 +343,7 @@ const CustomerShipments: React.FC = () => {
         columns={columns}
         loading={loading}
         enablePagination
+        onRowClick={handleViewShipment}
         searchPlaceholder="Search by shipment #, order #, customer, or tracking #..."
         searchFields={["shipmentNo", "orderNumber", "customerName", "customerCode", "trackingNumber", "courier", "shipmentDate"]}
         filters={[

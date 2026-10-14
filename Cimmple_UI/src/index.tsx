@@ -8,6 +8,7 @@ import ReduxStore from "./Redux/Store/IndexStore";
 import { SettingsProvider } from "./Common/Contexts/SettingsContext";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "react-toastify/dist/ReactToastify.css";
+import "./Common/Styles/ui-controls.scss";
 
 ReactDOM.render(
   <Provider store={ReduxStore}>

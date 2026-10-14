@@ -35,6 +35,13 @@ const VendorOrders: React.FC = () => {
     const orderIdParam = urlParams.get('orderId') || urlParams.get('open');
     const search = urlParams.get('search');
 
+    if (urlParams.get('new') === '1') {
+      setSelectedOrderId(0);
+      setShowSlideout(true);
+      history.replace(location.pathname);
+      return;
+    }
+
     if (orderIdParam && orderIdParam !== processedOrderIdRef.current) {
       const orderId = parseInt(orderIdParam, 10);
       if (orderId > 0) {
@@ -192,7 +199,7 @@ const VendorOrders: React.FC = () => {
       label: "Order #",
       sortable: true,
       align: "left" as const,
-      render: (value: any) => formatOrderNumber(value),
+      render: (value: any) => <span className="entity-number">{formatOrderNumber(value)}</span>,
     },
     {
       key: "vendorName",
@@ -221,21 +228,12 @@ const VendorOrders: React.FC = () => {
                   setShowQuotationSlideout(true);
                 }}
                 title="Click to view quotation"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#6366f1',
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
-                  fontWeight: 500,
-                  padding: 0,
-                }}
               >
                 {quotationNo}
               </button>
             );
           }
-          return <span style={{ color: "#6366f1", fontWeight: 500 }}>{quotationNo}</span>;
+          return <span>{quotationNo}</span>;
         }
         return <span style={{ color: "#9ca3af" }}>-</span>;
       },

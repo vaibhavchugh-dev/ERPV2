@@ -32,6 +32,7 @@ import { RawMaterial } from "../../Common/Services/InventoryService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import CommentsSection, { EntityComment } from "../../Common/Components/CommentsSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
@@ -2532,21 +2533,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteDetail(index)}
-                                style={{
-                                  padding: "0.25rem 0.5rem",
-                                  backgroundColor: "#ef4444",
-                                  color: "white",
-                                  border: "none",
-                                  borderRadius: "0.25rem",
-                                  cursor: "pointer",
-                                  fontSize: "0.75rem",
-                                }}
-                              >
-                                Delete
-                              </button>
+                              <DeleteIconButton label="Delete line" onClick={() => handleDeleteDetail(index)} />
                             </td>
                           </tr>
                           {historyHint ? (

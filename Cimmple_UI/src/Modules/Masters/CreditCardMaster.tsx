@@ -4,6 +4,8 @@ import { toast } from "react-toastify";
 import { CreditCardService, CreditCardMaster } from "../../Common/Services/CreditCardService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import CreditCardMasterSlideout from "./CreditCardMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
@@ -46,6 +48,9 @@ const CreditCardMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -113,6 +118,7 @@ const CreditCardMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof CreditCardMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -177,14 +183,7 @@ const CreditCardMasterComponent: React.FC = () => {
   } = useClientPagination(sortedCreditCards, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof CreditCardMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (creditCard: CreditCardMaster, key: string): React.ReactNode => {
@@ -274,18 +273,6 @@ const CreditCardMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -301,7 +288,7 @@ const CreditCardMasterComponent: React.FC = () => {
       {/* Credit Cards Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -332,7 +319,7 @@ const CreditCardMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedCreditCards.map((creditCard) => (
-                  <tr key={creditCard.id} onClick={() => handleRowClick(creditCard)}>
+                  <tr key={creditCard.id} className="clickable" onClick={() => handleRowClick(creditCard)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(creditCard, column.key)}</td>
                     ))}

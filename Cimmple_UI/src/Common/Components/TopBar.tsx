@@ -719,7 +719,7 @@ const TopBar: React.FC = () => {
               <div className="location-dropdown">
                 <div className="dropdown-header">
                   <FontAwesomeIcon icon={faMapMarkerAlt} size="sm" />
-                  <div>
+                  <div className="dropdown-user-meta">
                     <div className="dropdown-name">Working site</div>
                     <div className="dropdown-email">Lists follow this site; choose All sites on a page for tenant-wide view</div>
                   </div>
@@ -736,7 +736,7 @@ const TopBar: React.FC = () => {
                       className={`dropdown-item ${currentLocationId === loc.locationId ? 'active' : ''}`}
                       onClick={() => handleLocationChange(loc.locationId)}
                     >
-                      <div style={{ flex: 1, textAlign: 'left' }}>
+                      <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                         <div style={{ fontWeight: currentLocationId === loc.locationId ? 600 : 400 }}>
                           {loc.name}
                         </div>

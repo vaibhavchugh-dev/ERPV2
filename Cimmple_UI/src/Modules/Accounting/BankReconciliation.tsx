@@ -5,7 +5,6 @@ import {
   faExclamationTriangle,
   faDownload,
   faUpload,
-  faFilter,
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -18,6 +17,8 @@ import {
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import SortIndicator from "../../Common/Components/SortIndicator";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
 import BankStatementImportModal from "./BankStatementImportModal";
 import type { BankStatementImportResult } from "./BankStatementImportModal";
 
@@ -70,7 +71,10 @@ const BankReconciliation: React.FC = () => {
   const hasOpenPeriod = !!openPeriod;
   const beginningBalance = openPeriod?.beginningBalance ?? reconContext?.suggestedBeginningBalance ?? 0;
 
+  const { tableRef: transactionsTableRef, lockColumnWidths } = useLockedColumnWidths();
+
   const handleSort = (column: ReconSortColumn) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -132,11 +136,6 @@ const BankReconciliation: React.FC = () => {
 
   const canComplete = hasOpenPeriod && Math.abs(differenceAmount) < 0.01;
 
-  const sortIcon = (column: ReconSortColumn) => {
-    if (sortColumn !== column) return "⇅";
-    return sortDirection === "asc" ? "↑" : "↓";
-  };
-
   const thSortable = (
     column: ReconSortColumn,
     label: string,
@@ -157,10 +156,8 @@ const BankReconciliation: React.FC = () => {
       }}
       title={`Sort by ${label}`}
     >
-      {label}{" "}
-      <span style={{ color: sortColumn === column ? "#2563eb" : "#9ca3af", fontSize: "0.75rem" }}>
-        {sortIcon(column)}
-      </span>
+      {label}
+      <SortIndicator active={sortColumn === column} direction={sortDirection} />
     </th>
   );
 
@@ -1161,21 +1158,11 @@ const BankReconciliation: React.FC = () => {
           marginBottom: "1.5rem",
         }}
       >
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <FontAwesomeIcon icon={faFilter} style={{ color: "#6b7280" }} />
-            <span style={{ fontWeight: 500, color: "#374151" }}>Filters:</span>
-          </div>
-
+        <div className="filter-group" style={{ flexWrap: "wrap" }}>
           <select
             value={masterListFilter.value}
             onChange={(e) => masterListFilter.onChange(e.target.value)}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-            }}
+            className="filter-select"
             title="Site"
           >
             {masterListFilter.options.map((opt) => (
@@ -1188,12 +1175,7 @@ const BankReconciliation: React.FC = () => {
           <select
             value={filters.reconciled}
             onChange={(e) => setFilters((prev) => ({ ...prev, reconciled: e.target.value }))}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-            }}
+            className="filter-select"
           >
             <option value="all">All Transactions</option>
             <option value="reconciled">Reconciled Only</option>
@@ -1203,12 +1185,7 @@ const BankReconciliation: React.FC = () => {
           <select
             value={filters.amountRange}
             onChange={(e) => setFilters((prev) => ({ ...prev, amountRange: e.target.value }))}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-            }}
+            className="filter-select"
           >
             <option value="All">All Amounts</option>
             <option value="Under $100">Under $100</option>
@@ -1220,12 +1197,7 @@ const BankReconciliation: React.FC = () => {
           <select
             value={filters.dateRange}
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
-            style={{
-              padding: "0.5rem 1rem",
-              border: "1px solid #d1d5db",
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-            }}
+            className="filter-select"
           >
             <option value="Last 7 Days">Last 7 Days</option>
             <option value="Last 30 Days">Last 30 Days</option>
@@ -1291,7 +1263,7 @@ const BankReconciliation: React.FC = () => {
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table ref={transactionsTableRef} style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead style={{ backgroundColor: "#f9fafb" }}>
                 <tr>
                   {thSortable("date", "Date", "left")}

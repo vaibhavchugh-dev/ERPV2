@@ -48,6 +48,13 @@ const Quality: React.FC = () => {
     const severity = params.get("severity");
     let seeded = false;
 
+    if (params.get("new") === "1") {
+      setSelectedNCRId(0);
+      setShowSlideout(true);
+      history.replace(location.pathname);
+      return;
+    }
+
     if (status && status.trim()) {
       setFilters((prev) => ({
         ...prev,
@@ -267,7 +274,7 @@ const Quality: React.FC = () => {
       sortable: true,
       locked: true,
       align: "left" as const,
-      render: (value: string) => <strong style={{ color: "#2563eb" }}>{value}</strong>,
+      render: (value: string) => <span className="entity-number">{value}</span>,
     },
     {
       key: "title",
@@ -322,7 +329,7 @@ const Quality: React.FC = () => {
       sortable: true,
       align: "left" as const,
       render: (value: string) =>
-        value ? <span style={{ fontFamily: "monospace", fontSize: "0.875rem" }}>{value}</span> : "-",
+        value ? <span style={{ whiteSpace: "nowrap" }}>{value}</span> : "-",
     },
     {
       key: "dueDate",

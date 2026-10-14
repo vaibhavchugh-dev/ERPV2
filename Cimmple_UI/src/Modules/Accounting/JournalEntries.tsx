@@ -11,6 +11,7 @@ import MasterListPage, {
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
 import "./JournalEntries.scss";
 
@@ -313,7 +314,7 @@ const JournalEntries: React.FC = () => {
       label: "JE Number",
       sortable: true,
       locked: true,
-      render: (value) => <strong>#{value}</strong>,
+      render: (value) => <span className="entity-number">#{value}</span>,
     },
     {
       key: "entryDate",
@@ -547,9 +548,8 @@ const JournalEntries: React.FC = () => {
                   placeholder="0.00"
                 />
               </div>
-              <button
-                type="button"
-                className="je-remove"
+              <DeleteIconButton
+                label="Remove line"
                 onClick={() => {
                   if (lines.length <= 2) {
                     toast.info("Keep at least two lines.");
@@ -557,9 +557,7 @@ const JournalEntries: React.FC = () => {
                   }
                   setLines(lines.filter((_, i) => i !== idx));
                 }}
-              >
-                Remove
-              </button>
+              />
             </div>
           ))}
         </div>

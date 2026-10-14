@@ -36,6 +36,12 @@ const CustomerOrders: React.FC = () => {
     const params = new URLSearchParams(location.search);
     const openId = params.get('open') || params.get('orderId');
     const search = params.get('search');
+    if (params.get('new') === '1') {
+      setSelectedOrderId(0);
+      setShowSlideout(true);
+      history.replace(location.pathname);
+      return;
+    }
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
@@ -158,7 +164,7 @@ const CustomerOrders: React.FC = () => {
       key: "orderNumber",
       label: "Order #",
       sortable: true,
-      render: (value: any) => formatOrderNumber(value),
+      render: (value: any) => <span className="entity-number">{formatOrderNumber(value)}</span>,
     },
     {
       key: "customerName",
@@ -183,15 +189,6 @@ const CustomerOrders: React.FC = () => {
                 setShowQuotationSlideout(true);
               }}
               title="Click to view quotation"
-              style={{
-                background: "none",
-                border: "none",
-                color: "#6366f1",
-                cursor: "pointer",
-                textDecoration: "underline",
-                fontWeight: 500,
-                padding: 0,
-              }}
             >
               {quotationNo}
             </button>

@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { DocumentService, Document, DocumentCategory } from "../../Common/Services/DocumentService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { useTableSort } from "../../Common/Hooks/useTableSort";
+import SortableTh from "../../Common/Components/SortableTh";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { formatDate } from "../../Common/Utils/Formatting";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
 import DocumentUploadModal from "./DocumentUploadModal";
@@ -18,7 +21,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faUpload,
   faSearch,
-  faFilter,
   faFile,
   faDownload,
   faTrash,
@@ -33,8 +35,16 @@ const parseTags = (tags?: string): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
+const getDocumentSortValue = (document: Document, key: string): unknown => {
+  if (key === "version") {
+    return document.requiresVersionControl ? document.currentVersionNumber : null;
+  }
+  return document[key as keyof Document];
+};
+
 const Documents: React.FC = () => {
   const location = useLocation();
+  const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
@@ -76,6 +86,11 @@ const Documents: React.FC = () => {
   // Handle URL parameter to open document detail modal
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    if (params.get("upload") === "1") {
+      setShowUploadModal(true);
+      history.replace(location.pathname);
+      return;
+    }
     const documentId = params.get("open");
     if (documentId) {
       const id = parseInt(documentId, 10);
@@ -83,7 +98,8 @@ const Documents: React.FC = () => {
         handleDocumentClickById(id);
       }
     }
-  }, [location.search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, history, location.pathname]);
 
   const handleDocumentClickById = async (id: number) => {
     try {
@@ -290,6 +306,15 @@ const Documents: React.FC = () => {
     return list;
   }, [documents, selectedCategoryId, selectedTag]);
 
+  const {
+    sortedRows: sortedDocuments,
+    sortKey,
+    sortDirection,
+    toggleSort,
+    tableRef,
+  } = useTableSort(filteredDocuments, getDocumentSortValue);
+  const sortProps = { activeKey: sortKey, direction: sortDirection, onSort: toggleSort };
+
   const renderTagChips = (tags?: string) => {
     const list = parseTags(tags);
     if (list.length === 0) return null;
@@ -308,18 +333,24 @@ const Documents: React.FC = () => {
 
   return (
     <div className="documents-page">
-      <div className="documents-header">
-        <h2>Documents</h2>
-        <button className="btn btn-primary" onClick={() => setShowUploadModal(true)}>
-          <FontAwesomeIcon icon={faUpload} /> Upload Document
-        </button>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Documents</h1>
+          <p className="page-subtitle">Upload, organise and version your company documents</p>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
+            <FontAwesomeIcon icon={faUpload} /> Upload Document
+          </button>
+        </div>
       </div>
 
-      <div className="documents-filters">
-        <div className="search-box">
+      <div className="page-filters">
+        <div className="search-wrapper">
           <FontAwesomeIcon icon={faSearch} />
           <input
             type="text"
+            className="search-input"
             placeholder="Search by name, number, or tags…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -327,7 +358,6 @@ const Documents: React.FC = () => {
         </div>
 
         <div className="filter-group">
-          <FontAwesomeIcon icon={faFilter} />
           <select
             className="filter-select"
             value={masterListFilter.value}
@@ -345,7 +375,6 @@ const Documents: React.FC = () => {
         </div>
 
         <div className="filter-group">
-          <FontAwesomeIcon icon={faFilter} />
           <select
             className="filter-select"
             value={selectedCategoryId || ""}
@@ -364,7 +393,6 @@ const Documents: React.FC = () => {
 
         {pageTags.length > 0 && (
           <div className="filter-group">
-            <FontAwesomeIcon icon={faTags} />
             <select
               className="filter-select"
               value={selectedTag}
@@ -383,12 +411,14 @@ const Documents: React.FC = () => {
 
         <div className="view-toggle">
           <button
+            type="button"
             className={viewMode === "grid" ? "active" : ""}
             onClick={() => setViewMode("grid")}
           >
             Grid
           </button>
           <button
+            type="button"
             className={viewMode === "list" ? "active" : ""}
             onClick={() => setViewMode("list")}
           >
@@ -398,12 +428,15 @@ const Documents: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className="loading">Loading documents...</div>
+        <div className="page-loading">
+          <div className="loading-spinner"></div>
+          <p>Loading documents...</p>
+        </div>
       ) : documents.length === 0 ? (
         <div className="empty-state">
           <FontAwesomeIcon icon={faFile} size="3x" />
           <p>No documents found</p>
-          <button className="btn btn-primary" onClick={() => setShowUploadModal(true)}>
+          <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
             Upload Your First Document
           </button>
         </div>
@@ -412,7 +445,8 @@ const Documents: React.FC = () => {
           <FontAwesomeIcon icon={faTags} size="3x" />
           <p>No documents match the selected filters</p>
           <button
-            className="btn btn-primary"
+            type="button"
+            className="btn-secondary"
             onClick={() => {
               setSelectedTag("");
               setSelectedCategoryId(undefined);
@@ -423,7 +457,7 @@ const Documents: React.FC = () => {
         </div>
       ) : viewMode === "grid" ? (
         <div className="documents-grid">
-          {filteredDocuments.map((document) => (
+          {sortedDocuments.map((document) => (
             <div key={document.id} className="document-card">
               <div className="document-icon">
                 <FontAwesomeIcon icon={getFileIcon(document) as any} size="3x" />
@@ -433,7 +467,7 @@ const Documents: React.FC = () => {
                 {document.documentNumber && (
                   <p className="document-number">
                     <span className="number-label">Doc #:</span>
-                    <span className="number-value">{document.documentNumber}</span>
+                    <span className="entity-number">{document.documentNumber}</span>
                     {document.isDocumentNumberAutoGenerated && (
                       <span className="auto-badge" title="System-generated document number">
                         Auto
@@ -493,27 +527,32 @@ const Documents: React.FC = () => {
           ))}
         </div>
       ) : (
-        <div className="documents-list">
-          <table>
+        <div className="table-card documents-list">
+          <div className="table-wrapper">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
-                <th>Document #</th>
-                <th>Name</th>
-                <th>Category</th>
+                <SortableTh sortKey="documentNumber" {...sortProps}>Document #</SortableTh>
+                <SortableTh sortKey="documentName" {...sortProps}>Name</SortableTh>
+                <SortableTh sortKey="categoryName" {...sortProps}>Category</SortableTh>
                 <th>Tags</th>
-                <th>Size</th>
-                <th>Version</th>
-                <th>Created</th>
+                <SortableTh sortKey="fileSize" {...sortProps}>Size</SortableTh>
+                <SortableTh sortKey="version" {...sortProps}>Version</SortableTh>
+                <SortableTh sortKey="createdDate" {...sortProps}>Created</SortableTh>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredDocuments.map((document) => (
-                <tr key={document.id}>
+              {sortedDocuments.map((document) => (
+                <tr
+                  key={document.id}
+                  className="clickable"
+                  onClick={() => handleDocumentClick(document)}
+                >
                   <td>
                     {document.documentNumber ? (
                       <span className="document-number-cell">
-                        <span className="number-value">{document.documentNumber}</span>
+                        <span className="entity-number">{document.documentNumber}</span>
                         {document.isDocumentNumberAutoGenerated && (
                           <span className="auto-badge" title="System-generated document number">
                             Auto
@@ -527,9 +566,7 @@ const Documents: React.FC = () => {
                   <td>
                     <div className="document-name-cell">
                       <FontAwesomeIcon icon={getFileIcon(document) as any} />
-                      <span onClick={() => handleDocumentClick(document)}>
-                        {document.documentName}
-                      </span>
+                      <span>{document.documentName}</span>
                     </div>
                   </td>
                   <td>{document.categoryName || "-"}</td>
@@ -542,8 +579,9 @@ const Documents: React.FC = () => {
                   </td>
                   <td>{formatDate(document.createdDate)}</td>
                   <td>
-                    <div className="action-buttons">
+                    <div className="action-buttons" onClick={(e) => e.stopPropagation()}>
                       <button
+                        type="button"
                         className="btn-icon"
                         onClick={() => handlePreview(document)}
                         title="Preview"
@@ -551,25 +589,24 @@ const Documents: React.FC = () => {
                         <FontAwesomeIcon icon={faEye} />
                       </button>
                       <button
+                        type="button"
                         className="btn-icon"
                         onClick={() => handleDownload(document)}
                         title="Download"
                       >
                         <FontAwesomeIcon icon={faDownload} />
                       </button>
-                      <button
-                        className="btn-icon btn-danger"
+                      <DeleteIconButton
+                        label="Delete document"
                         onClick={() => handleDelete(document.id)}
-                        title="Delete"
-                      >
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

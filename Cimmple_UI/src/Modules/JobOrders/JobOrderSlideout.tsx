@@ -45,6 +45,7 @@ import {
 } from "../../Common/Constants/jobPriorities";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import CommentsSection, { EntityComment } from "../../Common/Components/CommentsSection";
 import DocumentViewerWorkspace, { DocumentViewerFile } from "../../Common/Components/DocumentViewerWorkspace";
@@ -3130,13 +3131,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                             : "Reserve"}
                                       </button>
                                     )}
-                                    <button
-                                      type="button"
-                                      className="jo-material-btn jo-material-btn--delete"
+                                    <DeleteIconButton
+                                      label="Delete material"
                                       onClick={() => handleRemoveMaterialRequirement(index)}
-                                    >
-                                      Delete
-                                    </button>
+                                    />
                                     {showReserve && !canReserve && !canIssue ? (
                                       <div className="jo-material-stock-hint">
                                         No stock at job location
@@ -3726,21 +3724,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                             </div>
                           </td>
                           <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                            <button
-                              type="button"
+                            <DeleteIconButton
+                              label="Delete routing step"
                               onClick={() => handleDeleteRoutingStep(step.id)}
-                              style={{
-                                padding: "0.25rem 0.5rem",
-                                backgroundColor: "#ef4444",
-                                color: "white",
-                                border: "none",
-                                borderRadius: "0.25rem",
-                                cursor: "pointer",
-                                fontSize: "0.75rem",
-                              }}
-                            >
-                              Delete
-                            </button>
+                            />
                           </td>
                         </tr>
                       ))

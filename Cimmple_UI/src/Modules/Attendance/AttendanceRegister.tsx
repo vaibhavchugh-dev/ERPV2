@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import {
   AttendancePunchLogRow,
   AttendanceRegisterRow,
@@ -10,6 +12,7 @@ import {
 } from "../../Common/Services/AttendanceService";
 import { EmployeeMaster, EmployeeService } from "../../Common/Services/EmployeeService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { formatTimeOnly, todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
 import "../Masters/CustomerMaster.scss";
@@ -96,6 +99,9 @@ const AttendanceRegister: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   const loadEmployees = async () => {
     try {
@@ -176,6 +182,7 @@ const AttendanceRegister: React.FC = () => {
   }, [filteredRows, sortColumn, sortDirection]);
 
   const handleSort = (column: string) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -322,18 +329,22 @@ const AttendanceRegister: React.FC = () => {
             ))}
           </select>
         </div>
-        <div className="filter-group">
-          <input
-            type="date"
+        <div className="date-range-filter">
+          <label htmlFor="attendance-from">From</label>
+          <DateFilterInput
+            id="attendance-from"
             className="filter-select"
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            max={toDate || undefined}
+            onCommit={(value) => setFromDate(value || todayIso())}
           />
-          <input
-            type="date"
+          <label htmlFor="attendance-to">To</label>
+          <DateFilterInput
+            id="attendance-to"
             className="filter-select"
             value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            min={fromDate || undefined}
+            onCommit={(value) => setToDate(value || todayIso())}
           />
         </div>
         <div className="filter-group">
@@ -385,7 +396,7 @@ const AttendanceRegister: React.FC = () => {
               <p>Loading attendance...</p>
             </div>
           ) : (
-            <table className="customers-table">
+            <table className="customers-table" ref={tableRef}>
               <thead>
                 <tr>
                   {visibleColumns.map((column) => (
@@ -394,7 +405,12 @@ const AttendanceRegister: React.FC = () => {
                       className={column.sortKey ? "sortable" : ""}
                       onClick={() => column.sortKey && handleSort(column.sortKey)}
                     >
-                      <div className="th-content">{column.label}</div>
+                      <div className="th-content">
+                        {column.label}
+                        {column.sortKey && (
+                          <SortIndicator active={sortColumn === column.sortKey} direction={sortDirection} />
+                        )}
+                      </div>
                     </th>
                   ))}
                 </tr>
@@ -411,6 +427,7 @@ const AttendanceRegister: React.FC = () => {
                   sortedRows.map((row) => (
                     <tr
                       key={`${row.workDate}-${row.userUniqueId}`}
+                      className="clickable"
                       onClick={() => openLog(row)}
                     >
                       {visibleColumns.map((column) => (

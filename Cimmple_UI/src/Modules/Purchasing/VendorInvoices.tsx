@@ -703,22 +703,7 @@ const VendorInvoices: React.FC = () => {
       label: "Invoice #",
       sortable: true,
       align: "left" as const,
-      render: (value: any, row: VendorInvoiceSummary) => (
-        <button
-          className="link-button"
-          onClick={() => handleViewInvoice(row)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#2563eb',
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            fontWeight: '500'
-          }}
-        >
-          {value}
-        </button>
-      ),
+      render: (value: any) => <span className="entity-number">{value}</span>,
     },
     {
       key: "vendorName",
@@ -742,16 +727,11 @@ const VendorInvoices: React.FC = () => {
         if (orderId) {
           return (
             <button
+              type="button"
               className="link-button"
-              onClick={() => handleNavigateToOrder(orderId)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#2563eb',
-                cursor: 'pointer',
-                textDecoration: 'underline',
-                fontWeight: '500',
-                padding: 0
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNavigateToOrder(orderId);
               }}
             >
               {value}
@@ -931,6 +911,7 @@ const VendorInvoices: React.FC = () => {
         columns={columns}
         loading={loading}
         enablePagination
+        onRowClick={handleViewInvoice}
         onAdd={handleNewInvoice}
         addButtonLabel="New Invoice"
         searchPlaceholder="Search by invoice #, vendor, or order #..."

@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
 import { BankService, BankMaster } from "../../Common/Services/BankService";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 
 interface AccountingSettings {
   companyName: string;
@@ -688,25 +689,15 @@ const AccountingSetup: React.FC = () => {
                         fontSize: '0.875rem'
                       }}
                     />
-                    <button
+                    <DeleteIconButton
+                      label="Remove payment term"
                       onClick={() => {
                         setSettings(prev => ({
                           ...prev,
                           paymentTerms: prev.paymentTerms.filter(t => t.id !== term.id)
                         }));
                       }}
-                      style={{
-                        padding: '0.5rem',
-                        backgroundColor: '#ef4444',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '0.375rem',
-                        cursor: 'pointer',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      Remove
-                    </button>
+                    />
                   </div>
                 ))}
               </div>
@@ -776,25 +767,15 @@ const AccountingSetup: React.FC = () => {
                         style={{ width: '1rem', height: '1rem' }}
                       />
                     </div>
-                    <button
+                    <DeleteIconButton
+                      label="Remove approval limit"
                       onClick={() => {
                         setSettings(prev => ({
                           ...prev,
                           approvalLimits: prev.approvalLimits.filter(l => l.id !== limit.id)
                         }));
                       }}
-                      style={{
-                        padding: '0.5rem',
-                        backgroundColor: '#ef4444',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '0.375rem',
-                        cursor: 'pointer',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      Remove
-                    </button>
+                    />
                   </div>
                 ))}
               </div>

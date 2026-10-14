@@ -19,6 +19,7 @@ import InvoiceModal from "./InvoiceModal";
 import CopyFromPastOrderDialog, { CopyFromPastOrderResult } from "./CopyFromPastOrderDialog";
 import { formatPrefixedDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
@@ -2506,15 +2507,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 {(() => {
                                   const hasJobOrder = detail.ID > 0 && jobOrderDetailIds.has(detail.ID);
                                   return (
-                                    <button
-                                      type="button"
-                                      className={`btn-icon ${hasJobOrder ? 'btn-icon-disabled' : 'btn-icon-danger'}`}
+                                    <DeleteIconButton
+                                      label="Delete line"
                                       onClick={() => !hasJobOrder && handleDeleteDetail(index)}
                                       disabled={hasJobOrder}
-                                      title={hasJobOrder ? "Cannot delete: Job Order exists for this line item" : "Delete"}
-                                    >
-                                      ×
-                                    </button>
+                                      title={hasJobOrder ? "Cannot delete: Job Order exists for this line item" : undefined}
+                                    />
                                   );
                                 })()}
                               </div>
@@ -2616,26 +2614,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               </div>
                             )}
                           </div>
-                          <button
-                            type="button"
+                          <DeleteIconButton
+                            label="Delete shipment"
                             onClick={() => handleDeleteShipment(shipment.id)}
-                            title="Delete shipment"
-                            style={{
-                              padding: "0.25rem 0.5rem",
-                              backgroundColor: "#ef4444",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "0.25rem",
-                              cursor: "pointer",
-                              fontSize: "0.75rem",
-                              fontWeight: "500",
-                              whiteSpace: "nowrap"
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#dc2626"}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ef4444"}
-                          >
-                            Delete
-                          </button>
+                          />
                         </div>
                       </div>
 
@@ -2729,26 +2711,10 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               Amount: {formatCurrency(invoice.totalAmount)}
                             </div>
                           </div>
-                          <button
-                            type="button"
+                          <DeleteIconButton
+                            label="Delete invoice"
                             onClick={() => handleDeleteInvoice(invoice.id)}
-                            title="Delete invoice"
-                            style={{
-                              padding: "0.25rem 0.5rem",
-                              backgroundColor: "#ef4444",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "0.25rem",
-                              cursor: "pointer",
-                              fontSize: "0.75rem",
-                              fontWeight: "500",
-                              whiteSpace: "nowrap"
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#dc2626"}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ef4444"}
-                          >
-                            Delete
-                          </button>
+                          />
                         </div>
                       </div>
 

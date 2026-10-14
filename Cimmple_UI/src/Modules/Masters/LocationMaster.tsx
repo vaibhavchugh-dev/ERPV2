@@ -5,6 +5,8 @@ import { LocationService, LocationMaster } from "../../Common/Services/LocationS
 import { AuthService } from "../../Common/Services/AuthService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import LocationMasterSlideout from "./LocationMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
@@ -48,6 +50,9 @@ const LocationMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -118,6 +123,7 @@ const LocationMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof LocationMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -190,14 +196,7 @@ const LocationMasterComponent: React.FC = () => {
   } = useClientPagination(sortedLocations, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof LocationMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (location: LocationMaster, key: string): React.ReactNode => {
@@ -299,18 +298,6 @@ const LocationMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -326,7 +313,7 @@ const LocationMasterComponent: React.FC = () => {
       {/* Locations Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -357,7 +344,7 @@ const LocationMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedLocations.map((location) => (
-                  <tr key={location.locationId} onClick={() => handleRowClick(location)}>
+                  <tr key={location.locationId} className="clickable" onClick={() => handleRowClick(location)}>
                     {visibleColumns.map((column) => (
                       <td
                         key={column.key}

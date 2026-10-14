@@ -6,6 +6,7 @@ import {
   CategoryTypeReq,
 } from "../../Common/Services/CategoryService";
 import CategoryTypeSlideout from "./CategoryTypeSlideout";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import "./CustomerMaster.scss";
 import "./CategoryMaster.scss";
 
@@ -275,22 +276,19 @@ const CategoryMasterComponent: React.FC = () => {
                     >
                       ✎
                     </button>
-                    <button
-                      type="button"
-                      className="category-icon-button is-danger"
+                    <DeleteIconButton
+                      label="Delete category type"
                       title={
                         type.isSystem
                           ? "System category types cannot be deleted"
-                          : "Delete category type"
+                          : undefined
                       }
                       disabled={type.isSystem}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDeleteType(type);
                       }}
-                    >
-                      🗑
-                    </button>
+                    />
                   </div>
                 </div>
               ))}
@@ -358,19 +356,16 @@ const CategoryMasterComponent: React.FC = () => {
                     <span className="category-value-usage">
                       {value.usageCount ? `${value.usageCount} in use` : "unused"}
                     </span>
-                    <button
-                      type="button"
-                      className="category-icon-button is-danger"
+                    <DeleteIconButton
+                      label="Delete category value"
                       title={
                         value.usageCount
                           ? "In use by one or more templates"
-                          : "Delete category value"
+                          : undefined
                       }
                       disabled={!!value.usageCount}
                       onClick={() => handleDeleteValue(value.id, value.name)}
-                    >
-                      🗑
-                    </button>
+                    />
                   </div>
                 ))
               )}

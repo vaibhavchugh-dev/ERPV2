@@ -102,7 +102,7 @@ const VendorReceiving: React.FC = () => {
       label: "Vendor Order #",
       sortable: true,
       align: "left" as const,
-      render: (value: any) => formatOrderNumber(value),
+      render: (value: any) => <span className="entity-number">{formatOrderNumber(value)}</span>,
     },
     {
       key: "vendorName",

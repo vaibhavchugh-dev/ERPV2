@@ -13,26 +13,6 @@
   margin-bottom: 1rem;
 }
 
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
-  background: #e5e7eb;
-  color: #374151;
-  border: none;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-
-.btn-secondary:hover {
-  background: #d1d5db;
-}
-
 .filter-checkbox {
   display: flex;
   align-items: center;
@@ -158,46 +138,8 @@
   white-space: nowrap;
 }
 
-.inventory-location-filter {
-  padding: 0;
-  min-width: 12.5rem;
-  background-color: #f3f4f6;
-  border: 1px solid #d1d5db;
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-
-.inventory-location-filter:hover {
-  background-color: #e5e7eb;
-  border-color: #9ca3af;
-}
-
-.inventory-location-filter:focus-within {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
-}
-
 .inventory-location-filter .filter-select {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  padding: 0.5rem 2rem 0.5rem 0.75rem !important;
-  border: none !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%234b5563' d='M6 9L1 4h10z'/%3E%3C/svg%3E") !important;
-  background-repeat: no-repeat !important;
-  background-position: right 0.65rem center !important;
-  background-size: 12px !important;
-  color: #111827 !important;
-  box-shadow: none !important;
-}
-
-.inventory-location-filter .filter-select:hover,
-.inventory-location-filter .filter-select:focus {
-  background-color: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+  min-width: 12.5rem;
 }
 
 .inventory-page .table-wrapper {

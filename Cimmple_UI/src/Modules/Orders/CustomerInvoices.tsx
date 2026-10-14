@@ -616,22 +616,7 @@ const CustomerInvoices: React.FC = () => {
       label: "Invoice #",
       sortable: true,
       align: "left" as const,
-      render: (value: any, row: CustomerInvoiceSummary) => (
-        <button
-          className="link-button"
-          onClick={() => handleViewInvoice(row)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#2563eb',
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            fontWeight: '500'
-          }}
-        >
-          {value}
-        </button>
-      ),
+      render: (value: any) => <span className="entity-number">{value}</span>,
     },
     {
       key: "orderNumber",
@@ -645,16 +630,11 @@ const CustomerInvoices: React.FC = () => {
 
         return (
           <button
+            type="button"
             className="link-button"
-            onClick={() => handleNavigateToOrder(row.orderId)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#2563eb',
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              fontWeight: '500',
-              padding: 0
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNavigateToOrder(row.orderId);
             }}
           >
             {value}
@@ -826,6 +806,7 @@ const CustomerInvoices: React.FC = () => {
         data={invoices}
         columns={columns}
         loading={loading}
+        onRowClick={handleViewInvoice}
         enablePagination
         searchPlaceholder="Search by invoice #, order #, customer..."
         searchFields={["invoiceNo", "orderNumber", "customerName", "customerCode", "totalAmount", "invoiceDate", "dueDate", "amountDue"]}

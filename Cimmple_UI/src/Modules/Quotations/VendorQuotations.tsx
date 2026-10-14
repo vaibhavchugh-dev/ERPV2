@@ -168,7 +168,7 @@ const VendorQuotations: React.FC = () => {
       label: "Quotation No",
       sortable: true,
       align: "left" as const,
-      render: (value: any) => formatQuotationNumber(value),
+      render: (value: any) => <span className="entity-number">{formatQuotationNumber(value)}</span>,
     },
     {
       key: "vendorName",

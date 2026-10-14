@@ -4,6 +4,8 @@ import { toast } from "react-toastify";
 import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import CustomerMasterSlideout from "./CustomerMasterSlideout";
 import CustomerMasterImportModal from "./CustomerMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
@@ -42,6 +44,9 @@ const CustomerMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   useEffect(() => {
     loadCustomers();
@@ -129,6 +134,7 @@ const CustomerMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof CustomerMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -193,14 +199,7 @@ const CustomerMasterComponent: React.FC = () => {
   } = useClientPagination(sortedCustomers, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof CustomerMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (customer: CustomerMaster, key: string): React.ReactNode => {
@@ -299,18 +298,6 @@ const CustomerMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -326,7 +313,7 @@ const CustomerMasterComponent: React.FC = () => {
       {/* Customers Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -357,7 +344,7 @@ const CustomerMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedCustomers.map((customer) => (
-                  <tr key={customer.customer_id} onClick={() => handleRowClick(customer)}>
+                  <tr key={customer.customer_id} className="clickable" onClick={() => handleRowClick(customer)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(customer, column.key)}</td>
                     ))}

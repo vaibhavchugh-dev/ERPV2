@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSettingsSafe } from "../../Contexts/SettingsContext";
 import ColumnChooser from "../ColumnChooser";
 import ClientPagination from "../ClientPagination";
+import SortIndicator from "../SortIndicator";
 import { useColumnChooser } from "../../Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Hooks/useLockedColumnWidths";
 import { PAGE_SIZE_OPTIONS, useListPageSize } from "../../Hooks/useListPageSize";
 import { matchFieldValue } from "../../Utils/listSearchMatch";
+import { rowClickHandler } from "../../Utils/rowClick";
 import "./MasterListPage.scss";
 
 // Column configuration
@@ -186,7 +189,12 @@ const MasterListPage = <T extends Record<string, any>>({
     }
   }, []);
 
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleTableColumns.map((column) => String(column.key)).join("|")
+  );
+
   const handleSort = (columnKey: string) => {
+    lockColumnWidths();
     if (sortColumn === columnKey) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -255,16 +263,9 @@ const MasterListPage = <T extends Record<string, any>>({
     }
   }, [searchTerm, filterSignature, enablePagination]);
 
-  const getSortIcon = (columnKey: string) => {
-    if (sortColumn !== columnKey) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
-  };
+  const getSortIcon = (columnKey: string) => (
+    <SortIndicator active={sortColumn === columnKey} direction={sortDirection} />
+  );
 
   const getValue = (row: T, column: ColumnConfig<T>) => {
     const value = row[column.key as keyof T];
@@ -369,7 +370,7 @@ const MasterListPage = <T extends Record<string, any>>({
       {/* Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="master-table">
+          <table className="master-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleTableColumns.map((column) => {
@@ -406,7 +407,7 @@ const MasterListPage = <T extends Record<string, any>>({
                   return (
                     <tr
                       key={rowId}
-                      onClick={() => onRowClick && onRowClick(row)}
+                      onClick={onRowClick ? rowClickHandler(() => onRowClick(row)) : undefined}
                       className={onRowClick ? "clickable" : ""}
                     >
                       {visibleTableColumns.map((column) => (

@@ -4,6 +4,8 @@ import { toast } from "react-toastify";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import ProcessMasterSlideout from "./ProcessMasterSlideout";
 import ProcessMasterImportModal from "./ProcessMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
@@ -45,6 +47,9 @@ const ProcessMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -106,6 +111,7 @@ const ProcessMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof ProcessMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -165,14 +171,7 @@ const ProcessMasterComponent: React.FC = () => {
   } = useClientPagination(sortedProcesses, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof ProcessMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (process: ProcessMaster, key: string): React.ReactNode => {
@@ -280,18 +279,6 @@ const ProcessMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -307,7 +294,7 @@ const ProcessMasterComponent: React.FC = () => {
 
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -338,7 +325,7 @@ const ProcessMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedProcesses.map((process) => (
-                  <tr key={process.id} onClick={() => handleRowClick(process)}>
+                  <tr key={process.id} className="clickable" onClick={() => handleRowClick(process)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(process, column.key)}</td>
                     ))}

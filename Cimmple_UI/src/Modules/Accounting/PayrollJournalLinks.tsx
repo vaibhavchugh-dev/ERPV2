@@ -286,6 +286,7 @@ const PayrollJournalLinks: React.FC = () => {
       render: (_value, row) => (
         <>
           <Link
+            className="link-button"
             to={`/accounts/journal-entries?id=${row.journalEntryId}`}
             onClick={(e) => e.stopPropagation()}
           >
@@ -306,6 +307,7 @@ const PayrollJournalLinks: React.FC = () => {
             <>
               {row.paymentJournalEntryId ? (
                 <Link
+                  className="link-button"
                   to={`/accounts/journal-entries?id=${row.paymentJournalEntryId}`}
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -334,6 +336,7 @@ const PayrollJournalLinks: React.FC = () => {
         row.taxRemittanceJournalEntryId ? (
           <>
             <Link
+              className="link-button"
               to={`/accounts/journal-entries?id=${row.taxRemittanceJournalEntryId}`}
               onClick={(e) => e.stopPropagation()}
             >

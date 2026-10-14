@@ -11,6 +11,7 @@ import {
   getApiErrorMessage,
   validateSelectedFiles,
 } from "../Common/Services/FileUploadHelper";
+import DeleteIconButton from "../Common/Components/DeleteIconButton";
 import "./VendorPortal.scss";
 
 type LineAttachment = QuotationAttachment & { isPending?: boolean; file?: File; localUrl?: string };
@@ -711,8 +712,9 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                         : `${att.name}${att.isPending ? " (pending)" : ""}`}
                                     </button>
                                     {!isReadOnlyResponse && (
-                                    <button
-                                      type="button"
+                                    <DeleteIconButton
+                                      size="sm"
+                                      label="Remove attachment"
                                       onClick={() => {
                                         if (att.localUrl) URL.revokeObjectURL(att.localUrl);
                                         setLineItemAttachments(prev => {
@@ -722,19 +724,7 @@ const VendorQuotationResponse: React.FC<VendorQuotationResponseProps> = ({
                                           return newMap;
                                         });
                                       }}
-                                      style={{
-                                        background: "none",
-                                        border: "none",
-                                        color: "#ef4444",
-                                        cursor: "pointer",
-                                        fontSize: "1rem",
-                                        padding: "0",
-                                        lineHeight: "1"
-                                      }}
-                                      title="Remove attachment"
-                                    >
-                                      ×
-                                    </button>
+                                    />
                                     )}
                                   </div>
                                 ))}

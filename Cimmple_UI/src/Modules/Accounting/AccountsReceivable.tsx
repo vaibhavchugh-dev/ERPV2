@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { faCheckCircle, faEnvelope, faDollarSign, faUser, faCalendar, faFilter, faEye, faCreditCard, faFileInvoice, faClock, faBan, faSpinner } from "@fortawesome/free-solid-svg-icons";
+import { faCheckCircle, faEnvelope, faDollarSign, faUser, faCalendar, faEye, faCreditCard, faFileInvoice, faClock, faBan, faSpinner } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { InvoiceService, InvoiceSummary } from "../../Common/Services/InvoiceService";
 import { AccountingService } from "../../Common/Services/AccountingService";
@@ -10,6 +10,9 @@ import CustomerInvoiceDetailModal from "../Orders/CustomerInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { useTableSort } from "../../Common/Hooks/useTableSort";
+import SortableTh from "../../Common/Components/SortableTh";
+import { rowClickHandler } from "../../Common/Utils/rowClick";
 
 interface ARFilterOptions {
   status: string;
@@ -215,6 +218,9 @@ const BulkARPaymentModal: React.FC<BulkARPaymentModalProps> = ({ invoices, onClo
   );
 };
 
+const getInvoiceSortValue = (invoice: InvoiceSummary, key: string): unknown =>
+  invoice[key as keyof InvoiceSummary];
+
 const AccountsReceivable: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
@@ -300,6 +306,11 @@ const AccountsReceivable: React.FC = () => {
     () => invoices.filter((inv) => selectedIds.includes(inv.id) && canRecordPayment(inv)),
     [invoices, selectedIds]
   );
+  const { sortedRows: sortedInvoices, sortKey, sortDirection, toggleSort, tableRef } = useTableSort(
+    invoices,
+    getInvoiceSortValue
+  );
+  const sortProps = { activeKey: sortKey, direction: sortDirection, onSort: toggleSort };
 
   const handleSendReminder = async (invoice: InvoiceSummary) => {
     if (!canRecordPayment(invoice)) {
@@ -654,16 +665,11 @@ const AccountsReceivable: React.FC = () => {
           marginBottom: "1.5rem",
         }}
       >
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <FontAwesomeIcon icon={faFilter} style={{ color: "#6b7280" }} />
-            <span style={{ fontWeight: "500", color: "#374151" }}>Filters:</span>
-          </div>
-
+        <div className="filter-group" style={{ flexWrap: "wrap" }}>
           <select
             value={filters.status}
             onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
-            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            className="filter-select"
           >
             <option value="All">All Status</option>
             <option value="Paid">Paid</option>
@@ -676,7 +682,7 @@ const AccountsReceivable: React.FC = () => {
           <select
             value={filters.overdueStatus}
             onChange={(e) => setFilters((prev) => ({ ...prev, overdueStatus: e.target.value }))}
-            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            className="filter-select"
           >
             <option value="All">All Aging</option>
             <option value="Current">Current</option>
@@ -686,7 +692,7 @@ const AccountsReceivable: React.FC = () => {
           <select
             value={filters.amountRange}
             onChange={(e) => setFilters((prev) => ({ ...prev, amountRange: e.target.value }))}
-            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            className="filter-select"
           >
             <option value="All">All Amounts</option>
             <option value="Under $1,000">Under $1,000</option>
@@ -698,7 +704,7 @@ const AccountsReceivable: React.FC = () => {
           <select
             value={filters.dateRange}
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
-            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            className="filter-select"
           >
             <option value="All">All Dates</option>
             <option value="This Week">This Week</option>
@@ -710,7 +716,7 @@ const AccountsReceivable: React.FC = () => {
           <select
             value={masterListFilter.value}
             onChange={(e) => masterListFilter.onChange(e.target.value)}
-            style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", fontSize: "0.875rem" }}
+            className="filter-select"
             title="Site"
           >
             {masterListFilter.options.map((opt) => (
@@ -748,7 +754,7 @@ const AccountsReceivable: React.FC = () => {
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table ref={tableRef} style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead style={{ backgroundColor: "#f9fafb" }}>
                 <tr>
                   <th style={{ padding: "0.75rem 1rem", textAlign: "center", borderBottom: "1px solid #e5e7eb", width: 40 }}>
@@ -760,30 +766,35 @@ const AccountsReceivable: React.FC = () => {
                       title="Select all unpaid"
                     />
                   </th>
-                  <th style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
+                  <SortableTh sortKey="invoiceNo" {...sortProps} style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Invoice
-                  </th>
-                  <th style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
+                  </SortableTh>
+                  <SortableTh sortKey="customerName" {...sortProps} style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Customer
-                  </th>
-                  <th style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
+                  </SortableTh>
+                  <SortableTh sortKey="totalAmount" {...sortProps} style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Amount
-                  </th>
-                  <th style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
+                  </SortableTh>
+                  <SortableTh sortKey="dueDate" {...sortProps} style={{ padding: "0.75rem 1.5rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Due Date
-                  </th>
-                  <th style={{ padding: "0.75rem 1.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
+                  </SortableTh>
+                  <SortableTh sortKey="status" {...sortProps} style={{ padding: "0.75rem 1.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Status
-                  </th>
+                  </SortableTh>
                   <th style={{ padding: "0.75rem 1.5rem", textAlign: "center", fontSize: "0.875rem", fontWeight: "600", color: "#374151", borderBottom: "1px solid #e5e7eb" }}>
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {invoices.map((invoice) => (
-                  <tr key={invoice.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                    <td style={{ padding: "1rem", textAlign: "center" }}>
+                {sortedInvoices.map((invoice) => (
+                  <tr
+                    key={invoice.id}
+                    className="clickable"
+                    style={{ borderBottom: "1px solid #f3f4f6" }}
+                    onClick={rowClickHandler(() => handleViewInvoice(invoice))}
+                  >
+                    <td style={{ padding: "1rem", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                       {canRecordPayment(invoice) ? (
                         <input
                           type="checkbox"
@@ -794,7 +805,7 @@ const AccountsReceivable: React.FC = () => {
                     </td>
                     <td style={{ padding: "1rem 1.5rem" }}>
                       <div>
-                        <div style={{ fontWeight: "500", color: "#111827", fontSize: "0.875rem" }}>{invoice.invoiceNo}</div>
+                        <div className="entity-number" style={{ fontSize: "0.875rem" }}>{invoice.invoiceNo}</div>
                         <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{formatDate(invoice.invoiceDate)}</div>
                       </div>
                     </td>

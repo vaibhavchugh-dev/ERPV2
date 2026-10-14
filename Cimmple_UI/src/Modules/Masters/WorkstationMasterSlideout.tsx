@@ -7,6 +7,7 @@ import {
   User,
 } from "../../Common/Services/WorkstationService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import "./CustomerMasterSlideout.scss";
 
 interface WorkstationMasterSlideoutProps {
@@ -395,14 +396,10 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
                           </select>
                         </td>
                         <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
-                          <button
-                            type="button"
-                            className="btn-icon btn-icon-danger"
+                          <DeleteIconButton
+                            label="Remove user"
                             onClick={() => handleDeleteUserMapping(index)}
-                            title="Remove user"
-                          >
-                            🗑️
-                          </button>
+                          />
                         </td>
                       </tr>
                     ))}

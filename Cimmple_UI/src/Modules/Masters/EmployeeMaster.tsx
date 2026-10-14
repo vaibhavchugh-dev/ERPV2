@@ -5,6 +5,8 @@ import { EmployeeService, EmployeeMaster } from "../../Common/Services/EmployeeS
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
+import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import EmployeeMasterSlideout from "./EmployeeMasterSlideout";
 import EmployeeMasterImportModal from "./EmployeeMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
@@ -50,6 +52,9 @@ const EmployeeMasterComponent: React.FC = () => {
     columnChooserRef,
     toggleColumn,
   } = useColumnChooser(COLUMN_PREFERENCE_KEY, COLUMNS, DEFAULT_HIDDEN_COLUMNS);
+  const { tableRef, lockColumnWidths } = useLockedColumnWidths(
+    visibleColumns.map((column) => column.key).join("|")
+  );
 
   useEffect(() => {
     loadEmployees();
@@ -152,6 +157,7 @@ const EmployeeMasterComponent: React.FC = () => {
   };
 
   const handleSort = (column: keyof EmployeeMaster) => {
+    lockColumnWidths();
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -223,14 +229,7 @@ const EmployeeMasterComponent: React.FC = () => {
   } = useClientPagination(sortedEmployees, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const getSortIcon = (column: keyof EmployeeMaster) => {
-    if (sortColumn !== column) {
-      return <span className="sort-icon inactive">⇅</span>;
-    }
-    return sortDirection === "asc" ? (
-      <span className="sort-icon active">↑</span>
-    ) : (
-      <span className="sort-icon active">↓</span>
-    );
+    return <SortIndicator active={sortColumn === column} direction={sortDirection} />;
   };
 
   const renderCell = (employee: EmployeeMaster, key: string): React.ReactNode => {
@@ -351,18 +350,6 @@ const EmployeeMasterComponent: React.FC = () => {
           />
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={masterListFilter.value}
             onChange={(e) => masterListFilter.onChange(e.target.value)}
@@ -376,18 +363,6 @@ const EmployeeMasterComponent: React.FC = () => {
           </select>
         </div>
         <div className="filter-group">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-          </svg>
           <select
             value={filterValue}
             onChange={(e) => setFilterValue(e.target.value)}
@@ -403,7 +378,7 @@ const EmployeeMasterComponent: React.FC = () => {
       {/* Employees Table */}
       <div className="table-card">
         <div className="table-wrapper">
-          <table className="customers-table">
+          <table className="customers-table" ref={tableRef}>
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
@@ -434,7 +409,7 @@ const EmployeeMasterComponent: React.FC = () => {
                 </tr>
               ) : (
                 pagedEmployees.map((employee) => (
-                  <tr key={employee.user_UniqueID} onClick={() => handleRowClick(employee)}>
+                  <tr key={employee.user_UniqueID} className="clickable" onClick={() => handleRowClick(employee)}>
                     {visibleColumns.map((column) => (
                       <td key={column.key}>{renderCell(employee, column.key)}</td>
                     ))}

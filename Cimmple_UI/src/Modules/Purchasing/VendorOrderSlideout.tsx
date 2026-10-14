@@ -16,6 +16,7 @@ import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Servi
 import { AccountingService } from "../../Common/Services/AccountingService";
 import VendorInvoiceModal from "./VendorInvoiceModal";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
@@ -2459,23 +2460,12 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              <button
-                                type="button"
+                              <DeleteIconButton
+                                label="Delete line"
                                 onClick={() => handleDeleteDetail(index)}
                                 disabled={isInvoiced}
-                                title={isInvoiced ? "Invoiced items cannot be deleted" : "Delete"}
-                                style={{
-                                  padding: "0.25rem 0.5rem",
-                                  backgroundColor: isInvoiced ? "#9ca3af" : "#ef4444",
-                                  color: "white",
-                                  border: "none",
-                                  borderRadius: "0.25rem",
-                                  cursor: isInvoiced ? "not-allowed" : "pointer",
-                                  fontSize: "0.75rem",
-                                }}
-                              >
-                                Delete
-                              </button>
+                                title={isInvoiced ? "Invoiced items cannot be deleted" : undefined}
+                              />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
                               {isInvoiced ? (
@@ -2663,26 +2653,10 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               >
                                 🖨️ Print
                               </button>
-                              <button
-                                type="button"
+                              <DeleteIconButton
+                                label="Delete invoice"
                                 onClick={() => handleDeleteInvoice(invoice.id)}
-                                title="Delete invoice"
-                                style={{
-                                  padding: "0.25rem 0.5rem",
-                                  backgroundColor: "#ef4444",
-                                  color: "white",
-                                  border: "none",
-                                  borderRadius: "0.25rem",
-                                  cursor: "pointer",
-                                  fontSize: "0.75rem",
-                                  fontWeight: "500",
-                                  whiteSpace: "nowrap"
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#dc2626"}
-                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ef4444"}
-                              >
-                                Delete
-                              </button>
+                              />
                             </div>
                           </div>
                         </div>

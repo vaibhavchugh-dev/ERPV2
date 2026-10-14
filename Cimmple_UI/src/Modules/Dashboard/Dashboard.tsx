@@ -22,7 +22,7 @@ import {
   faSync,
   faPlus,
   faEye,
-  faFilter
+  faUpload
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { formatCurrency, formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
@@ -376,8 +376,7 @@ const Dashboard: React.FC = () => {
 
       {/* Charts Section */}
       <div className="dashboard-charts">
-        {/* Production Status Chart - Row 1, Col 1 */}
-        <div className="dashboard-widget chart-widget-left chart-widget-row-1">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Production Status</h3>
             <select
@@ -408,8 +407,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Quality Status Pie Chart - Row 1, Col 2 */}
-        <div className="dashboard-widget chart-widget-right chart-widget-row-1">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Quality Status</h3>
           </div>
@@ -443,8 +441,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Revenue & Expenses Trend - Row 2, Col 1 */}
-        <div className="dashboard-widget chart-widget-left chart-widget-row-2">
+        <div className="dashboard-widget chart-widget-wide">
           <div className="widget-header">
             <h3 title="Billed (invoiced) amounts by date — aligned with Sales reports">Revenue & Expenses Trend</h3>
             <select
@@ -476,8 +473,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Top Customers - Row 2, Col 2 */}
-        <div className="dashboard-widget chart-widget-right chart-widget-row-2">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Top Customers</h3>
           </div>
@@ -500,8 +496,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Top Products - Row 3, Col 2 */}
-        <div className="dashboard-widget chart-widget-right chart-widget-row-3">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Top Products</h3>
           </div>
@@ -527,13 +522,9 @@ const Dashboard: React.FC = () => {
 
       {/* Bottom Section */}
       <div className="dashboard-bottom">
-        {/* Recent Activities - Row 1, Col 1 */}
-        <div className="dashboard-widget bottom-widget-left bottom-widget-row-1">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Recent Activities</h3>
-            <button className="widget-filter-btn">
-              <FontAwesomeIcon icon={faFilter} />
-            </button>
           </div>
           <div className="widget-content">
             {recentActivities.length > 0 ? (
@@ -556,43 +547,50 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick Actions - Row 1, Col 2 */}
-        <div className="dashboard-widget bottom-widget-right bottom-widget-row-1">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Quick Actions</h3>
           </div>
           <div className="widget-content">
             <div className="quick-actions-grid">
-              <button className="quick-action-btn" onClick={() => history.push("/job-orders")}>
+              <button
+                type="button"
+                className="quick-action-btn"
+                onClick={() => {
+                  toast.info("Job orders are created from customer order line items. Open an order to create one.", {
+                    autoClose: 4000,
+                  });
+                  history.push("/orders/customer");
+                }}
+              >
                 <FontAwesomeIcon icon={faPlus} />
                 <span>Create Job Order</span>
               </button>
-              <button className="quick-action-btn" onClick={() => history.push("/orders/customer")}>
+              <button type="button" className="quick-action-btn" onClick={() => history.push("/orders/customer?new=1")}>
                 <FontAwesomeIcon icon={faPlus} />
                 <span>Create Customer Order</span>
               </button>
-              <button className="quick-action-btn" onClick={() => history.push("/purchasing/vendor-orders")}>
+              <button type="button" className="quick-action-btn" onClick={() => history.push("/purchasing/vendor-orders?new=1")}>
                 <FontAwesomeIcon icon={faPlus} />
                 <span>Create Vendor Order</span>
               </button>
-              <button className="quick-action-btn" onClick={() => history.push("/quality")}>
+              <button type="button" className="quick-action-btn" onClick={() => history.push("/quality?new=1")}>
                 <FontAwesomeIcon icon={faPlus} />
                 <span>Create NCR</span>
               </button>
-              <button className="quick-action-btn" onClick={() => history.push("/reports")}>
+              <button type="button" className="quick-action-btn" onClick={() => history.push("/reports")}>
                 <FontAwesomeIcon icon={faChartBar} />
                 <span>Generate Report</span>
               </button>
-              <button className="quick-action-btn" onClick={() => history.push("/documents")}>
-                <FontAwesomeIcon icon={faBox} />
-                <span>View Documents</span>
+              <button type="button" className="quick-action-btn" onClick={() => history.push("/documents?upload=1")}>
+                <FontAwesomeIcon icon={faUpload} />
+                <span>Upload Document</span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Alerts - Row 2, Col 1 */}
-        <div className="dashboard-widget bottom-widget-left bottom-widget-row-2">
+        <div className="dashboard-widget">
           <div className="widget-header">
             <h3>Alerts & Notifications</h3>
             <span className="alert-badge">{alerts.length}</span>
@@ -631,8 +629,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Upcoming Deadlines - Row 2, Col 2 */}
-        <div className="dashboard-widget bottom-widget-right bottom-widget-row-2">
+        <div className="dashboard-widget">
           {(() => {
             const filteredDeadlines = upcomingDeadlines.filter(
               (d: any) => !d.isVoided && d.status !== 'Void' && d.status !== 'Voided'

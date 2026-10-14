@@ -19,6 +19,7 @@ import { PriceBreakdownService, PriceBreakdownMaster } from "../../Common/Servic
 import CustomerPartCombobox, { formatPartHistoryHint } from "../../Common/Components/CustomerPartCombobox";
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import AttachmentUploadSection, { ModuleAttachment } from "../../Common/Components/AttachmentUploadSection";
 import CommentsSection, { EntityComment } from "../../Common/Components/CommentsSection";
@@ -2368,14 +2369,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                               </button>
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              <button
-                                type="button"
-                                className="btn-icon btn-icon-danger"
-                                onClick={() => handleDeleteDetail(index)}
-                                title="Delete"
-                              >
-                                ×
-                              </button>
+                              <DeleteIconButton label="Delete line" onClick={() => handleDeleteDetail(index)} />
                             </td>
                           </tr>
                           {historyHint ? (
@@ -3279,37 +3273,11 @@ const PriceBreakdownMatrixPopup: React.FC<PriceBreakdownMatrixPopupProps> = ({
                                 >
                                   <span>Qty</span>
                                   {canRemove && (
-                                    <button
-                                      type="button"
+                                    <DeleteIconButton
+                                      size="sm"
+                                      label="Remove quantity column"
                                       onClick={() => handleRemoveQuantity(originalIndex)}
-                                      style={{
-                                        flexShrink: 0,
-                                        width: "18px",
-                                        height: "18px",
-                                        padding: 0,
-                                        backgroundColor: "transparent",
-                                        color: "#6b7280",
-                                        border: "none",
-                                        cursor: "pointer",
-                                        fontSize: "14px",
-                                        lineHeight: "1",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        borderRadius: "2px",
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        e.currentTarget.style.color = "#ef4444";
-                                        e.currentTarget.style.backgroundColor = "#fee2e2";
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.color = "#6b7280";
-                                        e.currentTarget.style.backgroundColor = "transparent";
-                                      }}
-                                      title="Remove column"
-                                    >
-                                      ×
-                                    </button>
+                                    />
                                   )}
                                 </div>
                                 {/* Quantity input/display - all at same height */}

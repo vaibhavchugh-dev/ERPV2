@@ -239,7 +239,7 @@ const JobOrders: React.FC = () => {
       key: "jobOrderNumber",
       label: "Job Order #",
       sortable: true,
-      render: (value: any) => formatJobOrderNumber(value),
+      render: (value: any) => <span className="entity-number">{formatJobOrderNumber(value)}</span>,
     },
     {
       key: "customerOrderID",
@@ -250,13 +250,9 @@ const JobOrders: React.FC = () => {
         const poNumber = row?.customerPONumber || row?.customerOrderNumber || row?.poNumber || orderId;
         if (orderId && Number(orderId) > 0) {
           return (
-            <span
-              style={{
-                color: "#6366f1",
-                fontWeight: 500,
-                cursor: "pointer",
-                textDecoration: "underline",
-              }}
+            <button
+              type="button"
+              className="link-button"
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedCustomerOrderId(Number(orderId));
@@ -265,7 +261,7 @@ const JobOrders: React.FC = () => {
               title="Click to view customer order"
             >
               {formatCustomerOrderNumber(Number(poNumber))}
-            </span>
+            </button>
           );
         }
         return "-";
