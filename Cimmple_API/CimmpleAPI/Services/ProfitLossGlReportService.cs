@@ -44,10 +44,15 @@ public static class ProfitLossGlReportService
         public decimal NetRevenue { get; set; }
         public decimal TotalCostOfGoodsSold { get; set; }
         public decimal GrossProfit { get; set; }
+        /// <summary>Selling, general &amp; administrative only (excludes R&amp;D).</summary>
         public decimal TotalOperatingExpenses { get; set; }
         public decimal TotalResearchAndDevelopment { get; set; }
+        /// <summary>SG&amp;A + R&amp;D.</summary>
+        public decimal TotalOperatingExpensesAll { get; set; }
         public decimal TotalOtherIncome { get; set; }
         public decimal TotalOtherExpense { get; set; }
+        /// <summary>Other income − other expense.</summary>
+        public decimal NetOtherIncome { get; set; }
         public decimal TotalIncomeTax { get; set; }
         public decimal OperatingIncome { get; set; }
         public decimal IncomeBeforeTax { get; set; }
@@ -192,8 +197,10 @@ public static class ProfitLossGlReportService
             GrossProfit = grossProfit,
             TotalOperatingExpenses = totalOpEx,
             TotalResearchAndDevelopment = totalRd,
+            TotalOperatingExpensesAll = totalOpEx + totalRd,
             TotalOtherIncome = totalOtherIncome,
             TotalOtherExpense = totalOtherExpense,
+            NetOtherIncome = totalOtherIncome - totalOtherExpense,
             TotalIncomeTax = totalTax,
             OperatingIncome = operatingIncome,
             IncomeBeforeTax = incomeBeforeTax,

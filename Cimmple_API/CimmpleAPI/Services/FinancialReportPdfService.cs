@@ -74,7 +74,20 @@ public static class FinancialReportPdfService
         var ps = GetString(root, "periodStart") ?? GetString(root, "PeriodStart");
         var pe = GetString(root, "periodEnd") ?? GetString(root, "PeriodEnd");
         if (!string.IsNullOrEmpty(ps)) sb.AppendLine($"Period,{ps} to {pe}");
+        if (IsProfitLoss(root)) sb.AppendLine("Basis,Accrual (general ledger)");
         sb.AppendLine();
+
+        if (IsProfitLoss(root))
+        {
+            sb.AppendLine("Account Code,Line,Amount");
+            foreach (var row in BuildProfitLossRows(root))
+            {
+                var label = new string(' ', row.Indent * 2) + row.Label;
+                var amount = row.Amount.HasValue ? row.Amount.Value.ToString(CultureInfo.InvariantCulture) : "";
+                sb.AppendLine($"{Escape(row.Code)},{Escape(label)},{amount}");
+            }
+            return sb.ToString();
+        }
 
         if (TryGetProperty(root, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
         {
@@ -214,17 +227,18 @@ public static class FinancialReportPdfService
             return;
         }
 
-        // P&L / Cash Flow sections — skip empty sections (same rule as UI).
+        if (IsProfitLoss(root))
+        {
+            RenderProfitLoss(col, root);
+            return;
+        }
+
+        // Cash Flow sections — skip empty sections (same rule as UI).
         if (TryGetProperty(root, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array)
         {
             var isCashFlow = reportBasis.Equals("direct-cash", StringComparison.OrdinalIgnoreCase)
                              || reportType.Contains("cash", StringComparison.OrdinalIgnoreCase);
-            var isPl = reportBasis.Equals("accrual-gl", StringComparison.OrdinalIgnoreCase)
-                       || reportType.Contains("profit", StringComparison.OrdinalIgnoreCase)
-                       || reportType.Contains("income", StringComparison.OrdinalIgnoreCase);
 
-            if (isPl)
-                col.Item().Text("Profit & Loss (accrual)").Bold().FontSize(12);
             if (isCashFlow)
                 col.Item().Text("Cash Flow (direct)").Bold().FontSize(12);
 
@@ -249,18 +263,6 @@ public static class FinancialReportPdfService
                 var sub = GetDecimal(sec, "subtotal") ?? GetDecimal(sec, "Subtotal");
                 if (sub.HasValue)
                     MoneyRow(col, $"Subtotal — {title}", sub.Value);
-            }
-
-            if (isPl)
-            {
-                if (GetDecimal(root, "grossProfit").HasValue || GetDecimal(root, "GrossProfit").HasValue)
-                    MoneyRow(col, "Gross profit", GetDecimal(root, "grossProfit") ?? GetDecimal(root, "GrossProfit") ?? 0);
-                if (GetDecimal(root, "operatingIncome").HasValue || GetDecimal(root, "OperatingIncome").HasValue)
-                    MoneyRow(col, "Operating income", GetDecimal(root, "operatingIncome") ?? GetDecimal(root, "OperatingIncome") ?? 0);
-                if (GetDecimal(root, "incomeBeforeTax").HasValue || GetDecimal(root, "IncomeBeforeTax").HasValue)
-                    MoneyRow(col, "Income before tax", GetDecimal(root, "incomeBeforeTax") ?? GetDecimal(root, "IncomeBeforeTax") ?? 0);
-                MoneyRow(col, "Net income",
-                    GetDecimal(root, "netIncome") ?? GetDecimal(root, "NetIncome") ?? 0, bold: true);
             }
 
             if (isCashFlow || GetDecimal(root, "netCashFlow").HasValue || GetDecimal(root, "NetCashFlow").HasValue)
@@ -451,6 +453,182 @@ public static class FinancialReportPdfService
             bold: true);
     }
 
+    private enum PlRowKind { Heading, SubHeading, Account, Subtotal, Total, GrandTotal }
+
+    private sealed record PlRow(PlRowKind Kind, string Label, decimal? Amount = null, int Indent = 0, string Code = "");
+
+    private static bool IsProfitLoss(JsonElement root)
+    {
+        var basis = GetString(root, "reportBasis") ?? "";
+        if (basis.Equals("accrual-gl", StringComparison.OrdinalIgnoreCase)) return true;
+        var type = GetString(root, "reportType") ?? "";
+        return type.Contains("profit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static JsonElement? FindSection(JsonElement root, string sectionId)
+    {
+        if (!TryGetProperty(root, "sections", out var sections) || sections.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var sec in sections.EnumerateArray())
+        {
+            var id = GetString(sec, "sectionId") ?? "";
+            if (id.Equals(sectionId, StringComparison.OrdinalIgnoreCase))
+                return sec;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Standard multi-step P&amp;L: Revenue → COGS → Gross Profit → Operating Expenses → Operating Income
+    /// → Other Income/(Expense) → Income Before Tax → Income Tax → Net Income. Shared by PDF and CSV.
+    /// </summary>
+    private static List<PlRow> BuildProfitLossRows(JsonElement root)
+    {
+        var rows = new List<PlRow>();
+        decimal Total(string key) => GetDecimal(root, key) ?? 0;
+        decimal Subtotal(JsonElement? sec) => sec.HasValue ? GetDecimal(sec.Value, "subtotal") ?? 0 : 0;
+        bool HasContent(JsonElement? sec) => sec.HasValue && SectionHasContent(sec.Value);
+
+        void AddLines(JsonElement? sec, int indent, bool negate = false)
+        {
+            if (!sec.HasValue || !TryGetProperty(sec.Value, "lines", out var lines) || lines.ValueKind != JsonValueKind.Array)
+                return;
+            foreach (var ln in lines.EnumerateArray())
+            {
+                var amt = GetDecimal(ln, "amount") ?? 0;
+                rows.Add(new PlRow(PlRowKind.Account, GetString(ln, "accountName") ?? "",
+                    negate ? -amt : amt, indent, GetString(ln, "accountCode") ?? ""));
+            }
+        }
+
+        var revenue = FindSection(root, "revenue");
+        var cogs = FindSection(root, "costOfGoodsSold");
+        var sga = FindSection(root, "operatingExpenses");
+        var rd = FindSection(root, "researchAndDevelopment");
+        var otherIncome = FindSection(root, "otherIncome");
+        var otherExpense = FindSection(root, "otherExpense");
+        var tax = FindSection(root, "incomeTax");
+
+        rows.Add(new PlRow(PlRowKind.Heading, "Revenue"));
+        AddLines(revenue, 1);
+        rows.Add(new PlRow(PlRowKind.Subtotal, "Total Revenue", Total("netRevenue")));
+
+        if (HasContent(cogs))
+        {
+            rows.Add(new PlRow(PlRowKind.Heading, "Cost of Goods Sold"));
+            AddLines(cogs, 1);
+            rows.Add(new PlRow(PlRowKind.Subtotal, "Total Cost of Goods Sold", Total("totalCostOfGoodsSold")));
+        }
+        rows.Add(new PlRow(PlRowKind.Total, "Gross Profit", Total("grossProfit")));
+
+        if (HasContent(sga) || HasContent(rd))
+        {
+            rows.Add(new PlRow(PlRowKind.Heading, "Operating Expenses"));
+            if (HasContent(sga))
+            {
+                rows.Add(new PlRow(PlRowKind.SubHeading, "Selling, General & Administrative"));
+                AddLines(sga, 1);
+                rows.Add(new PlRow(PlRowKind.Subtotal, "Total Selling, General & Administrative", Subtotal(sga)));
+            }
+            if (HasContent(rd))
+            {
+                rows.Add(new PlRow(PlRowKind.SubHeading, "Research & Development"));
+                AddLines(rd, 1);
+                rows.Add(new PlRow(PlRowKind.Subtotal, "Total Research & Development", Subtotal(rd)));
+            }
+            var opEx = GetDecimal(root, "totalOperatingExpensesAll") ?? Subtotal(sga) + Subtotal(rd);
+            rows.Add(new PlRow(PlRowKind.Subtotal, "Total Operating Expenses", opEx));
+        }
+        rows.Add(new PlRow(PlRowKind.Total, "Operating Income", Total("operatingIncome")));
+
+        if (HasContent(otherIncome) || HasContent(otherExpense))
+        {
+            rows.Add(new PlRow(PlRowKind.Heading, "Other Income / (Expense)"));
+            AddLines(otherIncome, 1);
+            AddLines(otherExpense, 1, negate: true);
+            var netOther = GetDecimal(root, "netOtherIncome") ?? Subtotal(otherIncome) - Subtotal(otherExpense);
+            rows.Add(new PlRow(PlRowKind.Subtotal, "Net Other Income / (Expense)", netOther));
+        }
+        rows.Add(new PlRow(PlRowKind.Total, "Income Before Tax", Total("incomeBeforeTax")));
+
+        if (HasContent(tax))
+        {
+            rows.Add(new PlRow(PlRowKind.Heading, "Income Tax Expense"));
+            AddLines(tax, 1);
+            rows.Add(new PlRow(PlRowKind.Subtotal, "Total Income Tax", Total("totalIncomeTax")));
+        }
+        rows.Add(new PlRow(PlRowKind.GrandTotal, "Net Income", Total("netIncome")));
+
+        return rows;
+    }
+
+    private static void RenderProfitLoss(ColumnDescriptor col, JsonElement root)
+    {
+        var rows = BuildProfitLossRows(root);
+
+        col.Item().Table(table =>
+        {
+            table.ColumnsDefinition(c =>
+            {
+                c.ConstantColumn(52);
+                c.RelativeColumn();
+                c.ConstantColumn(110);
+            });
+            table.Header(h =>
+            {
+                h.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten1).PaddingBottom(3).Text("Code").Bold();
+                h.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten1).PaddingBottom(3).PaddingLeft(12).Text("Account").Bold();
+                h.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten1).PaddingBottom(3).AlignRight().Text("Amount").Bold();
+            });
+
+            foreach (var row in rows)
+            {
+                var indent = row.Indent * 12f;
+                switch (row.Kind)
+                {
+                    case PlRowKind.Heading:
+                        table.Cell().ColumnSpan(3).PaddingTop(10).PaddingBottom(2)
+                            .Text(row.Label.ToUpperInvariant()).Bold().FontSize(9.5f).FontColor(Colors.Grey.Darken4);
+                        break;
+                    case PlRowKind.SubHeading:
+                        table.Cell().ColumnSpan(3).PaddingTop(4).PaddingLeft(indent)
+                            .Text(row.Label).SemiBold();
+                        break;
+                    case PlRowKind.Account:
+                        table.Cell().PaddingVertical(1.5f).Text(row.Code).FontColor(Colors.Grey.Darken1);
+                        table.Cell().PaddingVertical(1.5f).PaddingLeft(indent).Text(row.Label);
+                        table.Cell().PaddingVertical(1.5f).AlignRight().Text(FormatAccounting(row.Amount ?? 0));
+                        break;
+                    case PlRowKind.Subtotal:
+                        table.Cell().ColumnSpan(2).PaddingTop(2).PaddingBottom(3).PaddingLeft(indent)
+                            .Text(row.Label).SemiBold();
+                        table.Cell().BorderTop(0.75f).BorderColor(Colors.Grey.Darken1).PaddingTop(2).PaddingBottom(3)
+                            .AlignRight().Text(FormatAccounting(row.Amount ?? 0)).SemiBold();
+                        break;
+                    case PlRowKind.Total:
+                        table.Cell().ColumnSpan(2).Background(Colors.Grey.Lighten4).PaddingVertical(4).PaddingLeft(2)
+                            .Text(row.Label.ToUpperInvariant()).Bold();
+                        table.Cell().Background(Colors.Grey.Lighten4).BorderTop(1).BorderColor(Colors.Grey.Darken3)
+                            .PaddingVertical(4).AlignRight().Text(FormatAccounting(row.Amount ?? 0)).Bold();
+                        break;
+                    case PlRowKind.GrandTotal:
+                        table.Cell().ColumnSpan(2).PaddingTop(8).PaddingBottom(4)
+                            .Text(row.Label.ToUpperInvariant()).Bold().FontSize(11);
+                        table.Cell().PaddingTop(6).BorderTop(1).BorderBottom(2.5f).BorderColor(Colors.Grey.Darken4)
+                            .PaddingVertical(3).AlignRight().Text(FormatAccounting(row.Amount ?? 0)).Bold().FontSize(11);
+                        break;
+                }
+            }
+        });
+    }
+
+    /// <summary>Accounting style: negatives in parentheses.</summary>
+    private static string FormatAccounting(decimal v)
+    {
+        var abs = Math.Abs(v).ToString("C", CultureInfo.GetCultureInfo("en-US"));
+        return v < 0 ? $"({abs})" : abs;
+    }
+
     private static JsonElement? GetLines(JsonElement parent, string camel, string pascal)
     {
         if (TryGetProperty(parent, camel, out var lines) && lines.ValueKind == JsonValueKind.Array)
@@ -550,7 +728,12 @@ public static class FinancialReportPdfService
         if (!string.IsNullOrEmpty(asOf)) return $"As of {asOf}";
         var ps = GetString(root, "periodStart") ?? GetString(root, "PeriodStart");
         var pe = GetString(root, "periodEnd") ?? GetString(root, "PeriodEnd");
-        if (!string.IsNullOrEmpty(ps)) return $"Period {ps} to {pe}";
+        if (!string.IsNullOrEmpty(ps))
+        {
+            return IsProfitLoss(root)
+                ? $"For the period {ps} to {pe} · Accrual basis (general ledger)"
+                : $"Period {ps} to {pe}";
+        }
         return "";
     }
 

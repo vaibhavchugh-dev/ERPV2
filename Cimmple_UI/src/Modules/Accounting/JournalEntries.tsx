@@ -204,13 +204,14 @@ const JournalEntries: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search || "");
-    const raw = params.get("id") || params.get("highlight");
+    const raw = params.get("id") || params.get("open") || params.get("highlight");
     const journalId = raw ? Number.parseInt(raw, 10) : 0;
     if (!Number.isFinite(journalId) || journalId <= 0) {
       return;
     }
     void openDetail(journalId);
     params.delete("id");
+    params.delete("open");
     params.delete("highlight");
     const qs = params.toString();
     history.replace({

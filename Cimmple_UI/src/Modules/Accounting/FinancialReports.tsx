@@ -798,36 +798,7 @@ function ReportBody({
       )}
 
       {data.reportBasis === "accrual-gl" && Array.isArray(data.sections) && (
-        <div className="fr-block">
-          <h3>Profit &amp; Loss (accrual)</h3>
-          <p className="fr-muted">
-            Based on posted journal entries.
-            {typeof data.journalEntryCount === "number" && (
-              <> Journal headers in period: <strong>{data.journalEntryCount}</strong>.</>
-            )}
-          </p>
-          {data.sections.map((sec: any) => {
-            const hasLines = Array.isArray(sec.lines) && sec.lines.length > 0;
-            const hasAmt = Math.abs(Number(sec.subtotal) || 0) > 0.0001;
-            if (!hasLines && !hasAmt) return null;
-            return (
-              <SectionTable
-                key={sec.sectionId || sec.title}
-                title={sec.title}
-                lines={sec.lines}
-                amountKey="amount"
-                codeKey="accountCode"
-                nameKey="accountName"
-                subtotal={sec.subtotal}
-                onAccountClick={onAccountClick}
-              />
-            );
-          })}
-          <TotalsRow label="Gross profit" value={data.grossProfit} />
-          <TotalsRow label="Operating income" value={data.operatingIncome} />
-          <TotalsRow label="Income before tax" value={data.incomeBeforeTax} />
-          <TotalsRow label="Net income" value={data.netIncome} strong />
-        </div>
+        <ProfitLossStatement data={data} onAccountClick={onAccountClick} />
       )}
 
       {data.reportBasis === "direct-cash" && Array.isArray(data.sections) && (
@@ -1082,6 +1053,215 @@ function ReportBody({
   );
 }
 
+type PlRow = {
+  kind: "heading" | "subheading" | "account" | "subtotal" | "total" | "grand";
+  label: string;
+  amount?: number;
+  indent: number;
+  line?: any;
+};
+
+/** Accounting style: negatives in parentheses. */
+const moneyAcct = (n: unknown) => {
+  const v = Number(n) || 0;
+  const s = money(Math.abs(v));
+  return v < 0 ? `(${s})` : s;
+};
+
+/**
+ * Standard multi-step P&L: Revenue → COGS → Gross Profit → Operating Expenses → Operating Income
+ * → Other Income/(Expense) → Income Before Tax → Income Tax → Net Income.
+ * Mirrors FinancialReportPdfService.BuildProfitLossRows so screen, PDF and CSV match.
+ */
+function buildProfitLossRows(data: any): PlRow[] {
+  const sections: any[] = Array.isArray(data?.sections) ? data.sections : [];
+  const sec = (id: string) => sections.find((s) => s.sectionId === id);
+  const num = (v: unknown) => Number(v) || 0;
+  const hasContent = (s: any) =>
+    !!s && ((Array.isArray(s.lines) && s.lines.length > 0) || Math.abs(num(s.subtotal)) > 0.0001);
+
+  const rows: PlRow[] = [];
+  const addLines = (s: any, indent: number, negate = false) => {
+    (s?.lines || []).forEach((ln: any) =>
+      rows.push({
+        kind: "account",
+        label: ln.accountName || "",
+        amount: negate ? -num(ln.amount) : num(ln.amount),
+        indent,
+        line: ln,
+      })
+    );
+  };
+
+  const revenue = sec("revenue");
+  const cogs = sec("costOfGoodsSold");
+  const sga = sec("operatingExpenses");
+  const rd = sec("researchAndDevelopment");
+  const otherIncome = sec("otherIncome");
+  const otherExpense = sec("otherExpense");
+  const tax = sec("incomeTax");
+
+  rows.push({ kind: "heading", label: "Revenue", indent: 0 });
+  addLines(revenue, 1);
+  rows.push({ kind: "subtotal", label: "Total Revenue", amount: num(data.netRevenue), indent: 0 });
+
+  if (hasContent(cogs)) {
+    rows.push({ kind: "heading", label: "Cost of Goods Sold", indent: 0 });
+    addLines(cogs, 1);
+    rows.push({
+      kind: "subtotal",
+      label: "Total Cost of Goods Sold",
+      amount: num(data.totalCostOfGoodsSold),
+      indent: 0,
+    });
+  }
+  rows.push({ kind: "total", label: "Gross Profit", amount: num(data.grossProfit), indent: 0 });
+
+  if (hasContent(sga) || hasContent(rd)) {
+    rows.push({ kind: "heading", label: "Operating Expenses", indent: 0 });
+    if (hasContent(sga)) {
+      rows.push({ kind: "subheading", label: "Selling, General & Administrative", indent: 0 });
+      addLines(sga, 1);
+      rows.push({
+        kind: "subtotal",
+        label: "Total Selling, General & Administrative",
+        amount: num(sga.subtotal),
+        indent: 0,
+      });
+    }
+    if (hasContent(rd)) {
+      rows.push({ kind: "subheading", label: "Research & Development", indent: 0 });
+      addLines(rd, 1);
+      rows.push({
+        kind: "subtotal",
+        label: "Total Research & Development",
+        amount: num(rd.subtotal),
+        indent: 0,
+      });
+    }
+    rows.push({
+      kind: "subtotal",
+      label: "Total Operating Expenses",
+      amount:
+        data.totalOperatingExpensesAll !== undefined
+          ? num(data.totalOperatingExpensesAll)
+          : num(sga?.subtotal) + num(rd?.subtotal),
+      indent: 0,
+    });
+  }
+  rows.push({ kind: "total", label: "Operating Income", amount: num(data.operatingIncome), indent: 0 });
+
+  if (hasContent(otherIncome) || hasContent(otherExpense)) {
+    rows.push({ kind: "heading", label: "Other Income / (Expense)", indent: 0 });
+    addLines(otherIncome, 1);
+    addLines(otherExpense, 1, true);
+    rows.push({
+      kind: "subtotal",
+      label: "Net Other Income / (Expense)",
+      amount:
+        data.netOtherIncome !== undefined
+          ? num(data.netOtherIncome)
+          : num(otherIncome?.subtotal) - num(otherExpense?.subtotal),
+      indent: 0,
+    });
+  }
+  rows.push({ kind: "total", label: "Income Before Tax", amount: num(data.incomeBeforeTax), indent: 0 });
+
+  if (hasContent(tax)) {
+    rows.push({ kind: "heading", label: "Income Tax Expense", indent: 0 });
+    addLines(tax, 1);
+    rows.push({ kind: "subtotal", label: "Total Income Tax", amount: num(data.totalIncomeTax), indent: 0 });
+  }
+  rows.push({ kind: "grand", label: "Net Income", amount: num(data.netIncome), indent: 0 });
+
+  return rows;
+}
+
+function ProfitLossStatement({
+  data,
+  onAccountClick,
+}: {
+  data: any;
+  onAccountClick: (ln: any) => void;
+}) {
+  const rows = useMemo(() => buildProfitLossRows(data), [data]);
+
+  return (
+    <div className="fr-block fr-pl">
+      <div className="fr-pl-header">
+        <h3>Profit &amp; Loss Statement</h3>
+        <div className="fr-pl-period">
+          For the period {data.periodStart} to {data.periodEnd} · Accrual basis (general ledger)
+        </div>
+        {typeof data.journalEntryCount === "number" && (
+          <div className="fr-muted">
+            Journal entries in period: <strong>{data.journalEntryCount}</strong>
+          </div>
+        )}
+      </div>
+
+      <table className="fr-table fr-pl-table">
+        <thead>
+          <tr>
+            <th className="fr-pl-code">Code</th>
+            <th style={{ paddingLeft: "1.6rem" }}>Account</th>
+            <th className="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => {
+            const pad = { paddingLeft: `${0.5 + row.indent * 1.1}rem` };
+            if (row.kind === "heading") {
+              return (
+                <tr key={i} className="fr-pl-heading">
+                  <td colSpan={3}>{row.label}</td>
+                </tr>
+              );
+            }
+            if (row.kind === "subheading") {
+              return (
+                <tr key={i} className="fr-pl-subheading">
+                  <td colSpan={3}>{row.label}</td>
+                </tr>
+              );
+            }
+            if (row.kind === "account") {
+              const ln = row.line;
+              const clickable = Number(ln?.accountId) > 0;
+              return (
+                <tr
+                  key={i}
+                  className={clickable ? "fr-row-click" : undefined}
+                  onClick={clickable ? () => onAccountClick(ln) : undefined}
+                  title={clickable ? "View general ledger activity" : undefined}
+                >
+                  <td className="mono">
+                    {clickable ? (
+                      <span className="fr-drillable">{ln.accountCode || ""}</span>
+                    ) : (
+                      ln?.accountCode || ""
+                    )}
+                  </td>
+                  <td style={pad}>{row.label}</td>
+                  <td className="num">{moneyAcct(row.amount)}</td>
+                </tr>
+              );
+            }
+            return (
+              <tr key={i} className={`fr-pl-${row.kind}`}>
+                <td colSpan={2} style={row.kind === "subtotal" ? pad : undefined}>
+                  {row.label}
+                </td>
+                <td className="num">{moneyAcct(row.amount)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function SectionTable({
   title,
   lines,
@@ -1187,7 +1367,13 @@ function convertToCSV(data: any): string {
     rows.push("");
   }
   if (data.reportBasis === "accrual-gl" && Array.isArray(data.sections)) {
-    rows.push(`Net income,${data.netIncome ?? 0}`);
+    const esc = (s: string) => (/[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    rows.push("Account Code,Line,Amount");
+    buildProfitLossRows(data).forEach((row) => {
+      const label = `${"  ".repeat(row.indent)}${row.label}`;
+      const amount = row.amount === undefined ? "" : String(row.amount);
+      rows.push(`${esc(row.line?.accountCode || "")},${esc(label)},${amount}`);
+    });
   }
   if (data.reportBasis === "direct-cash") {
     rows.push(`Net Cash Flow,${data.netCashFlow ?? 0}`);

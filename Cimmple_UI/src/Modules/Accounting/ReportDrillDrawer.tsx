@@ -135,6 +135,9 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
     window.open(href, "_blank", "noopener,noreferrer");
   };
 
+  const openJournal = (journalEntryId: number) =>
+    go(withQuery("/accounts/journal-entries", { id: journalEntryId }));
+
   /** Open the specific invoice when its id is known; otherwise fall back to a list search. */
   const invoiceLink = (path: string, invoiceId?: number | null, reference?: string | null) =>
     invoiceId && Number(invoiceId) > 0
@@ -263,14 +266,8 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                                 <button
                                   type="button"
                                   className="fr-link-btn"
-                                  onClick={() =>
-                                    go(
-                                      withQuery("/accounts/journal-entries", {
-                                        open: ln.journalEntryId,
-                                      })
-                                    )
-                                  }
-                                  title="Open journal entries"
+                                  onClick={() => openJournal(ln.journalEntryId)}
+                                  title="Open journal entry in a new tab"
                                 >
                                   JE #{ln.journalEntryId}
                                 </button>

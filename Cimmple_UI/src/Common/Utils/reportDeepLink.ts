@@ -164,9 +164,9 @@ export function buildDrillLink(opts: DrillLinkOptions): string {
     return withLocationId(path, opts.locationId);
   }
 
-  // Journal entries: open specific JE when supported later; still pass open
+  // Journal entries: ?id= opens the journal detail popup
   if (base.startsWith("/accounts/journal-entries") && id) {
-    path = withQuery(rawPath, { open: id });
+    path = withQuery(rawPath, { id });
     return withLocationId(path, opts.locationId);
   }
 
@@ -279,4 +279,3 @@ export function buildDrillLink(opts: DrillLinkOptions): string {
 }
 
 export const DRILL_DETAIL_PAGE_SIZE = 25;
-

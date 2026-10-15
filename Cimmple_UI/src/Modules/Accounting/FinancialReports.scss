@@ -660,6 +660,89 @@
       padding-top: 0.55rem;
     }
   }
+
+  // Standard multi-step Profit & Loss statement
+  .fr-pl-header {
+    text-align: center;
+    margin-bottom: 1rem;
+
+    h3 {
+      margin: 0.1rem 0 0.2rem;
+    }
+  }
+
+  .fr-pl-period {
+    font-size: 0.8125rem;
+    color: #4b5563;
+    margin-bottom: 0.25rem;
+  }
+
+  .fr-pl-table {
+    max-width: 56rem;
+    margin: 0 auto;
+
+    td {
+      border-bottom-color: transparent;
+      padding-top: 0.28rem;
+      padding-bottom: 0.28rem;
+    }
+
+    .fr-pl-code {
+      width: 5.5rem;
+    }
+
+    .fr-pl-heading td {
+      padding-top: 1rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #111827;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .fr-pl-subheading td {
+      padding-top: 0.5rem;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .fr-pl-subtotal td {
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .fr-pl-subtotal td.num {
+      border-top: 1px solid #9ca3af;
+    }
+
+    .fr-pl-total td {
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 0.8125rem;
+      color: #111827;
+      background: #f3f4f6;
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .fr-pl-total td.num {
+      border-top: 1px solid #111827;
+    }
+
+    .fr-pl-grand td {
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 0.9375rem;
+      color: #111827;
+      padding-top: 0.85rem;
+    }
+
+    .fr-pl-grand td.num {
+      border-top: 1px solid #111827;
+      border-bottom: 3px double #111827;
+    }
+  }
 }
 
 @media (max-width: 960px) {
