@@ -7,7 +7,10 @@ import { PdfService } from '../../Common/Services/PdfService';
 import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDialog';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
+import CreditCardAccountSelect from '../../Common/Components/CreditCardAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
+import { useCompanyCreditCards } from '../../Common/Hooks/useCompanyCreditCards';
+import { VENDOR_ORDER_LINE_TYPES } from '../../Common/Constants/vendorOrderLineTypes';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
 import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 import {
@@ -58,6 +61,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [pvrNo, setPvrNo] = useState('');
   const [series, setSeries] = useState('AP');
   const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
+  const isCardPayment = paymentMethod === 'Credit Card';
+  const { cards, creditCardId, setCreditCardId, loading: cardsLoading } = useCompanyCreditCards(isCardPayment);
   const balanceDue = Math.max(
     0,
     Number(invoice.balanceDue ?? invoice.totalAmount - (invoice.paidAmount ?? 0))
@@ -85,7 +90,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
       return;
     }
 
-    if (!bankId) {
+    if (isCardPayment && !creditCardId) {
+      toast.error('Please select a company credit card');
+      return;
+    }
+
+    if (!isCardPayment && !bankId) {
       toast.error('Please select a bank account');
       return;
     }
@@ -100,7 +110,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
         CheckDate: checkDate || undefined,
         PvrNo: pvrNo ? parseInt(pvrNo) : undefined,
         Series: series || undefined,
-        BankId: bankId,
+        BankId: isCardPayment ? undefined : bankId,
+        CreditCardId: isCardPayment ? creditCardId : undefined,
         PaymentAmount: amount
       };
 
@@ -371,12 +382,21 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                       }}
                     />
                   </div>
-                  <BankAccountSelect
-                    banks={banks}
-                    value={bankId}
-                    onChange={setBankId}
-                    loading={banksLoading}
-                  />
+                  {isCardPayment ? (
+                    <CreditCardAccountSelect
+                      cards={cards}
+                      value={creditCardId}
+                      onChange={setCreditCardId}
+                      loading={cardsLoading}
+                    />
+                  ) : (
+                    <BankAccountSelect
+                      banks={banks}
+                      value={bankId}
+                      onChange={setBankId}
+                      loading={banksLoading}
+                    />
+                  )}
                 </div>
               </div>
             </div>
@@ -906,7 +926,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                     <div>
                       <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Order:</span>
                       <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
-                        {invoice.orderId != null ? `Order ${invoice.orderId}` : '—'}
+                        {invoice.orderNumber || '—'}
                       </p>
                     </div>
                     <div>
@@ -958,10 +978,19 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {invoice.items.map((item, index) => (
+                      {invoice.items.map((item, index) => {
+                        const lineTypeLabel = VENDOR_ORDER_LINE_TYPES.find((t) => t.value === item.lineType)?.label;
+                        const partNo = item.partNo && item.partNo !== item.description ? item.partNo : '';
+                        const meta = [lineTypeLabel, partNo].filter(Boolean).join(' · ');
+                        return (
                         <tr key={index} style={{ borderBottom: '1px solid #f3f4f6' }}>
                           <td style={{ padding: '0.75rem', fontSize: '0.875rem', color: '#111827' }}>
-                            {item.description}
+                            <div style={{ whiteSpace: 'pre-line' }}>{item.description || '—'}</div>
+                            {meta && (
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.125rem' }}>
+                                {meta}
+                              </div>
+                            )}
                           </td>
                           <td style={{ padding: '0.75rem', textAlign: 'right', fontSize: '0.875rem', color: '#111827' }}>
                             {item.qtyInvoiced}
@@ -970,7 +999,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                             {formatCurrency(item.amount)}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                     <tfoot style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
                       <tr>
@@ -1153,7 +1183,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               invoiceNo: invoice.invoiceNo,
               vendorName: invoice.vendorName || '',
               vendorCode: invoice.vendorCode || '',
-              orderNumber: `Order ${invoice.orderId}`,
+              orderNumber: invoice.orderNumber || '',
               invoiceDate: invoice.invoiceDate,
               dueDate: invoice.dueDate,
               amount: invoice.amount,

@@ -1,6 +1,6 @@
 import React from "react";
 import { BankMaster } from "../Services/BankService";
-import { getBankDisplayName } from "../Hooks/useCompanyBanks";
+import { bankHasGlAccount, getBankDisplayName } from "../Hooks/useCompanyBanks";
 
 interface BankAccountSelectProps {
   banks: BankMaster[];
@@ -34,6 +34,9 @@ const BankAccountSelect: React.FC<BankAccountSelectProps> = ({
   disabled = false,
   style,
 }) => {
+  const hasUsableBank = banks.some(bankHasGlAccount);
+  const hasUnmappedBank = banks.some((bank) => !bankHasGlAccount(bank));
+
   return (
     <div>
       <label
@@ -62,14 +65,22 @@ const BankAccountSelect: React.FC<BankAccountSelectProps> = ({
           <>
             {!value && <option value="">Select bank account</option>}
             {banks.map((bank) => (
-              <option key={bank.id} value={bank.id}>
+              <option key={bank.id} value={bank.id} disabled={!bankHasGlAccount(bank)}>
                 {getBankDisplayName(bank)}
                 {bank.isprimary ? " (Primary)" : ""}
+                {!bankHasGlAccount(bank) ? " (no COA)" : ""}
               </option>
             ))}
           </>
         )}
       </select>
+      {!loading && hasUnmappedBank && (
+        <div style={{ fontSize: "0.7rem", color: hasUsableBank ? "#6b7280" : "#b91c1c", marginTop: "0.25rem" }}>
+          {hasUsableBank
+            ? "Banks marked (no COA) can't be used until a Chart of Accounts is set in Bank Master."
+            : "No bank has a Chart of Accounts. Set one in Bank Master before recording payments."}
+        </div>
+      )}
     </div>
   );
 };

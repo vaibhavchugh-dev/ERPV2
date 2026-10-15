@@ -253,51 +253,137 @@ public static class GlAccountResolutionService
         return byAccountCode ?? defaultExpenseAccountId;
     }
 
+    /// <summary>
+    /// GL account for a specific bank: BankCOAMapping, then Bank Master COA (account code; account id is a
+    /// legacy fallback). No fuzzy match: a bank without a COA must not post to a guessed bank/cash account.
+    /// </summary>
     public static int? ResolveBank(CimmpleDbContext db, int tenantId, int? bankId)
     {
-        if (bankId.HasValue && bankId.Value > 0)
+        if (!bankId.HasValue || bankId.Value <= 0)
+            return null;
+
+        var mappedAccountId = db.BankCOAMapping
+            .AsNoTracking()
+            .Where(m => m.bankid == bankId.Value)
+            .Select(m => (int?)m.accountid)
+            .FirstOrDefault();
+
+        if (mappedAccountId.HasValue && IsActiveAccountForTenant(db, tenantId, mappedAccountId.Value))
+            return mappedAccountId.Value;
+
+        var coa = db.BankMaster
+            .AsNoTracking()
+            .Where(b => b.Id == bankId.Value && b.TenantId == tenantId)
+            .Select(b => b.coa)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(coa))
+            return null;
+
+        var code = coa.Trim();
+        var byCode = db.ChartofAccounts
+            .AsNoTracking()
+            .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == code)
+            .Select(c => (int?)c.AccountID)
+            .FirstOrDefault();
+        if (byCode.HasValue)
+            return byCode;
+
+        if (int.TryParse(code, out var parsedAccountId) &&
+            IsActiveAccountForTenant(db, tenantId, parsedAccountId))
         {
-            var mappedAccountId = db.BankCOAMapping
-                .AsNoTracking()
-                .Where(m => m.bankid == bankId.Value)
-                .Select(m => (int?)m.accountid)
-                .FirstOrDefault();
+            return parsedAccountId;
+        }
 
-            if (mappedAccountId.HasValue && IsActiveAccountForTenant(db, tenantId, mappedAccountId.Value))
-                return mappedAccountId.Value;
+        return null;
+    }
 
-            var bank = db.BankMaster
-                .AsNoTracking()
-                .FirstOrDefault(b => b.Id == bankId.Value && b.TenantId == tenantId);
-            if (bank != null && !string.IsNullOrWhiteSpace(bank.coa))
+    /// <summary>Batch form of <see cref="ResolveBank"/>: ids of banks that resolve to an active GL account.</summary>
+    public static HashSet<int> GetBankIdsWithGlAccount(CimmpleDbContext db, int tenantId, IReadOnlyCollection<int> bankIds)
+    {
+        var result = new HashSet<int>();
+        if (bankIds.Count == 0)
+            return result;
+
+        var activeAccounts = db.ChartofAccounts
+            .AsNoTracking()
+            .Where(c => c.Tenantid == tenantId && c.IsActive)
+            .Select(c => new { c.AccountID, c.AccountCode })
+            .ToList();
+        var activeIds = activeAccounts.Select(a => a.AccountID).ToHashSet();
+        var activeCodes = activeAccounts
+            .Where(a => !string.IsNullOrWhiteSpace(a.AccountCode))
+            .Select(a => a.AccountCode.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var mappings = db.BankCOAMapping
+            .AsNoTracking()
+            .Where(m => bankIds.Contains(m.bankid))
+            .Select(m => new { m.bankid, m.accountid })
+            .ToList();
+        foreach (var m in mappings)
+        {
+            if (activeIds.Contains(m.accountid))
+                result.Add(m.bankid);
+        }
+
+        var banks = db.BankMaster
+            .AsNoTracking()
+            .Where(b => b.TenantId == tenantId && bankIds.Contains(b.Id))
+            .Select(b => new { b.Id, b.coa })
+            .ToList();
+        foreach (var b in banks)
+        {
+            if (result.Contains(b.Id) || string.IsNullOrWhiteSpace(b.coa))
+                continue;
+            var code = b.coa.Trim();
+            if (activeCodes.Contains(code) ||
+                (int.TryParse(code, out var parsedAccountId) && activeIds.Contains(parsedAccountId)))
             {
-                // Bank Master stores the account code; an account id is only a legacy fallback.
-                var byCode = db.ChartofAccounts
-                    .AsNoTracking()
-                    .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == bank.coa.Trim())
-                    .Select(c => (int?)c.AccountID)
-                    .FirstOrDefault();
-                if (byCode.HasValue)
-                    return byCode;
-
-                if (int.TryParse(bank.coa.Trim(), out var parsedAccountId) &&
-                    IsActiveAccountForTenant(db, tenantId, parsedAccountId))
-                {
-                    return parsedAccountId;
-                }
+                result.Add(b.Id);
             }
         }
 
-        return FindByKeywords(db, tenantId,
-            preferExactName: null,
-            typeKeywords: new[] { "bank", "cash" },
-            nameKeywords: new[] { "bank", "cash" },
-            groupKeywords: new[] { "bank", "cash" });
+        return result;
+    }
+
+    /// <summary>
+    /// Liability account for a company credit card. Card Master stores the account code (account id is a
+    /// legacy fallback). No fuzzy match: an unmapped card must not post to a guessed account.
+    /// </summary>
+    public static int? ResolveCreditCard(CimmpleDbContext db, int tenantId, int? creditCardId)
+    {
+        if (!creditCardId.HasValue || creditCardId.Value <= 0)
+            return null;
+
+        var coa = db.CreditCardMaster
+            .AsNoTracking()
+            .Where(c => c.Id == creditCardId.Value && c.TenantId == tenantId && c.Status == 1)
+            .Select(c => c.COA)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(coa))
+            return null;
+
+        var code = coa.Trim();
+        var byCode = db.ChartofAccounts
+            .AsNoTracking()
+            .Where(c => c.Tenantid == tenantId && c.IsActive && c.AccountCode == code)
+            .Select(c => (int?)c.AccountID)
+            .FirstOrDefault();
+        if (byCode.HasValue)
+            return byCode;
+
+        if (int.TryParse(code, out var parsedAccountId) &&
+            IsActiveAccountForTenant(db, tenantId, parsedAccountId))
+        {
+            return parsedAccountId;
+        }
+
+        return null;
     }
 
     /// <summary>
     /// Resolve GL cash/bank account for payroll: explicit bank → AccountingDefaults.DefaultPayrollBankId
-    /// → bank flagged ispayrollDefault → standard bank resolution.
+    /// → bank flagged ispayrollDefault. Each candidate must have a COA; no fuzzy match.
     /// </summary>
     public static int? ResolvePayrollBank(CimmpleDbContext db, int tenantId, int? bankId = null)
     {
@@ -326,7 +412,7 @@ public static class GlAccountResolutionService
                 return fromFlag;
         }
 
-        return ResolveBank(db, tenantId, null);
+        return null;
     }
 
     public static int? ResolvePayrollAccount(CimmpleDbContext db, int tenantId, Func<AccountingDefaults, int?> selector, string? preferExactName = null)

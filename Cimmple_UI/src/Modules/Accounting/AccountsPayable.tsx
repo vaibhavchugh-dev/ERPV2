@@ -7,7 +7,9 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
+import CreditCardAccountSelect from "../../Common/Components/CreditCardAccountSelect";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useCompanyCreditCards } from "../../Common/Hooks/useCompanyCreditCards";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
@@ -54,6 +56,8 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
   const [checkDate, setCheckDate] = useState(new Date().toISOString().split("T")[0]);
   const [series, setSeries] = useState("AP");
   const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
+  const isCardPayment = paymentMethod === "Credit Card";
+  const { cards, creditCardId, setCreditCardId, loading: cardsLoading } = useCompanyCreditCards(isCardPayment);
 
   const totalDue = invoices.reduce(
     (sum, inv) => sum + Math.max(0, Number(inv.balanceDue ?? inv.totalAmount - (inv.paidAmount ?? 0))),
@@ -66,7 +70,11 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
       toast.error("Payment method is required");
       return;
     }
-    if (!bankId) {
+    if (isCardPayment && !creditCardId) {
+      toast.error("Please select a company credit card");
+      return;
+    }
+    if (!isCardPayment && !bankId) {
       toast.error("Please select a bank account");
       return;
     }
@@ -89,7 +97,8 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
             CheckNo: checkNo || undefined,
             CheckDate: checkDate || undefined,
             Series: series || undefined,
-            BankId: bankId,
+            BankId: isCardPayment ? undefined : bankId,
+            CreditCardId: isCardPayment ? creditCardId : undefined,
             PaymentAmount: balanceDue,
           });
           success += 1;
@@ -166,6 +175,7 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
             <option value="ACH">ACH</option>
             <option value="Wire">Wire</option>
             <option value="Cash">Cash</option>
+            <option value="Credit Card">Credit Card</option>
           </select>
           <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, marginBottom: "0.25rem" }}>
             Payment Date
@@ -177,10 +187,10 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
             required
             style={{ width: "100%", padding: "0.5rem", marginBottom: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
           />
-          {paymentMethod === "Check" && (
+          {(paymentMethod === "Check" || isCardPayment) && (
             <>
               <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, marginBottom: "0.25rem" }}>
-                Check Number
+                {isCardPayment ? "Reference Number" : "Check Number"}
               </label>
               <input
                 type="text"
@@ -189,7 +199,7 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
                 style={{ width: "100%", padding: "0.5rem", marginBottom: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
               />
               <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 500, marginBottom: "0.25rem" }}>
-                Check Date
+                {isCardPayment ? "Transaction Date" : "Check Date"}
               </label>
               <input
                 type="date"
@@ -209,7 +219,11 @@ const BulkAPPaymentModal: React.FC<BulkAPPaymentModalProps> = ({ invoices, onClo
             style={{ width: "100%", padding: "0.5rem", marginBottom: "1rem", border: "1px solid #d1d5db", borderRadius: "0.25rem" }}
           />
           <div style={{ marginBottom: "1rem" }}>
-            <BankAccountSelect banks={banks} value={bankId} onChange={setBankId} loading={banksLoading} />
+            {isCardPayment ? (
+              <CreditCardAccountSelect cards={cards} value={creditCardId} onChange={setCreditCardId} loading={cardsLoading} />
+            ) : (
+              <BankAccountSelect banks={banks} value={bankId} onChange={setBankId} loading={banksLoading} />
+            )}
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
             <button type="button" onClick={onClose} disabled={loading} style={{ padding: "0.5rem 1rem", border: "1px solid #d1d5db", borderRadius: "0.375rem", background: "white" }}>

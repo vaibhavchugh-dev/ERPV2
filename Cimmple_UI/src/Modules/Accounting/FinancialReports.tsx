@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
@@ -128,11 +128,34 @@ const REPORT_CATALOG: ReportType[] = [
   },
 ];
 
+const LAST_REPORT_STORAGE_KEY = "financialReports.lastReport";
+
+/** Last report the user picked; the first report in the catalog on first visit. */
+const loadLastReport = (): string => {
+  const reports = REPORT_CATALOG.filter((r) => r.kind === "report");
+  try {
+    const saved = localStorage.getItem(LAST_REPORT_STORAGE_KEY);
+    if (saved && reports.some((r) => r.id === saved)) return saved;
+  } catch {
+    /* storage unavailable */
+  }
+  return reports[0]?.id || "";
+};
+
 const FinancialReports: React.FC = () => {
   const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
 
-  const [selectedReport, setSelectedReport] = useState<string>("profit-loss");
+  const [selectedReport, setSelectedReport] = useState<string>(loadLastReport);
+
+  useEffect(() => {
+    if (!REPORT_CATALOG.some((r) => r.id === selectedReport && r.kind === "report")) return;
+    try {
+      localStorage.setItem(LAST_REPORT_STORAGE_KEY, selectedReport);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [selectedReport]);
   const [dateRange, setDateRange] = useState("This Month");
   const [customStartDate, setCustomStartDate] = useState(() => {
     const d = new Date();
@@ -674,6 +697,14 @@ const FinancialReports: React.FC = () => {
   );
 };
 
+function openApLabel(asOf?: string | null): string {
+  return asOf ? `Open AP as of ${asOf}` : "Open AP";
+}
+
+function isApAgingReport(data: any): boolean {
+  return String(data?.reportType || "").toUpperCase().startsWith("AP ");
+}
+
 function ReportBody({
   data,
   onAccountClick,
@@ -852,9 +883,15 @@ function ReportBody({
           <table className="fr-table">
             <thead>
               <tr>
-                <th>Bucket</th>
-                <th className="num">Amount</th>
-                <th className="num">%</th>
+                <th title="How long past the due date the open invoices are, as of the report date">
+                  Days Past Due
+                </th>
+                <th className="num" title="Unpaid amount (invoice total minus payments)">
+                  Open Balance
+                </th>
+                <th className="num" title="This bucket's share of the total open balance">
+                  {isApAgingReport(data) ? "% of Total Payables" : "% of Total Receivables"}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1008,7 +1045,12 @@ function ReportBody({
                 <th>Vendor</th>
                 <th className="num">Payments</th>
                 <th className="num">Count</th>
-                <th className="num">Open AP</th>
+                <th
+                  className="num"
+                  title="Unpaid vendor invoice balance as of the period end date"
+                >
+                  {openApLabel(data.openApAsOf)}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1033,7 +1075,7 @@ function ReportBody({
             </tbody>
           </table>
           <TotalsRow label="Total Payments" value={data.totalPaymentsInPeriod} strong />
-          <TotalsRow label="Total Open AP" value={data.totalOpenAp} strong />
+          <TotalsRow label={`Total ${openApLabel(data.openApAsOf)}`} value={data.totalOpenAp} strong />
         </div>
       )}
     </>
@@ -1159,7 +1201,9 @@ function convertToCSV(data: any): string {
     });
   }
   if (data.agingBuckets) {
-    rows.push("Bucket,Amount,Percentage");
+    rows.push(
+      `Days Past Due,Open Balance,${isApAgingReport(data) ? "% of Total Payables" : "% of Total Receivables"}`
+    );
     (data.agingBuckets || []).forEach((b: any) => {
       rows.push(`${b.bucket || ""},${b.amount || 0},${b.percentage || 0}`);
     });

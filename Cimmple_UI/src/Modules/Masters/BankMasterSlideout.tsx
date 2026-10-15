@@ -226,8 +226,6 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
     } else if (field === "zip" && value) {
       error = validateZipCode(value);
     }
-    // COA validation removed - now handled by dropdown selection
-
     // Update errors
     setErrors((prev) => {
       const newErrors = { ...prev };
@@ -269,6 +267,9 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
       newErrors.checkseries = "Check Series is required";
     }
 
+    if ((formData.status || "Active") !== "Inactive" && !formData.coa?.trim()) {
+      newErrors.coa = "Chart of Accounts is required for an active bank";
+    }
 
     // Validate email
     if (formData.Email) {
@@ -294,7 +295,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
     
     if (hasErrors) {
       toast.error("Please fix validation errors before submitting");
-      if (newErrors.BankName || newErrors.AccountNo || newErrors.NickName || newErrors.startingcheck || newErrors.checkseries || newErrors.locationId) {
+      if (newErrors.BankName || newErrors.AccountNo || newErrors.NickName || newErrors.startingcheck || newErrors.checkseries || newErrors.coa || newErrors.locationId) {
         setActiveTab('bank');
       } else if (newErrors.Email || newErrors.Phone || newErrors.zip) {
         setActiveTab('contact');
@@ -783,7 +784,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
 
             <div className="form-row" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="form-group">
-                <label htmlFor="coa">Chart of Accounts</label>
+                <label htmlFor="coa">Chart of Accounts {(formData.status || "Active") !== "Inactive" && <span className="required">*</span>}</label>
                 <div className="input-group">
                   <div className="input-group-prepend">
                     <span className="input-group-icon">

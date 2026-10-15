@@ -54,12 +54,18 @@ export interface VendorInvoice {
   vendorName?: string;
   vendorCode?: string;
   orderId?: number;
+  /** Display order number(s), e.g. "VO#1003" or "VO#1003, VO#1004" when lines span orders. */
+  orderNumber?: string;
   paymentMethod?: string;
   isApproved?: boolean;
   items: Array<{
     orderDetailId: number;
     qtyInvoiced: number;
     description: string;
+    /** Vendor order line part number, when the invoice line is linked to an order line. */
+    partNo?: string;
+    /** Vendor order line type: RawMaterial, FinishedProduct, Tool, Service, Subcontract, Other. */
+    lineType?: string;
     amount: number;
   }>;
 }
@@ -93,7 +99,17 @@ export interface RecordVendorPaymentRequest {
   PvrNo?: number;
   Series?: string;
   BankId?: number;
+  /** Company card from Credit Card Master; required when PaymentMethod is Credit Card. */
+  CreditCardId?: number;
   PaymentAmount?: number;
+}
+
+export interface PaymentCreditCard {
+  id: number;
+  nickName: string;
+  cardType: string;
+  lastFourDigits: string;
+  isPrimary: boolean;
 }
 
 export class VendorInvoiceService {
@@ -221,6 +237,11 @@ export class VendorInvoiceService {
       console.error("Error recording vendor payment:", error);
       throw new Error(error.response?.data?.error || error.message || "Failed to record vendor payment");
     }
+  };
+
+  public static GetPaymentCreditCards = async (): Promise<PaymentCreditCard[]> => {
+    const response = await Instense.get(`/VendorInvoice/GetPaymentCreditCards`);
+    return (response.data.result as PaymentCreditCard[]) || [];
   };
 
   public static DeleteVendorInvoice = async (

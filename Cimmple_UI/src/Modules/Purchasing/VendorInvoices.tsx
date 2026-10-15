@@ -10,8 +10,10 @@ import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDi
 import VendorInvoiceDetailModal from "./VendorInvoiceDetailModal";
 import VendorOrderSlideout from "./VendorOrderSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
+import CreditCardAccountSelect from "../../Common/Components/CreditCardAccountSelect";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
+import { useCompanyCreditCards } from "../../Common/Hooks/useCompanyCreditCards";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
@@ -44,6 +46,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
   const [pvrNo, setPvrNo] = useState('');
   const [series, setSeries] = useState('AP');
   const { banks, bankId, setBankId, loading: banksLoading } = useCompanyBanks();
+  const isCardPayment = paymentMethod === 'Credit Card';
+  const { cards, creditCardId, setCreditCardId, loading: cardsLoading } = useCompanyCreditCards(isCardPayment);
   const balanceDue = Math.max(
     0,
     Number(invoice.balanceDue ?? invoice.totalAmount - (invoice.paidAmount ?? 0))
@@ -71,7 +75,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
       return;
     }
 
-    if (!bankId) {
+    if (isCardPayment && !creditCardId) {
+      toast.error('Please select a company credit card');
+      return;
+    }
+
+    if (!isCardPayment && !bankId) {
       toast.error('Please select a bank account');
       return;
     }
@@ -86,7 +95,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
         CheckDate: checkDate || undefined,
         PvrNo: pvrNo ? parseInt(pvrNo) : undefined,
         Series: series || undefined,
-        BankId: bankId,
+        BankId: isCardPayment ? undefined : bankId,
+        CreditCardId: isCardPayment ? creditCardId : undefined,
         PaymentAmount: amount
       };
 
@@ -357,12 +367,21 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
                       }}
                     />
                   </div>
-                  <BankAccountSelect
-                    banks={banks}
-                    value={bankId}
-                    onChange={setBankId}
-                    loading={banksLoading}
-                  />
+                  {isCardPayment ? (
+                    <CreditCardAccountSelect
+                      cards={cards}
+                      value={creditCardId}
+                      onChange={setCreditCardId}
+                      loading={cardsLoading}
+                    />
+                  ) : (
+                    <BankAccountSelect
+                      banks={banks}
+                      value={bankId}
+                      onChange={setBankId}
+                      loading={banksLoading}
+                    />
+                  )}
                 </div>
               </div>
             </div>

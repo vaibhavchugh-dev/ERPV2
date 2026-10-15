@@ -130,7 +130,7 @@ public static class FinancialReportPdfService
 
         if (TryGetProperty(root, "agingBuckets", out var buckets) && buckets.ValueKind == JsonValueKind.Array)
         {
-            sb.AppendLine("Bucket,Amount,Percentage");
+            sb.AppendLine($"Days Past Due,Open Balance,{AgingShareLabel(root)}");
             foreach (var b in buckets.EnumerateArray())
             {
                 sb.AppendLine($"{Escape(GetString(b, "bucket") ?? "")},{GetDecimal(b, "amount") ?? 0},{GetDecimal(b, "percentage") ?? 0}");
@@ -164,7 +164,7 @@ public static class FinancialReportPdfService
 
         if (TryGetProperty(root, "vendors", out var vendors) && vendors.ValueKind == JsonValueKind.Array)
         {
-            sb.AppendLine("Vendor,Code,Payments,Payment Count,Open AP,Invoices Paid");
+            sb.AppendLine($"Vendor,Code,Payments,Payment Count,{Escape(OpenApLabel(root))},Invoices Paid");
             foreach (var v in vendors.EnumerateArray())
             {
                 sb.AppendLine(string.Join(",",
@@ -176,7 +176,7 @@ public static class FinancialReportPdfService
                     (GetDecimal(v, "invoicesPaidAmountInPeriod") ?? 0).ToString(CultureInfo.InvariantCulture)));
             }
             sb.AppendLine($"Total Payments,{(GetDecimal(root, "totalPaymentsInPeriod") ?? 0).ToString(CultureInfo.InvariantCulture)}");
-            sb.AppendLine($"Total Open AP,{(GetDecimal(root, "totalOpenAp") ?? 0).ToString(CultureInfo.InvariantCulture)}");
+            sb.AppendLine($"{Escape("Total " + OpenApLabel(root))},{(GetDecimal(root, "totalOpenAp") ?? 0).ToString(CultureInfo.InvariantCulture)}");
         }
 
         if (GetDecimal(root, "operatingActivities").HasValue || GetDecimal(root, "OperatingActivities").HasValue)
@@ -320,9 +320,9 @@ public static class FinancialReportPdfService
                 });
                 table.Header(h =>
                 {
-                    h.Cell().Text("Bucket").Bold();
-                    h.Cell().AlignRight().Text("Amount").Bold();
-                    h.Cell().AlignRight().Text("%").Bold();
+                    h.Cell().Text("Days Past Due").Bold();
+                    h.Cell().AlignRight().Text("Open Balance").Bold();
+                    h.Cell().AlignRight().Text(AgingShareLabel(root)).Bold();
                 });
                 foreach (var b in buckets.EnumerateArray())
                 {
@@ -400,7 +400,7 @@ public static class FinancialReportPdfService
                 {
                     h.Cell().Text("Vendor").Bold();
                     h.Cell().AlignRight().Text("Payments").Bold();
-                    h.Cell().AlignRight().Text("Open AP").Bold();
+                    h.Cell().AlignRight().Text(OpenApLabel(root)).Bold();
                     h.Cell().AlignRight().Text("Count").Bold();
                 });
                 foreach (var v in vendors.EnumerateArray())
@@ -412,7 +412,7 @@ public static class FinancialReportPdfService
                 }
             });
             MoneyRow(col, "Total Payments", GetDecimal(root, "totalPaymentsInPeriod") ?? 0, bold: true);
-            MoneyRow(col, "Total Open AP", GetDecimal(root, "totalOpenAp") ?? 0, bold: true);
+            MoneyRow(col, "Total " + OpenApLabel(root), GetDecimal(root, "totalOpenAp") ?? 0, bold: true);
         }
 
         _ = reportType;
@@ -553,6 +553,19 @@ public static class FinancialReportPdfService
         if (!string.IsNullOrEmpty(ps)) return $"Period {ps} to {pe}";
         return "";
     }
+
+    private static string OpenApLabel(JsonElement root)
+    {
+        var asOf = GetString(root, "openApAsOf") ?? GetString(root, "OpenApAsOf");
+        return string.IsNullOrEmpty(asOf) ? "Open AP" : $"Open AP as of {asOf}";
+    }
+
+    private static bool IsApAging(JsonElement root) =>
+        (GetString(root, "reportType") ?? GetString(root, "ReportType") ?? "")
+            .StartsWith("AP ", StringComparison.OrdinalIgnoreCase);
+
+    private static string AgingShareLabel(JsonElement root) =>
+        IsApAging(root) ? "% of Total Payables" : "% of Total Receivables";
 
     private static string FormatMoney(decimal v) =>
         v.ToString("C", CultureInfo.GetCultureInfo("en-US"));

@@ -4865,7 +4865,10 @@ namespace CimmpleAPI.Controllers
                             OrderId = request.OrderId,
                             VendorOrderDetailID = item.OrderDetailId,
                             OrderDate = vendorOrder.OrderDate,
-                            Description = VendorOrderLineDescription(detail.PartName, detail.PartNo),
+                            Description = VendorOrderLineDescription(
+                                detail.PartName, detail.PartNo,
+                                NormalizeVendorOrderLineType(detail.LineType, vendorOrder.MaterialType),
+                                detail.Notes, detail.JobDesc),
                             VendorPoNumber = vendorOrder.VendorPoNumber ?? "",
                             Amount = lineTotal,
                             qty = item.QtyToInvoice,
@@ -5169,11 +5172,54 @@ namespace CimmpleAPI.Controllers
                     .OrderBy(d => d.Id)
                     .ToListAsync();
 
+                var orderDetailIds = invoiceDetails
+                    .Where(d => (d.VendorOrderDetailID ?? 0) > 0)
+                    .Select(d => d.VendorOrderDetailID!.Value)
+                    .Distinct()
+                    .ToList();
+                var orderLines = orderDetailIds.Count == 0
+                    ? new Dictionary<int, (string Description, string PartNo, string LineType)>()
+                    : (await _context.VendorOrderDetails
+                        .AsNoTracking()
+                        .Where(d => orderDetailIds.Contains(d.ID) && d.Tenantid == tenantId)
+                        .Select(d => new { d.ID, d.PartName, d.PartNo, d.LineType, d.Notes, d.JobDesc })
+                        .ToListAsync())
+                        .ToDictionary(
+                            d => d.ID,
+                            d =>
+                            {
+                                var lineType = NormalizeVendorOrderLineType(d.LineType, null);
+                                return (
+                                    Description: VendorOrderLineDescription(d.PartName, d.PartNo, lineType, d.Notes, d.JobDesc),
+                                    PartNo: (d.PartNo ?? "").Trim(),
+                                    LineType: lineType);
+                            });
+
+                // Detail.OrderId is the internal VendorOrder.OrderID; display uses PONumber (VO#).
+                var lineOrderIds = invoiceDetails
+                    .Select(d => d.OrderId)
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToList();
+                var poNumbers = lineOrderIds.Count == 0
+                    ? new List<int>()
+                    : await _context.VendorOrders
+                        .AsNoTracking()
+                        .Where(o => lineOrderIds.Contains(o.OrderID) && o.Tenantid == tenantId)
+                        .Select(o => o.PONumber)
+                        .OrderBy(po => po)
+                        .ToListAsync();
+                var orderNumber = poNumbers.Count > 0
+                    ? string.Join(", ", poNumbers.Select(po => $"VO#{(po < 1000 ? po + 999 : po)}"))
+                    : null;
+
                 // Convert to the expected format
                 var invoiceDetailResponse = new
                 {
                     id = invoice.Id,
                     invoiceNo = invoice.InvoiceNo,
+                    orderId = lineOrderIds.Count == 1 ? lineOrderIds[0] : (int?)null,
+                    orderNumber,
                     invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
@@ -5187,13 +5233,21 @@ namespace CimmpleAPI.Controllers
                     paymentMethod = invoice.PaymentMethod ?? "",
                     vendorName = invoice.VendorName ?? "",
                     vendorCode = invoice.VendorCode ?? "",
-                    items = invoiceDetails.Select(d => new
+                    items = invoiceDetails.Select(d =>
                     {
-                        orderDetailId = d.VendorOrderDetailID ?? 0,
-                        qtyInvoiced = d.qty.HasValue && d.qty.Value > 0 ? d.qty.Value : (d.price.HasValue && d.price.Value > 0 && d.Amount > 0 ? (int)Math.Round(d.Amount / d.price.Value) : 1),
-                        unitPrice = d.price ?? 0m,
-                        description = d.Description ?? "",
-                        amount = d.Amount
+                        orderLines.TryGetValue(d.VendorOrderDetailID ?? 0, out var line);
+                        return new
+                        {
+                            orderDetailId = d.VendorOrderDetailID ?? 0,
+                            qtyInvoiced = d.qty.HasValue && d.qty.Value > 0 ? d.qty.Value : (d.price.HasValue && d.price.Value > 0 && d.Amount > 0 ? (int)Math.Round(d.Amount / d.price.Value) : 1),
+                            unitPrice = d.price ?? 0m,
+                            description = !string.IsNullOrWhiteSpace(d.Description)
+                                ? d.Description.Trim()
+                                : line.Description ?? "",
+                            partNo = line.PartNo ?? "",
+                            lineType = line.LineType ?? "",
+                            amount = d.Amount
+                        };
                     }).ToList()
                 };
 
@@ -5245,9 +5299,10 @@ namespace CimmpleAPI.Controllers
                     : (await _context.VendorOrderDetails
                         .AsNoTracking()
                         .Where(d => blankDetailIds.Contains(d.ID) && d.Tenantid == tenantId)
-                        .Select(d => new { d.ID, d.PartName, d.PartNo })
+                        .Select(d => new { d.ID, d.PartName, d.PartNo, d.LineType, d.Notes, d.JobDesc })
                         .ToListAsync())
-                        .ToDictionary(d => d.ID, d => VendorOrderLineDescription(d.PartName, d.PartNo));
+                        .ToDictionary(d => d.ID, d => VendorOrderLineDescription(
+                            d.PartName, d.PartNo, NormalizeVendorOrderLineType(d.LineType, null), d.Notes, d.JobDesc));
 
                 // Build the response
                 var result = invoices.Select(im => new
@@ -5290,12 +5345,36 @@ namespace CimmpleAPI.Controllers
         }
 
         // Helper methods
-        /// <summary>Item name, or Part No / Tool name when the item name is blank (Tool, Service, Other lines).</summary>
-        private static string VendorOrderLineDescription(string? partName, string? partNo)
+        /// <summary>
+        /// Invoice line text for any vendor order line type. Tool / Service / Subcontract / Other lines often have
+        /// no item name, so fall back through Part No, Notes and Job description, then the line type itself.
+        /// </summary>
+        private static string VendorOrderLineDescription(
+            string? partName,
+            string? partNo,
+            string? lineType = null,
+            string? notes = null,
+            string? jobDesc = null)
         {
-            if (!string.IsNullOrWhiteSpace(partName)) return partName.Trim();
-            return (partNo ?? "").Trim();
+            foreach (var candidate in new[] { partName, partNo, notes, jobDesc })
+            {
+                if (!string.IsNullOrWhiteSpace(candidate))
+                    return candidate.Trim();
+            }
+            return VendorOrderLineTypeLabel(lineType);
         }
+
+        private static string VendorOrderLineTypeLabel(string? lineType) =>
+            (lineType ?? "").Trim() switch
+            {
+                "RawMaterial" => "Raw material",
+                "FinishedProduct" => "Finished product",
+                "Tool" => "Tool",
+                "Service" => "Service",
+                "Subcontract" => "Subcontract",
+                "Other" => "Other",
+                _ => ""
+            };
 
         private async Task<int> GetReceivedQtyForVendorOrderDetail(int orderDetailId, int tenantId)
         {

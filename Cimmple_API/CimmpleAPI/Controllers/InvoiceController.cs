@@ -1105,6 +1105,13 @@ namespace CimmpleAPI.Controllers
                     if (invoice.IsVoided)
                         return BadRequest(new { error = "Cannot record payment on a voided customer invoice." });
 
+                    var method = (request.PaymentMethod ?? "").Trim();
+                    if (method.Equals("Credit Card", StringComparison.OrdinalIgnoreCase) ||
+                        method.Equals("Card", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return BadRequest(new { error = "Credit Card is not a supported payment method for customer invoices." });
+                    }
+
                     var alreadyPaid = GetEffectivePaidAmount(invoice);
                     var balanceDue = Math.Round(invoice.TotalAmount - alreadyPaid, 2);
                     if (balanceDue <= 0.009m)
@@ -1130,7 +1137,7 @@ namespace CimmpleAPI.Controllers
                     {
                         return BadRequest(new
                         {
-                            error = "Unable to determine a bank GL account for this payment. Configure bank COA mapping first."
+                            error = "The selected bank is not mapped to an active Chart of Accounts entry. Set its COA in Bank Master first."
                         });
                     }
 

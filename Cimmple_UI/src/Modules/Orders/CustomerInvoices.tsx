@@ -208,7 +208,6 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
                     <option value="Check">Check</option>
                     <option value="Cash">Cash</option>
                     <option value="Wire Transfer">Wire Transfer</option>
-                    <option value="Credit Card">Credit Card</option>
                     <option value="ACH">ACH</option>
                   </select>
                 </div>

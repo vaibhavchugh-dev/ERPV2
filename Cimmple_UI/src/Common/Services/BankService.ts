@@ -29,6 +29,8 @@ export interface BankMaster {
   locationId: number;
   sharingid: number;
   lastReconciledDate?: string | null;
+  /** From GetBanklist: bank resolves to an active COA account and can be used for GL posting. */
+  hasGlAccount?: boolean;
 }
 
 export interface BankMasterReq {

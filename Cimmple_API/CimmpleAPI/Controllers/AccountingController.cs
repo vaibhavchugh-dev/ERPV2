@@ -196,21 +196,32 @@ namespace CimmpleAPI.Controllers
                                 t.TransactionDate >= rangeStart &&
                                 t.TransactionDate <= rangeEnd);
 
-                var customerPayments = customerPaymentsQuery
+                var customerPaymentRows = customerPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .AsEnumerable()
                     .Where(t => PaymentMatchesLocation(t, true))
                     .Take(safeLimit)
-                    .Select(t => new
+                    .ToList();
+                var customerNameByInvoiceNo = ResolveCustomerNamesByInvoiceNo(
+                    tenantId, customerPaymentRows.Select(t => t.invoiceNo));
+                var customerPayments = customerPaymentRows
+                    .Select(t =>
                     {
-                        id = t.TransactionID,
-                        type = "payment" as string,
-                        description = $"Payment received from {t.Description}",
-                        amount = t.Amount ?? 0,
-                        date = t.TransactionDate,
-                        status = "completed" as string,
-                        customerVendor = t.Description ?? "Customer"
+                        var invoiceNo = t.invoiceNo?.Trim() ?? "";
+                        var customerName = customerNameByInvoiceNo.TryGetValue(invoiceNo, out var name) ? name : "Customer";
+                        return new
+                        {
+                            id = t.TransactionID,
+                            type = "payment" as string,
+                            description = invoiceNo.Length > 0
+                                ? $"Payment received from {customerName} for invoice {invoiceNo}"
+                                : $"Payment received from {customerName}",
+                            amount = t.Amount ?? 0,
+                            date = t.TransactionDate,
+                            status = "completed" as string,
+                            customerVendor = customerName
+                        };
                     })
                     .ToList();
 
@@ -281,21 +292,32 @@ namespace CimmpleAPI.Controllers
                                 t.TransactionDate >= rangeStart &&
                                 t.TransactionDate <= rangeEnd);
 
-                var vendorPayments = vendorPaymentsQuery
+                var vendorPaymentRows = vendorPaymentsQuery
                     .OrderByDescending(t => t.TransactionDate)
                     .ThenByDescending(t => t.TransactionID)
                     .AsEnumerable()
                     .Where(t => PaymentMatchesLocation(t, false))
                     .Take(safeLimit)
-                    .Select(t => new
+                    .ToList();
+                var vendorNameByInvoiceNo = ResolveVendorNamesByInvoiceNo(
+                    tenantId, vendorPaymentRows.Select(t => t.invoiceNo));
+                var vendorPayments = vendorPaymentRows
+                    .Select(t =>
                     {
-                        id = t.TransactionID,
-                        type = "payment" as string,
-                        description = $"Payment made to {t.Description}",
-                        amount = -(t.Amount ?? 0), // Negative for payments out
-                        date = t.TransactionDate,
-                        status = "completed" as string,
-                        customerVendor = t.Description ?? "Vendor"
+                        var invoiceNo = t.invoiceNo?.Trim() ?? "";
+                        var vendorName = vendorNameByInvoiceNo.TryGetValue(invoiceNo, out var name) ? name : "Vendor";
+                        return new
+                        {
+                            id = t.TransactionID,
+                            type = "payment" as string,
+                            description = invoiceNo.Length > 0
+                                ? $"Payment made to {vendorName} for invoice {invoiceNo}"
+                                : $"Payment made to {vendorName}",
+                            amount = -(t.Amount ?? 0), // Negative for payments out
+                            date = t.TransactionDate,
+                            status = "completed" as string,
+                            customerVendor = vendorName
+                        };
                     })
                     .ToList();
 
@@ -1558,6 +1580,75 @@ namespace CimmpleAPI.Controllers
                 .Sum(x => x.balance);
 
             return (totalPayables, overduePayables, payablesDueThisWeek);
+        }
+
+        private static List<string> NormalizeInvoiceNos(IEnumerable<string?> invoiceNos) =>
+            invoiceNos
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        /// <summary>Payment rows store the invoice number (prefixed or plain); customer name lives on the linked order.</summary>
+        private Dictionary<string, string> ResolveCustomerNamesByInvoiceNo(int tenantId, IEnumerable<string?> invoiceNos)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var nos = NormalizeInvoiceNos(invoiceNos);
+            if (nos.Count == 0)
+                return result;
+
+            var numericNos = nos
+                .Select(s => int.TryParse(s, out var n) ? n : (int?)null)
+                .Where(n => n.HasValue)
+                .Select(n => n!.Value)
+                .ToList();
+
+            var rows = (from im in _context.InvoiceMaster.AsNoTracking()
+                        where im.TenantId == tenantId &&
+                              (nos.Contains(im.PrefixInvoiceNo) || numericNos.Contains(im.InvoiceNo))
+                        join d in _context.InvoiceDetail.AsNoTracking() on im.Id equals d.InvoiceId
+                        join co in _context.CustomerOrder.AsNoTracking() on d.OrderId equals co.OrderID
+                        where co.Tenantid == tenantId
+                        select new { im.PrefixInvoiceNo, im.InvoiceNo, co.CustomerName })
+                       .ToList();
+
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrWhiteSpace(row.CustomerName))
+                    continue;
+                var name = row.CustomerName.Trim();
+                if (!string.IsNullOrWhiteSpace(row.PrefixInvoiceNo))
+                    result.TryAdd(row.PrefixInvoiceNo.Trim(), name);
+                result.TryAdd(row.InvoiceNo.ToString(), name);
+            }
+            return result;
+        }
+
+        private Dictionary<string, string> ResolveVendorNamesByInvoiceNo(int tenantId, IEnumerable<string?> invoiceNos)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var nos = NormalizeInvoiceNos(invoiceNos);
+            if (nos.Count == 0)
+                return result;
+
+            var rows = _context.VendorInvoiceMaster
+                .AsNoTracking()
+                .Where(vim => vim.TenantId == tenantId &&
+                              (nos.Contains(vim.prefixinvoiceno) || nos.Contains(vim.InvoiceNo)))
+                .Select(vim => new { vim.prefixinvoiceno, vim.InvoiceNo, vim.VendorName })
+                .ToList();
+
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrWhiteSpace(row.VendorName))
+                    continue;
+                var name = row.VendorName.Trim();
+                if (!string.IsNullOrWhiteSpace(row.prefixinvoiceno))
+                    result.TryAdd(row.prefixinvoiceno.Trim(), name);
+                if (!string.IsNullOrWhiteSpace(row.InvoiceNo))
+                    result.TryAdd(row.InvoiceNo.Trim(), name);
+            }
+            return result;
         }
 
         private (DateTime startDate, DateTime endDate) GetDateRangeFilter(string dateRange, ReportRequest? reportRequest = null)

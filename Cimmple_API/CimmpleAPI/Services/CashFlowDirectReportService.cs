@@ -21,6 +21,8 @@ public static class CashFlowDirectReportService
         public decimal Amount { get; set; }
         /// <summary>Payment / bank transaction id when available.</summary>
         public int? TransactionId { get; set; }
+        /// <summary>Customer or vendor invoice the payment was applied to, when it can be matched.</summary>
+        public int? InvoiceId { get; set; }
         public int? AccountId { get; set; }
         public bool? IsCustomer { get; set; }
         public string SourceType { get; set; } = "";
@@ -125,7 +127,10 @@ public static class CashFlowDirectReportService
         if (locationId.HasValue)
             cashInQuery = cashInQuery.Where(t => t.locationId == locationId.Value);
 
-        foreach (var t in cashInQuery.OrderBy(t => t.TransactionDate).ThenBy(t => t.TransactionID))
+        var customerPayments = cashInQuery.OrderBy(t => t.TransactionDate).ThenBy(t => t.TransactionID).ToList();
+        var customerInvoiceIds = LoadCustomerInvoiceIds(db, tenantId, customerPayments);
+
+        foreach (var t in customerPayments)
         {
             var amt = t.Amount ?? 0;
             if (Math.Abs(amt) < Epsilon) continue;
@@ -137,14 +142,19 @@ public static class CashFlowDirectReportService
                 Category = "Cash received from customers",
                 Amount = amt,
                 TransactionId = t.TransactionID,
+                InvoiceId = customerInvoiceIds.TryGetValue(t.invoiceNo?.Trim() ?? "", out var customerInvoiceId)
+                    ? customerInvoiceId
+                    : null,
                 IsCustomer = true,
                 SourceType = "payment"
             });
         }
 
+        // Card payments credit the card liability; cash leaves only when the card bill is paid.
         var cashOutQuery = db.Transactions.AsNoTracking()
             .Where(t => t.TenantId == tenantId &&
                         (t.isCustomer == 0 || t.isCustomer == null) &&
+                        (t.PaymentMethod == null || t.PaymentMethod != "Credit Card") &&
                         t.TransactionType != null &&
                         EF.Functions.Like(t.TransactionType, "%Payment%") &&
                         t.TransactionDate != null &&
@@ -153,7 +163,10 @@ public static class CashFlowDirectReportService
         if (locationId.HasValue)
             cashOutQuery = cashOutQuery.Where(t => t.locationId == locationId.Value);
 
-        foreach (var t in cashOutQuery.OrderBy(t => t.TransactionDate).ThenBy(t => t.TransactionID))
+        var vendorPayments = cashOutQuery.OrderBy(t => t.TransactionDate).ThenBy(t => t.TransactionID).ToList();
+        var resolveVendorInvoiceId = BuildVendorInvoiceIdResolver(db, tenantId, vendorPayments);
+
+        foreach (var t in vendorPayments)
         {
             var amt = t.Amount ?? 0;
             if (Math.Abs(amt) < Epsilon) continue;
@@ -165,12 +178,82 @@ public static class CashFlowDirectReportService
                 Category = "Cash paid to vendors",
                 Amount = -amt,
                 TransactionId = t.TransactionID,
+                InvoiceId = resolveVendorInvoiceId(t),
                 IsCustomer = false,
                 SourceType = "payment"
             });
         }
 
         return lines;
+    }
+
+    private static Dictionary<string, int> LoadCustomerInvoiceIds(
+        CimmpleDbContext db, int tenantId, IEnumerable<Transactions> payments)
+    {
+        var refs = payments
+            .Select(t => t.invoiceNo?.Trim())
+            .Where(no => !string.IsNullOrEmpty(no))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (refs.Count == 0)
+            return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        return db.InvoiceMaster.AsNoTracking()
+            .Where(im => im.TenantId == tenantId && refs.Contains(im.PrefixInvoiceNo))
+            .Select(im => new { im.PrefixInvoiceNo, im.Id })
+            .ToList()
+            .GroupBy(x => x.PrefixInvoiceNo.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Vendor invoice numbers are only unique per vendor; match on vendor when the payment has one.</summary>
+    private static Func<Transactions, int?> BuildVendorInvoiceIdResolver(
+        CimmpleDbContext db, int tenantId, IEnumerable<Transactions> payments)
+    {
+        var refs = payments
+            .Select(t => t.invoiceNo?.Trim())
+            .Where(no => !string.IsNullOrEmpty(no))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (refs.Count == 0)
+            return _ => null;
+
+        var invoices = db.VendorInvoiceMaster.AsNoTracking()
+            .Where(v => v.TenantId == tenantId &&
+                        (refs.Contains(v.prefixinvoiceno) || refs.Contains(v.InvoiceNo)))
+            .Select(v => new { v.Id, v.vid, v.prefixinvoiceno, v.InvoiceNo })
+            .ToList();
+
+        var byNo = new Dictionary<string, List<(int Id, int Vid)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var v in invoices)
+        {
+            foreach (var no in new[] { v.prefixinvoiceno, v.InvoiceNo })
+            {
+                if (string.IsNullOrWhiteSpace(no))
+                    continue;
+                var key = no.Trim();
+                if (!byNo.TryGetValue(key, out var list))
+                {
+                    list = new List<(int Id, int Vid)>();
+                    byNo[key] = list;
+                }
+                if (!list.Any(x => x.Id == v.Id))
+                    list.Add((v.Id, v.vid));
+            }
+        }
+
+        return t =>
+        {
+            var key = t.invoiceNo?.Trim();
+            if (string.IsNullOrEmpty(key) || !byNo.TryGetValue(key, out var matches))
+                return null;
+            if (t.vendorid is > 0)
+            {
+                var forVendor = matches.Where(m => m.Vid == t.vendorid).ToList();
+                return forVendor.Count == 1 ? forVendor[0].Id : null;
+            }
+            return matches.Count == 1 ? matches[0].Id : null;
+        };
     }
 
     private static void BuildInvestingFinancingLines(

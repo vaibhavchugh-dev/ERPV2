@@ -45,6 +45,14 @@ const money = (n: unknown) =>
     maximumFractionDigits: 2,
   })}`;
 
+const cashFlowSourceLabel = (line: any): string => {
+  if (line?.sourceType === "payment") {
+    return line.isCustomer ? "Customer payment" : "Vendor payment";
+  }
+  if (line?.sourceType === "coa-cash") return "Bank deposit / withdrawal";
+  return line?.sourceType || "—";
+};
+
 type Props = {
   target: DrillTarget | null;
   onClose: () => void;
@@ -119,9 +127,19 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
   }, [target, onClose]);
 
   const go = (path: string) => {
-    onClose();
-    history.push(path);
+    const qIndex = path.indexOf("?");
+    const href = history.createHref({
+      pathname: qIndex >= 0 ? path.slice(0, qIndex) : path,
+      search: qIndex >= 0 ? path.slice(qIndex) : "",
+    });
+    window.open(href, "_blank", "noopener,noreferrer");
   };
+
+  /** Open the specific invoice when its id is known; otherwise fall back to a list search. */
+  const invoiceLink = (path: string, invoiceId?: number | null, reference?: string | null) =>
+    invoiceId && Number(invoiceId) > 0
+      ? withQuery(path, { open: Number(invoiceId) })
+      : withQuery(path, { search: reference || undefined });
 
   const glLines = useMemo(
     () => (Array.isArray(gl?.lines) ? gl.lines : []),
@@ -335,11 +353,7 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                               (target.isAp
                                 ? "/purchasing/vendor-invoices"
                                 : "/orders/customer-invoices");
-                            const href = buildDrillLink({
-                              path: base,
-                              entityId: inv.invoiceId,
-                              search: inv.invoiceNo,
-                            });
+                            const href = invoiceLink(base, inv.invoiceId, inv.invoiceNo);
                             return (
                               <tr key={i}>
                                 <td className="mono">{inv.invoiceNo}</td>
@@ -407,7 +421,7 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                 </div>
                 <div>
                   <dt>Source</dt>
-                  <dd>{target.line.sourceType || "—"}</dd>
+                  <dd>{cashFlowSourceLabel(target.line)}</dd>
                 </div>
               </dl>
               <div className="fr-drill-actions">
@@ -417,13 +431,16 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                     className="fr-btn fr-btn-secondary"
                     onClick={() =>
                       go(
-                        withQuery("/orders/customer-invoices", {
-                          search: target.line.reference || undefined,
-                        })
+                        invoiceLink(
+                          "/orders/customer-invoices",
+                          target.line.invoiceId,
+                          target.line.reference
+                        )
                       )
                     }
                   >
-                    Customer invoices
+                    <FontAwesomeIcon icon={faExternalLinkAlt} />
+                    {target.line.invoiceId ? "Open customer invoice" : "Customer invoices"}
                   </button>
                 )}
                 {target.line.isCustomer === false && (
@@ -432,13 +449,16 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                     className="fr-btn fr-btn-secondary"
                     onClick={() =>
                       go(
-                        withQuery("/purchasing/vendor-invoices", {
-                          search: target.line.reference || undefined,
-                        })
+                        invoiceLink(
+                          "/purchasing/vendor-invoices",
+                          target.line.invoiceId,
+                          target.line.reference
+                        )
                       )
                     }
                   >
-                    Vendor invoices
+                    <FontAwesomeIcon icon={faExternalLinkAlt} />
+                    {target.line.invoiceId ? "Open vendor invoice" : "Vendor invoices"}
                   </button>
                 )}
                 {target.line.accountId > 0 && (
@@ -465,14 +485,6 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                   Payment dashboard
                 </button>
               </div>
-              {target.line.reference && (
-                <p className="fr-muted" style={{ marginTop: "0.75rem" }}>
-                  Invoice / check ref: <strong>{target.line.reference}</strong>
-                  {target.line.transactionId
-                    ? ` · Tx #${target.line.transactionId}`
-                    : ""}
-                </p>
-              )}
             </div>
           )}
 
@@ -514,19 +526,20 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                   className="fr-btn fr-btn-secondary"
                   onClick={() =>
                     go(
-                      buildDrillLink({
-                        path:
-                          target.line.linkPath || "/orders/customer-invoices",
-                        entityId: target.line.invoiceId,
-                        search: target.line.reference,
-                      })
+                      invoiceLink(
+                        target.line.linkPath || "/orders/customer-invoices",
+                        target.line.invoiceId,
+                        target.line.reference
+                      )
                     )
                   }
                 >
                   <FontAwesomeIcon icon={faExternalLinkAlt} />
-                  {target.line.type === "Payment"
-                    ? "Customer invoices / payments"
-                    : "Open customer invoice"}
+                  {target.line.invoiceId
+                    ? target.line.type === "Payment"
+                      ? "Open paid invoice"
+                      : "Open customer invoice"
+                    : "Customer invoices"}
                 </button>
                 <button
                   type="button"
@@ -536,19 +549,6 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                   Payment dashboard
                 </button>
               </div>
-              {(target.line.invoiceId || target.line.transactionId) && (
-                <p className="fr-muted" style={{ marginTop: "0.75rem" }}>
-                  {target.line.invoiceId
-                    ? `Invoice #${target.line.invoiceId}`
-                    : ""}
-                  {target.line.invoiceId && target.line.transactionId
-                    ? " · "
-                    : ""}
-                  {target.line.transactionId
-                    ? `Tx #${target.line.transactionId}`
-                    : ""}
-                </p>
-              )}
             </div>
           )}
 
@@ -564,7 +564,11 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                   <dd>{target.vendor.paymentCount || 0}</dd>
                 </div>
                 <div>
-                  <dt>Open AP</dt>
+                  <dt>
+                    {target.vendor.openApAsOf
+                      ? `Open AP as of ${target.vendor.openApAsOf}`
+                      : "Open AP"}
+                  </dt>
                   <dd>{money(target.vendor.openApBalance)}</dd>
                 </div>
               </dl>
@@ -607,10 +611,11 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                                   className="fr-link-btn"
                                   onClick={() =>
                                     go(
-                                      withQuery(
+                                      invoiceLink(
                                         p.linkPath ||
                                           "/purchasing/vendor-invoices",
-                                        { search: p.reference || undefined }
+                                        p.invoiceId,
+                                        p.reference
                                       )
                                     )
                                   }
@@ -638,11 +643,15 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                 </>
               )}
 
-              <h4 className="fr-drill-section-title">Open AP invoices</h4>
+              <h4 className="fr-drill-section-title">
+                {target.vendor.openApAsOf
+                  ? `Open AP invoices as of ${target.vendor.openApAsOf}`
+                  : "Open AP invoices"}
+              </h4>
               {vendorOpen.length === 0 ? (
                 <div className="fr-drill-empty">
                   <p className="fr-muted">
-                    No open AP invoices for this vendor.
+                    No open AP invoices for this vendor as of the period end.
                   </p>
                 </div>
               ) : (
@@ -673,13 +682,12 @@ const ReportDrillDrawer: React.FC<Props> = ({ target, onClose }) => {
                                 className="fr-link-btn"
                                 onClick={() =>
                                   go(
-                                    buildDrillLink({
-                                      path:
-                                        inv.linkPath ||
+                                    invoiceLink(
+                                      inv.linkPath ||
                                         "/purchasing/vendor-invoices",
-                                      entityId: inv.invoiceId,
-                                      search: inv.invoiceNo,
-                                    })
+                                      inv.invoiceId,
+                                      inv.invoiceNo
+                                    )
                                   )
                                 }
                               >
