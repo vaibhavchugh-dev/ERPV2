@@ -9,6 +9,7 @@ import { PdfService } from "../../Common/Services/PdfService";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import VendorInvoiceDetailModal from "./VendorInvoiceDetailModal";
 import VendorOrderSlideout from "./VendorOrderSlideout";
+import DirectVendorInvoiceSlideout from "./DirectVendorInvoiceSlideout";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import CreditCardAccountSelect from "../../Common/Components/CreditCardAccountSelect";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
@@ -491,6 +492,7 @@ const VendorInvoices: React.FC = () => {
   // Slideout states
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
+  const [showDirectInvoiceSlideout, setShowDirectInvoiceSlideout] = useState(false);
 
   useEffect(() => {
     loadInvoices();
@@ -698,11 +700,14 @@ const VendorInvoices: React.FC = () => {
   };
 
   const handleNewInvoice = () => {
-    // Redirect to vendor orders page with a helpful message
-    toast.info("Redirecting to Vendor Orders to create an invoice from an order with received items.", {
-      autoClose: 4000
-    });
-    history.push('/purchasing/vendor-orders');
+    setShowDirectInvoiceSlideout(true);
+  };
+
+  const handleCloseDirectInvoiceSlideout = (refreshList?: boolean) => {
+    setShowDirectInvoiceSlideout(false);
+    if (refreshList) {
+      loadInvoices();
+    }
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
@@ -736,8 +741,12 @@ const VendorInvoices: React.FC = () => {
       sortable: true,
       align: "left" as const,
       render: (value: any, row: VendorInvoiceSummary) => {
-        if (!value || value === 'Multiple Orders') {
-          return <span>{value || '-'}</span>;
+        if (!value || value === 'Multiple Orders' || value === 'Direct') {
+          return (
+            <span style={value === 'Direct' ? { color: '#6b7280', fontStyle: 'italic' } : undefined}>
+              {value || '-'}
+            </span>
+          );
         }
 
         // Extract order ID from VO# format (e.g., "VO#1003" -> 1003)
@@ -925,7 +934,7 @@ const VendorInvoices: React.FC = () => {
     <div style={{ padding: "1rem" }}>
       <MasterListPage
         title="Vendor Invoices"
-        subtitle="Manage all vendor invoices across orders"
+        subtitle="Direct bills and invoices from vendor orders"
         data={filteredInvoices}
         columns={columns}
         loading={loading}
@@ -1011,6 +1020,10 @@ const VendorInvoices: React.FC = () => {
           orderId={selectedOrderId}
           onClose={handleCloseOrderSlideout}
         />
+      )}
+
+      {showDirectInvoiceSlideout && (
+        <DirectVendorInvoiceSlideout onClose={handleCloseDirectInvoiceSlideout} />
       )}
 
       {/* Payment Modal */}

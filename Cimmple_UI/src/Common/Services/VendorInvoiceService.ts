@@ -39,6 +39,33 @@ export interface CreateVendorInvoiceRequest {
   freightCharge?: number;
 }
 
+/** Direct (non-PO) vendor bill line — posts to expense / AP. */
+export interface DirectVendorInvoiceLineItem {
+  description: string;
+  amount: number;
+  accountId?: number;
+  quantity?: number;
+  unitPrice?: number;
+}
+
+/** Direct (non-PO) vendor bill — no vendor order required. */
+export interface CreateDirectVendorInvoiceRequest {
+  vendorId: number;
+  vendorCode?: string;
+  vendorName?: string;
+  /** Vendor's bill / reference number (optional; system generates if omitted). */
+  invoiceNo?: string;
+  locationId?: number;
+  invoiceDate?: string;
+  dueDate?: string;
+  paymentTermId?: number;
+  notes?: string;
+  taxRate?: number;
+  taxAmount?: number;
+  freightCharge?: number;
+  lineItems: DirectVendorInvoiceLineItem[];
+}
+
 export interface VendorInvoice {
   id: number;
   invoiceNo: string;
@@ -145,6 +172,57 @@ export class VendorInvoiceService {
     } catch (error: any) {
       console.error("Error creating vendor invoice:", error);
       throw new Error(error.response?.data?.error || error.message || "Failed to create vendor invoice");
+    }
+  };
+
+  /** Create a vendor bill without a purchase order (utilities, rent, misc expenses). Auto-posts to AP. */
+  public static CreateDirectVendorInvoice = async (
+    request: CreateDirectVendorInvoiceRequest
+  ): Promise<{ id: number; invoiceNumber: string; message: string } | null> => {
+    const url = `/VendorInvoice/CreateVendorInvoice`;
+    try {
+      const payload = {
+        VendorId: request.vendorId,
+        VendorCode: request.vendorCode,
+        VendorName: request.vendorName,
+        InvoiceNo: request.invoiceNo,
+        LocationId: request.locationId,
+        InvoiceDate: request.invoiceDate,
+        DueDate: request.dueDate,
+        PaymentTermId: request.paymentTermId,
+        Notes: request.notes,
+        TaxRate: request.taxRate,
+        TaxAmount: request.taxAmount,
+        FreightCharge: request.freightCharge,
+        LineItems: request.lineItems.map((item) => ({
+          VendorOrderId: 0,
+          Description: item.description,
+          Amount: item.amount,
+          AccountId: item.accountId,
+          Quantity: item.quantity ?? 1,
+          UnitPrice: item.unitPrice ?? item.amount,
+        })),
+      };
+      const response = await Instense.post(url, payload);
+      const result = response.data.result;
+      if (result && result.invoiceId) {
+        return {
+          id: result.invoiceId,
+          invoiceNumber: result.invoiceNumber,
+          message: result.message || "Vendor invoice created successfully",
+        };
+      }
+      return null;
+    } catch (error: any) {
+      console.error("Error creating direct vendor invoice:", error);
+      const data = error.response?.data;
+      const detail =
+        data?.error ||
+        data?.innerException ||
+        (typeof data === "string" ? data : null) ||
+        error.message ||
+        "Failed to create vendor invoice";
+      throw new Error(detail);
     }
   };
 

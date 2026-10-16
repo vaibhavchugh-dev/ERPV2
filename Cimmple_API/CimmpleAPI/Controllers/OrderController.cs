@@ -5082,16 +5082,29 @@ namespace CimmpleAPI.Controllers
 
                 foreach (var invoice in invoices.OrderByDescending(x => x.Invoice.InvoiceDate))
                 {
-                    var orderId = invoice.OrderIds.Count == 1 ? invoice.OrderIds[0] : 0;
-                    var hasMapping = orderMappings.ContainsKey(orderId);
-                    var mappedPONumber = hasMapping ? orderMappings[orderId] : orderId;
-                    // Apply the +1000 offset to get the actual order number
-                    var actualOrderNumber = mappedPONumber < 1000 ? mappedPONumber + 999 : mappedPONumber;
-                    var orderNumber = invoice.OrderIds.Count == 1
-                        ? $"VO#{actualOrderNumber}"
-                        : "Multiple Orders";
+                    var linkedOrderIds = invoice.OrderIds.Where(id => id > 0).Distinct().ToList();
+                    string orderNumber;
+                    int? displayOrderId = null;
+                    if (linkedOrderIds.Count == 0)
+                    {
+                        orderNumber = "Direct";
+                    }
+                    else if (linkedOrderIds.Count == 1)
+                    {
+                        var orderId = linkedOrderIds[0];
+                        displayOrderId = orderId;
+                        var hasMapping = orderMappings.ContainsKey(orderId);
+                        var mappedPONumber = hasMapping ? orderMappings[orderId] : orderId;
+                        // Apply the +1000 offset to get the actual order number
+                        var actualOrderNumber = mappedPONumber < 1000 ? mappedPONumber + 999 : mappedPONumber;
+                        orderNumber = $"VO#{actualOrderNumber}";
+                    }
+                    else
+                    {
+                        orderNumber = "Multiple Orders";
+                    }
 
-                    Console.WriteLine($"Invoice {invoice.Invoice.InvoiceNo}: orderId={orderId}, hasMapping={hasMapping}, mappedPONumber={mappedPONumber}, actualOrderNumber={actualOrderNumber}, orderNumber='{orderNumber}'");
+                    Console.WriteLine($"Invoice {invoice.Invoice.InvoiceNo}: linkedOrders={linkedOrderIds.Count}, orderNumber='{orderNumber}'");
 
                     var taxFreight = VendorInvoiceTaxBreakdown(invoice.Invoice);
                     invoiceSummaries.Add(new
@@ -5112,7 +5125,7 @@ namespace CimmpleAPI.Controllers
                         status = ResolveVendorInvoiceListStatus(invoice.Invoice, now),
                         isApproved = invoice.Invoice.Approved == true,
                         paymentMethod = invoice.Invoice.PaymentMethod ?? "",
-                        orderId = invoice.OrderIds.Count == 1 ? (int?)orderId : null,
+                        orderId = displayOrderId,
                         daysOverdue = GetVendorDaysOverdue(invoice.Invoice, now)
                     });
                 }
