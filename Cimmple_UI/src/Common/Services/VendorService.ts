@@ -26,6 +26,8 @@ export interface VendorMaster {
   Tenantid?: number;
   fullAddress?: string;
   VendorContact?: VendorContact[];
+  /** True when an active portal user with password exists (can receive RFQs). */
+  portalAccessEnabled?: boolean;
 }
 
 export interface VendorContact {

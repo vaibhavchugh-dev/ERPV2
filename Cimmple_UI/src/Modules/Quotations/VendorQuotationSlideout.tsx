@@ -124,7 +124,14 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     ],
   });
 
-  const [vendors, setVendors] = useState<Array<{ vendor_id: number; company_name: string; vendorcode: string }>>([]);
+  const [vendors, setVendors] = useState<
+    Array<{
+      vendor_id: number;
+      company_name: string;
+      vendorcode: string;
+      portalAccessEnabled?: boolean;
+    }>
+  >([]);
   const [loading, setLoading] = useState(false);
   const [isHydrating, setIsHydrating] = useState(quotationId > 0);
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
@@ -1231,7 +1238,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       toast.error("Please add at least one line item before sending to multiple vendors");
       return;
     }
-    // Pre-select the master quotation's vendor (master pricing is kept; additional vendors get blank RFQ copies)
+    // Always pre-select the master quotation's vendor (master pricing is kept)
     const initialSelection = new Set<number>();
     if (formData.VendorID > 0) {
       initialSelection.add(formData.VendorID);
@@ -1257,30 +1264,39 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleMultiVendorSave = async () => {
-    // Include ALL selected vendors (including the master vendor) - API keeps master prices, blanks only new copies
-    const allSelectedVendors = Array.from(selectedVendorIds);
-
-    if (allSelectedVendors.length < 2) {
-      toast.error("Please select at least one additional vendor");
+    const masterId = formData.VendorID;
+    const masterHasPortal = !!vendors.find((v) => v.vendor_id === masterId)?.portalAccessEnabled;
+    if (!masterHasPortal) {
+      toast.error(
+        "Current vendor has no Vendor Portal access. Enable portal access in Vendor Master before sending."
+      );
       return;
     }
+
+    // Master is always included; additional vendors must have portal access.
+    const additional = Array.from(selectedVendorIds).filter((id) => {
+      if (id === masterId) return false;
+      return !!vendors.find((v) => v.vendor_id === id)?.portalAccessEnabled;
+    });
+
+    if (additional.length < 1) {
+      toast.error("Please select at least one additional vendor that has Vendor Portal access");
+      return;
+    }
+
+    const sendable = [masterId, ...additional];
 
     setLoading(true);
     try {
       const result = await QuotationService.DuplicateVendorQuotationForVendors(
         quotationId,
-        allSelectedVendors,
+        sendable,
         includeAttachments
       );
-      const skipped = (result as any)?.skippedVendorIds?.length || 0;
       const baseMsg =
         result?.message ||
-        `Quotation sent to ${allSelectedVendors.length} vendor(s). Master pricing kept; additional vendors start with blank pricing.`;
-      toast.success(
-        skipped > 0
-          ? `${baseMsg}`
-          : `Quotation sent to ${allSelectedVendors.length} vendor(s). Master pricing kept; additional vendors start with blank pricing for bidding.`
-      );
+        `Quotation sent to ${sendable.length} vendor(s). Master pricing kept; additional vendors start with blank pricing for bidding.`;
+      toast.success(baseMsg);
       setShowMultiVendorDialog(false);
       setSelectedVendorIds(new Set());
       setAlreadySentVendorIds(new Set());
@@ -1288,7 +1304,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       onClose(true); // Close slideout to refresh the list
     } catch (error: any) {
       console.error("Error sending to multiple vendors:", error);
-      toast.error(`Error: ${error.message || "Failed to send quotation"}`);
+      toast.error(
+        `Error: ${error?.response?.data?.error || error.message || "Failed to send quotation"}`
+      );
     } finally {
       setLoading(false);
     }
@@ -2708,7 +2726,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               </div>
               <div className="text-editor-popup-content">
                 <p className="multi-vendor-dialog-intro">
-                  Select additional vendors to send this quotation to. The current vendor (
+                  Select additional vendors to send this quotation to. RFQs appear in the Vendor
+                  Portal — vendors without portal access cannot be selected. The current vendor (
                   {formData.VendorName}) is already included in the comparison.
                 </p>
 
@@ -2728,42 +2747,71 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   </label>
                 </div>
 
-                {formData.VendorID > 0 && (
-                  <div className="multi-vendor-dialog-current">
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                      <input
-                        type="checkbox"
-                        checked={true}
-                        disabled
-                        style={{ cursor: "not-allowed", opacity: 0.6 }}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, fontSize: "0.875rem", color: "#0369a1" }}>
-                          {formData.VendorName} (Current — master pricing kept)
-                        </div>
-                        {formData.VendorCode && (
-                          <div style={{ fontSize: "0.75rem", color: "#0284c7" }}>
-                            {formData.VendorCode}
+                {formData.VendorID > 0 && (() => {
+                  const masterVendor = vendors.find((v) => v.vendor_id === formData.VendorID);
+                  const masterHasPortal = !!masterVendor?.portalAccessEnabled;
+                  return (
+                    <div className="multi-vendor-dialog-current">
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={true}
+                          disabled
+                          style={{ cursor: "not-allowed", opacity: 0.6 }}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 500,
+                              fontSize: "0.875rem",
+                              color: masterHasPortal ? "#0369a1" : "#92400e",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span>{formData.VendorName} (Current — master pricing kept)</span>
+                            {!masterHasPortal && (
+                              <span
+                                className="multi-vendor-portal-badge"
+                                title="Enable Vendor Portal access in Vendor Master to send RFQs"
+                              >
+                                No portal
+                              </span>
+                            )}
                           </div>
-                        )}
+                          {formData.VendorCode && (
+                            <div style={{ fontSize: "0.75rem", color: masterHasPortal ? "#0284c7" : "#b45309" }}>
+                              {formData.VendorCode}
+                            </div>
+                          )}
+                          {!masterHasPortal && (
+                            <div style={{ fontSize: "0.75rem", color: "#b45309", marginTop: "0.25rem" }}>
+                              Enable portal access for this vendor before sending.
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 <div className="multi-vendor-dialog-list">
                   {vendors
                     .filter((v) => v.vendor_id !== formData.VendorID)
                     .map((vendor) => {
                       const isAlreadySent = alreadySentVendorIds.has(vendor.vendor_id);
+                      const hasPortal = !!vendor.portalAccessEnabled;
+                      const isBlocked = isAlreadySent || !hasPortal;
                       const isSelected = selectedVendorIds.has(vendor.vendor_id);
                       return (
                         <div
                           key={vendor.vendor_id}
-                          className={`multi-vendor-dialog-list-item${isSelected ? " is-selected" : ""}`}
-                          style={isAlreadySent ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
+                          className={`multi-vendor-dialog-list-item${isSelected ? " is-selected" : ""}${!hasPortal ? " is-no-portal" : ""}`}
+                          style={isBlocked ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
                           onClick={() => {
-                            if (isAlreadySent) return;
+                            if (isBlocked) return;
                             const newSet = new Set(selectedVendorIds);
                             if (isSelected) {
                               newSet.delete(vendor.vendor_id);
@@ -2772,19 +2820,41 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                             }
                             setSelectedVendorIds(newSet);
                           }}
-                          title={isAlreadySent ? "Already sent — a quotation copy exists for this vendor" : undefined}
+                          title={
+                            isAlreadySent
+                              ? "Already sent — a quotation copy exists for this vendor"
+                              : !hasPortal
+                                ? "Enable Vendor Portal access in Vendor Master before sending RFQs"
+                                : undefined
+                          }
                         >
                           <input
                             type="checkbox"
                             checked={isSelected || isAlreadySent}
-                            disabled={isAlreadySent}
+                            disabled={isBlocked}
                             readOnly
-                            style={{ cursor: isAlreadySent ? "not-allowed" : "pointer" }}
+                            style={{ cursor: isBlocked ? "not-allowed" : "pointer" }}
                           />
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
-                              {vendor.company_name}
-                              {isAlreadySent ? " (Already sent)" : ""}
+                            <div
+                              style={{
+                                fontWeight: 500,
+                                fontSize: "0.875rem",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "0.5rem",
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <span>
+                                {vendor.company_name}
+                                {isAlreadySent ? " (Already sent)" : ""}
+                              </span>
+                              {!hasPortal && (
+                                <span className="multi-vendor-portal-badge" title="Enable Vendor Portal access in Vendor Master">
+                                  No portal
+                                </span>
+                              )}
                             </div>
                             {vendor.vendorcode && (
                               <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
@@ -2817,17 +2887,36 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   type="button"
                   className="btn-submit"
                   onClick={handleMultiVendorSave}
+                  title={
+                    formData.VendorID > 0 &&
+                    !vendors.find((v) => v.vendor_id === formData.VendorID)?.portalAccessEnabled
+                      ? "Current vendor has no portal access"
+                      : undefined
+                  }
                   disabled={
                     loading ||
-                    Array.from(selectedVendorIds).filter((id) => id !== formData.VendorID).length < 1
+                    (formData.VendorID > 0 &&
+                      !vendors.find((v) => v.vendor_id === formData.VendorID)?.portalAccessEnabled) ||
+                    Array.from(selectedVendorIds).filter((id) => {
+                      if (id === formData.VendorID) return false;
+                      return !!vendors.find((v) => v.vendor_id === id)?.portalAccessEnabled;
+                    }).length < 1
                   }
                 >
                   {loading
                     ? "Creating..."
                     : (() => {
-                        const additionalCount = Array.from(selectedVendorIds).filter(
-                          (id) => id !== formData.VendorID
-                        ).length;
+                        const masterHasPortal =
+                          formData.VendorID > 0 &&
+                          !!vendors.find((v) => v.vendor_id === formData.VendorID)
+                            ?.portalAccessEnabled;
+                        if (!masterHasPortal) {
+                          return "Current vendor has no portal";
+                        }
+                        const additionalCount = Array.from(selectedVendorIds).filter((id) => {
+                          if (id === formData.VendorID) return false;
+                          return !!vendors.find((v) => v.vendor_id === id)?.portalAccessEnabled;
+                        }).length;
                         if (additionalCount === 0) {
                           return "Select additional vendor(s)";
                         }

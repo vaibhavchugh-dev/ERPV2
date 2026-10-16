@@ -21,3 +21,7 @@ export const getKeepActiveReason = (roleName: string | null | undefined, targetU
   }
   return "";
 };
+
+/** Non-admins cannot change roles / login / admin targets — match API messaging. */
+export const getNonAdminSecurityHint = (): string =>
+  "Only an administrator can change login access, passwords, Admin roles, or Admin accounts.";

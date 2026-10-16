@@ -238,26 +238,29 @@ const RoleManager: React.FC<RoleManagerProps> = ({ onClose, onSave, onManagePerm
                             <div className="action-buttons">
                               {onManagePermissions && (
                                 <button
-                                  className="btn btn-sm btn-info"
+                                  type="button"
+                                  className="btn btn-sm btn-info action-icon-btn"
                                   onClick={() => onManagePermissions(role.id)}
                                   title="Manage Permissions"
                                 >
-                                  <i className="fas fa-key"></i>
+                                  <i className="fas fa-fw fa-key" aria-hidden="true" />
                                 </button>
                               )}
                               <button
-                                className="btn btn-sm btn-secondary"
+                                type="button"
+                                className="btn btn-sm btn-secondary action-icon-btn"
                                 onClick={() => handleEdit(role)}
                                 title="Edit Role"
                               >
-                                <i className="fas fa-edit"></i>
+                                <i className="fas fa-fw fa-edit" aria-hidden="true" />
                               </button>
                               <button
-                                className="btn btn-sm btn-danger"
+                                type="button"
+                                className="btn btn-sm btn-danger action-icon-btn"
                                 onClick={() => handleDelete(role.id)}
                                 title="Delete Role"
                               >
-                                <i className="fas fa-trash"></i>
+                                <i className="fas fa-fw fa-trash" aria-hidden="true" />
                               </button>
                             </div>
                           </td>

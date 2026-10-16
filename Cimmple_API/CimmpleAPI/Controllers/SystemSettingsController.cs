@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Auth;
 using CimmpleAPI.Services.Tenancy;
 using System;
 using System.Linq;
@@ -56,6 +57,59 @@ namespace CimmpleAPI.Controllers
             target.SmtpFromEmail = "";
             target.SmtpPort = 587;
             target.SmtpUseSsl = true;
+        }
+
+        private static void ApplyDefaultSecuritySettings(SystemSettings target)
+        {
+            var defaults = TenantDefaults.CreateSystemSettings(target.TenantId);
+            ApplySecuritySettings(target, defaults);
+        }
+
+        private static void ApplySecuritySettings(SystemSettings target, SystemSettings source)
+        {
+            target.MinPasswordLength = source.MinPasswordLength;
+            target.RequireUppercase = source.RequireUppercase;
+            target.RequireLowercase = source.RequireLowercase;
+            target.RequireNumbers = source.RequireNumbers;
+            target.RequireSpecialChars = source.RequireSpecialChars;
+            target.PasswordExpirationDays = source.PasswordExpirationDays;
+            target.PasswordHistoryCount = source.PasswordHistoryCount;
+            target.SessionTimeoutMinutes = source.SessionTimeoutMinutes;
+            target.MaxConcurrentSessions = source.MaxConcurrentSessions;
+            target.FailedLoginAttempts = source.FailedLoginAttempts;
+            target.AccountLockoutMinutes = source.AccountLockoutMinutes;
+        }
+
+        private static void ApplyNonSecuritySettings(SystemSettings target, SystemSettings source)
+        {
+            target.DateFormat = source.DateFormat;
+            target.TimeFormat = source.TimeFormat;
+            target.Timezone = source.Timezone;
+            target.Locale = source.Locale;
+            target.DefaultCurrency = source.DefaultCurrency;
+            target.CurrencySymbol = source.CurrencySymbol;
+            target.DecimalPlaces = source.DecimalPlaces;
+            target.DecimalSeparator = source.DecimalSeparator;
+            target.ThousandsSeparator = source.ThousandsSeparator;
+            target.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(source.EmailDeliveryMode);
+            target.SmtpFromName = source.SmtpFromName;
+            if (SmtpSettingsResolver.IsCustomMode(target.EmailDeliveryMode))
+            {
+                target.SmtpServer = source.SmtpServer;
+                target.SmtpPort = source.SmtpPort;
+                target.SmtpUseSsl = source.SmtpUseSsl;
+                target.SmtpUsername = source.SmtpUsername;
+                if (!string.IsNullOrEmpty(source.SmtpPassword))
+                    target.SmtpPassword = source.SmtpPassword;
+                target.SmtpFromEmail = source.SmtpFromEmail;
+            }
+            else
+            {
+                ClearTenantCustomSmtpFields(target);
+            }
+            target.DefaultPageSize = source.DefaultPageSize;
+            target.EnableEmailNotifications = source.EnableEmailNotifications;
+            target.EnableInAppNotifications = source.EnableInAppNotifications;
         }
 
         // GET: api/SystemSettings/GetSettings
@@ -156,11 +210,14 @@ namespace CimmpleAPI.Controllers
         [HttpPost("SaveSettings")]
         public async Task<IActionResult> SaveSettings([FromBody] SystemSettings settings)
         {
+            if (settings == null)
+                return BadRequest(new { message = "Settings data is required" });
+
+            var callerIsAdmin = AccountProtection.IsAdminCaller(
+                _context, CanAccessAllLocations(), GetCallerRoleId());
+
             try
             {
-                if (settings == null)
-                    return BadRequest(new { message = "Settings data is required" });
-
                 await SystemSettingsSchemaService.EnsureTablesAsync(_context);
 
                 var existingSettings = await _context.SystemSettings
@@ -171,51 +228,22 @@ namespace CimmpleAPI.Controllers
                     settings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
                     if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
                         ClearTenantCustomSmtpFields(settings);
+                    if (!callerIsAdmin)
+                    {
+                        // Non-admins cannot set security policy on first create — use defaults.
+                        ApplyDefaultSecuritySettings(settings);
+                    }
                     settings.CreatedDate = DateTime.UtcNow;
                     settings.UpdatedDate = DateTime.UtcNow;
                     _context.SystemSettings.Add(settings);
                 }
                 else
                 {
-                    existingSettings.DateFormat = settings.DateFormat;
-                    existingSettings.TimeFormat = settings.TimeFormat;
-                    existingSettings.Timezone = settings.Timezone;
-                    existingSettings.Locale = settings.Locale;
-                    existingSettings.DefaultCurrency = settings.DefaultCurrency;
-                    existingSettings.CurrencySymbol = settings.CurrencySymbol;
-                    existingSettings.DecimalPlaces = settings.DecimalPlaces;
-                    existingSettings.DecimalSeparator = settings.DecimalSeparator;
-                    existingSettings.ThousandsSeparator = settings.ThousandsSeparator;
-                    existingSettings.MinPasswordLength = settings.MinPasswordLength;
-                    existingSettings.RequireUppercase = settings.RequireUppercase;
-                    existingSettings.RequireLowercase = settings.RequireLowercase;
-                    existingSettings.RequireNumbers = settings.RequireNumbers;
-                    existingSettings.RequireSpecialChars = settings.RequireSpecialChars;
-                    existingSettings.PasswordExpirationDays = settings.PasswordExpirationDays;
-                    existingSettings.PasswordHistoryCount = settings.PasswordHistoryCount;
-                    existingSettings.SessionTimeoutMinutes = settings.SessionTimeoutMinutes;
-                    existingSettings.MaxConcurrentSessions = settings.MaxConcurrentSessions;
-                    existingSettings.FailedLoginAttempts = settings.FailedLoginAttempts;
-                    existingSettings.AccountLockoutMinutes = settings.AccountLockoutMinutes;
-                    existingSettings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
-                    existingSettings.SmtpFromName = settings.SmtpFromName;
-                    if (SmtpSettingsResolver.IsCustomMode(existingSettings.EmailDeliveryMode))
+                    ApplyNonSecuritySettings(existingSettings, settings);
+                    if (callerIsAdmin)
                     {
-                        existingSettings.SmtpServer = settings.SmtpServer;
-                        existingSettings.SmtpPort = settings.SmtpPort;
-                        existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
-                        existingSettings.SmtpUsername = settings.SmtpUsername;
-                        if (!string.IsNullOrEmpty(settings.SmtpPassword))
-                            existingSettings.SmtpPassword = settings.SmtpPassword;
-                        existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
+                        ApplySecuritySettings(existingSettings, settings);
                     }
-                    else
-                    {
-                        ClearTenantCustomSmtpFields(existingSettings);
-                    }
-                    existingSettings.DefaultPageSize = settings.DefaultPageSize;
-                    existingSettings.EnableEmailNotifications = settings.EnableEmailNotifications;
-                    existingSettings.EnableInAppNotifications = settings.EnableInAppNotifications;
                     existingSettings.UpdatedDate = DateTime.UtcNow;
                 }
 
@@ -238,51 +266,17 @@ namespace CimmpleAPI.Controllers
                         settings!.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
                         if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
                             ClearTenantCustomSmtpFields(settings);
+                        if (!callerIsAdmin)
+                            ApplyDefaultSecuritySettings(settings);
                         settings.CreatedDate = DateTime.UtcNow;
                         settings.UpdatedDate = DateTime.UtcNow;
                         _context.SystemSettings.Add(settings);
                     }
                     else
                     {
-                        existingSettings.DateFormat = settings!.DateFormat;
-                        existingSettings.TimeFormat = settings.TimeFormat;
-                        existingSettings.Timezone = settings.Timezone;
-                        existingSettings.Locale = settings.Locale;
-                        existingSettings.DefaultCurrency = settings.DefaultCurrency;
-                        existingSettings.CurrencySymbol = settings.CurrencySymbol;
-                        existingSettings.DecimalPlaces = settings.DecimalPlaces;
-                        existingSettings.DecimalSeparator = settings.DecimalSeparator;
-                        existingSettings.ThousandsSeparator = settings.ThousandsSeparator;
-                        existingSettings.MinPasswordLength = settings.MinPasswordLength;
-                        existingSettings.RequireUppercase = settings.RequireUppercase;
-                        existingSettings.RequireLowercase = settings.RequireLowercase;
-                        existingSettings.RequireNumbers = settings.RequireNumbers;
-                        existingSettings.RequireSpecialChars = settings.RequireSpecialChars;
-                        existingSettings.PasswordExpirationDays = settings.PasswordExpirationDays;
-                        existingSettings.PasswordHistoryCount = settings.PasswordHistoryCount;
-                        existingSettings.SessionTimeoutMinutes = settings.SessionTimeoutMinutes;
-                        existingSettings.MaxConcurrentSessions = settings.MaxConcurrentSessions;
-                        existingSettings.FailedLoginAttempts = settings.FailedLoginAttempts;
-                        existingSettings.AccountLockoutMinutes = settings.AccountLockoutMinutes;
-                        existingSettings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
-                        existingSettings.SmtpFromName = settings.SmtpFromName;
-                        if (SmtpSettingsResolver.IsCustomMode(existingSettings.EmailDeliveryMode))
-                        {
-                            existingSettings.SmtpServer = settings.SmtpServer;
-                            existingSettings.SmtpPort = settings.SmtpPort;
-                            existingSettings.SmtpUseSsl = settings.SmtpUseSsl;
-                            existingSettings.SmtpUsername = settings.SmtpUsername;
-                            if (!string.IsNullOrEmpty(settings.SmtpPassword))
-                                existingSettings.SmtpPassword = settings.SmtpPassword;
-                            existingSettings.SmtpFromEmail = settings.SmtpFromEmail;
-                        }
-                        else
-                        {
-                            ClearTenantCustomSmtpFields(existingSettings);
-                        }
-                        existingSettings.DefaultPageSize = settings.DefaultPageSize;
-                        existingSettings.EnableEmailNotifications = settings.EnableEmailNotifications;
-                        existingSettings.EnableInAppNotifications = settings.EnableInAppNotifications;
+                        ApplyNonSecuritySettings(existingSettings, settings!);
+                        if (callerIsAdmin)
+                            ApplySecuritySettings(existingSettings, settings!);
                         existingSettings.UpdatedDate = DateTime.UtcNow;
                     }
 

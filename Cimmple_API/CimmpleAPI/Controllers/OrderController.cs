@@ -129,7 +129,7 @@ namespace CimmpleAPI.Controllers
                 var detailsByOrderId = allDetails.GroupBy(d => d.OrderID)
                     .ToDictionary(g => g.Key, g => g.ToList());
 
-                // Calculate status for each order
+                // Calculate status for each order (shared with GetRecentOrdersByCustomer)
                 var ordersWithStatus = orders.Select(o =>
                 {
                     detailsByOrderId.TryGetValue(o.OrderID, out var detailsList);
@@ -137,38 +137,6 @@ namespace CimmpleAPI.Controllers
                     var totalOrdered = detailsList?.Sum(d => d.QtyOrdered) ?? 0;
                     var totalShipped = detailsList?.Sum(d => shippingDetailsDict.ContainsKey(d.ID) ? shippingDetailsDict[d.ID] : d.ShippedQty) ?? 0;
                     var totalInvoiced = detailsList?.Sum(d => invoiceDetailsDict.ContainsKey(d.ID) ? invoiceDetailsDict[d.ID] : d.InvoicedQty) ?? 0;
-                    
-                    string calculatedStatus = o.Status ?? "Draft";
-                    
-                    // Determine status based on invoicing (highest priority)
-                    if (totalInvoiced > 0)
-                    {
-                        if (totalInvoiced >= totalOrdered)
-                        {
-                            calculatedStatus = "Fully Invoiced";
-                        }
-                        else
-                        {
-                            calculatedStatus = "Partially Invoiced";
-                        }
-                    }
-                    // If not invoiced, check shipping status
-                    else if (totalShipped > 0)
-                    {
-                        if (totalShipped >= totalOrdered)
-                        {
-                            calculatedStatus = "Shipped";
-                        }
-                        else
-                        {
-                            calculatedStatus = "Partially Shipped";
-                        }
-                    }
-                    // If shipped or invoiced, it's no longer Draft
-                    else if (totalShipped > 0 || totalInvoiced > 0)
-                    {
-                        calculatedStatus = "In Progress";
-                    }
 
                     return new
                     {
@@ -179,7 +147,7 @@ namespace CimmpleAPI.Controllers
                         customerName = o.CustomerName ?? "",
                         orderDate = o.OrderDate,
                         totalAmount = o.TotalAmount,
-                        status = calculatedStatus,
+                        status = DeriveCustomerOrderDisplayStatus(o.Status, totalOrdered, totalShipped, totalInvoiced),
                         quotationId = o.quotationId,
                         quotationNo = o.QuotationNo ?? "",
                         locationId = o.locationId
@@ -203,7 +171,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] int tenantId,
             [FromQuery] int customerId,
             [FromQuery] int excludeOrderId = 0,
-            [FromQuery] int limit = 10)
+            [FromQuery] int limit = 10,
+            [FromQuery] int? locationId = null)
         {
             try
             {
@@ -215,11 +184,11 @@ namespace CimmpleAPI.Controllers
                 if (limit <= 0) limit = 10;
                 if (limit > 50) limit = 50;
 
-                var orders = CopyableCustomerOrders(tenantId, customerId, excludeOrderId)
+                var orders = CopyableCustomerOrders(tenantId, customerId, excludeOrderId, locationId)
                     .OrderByDescending(o => o.OrderDate)
                     .ThenByDescending(o => o.OrderID)
                     .Take(limit)
-                    .Select(o => new { o.OrderID, o.PONumber, o.OrderDate, o.Status, o.TotalAmount })
+                    .Select(o => new { o.OrderID, o.PONumber, o.OrderDate, o.Status, o.TotalAmount, o.locationId })
                     .ToList();
 
                 var orderIds = orders.Select(o => o.OrderID).ToList();
@@ -231,16 +200,56 @@ namespace CimmpleAPI.Controllers
                     .Select(g => new { OrderID = g.Key, Count = g.Count() })
                     .ToDictionary(x => x.OrderID, x => x.Count);
 
+                // Match Customer Orders listing: derive status from shipped/invoiced qty
+                var allDetails = _context.CustomerOrderDetails.AsNoTracking()
+                    .Where(d => orderIds.Contains(d.OrderID) && d.Tenantid == tenantId)
+                    .Select(d => new { d.ID, d.OrderID, d.QtyOrdered, d.ShippedQty, d.InvoicedQty })
+                    .ToList();
+                var allOrderDetailIds = allDetails.Select(d => d.ID).ToList();
+
+                var shippingDetailsDict = _context.ShippingDetails.AsNoTracking()
+                    .Where(sd => sd.OrderDetailID.HasValue && allOrderDetailIds.Contains(sd.OrderDetailID.Value))
+                    .Join(_context.Shipping.AsNoTracking(),
+                        sd => sd.ShipmentId,
+                        s => s.Id,
+                        (sd, s) => new { sd.OrderDetailID, sd.ShippedQty, s.TenantId })
+                    .Where(x => x.TenantId == tenantId)
+                    .GroupBy(x => x.OrderDetailID!.Value)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.ShippedQty));
+
+                var invoiceDetailsDict = _context.InvoiceDetail.AsNoTracking()
+                    .Where(id => id.OrderDetailID.HasValue && allOrderDetailIds.Contains(id.OrderDetailID.Value))
+                    .Join(_context.InvoiceMaster.AsNoTracking(),
+                        id => id.InvoiceId,
+                        im => im.Id,
+                        (id, im) => new { id.OrderDetailID, id.QtyInvoiced, im.TenantId, im.IsVoided })
+                    .Where(x => x.TenantId == tenantId && !x.IsVoided)
+                    .GroupBy(x => x.OrderDetailID!.Value)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.QtyInvoiced));
+
+                var detailsByOrderId = allDetails.GroupBy(d => d.OrderID)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
                 var result = orders
                     .Where(o => lineCounts.ContainsKey(o.OrderID))
-                    .Select(o => new
+                    .Select(o =>
                     {
-                        orderId = o.OrderID,
-                        orderNumber = o.PONumber,
-                        orderDate = o.OrderDate.ToString("yyyy-MM-dd"),
-                        status = string.IsNullOrWhiteSpace(o.Status) ? "Draft" : o.Status,
-                        totalAmount = o.TotalAmount,
-                        lineCount = lineCounts[o.OrderID]
+                        detailsByOrderId.TryGetValue(o.OrderID, out var detailsList);
+                        var totalOrdered = detailsList?.Sum(d => d.QtyOrdered) ?? 0;
+                        var totalShipped = detailsList?.Sum(d =>
+                            shippingDetailsDict.ContainsKey(d.ID) ? shippingDetailsDict[d.ID] : d.ShippedQty) ?? 0;
+                        var totalInvoiced = detailsList?.Sum(d =>
+                            invoiceDetailsDict.ContainsKey(d.ID) ? invoiceDetailsDict[d.ID] : d.InvoicedQty) ?? 0;
+
+                        return new
+                        {
+                            orderId = o.OrderID,
+                            orderNumber = o.PONumber,
+                            orderDate = o.OrderDate.ToString("yyyy-MM-dd"),
+                            status = DeriveCustomerOrderDisplayStatus(o.Status, totalOrdered, totalShipped, totalInvoiced),
+                            totalAmount = o.TotalAmount,
+                            lineCount = lineCounts[o.OrderID]
+                        };
                     })
                     .ToList();
 
@@ -363,13 +372,51 @@ namespace CimmpleAPI.Controllers
             }
         }
 
-        private IQueryable<CustomerOrder> CopyableCustomerOrders(int tenantId, int customerId, int excludeOrderId)
+        /// <summary>
+        /// Same display status rules as Customer Orders listing (invoice → ship → stored status).
+        /// </summary>
+        private static string DeriveCustomerOrderDisplayStatus(
+            string? storedStatus,
+            int totalOrdered,
+            int totalShipped,
+            int totalInvoiced)
+        {
+            var calculatedStatus = string.IsNullOrWhiteSpace(storedStatus) ? "Draft" : storedStatus.Trim();
+
+            if (totalInvoiced > 0)
+            {
+                return totalInvoiced >= totalOrdered ? "Fully Invoiced" : "Partially Invoiced";
+            }
+
+            if (totalShipped > 0)
+            {
+                return totalShipped >= totalOrdered ? "Shipped" : "Partially Shipped";
+            }
+
+            return calculatedStatus;
+        }
+
+        private IQueryable<CustomerOrder> CopyableCustomerOrders(
+            int tenantId,
+            int customerId,
+            int excludeOrderId,
+            int? preferredLocationId = null)
         {
             var query = _context.CustomerOrder
                 .AsNoTracking()
                 .Where(o => o.Tenantid == tenantId && o.CustomerID == customerId)
                 .Where(o => excludeOrderId <= 0 || o.OrderID != excludeOrderId)
                 .Where(o => o.Status == null || o.Status != "Cancelled");
+
+            // Same site only (order site or active working site).
+            if (preferredLocationId.HasValue && preferredLocationId.Value > 0)
+            {
+                if (!CanAccessLocation(preferredLocationId.Value))
+                {
+                    return query.Where(_ => false);
+                }
+                return query.Where(o => o.locationId == preferredLocationId.Value);
+            }
 
             TryResolveListLocationFilter(null, out _, out _, out var restrictToLocationIds);
             if (restrictToLocationIds != null)
@@ -880,28 +927,109 @@ namespace CimmpleAPI.Controllers
                         {
                             // Update existing detail
                             var existingDetail = existingDetails.First(d => d.ID == detail.ID);
-                            existingDetail.ItemNo = detail.ItemNo;
-                            existingDetail.partname = detail.PartName ?? "";
-                            existingDetail.PartNo = detail.PartNo ?? "";
-                            existingDetail.DueDate = detail.DueDate.Date;
-                            existingDetail.JobNumber = detail.JobNumber ?? "";
-                            existingDetail.JobDesc = detail.JobDesc ?? "";
-                            existingDetail.QtyOrdered = detail.QtyOrdered;
-                            existingDetail.Unit = detail.Unit ?? "";
-                            existingDetail.UnitPrice = detail.UnitPrice;
-                            existingDetail.JobPriority = detail.JobPriority;
-                            existingDetail.Discount = detail.Discount;
-                            existingDetail.DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType;
-                            existingDetail.productid = detail.ProductId;
-                            existingDetail.leadTime = detail.LeadTime ?? "";
-                            existingDetail.notes = detail.Notes ?? "";
+
+                            var shippedQty = _context.ShippingDetails
+                                .Where(sd => sd.OrderDetailID == existingDetail.ID)
+                                .Join(_context.Shipping, sd => sd.ShipmentId, s => s.Id,
+                                    (sd, s) => new { sd.ShippedQty, s.TenantId })
+                                .Where(x => x.TenantId == request.Tenantid)
+                                .Sum(x => (int?)x.ShippedQty) ?? 0;
+                            if (shippedQty <= 0)
+                            {
+                                shippedQty = existingDetail.ShippedQty;
+                            }
+
+                            var invoicedQty = _context.InvoiceDetail
+                                .Where(id => id.OrderDetailID == existingDetail.ID)
+                                .Join(_context.InvoiceMaster, id => id.InvoiceId, im => im.Id,
+                                    (id, im) => new { id.QtyInvoiced, im.TenantId, im.IsVoided })
+                                .Where(x => x.TenantId == request.Tenantid && !x.IsVoided)
+                                .Sum(x => (int?)x.QtyInvoiced) ?? 0;
+                            if (invoicedQty <= 0)
+                            {
+                                invoicedQty = existingDetail.InvoicedQty;
+                            }
+
+                            var isInvoiced = invoicedQty > 0;
+                            var isShipped = shippedQty > 0;
+                            var floorQty = Math.Max(shippedQty, invoicedQty);
+
+                            if (isInvoiced)
+                            {
+                                var qtyChanged = detail.QtyOrdered != existingDetail.QtyOrdered;
+                                var priceChanged = Math.Abs(detail.UnitPrice - existingDetail.UnitPrice) > 0.001m;
+                                var discountChanged = Math.Abs(detail.Discount - existingDetail.Discount) > 0.001m
+                                    || !string.Equals(
+                                        string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType,
+                                        string.IsNullOrWhiteSpace(existingDetail.DiscountType) ? "Percent" : existingDetail.DiscountType,
+                                        StringComparison.OrdinalIgnoreCase);
+                                var dueChanged = detail.DueDate.Date != existingDetail.DueDate.Date;
+                                var partChanged = !string.Equals(detail.PartNo ?? "", existingDetail.PartNo ?? "", StringComparison.OrdinalIgnoreCase)
+                                    || !string.Equals(detail.PartName ?? "", existingDetail.partname ?? "", StringComparison.OrdinalIgnoreCase)
+                                    || !string.Equals(detail.Unit ?? "", existingDetail.Unit ?? "", StringComparison.OrdinalIgnoreCase)
+                                    || detail.ProductId != existingDetail.productid;
+
+                                if (qtyChanged || priceChanged || discountChanged || dueChanged || partChanged)
+                                {
+                                    return BadRequest(new
+                                    {
+                                        error = $"Line item #{existingDetail.ItemNo} cannot be edited because it has already been invoiced. Void the invoice first."
+                                    });
+                                }
+
+                                // Notes remain editable on invoiced lines; commercial/identity fields stay unchanged.
+                                existingDetail.notes = detail.Notes ?? "";
+                            }
+                            else
+                            {
+                                if (isShipped)
+                                {
+                                    if (detail.QtyOrdered < floorQty)
+                                    {
+                                        return BadRequest(new
+                                        {
+                                            error = $"Quantity for line item #{existingDetail.ItemNo} cannot be less than shipped quantity ({floorQty})."
+                                        });
+                                    }
+
+                                    var partIdentityChanged =
+                                        !string.Equals(detail.PartNo ?? "", existingDetail.PartNo ?? "", StringComparison.OrdinalIgnoreCase)
+                                        || !string.Equals(detail.PartName ?? "", existingDetail.partname ?? "", StringComparison.OrdinalIgnoreCase)
+                                        || !string.Equals(detail.Unit ?? "", existingDetail.Unit ?? "", StringComparison.OrdinalIgnoreCase)
+                                        || detail.ProductId != existingDetail.productid;
+
+                                    if (partIdentityChanged)
+                                    {
+                                        return BadRequest(new
+                                        {
+                                            error = $"Part identity for line item #{existingDetail.ItemNo} cannot change after shipping. Adjust shipments first."
+                                        });
+                                    }
+                                }
+
+                                existingDetail.ItemNo = detail.ItemNo;
+                                existingDetail.partname = detail.PartName ?? "";
+                                existingDetail.PartNo = detail.PartNo ?? "";
+                                existingDetail.DueDate = detail.DueDate.Date;
+                                existingDetail.JobNumber = detail.JobNumber ?? "";
+                                existingDetail.JobDesc = detail.JobDesc ?? "";
+                                existingDetail.QtyOrdered = detail.QtyOrdered;
+                                existingDetail.Unit = detail.Unit ?? "";
+                                existingDetail.UnitPrice = detail.UnitPrice;
+                                existingDetail.JobPriority = detail.JobPriority;
+                                existingDetail.Discount = detail.Discount;
+                                existingDetail.DiscountType = string.IsNullOrWhiteSpace(detail.DiscountType) ? "Percent" : detail.DiscountType;
+                                existingDetail.productid = detail.ProductId;
+                                existingDetail.leadTime = detail.LeadTime ?? "";
+                                existingDetail.notes = detail.Notes ?? "";
+                            }
                             // Do not overwrite ShippedQty / ShippingStatus from client — shipping APIs own these.
                             // InvoicedQty / InvoiceStatus are likewise owned by invoice APIs.
 
                             // Keep linked Job Orders in sync (listing/detail read JO's own QtyOrdered snapshot).
-                            if (jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
+                            if (!isInvoiced && jobOrdersByDetailId.TryGetValue(existingDetail.ID, out var jobsForDetail))
                             {
-                                var remainingJobQty = Math.Max(0, detail.QtyOrdered - existingDetail.ShippedQty);
+                                var remainingJobQty = Math.Max(0, detail.QtyOrdered - shippedQty);
                                 foreach (var jobOrder in jobsForDetail)
                                 {
                                     var jobStatus = jobOrder.Status ?? "";

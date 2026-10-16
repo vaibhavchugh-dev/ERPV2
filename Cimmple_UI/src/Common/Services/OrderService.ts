@@ -562,7 +562,8 @@ export class OrderService {
 
   public static GetRecentOrdersByCustomer = async (
     customerId: number,
-    excludeOrderId = 0
+    excludeOrderId = 0,
+    options?: { locationId?: number }
   ): Promise<CopySourceOrder[]> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
     let tenantID = storage?.tenantID || 0;
@@ -570,22 +571,25 @@ export class OrderService {
       tenantID = 1;
     }
 
+    const locationId = options?.locationId && options.locationId > 0 ? options.locationId : undefined;
+
     return Instense.get(`/Order/GetRecentOrdersByCustomer`, {
       params: {
         tenantId: tenantID,
         customerId,
         ...(excludeOrderId > 0 ? { excludeOrderId } : {}),
+        ...(locationId ? { locationId } : {}),
       },
     }).then((response) => {
       const result = response.data?.result;
       if (!Array.isArray(result)) return [];
       return result.map((o: any) => ({
-        orderId: o.orderId || 0,
-        orderNumber: o.orderNumber || 0,
-        orderDate: o.orderDate || "",
-        status: o.status || "Draft",
-        totalAmount: o.totalAmount || 0,
-        lineCount: o.lineCount || 0,
+        orderId: o.orderId || o.OrderId || 0,
+        orderNumber: o.orderNumber || o.OrderNumber || 0,
+        orderDate: o.orderDate || o.OrderDate || "",
+        status: o.status || o.Status || "Draft",
+        totalAmount: o.totalAmount ?? o.TotalAmount ?? 0,
+        lineCount: o.lineCount || o.LineCount || 0,
       }));
     });
   };

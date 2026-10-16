@@ -326,7 +326,8 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
             <>
               <div className="permission-actions">
                 <button
-                  className="btn btn-sm btn-secondary"
+                  type="button"
+                  className="btn btn-sm permission-select-all-btn"
                   onClick={handleSelectAll}
                 >
                   {selectedPermissions.size === allPermissions.length ? "Deselect All" : "Select All"}

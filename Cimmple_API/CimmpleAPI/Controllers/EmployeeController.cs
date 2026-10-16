@@ -489,6 +489,16 @@ namespace CimmpleAPI.Controllers
                             return BadRequest(new { error = "Username already exists" });
                         }
                     }
+
+                    // Strict: non-admins cannot edit Admin accounts at all.
+                    var earlyCallerIsAdmin = AccountProtection.IsAdminCaller(
+                        _context, CanAccessAllLocations(), GetCallerRoleId());
+                    var adminTargetBlock = AccountProtection.GetAdminTargetMutationBlockReason(
+                        _context, earlyCallerIsAdmin, employee.Role);
+                    if (adminTargetBlock != null)
+                    {
+                        return StatusCode(403, new { error = adminTargetBlock });
+                    }
                 }
 
                 var empCode = (request.EmpCode ?? "").Trim();
@@ -516,12 +526,35 @@ namespace CimmpleAPI.Controllers
                 employee.FirstName = request.FirstName;
                 employee.LastName = request.LastName;
                 employee.Email = request.Email ?? "";
-                employee.UserName = request.UserName ?? "";
                 employee.Status = request.Status ?? "Active";
                 var accessError = ValidateEmployeeAccessFields(request);
                 if (accessError != null)
                 {
                     return accessError;
+                }
+
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var passwordProvidedEarly = !string.IsNullOrWhiteSpace(request.Password);
+                var securityBlock = AccountProtection.GetEmployeeSecurityMutationBlockReason(
+                    _context,
+                    callerIsAdmin,
+                    request.TenantID,
+                    GetUserId(),
+                    isNew ? null : employee,
+                    request.Role,
+                    request.UserName,
+                    passwordProvidedEarly,
+                    request.CanAccessAllLocations);
+                if (securityBlock != null)
+                {
+                    return StatusCode(403, new { error = securityBlock });
+                }
+
+                // Non-admins cannot mutate login credentials — keep existing username until admin path below.
+                if (callerIsAdmin || isNew)
+                {
+                    employee.UserName = request.UserName ?? "";
                 }
 
                 var deactivateBlockReason = AccountProtection.GetDeactivationBlockReason(
@@ -563,39 +596,43 @@ namespace CimmpleAPI.Controllers
                 var hasExistingPassword = !isNew && !string.IsNullOrEmpty(employee.Password);
                 SystemSettings? passwordSettings = null;
 
-                if (!loginAccessEnabled)
+                // Non-admins never mutate credentials on save (profile-only).
+                if (callerIsAdmin || isNew)
                 {
-                    // Disable login: clear credentials so the account cannot authenticate
-                    employee.UserName = "";
-                    employee.Password = "";
-                    employee.PasswordSalt = "";
-                    employee.ChangePassword = "No";
-                    employee.FailedLoginCount = 0;
-                    employee.LockoutEndUtc = null;
-                }
-                else if (passwordProvided)
-                {
-                    passwordSettings = await _context.SystemSettings
-                        .FirstOrDefaultAsync(s => s.TenantId == request.TenantID)
-                        ?? new SystemSettings { TenantId = request.TenantID };
-
-                    if (!_authService.ValidatePasswordAgainstPolicy(request.Password!, passwordSettings, out var policyError))
+                    if (!loginAccessEnabled)
                     {
-                        return BadRequest(new { error = policyError ?? "Password does not meet policy requirements" });
+                        // Disable login: clear credentials so the account cannot authenticate
+                        employee.UserName = "";
+                        employee.Password = "";
+                        employee.PasswordSalt = "";
+                        employee.ChangePassword = "No";
+                        employee.FailedLoginCount = 0;
+                        employee.LockoutEndUtc = null;
                     }
+                    else if (passwordProvided)
+                    {
+                        passwordSettings = await _context.SystemSettings
+                            .FirstOrDefaultAsync(s => s.TenantId == request.TenantID)
+                            ?? new SystemSettings { TenantId = request.TenantID };
 
-                    var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
-                        employee, request.Password!, passwordSettings);
-                    if (!applied)
-                        return BadRequest(new { error = applyError ?? "Password could not be applied" });
+                        if (!_authService.ValidatePasswordAgainstPolicy(request.Password!, passwordSettings, out var policyError))
+                        {
+                            return BadRequest(new { error = policyError ?? "Password does not meet policy requirements" });
+                        }
 
-                    employee.ChangePassword = "N";
-                    employee.FailedLoginCount = 0;
-                    employee.LockoutEndUtc = null;
-                }
-                else if (isNew || !hasExistingPassword)
-                {
-                    return BadRequest(new { error = "Password is required to enable login access" });
+                        var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
+                            employee, request.Password!, passwordSettings);
+                        if (!applied)
+                            return BadRequest(new { error = applyError ?? "Password could not be applied" });
+
+                        employee.ChangePassword = "N";
+                        employee.FailedLoginCount = 0;
+                        employee.LockoutEndUtc = null;
+                    }
+                    else if (isNew || !hasExistingPassword)
+                    {
+                        return BadRequest(new { error = "Password is required to enable login access" });
+                    }
                 }
 
                 if (isNew)

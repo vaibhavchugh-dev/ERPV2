@@ -225,6 +225,15 @@ const PunchWorkflowPanel: React.FC<{
       ? `Verify & ${nextLabel}`
       : `Capture & ${nextLabel}`;
 
+    const faceStatusBadge = (employee: PunchBoardUser) => {
+      if (employee.isProfile !== false) return null;
+      return (
+        <span className="punch-face-badge" title="Face not enrolled for time clock">
+          Face not enrolled
+        </span>
+      );
+    };
+
     return (
       <div className="punch-workflow-panel">
         {stage === "select" ? (
@@ -332,7 +341,7 @@ const PunchWorkflowPanel: React.FC<{
                               <strong>{getDisplayName(employee)}</strong>
                               <span>{employee.empCode || employee.userName || "--"}</span>
                             </div>
-                            {employee.isProfile === false && <span className="punch-new-tag">NEW</span>}
+                            {faceStatusBadge(employee)}
                           </button>
                         );
                       })
@@ -370,7 +379,16 @@ const PunchWorkflowPanel: React.FC<{
           <>
             <div className="punch-workflow-header">
               <h2>Place your face inside the oval frame.</h2>
-              <p>{selectedEmployee ? `Capturing for ${selectedLabel}.` : "Confirm the selected employee before capture."}</p>
+              <p className="punch-capture-for">
+                {selectedEmployee ? (
+                  <>
+                    <span>{`Capturing for ${selectedLabel}.`}</span>
+                    {faceStatusBadge(selectedEmployee)}
+                  </>
+                ) : (
+                  "Confirm the selected employee before capture."
+                )}
+              </p>
             </div>
 
 
@@ -402,16 +420,21 @@ const PunchWorkflowPanel: React.FC<{
                     <span className="punch-next-action-note"> (end of day)</span>
                   )}
                 </div>
-                {isNewEmployee
-                  ? "This employee is not enrolled yet. Enter the password to punch, then add a face photo in Employee Master."
-                  : passwordEntry.trim()
+                {!isNewEmployee &&
+                  (passwordEntry.trim()
                     ? "Password entered - tap submit to verify only."
                     : FACE_PUNCH_ENABLED
                       ? "Look at the camera, or enter a password as a fallback."
-                      : "Enter your password to punch. Face recognition will be enabled later."}
+                      : "Enter your password to punch. Face recognition will be enabled later.")}
               </div>
 
               <div className="punch-password-block">
+                {isNewEmployee && (
+                  <p className="punch-password-help">
+                    This employee is not enrolled yet. Enter the password to punch, then add a face photo in
+                    Employee Master.
+                  </p>
+                )}
                 <label className="punch-field-label">Password</label>
                 <div className="punch-password-row">
                   <input
@@ -431,11 +454,6 @@ const PunchWorkflowPanel: React.FC<{
                     {passwordVisible ? "Hide" : "Show"}
                   </button>
                 </div>
-                {/* <small className="punch-password-help">
-                {isNewEmployee
-                  ? "Password is required before we register the face."
-                  : "If you enter a password, we will verify it instead of doing a face punch."}
-              </small> */}
               </div>
 
               <div className="punch-camera-actions">
@@ -795,12 +813,32 @@ export const PunchInOut: React.FC = () => {
   const punchStorage = React.useMemo(() => getPunchStorage(), []);
   const punchToken = React.useMemo(() => getPunchToken(), []);
   const isPunchAuthorized = !!punchStorage?.userName && !!punchStorage?.user_UniqueID && !!punchToken;
-  const isAdminPunch = isAdminRole(Number(punchStorage?.rolId), punchStorage?.role);
+  const isAdminPunch = React.useMemo(() => {
+    if (isAdminRole(Number(punchStorage?.rolId), punchStorage?.role)) return true;
+    try {
+      const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+      return !!storage?.canAccessAllLocations;
+    } catch {
+      return false;
+    }
+  }, [punchStorage?.rolId, punchStorage?.role]);
+  const punchSelfUserId = Number(punchStorage?.user_UniqueID || 0);
   const showAttendancePanel = isAdminPunch && adminModeUnlocked;
   const punchDisplayName = punchStorage?.companyName || punchStorage?.name || punchStorage?.userName || "Main Entrance";
   const punchTimeZone = sessionTimeZone;
   const punchAdminUserName =
     punchStorage?.userName || JSON.parse(localStorage.getItem("storage") || "{}")?.userName || "";
+
+  const assertCanPunchEmployee = React.useCallback(
+    (employee: PunchBoardUser | null | undefined): boolean => {
+      if (!employee) return false;
+      if (isAdminPunch) return true;
+      if (punchSelfUserId > 0 && Number(employee.userUniqueId) === punchSelfUserId) return true;
+      toast.error("You can only punch for your own account.");
+      return false;
+    },
+    [isAdminPunch, punchSelfUserId]
+  );
 
   const handlePunchLogout = () => {
     localStorage.removeItem(PUNCH_STORAGE_KEY);
@@ -907,24 +945,12 @@ export const PunchInOut: React.FC = () => {
 
   // Load profile pictures
   const loadProfilePictures = React.useCallback(async (users: PunchBoardUser[]) => {
-    const updatedUsers = Array.from(new Map(users.map((user) => [user.userUniqueId, user])).values());
-    // const updatedUsers = await Promise.all(
-    //   users.map(async (user) => {
-    //     try {
-    //       const profilePicBlob = await PunchInOutService.GetProfilePic({
-    //         userId: user.userUniqueId,
-    //         tenantId: user.tenantID,
-    //       });
-    //       if (profilePicBlob) {
-    //         const profilePicUrl = URL.createObjectURL(profilePicBlob);
-    //         return { ...user, profilePicUrl };
-    //       }
-    //     } catch (error) {
-    //       console.warn(`Failed to load profile picture for user ${user.userUniqueId}:`, error);
-    //     }
-    //     return user;
-    //   })
-    // );
+    let updatedUsers = Array.from(new Map(users.map((user) => [user.userUniqueId, user])).values());
+
+    // Non-admins only see / can select themselves (API also enforces this).
+    if (!isAdminPunch && punchSelfUserId > 0) {
+      updatedUsers = updatedUsers.filter((u) => Number(u.userUniqueId) === punchSelfUserId);
+    }
 
     const inUsersWithPics = updatedUsers.filter((u) => Number(u.isPunchedInOnly) === 1);
     const breakUsersWithPics = updatedUsers.filter((u) => Number(u.isOnBreak) === 1);
@@ -936,7 +962,11 @@ export const PunchInOut: React.FC = () => {
     setOutUsers(outUsersWithPics);
     setAvailableUsers(availableUsersWithPics);
     setBoardMembers(updatedUsers);
-  }, []);
+
+    if (!isAdminPunch && updatedUsers.length === 1) {
+      setSelectedEmployee(updatedUsers[0]);
+    }
+  }, [isAdminPunch, punchSelfUserId]);
 
   // Load punch board
   const loadBoard = React.useCallback(() => {
@@ -1117,10 +1147,22 @@ export const PunchInOut: React.FC = () => {
   };
 
   const handleContinueSelection = () => {
+    const toastPunchNotSetup = () => {
+      toast.error("This employee has no login access and face is not enrolled.");
+    };
+
     if (entryMode === "code") {
       const employee = findEmployeeByCode(employeeCodeEntry);
       if (!employee) {
         toast.error("No employee found for that ID.");
+        return;
+      }
+      if (!assertCanPunchEmployee(employee)) {
+        return;
+      }
+      if (employee.isProfile === false && employee.hasPassword !== true) {
+        setSelectedEmployee(employee);
+        toastPunchNotSetup();
         return;
       }
       setSelectedEmployee(employee);
@@ -1130,6 +1172,15 @@ export const PunchInOut: React.FC = () => {
 
     if (!selectedEmployee) {
       toast.error("Please select an employee from the list.");
+      return;
+    }
+
+    if (!assertCanPunchEmployee(selectedEmployee)) {
+      return;
+    }
+
+    if (selectedEmployee.isProfile === false && selectedEmployee.hasPassword !== true) {
+      toastPunchNotSetup();
       return;
     }
 
@@ -1237,11 +1288,21 @@ export const PunchInOut: React.FC = () => {
       return;
     }
 
+    if (!assertCanPunchEmployee(selectedEmployee)) {
+      return;
+    }
+
     const isNewEmployee = selectedEmployee.isProfile === false;
-    const hasPassword = passwordEntry.trim().length > 0;
+    const employeeHasLoginPassword = selectedEmployee.hasPassword === true;
+    const passwordEntered = passwordEntry.trim().length > 0;
+
+    if (isNewEmployee && !employeeHasLoginPassword) {
+      toast.error("This employee has no login access and face is not enrolled.");
+      return;
+    }
 
     if (!FACE_PUNCH_ENABLED) {
-      if (!hasPassword) {
+      if (!passwordEntered) {
         toast.error("Enter your password to punch. Face punch is not enabled yet.");
         return;
       }
@@ -1255,7 +1316,7 @@ export const PunchInOut: React.FC = () => {
     }
 
     if (isNewEmployee) {
-      if (!hasPassword) {
+      if (!passwordEntered) {
         toast.error("This employee is not enrolled. Enter a password, or add a face photo in Employee Master.");
         return;
       }
@@ -1269,7 +1330,7 @@ export const PunchInOut: React.FC = () => {
       return;
     }
 
-    if (hasPassword) {
+    if (passwordEntered) {
       const passwordResult = await verifyPasswordPunch();
       if (passwordResult.success) {
         toast.success(formatPunchSuccess(selectedEmployee, passwordResult.message, passwordResult.direction));
@@ -1289,6 +1350,7 @@ export const PunchInOut: React.FC = () => {
 
     toast.error(captureResult.message || "Unable to process face punch.");
   }, [
+    assertCanPunchEmployee,
     captureAndPunch,
     captureLoading,
     formatPunchSuccess,
@@ -1412,10 +1474,10 @@ export const PunchInOut: React.FC = () => {
               ×
             </button>
             <h2 id="admin-unlock-title">Admin Unlock</h2>
-            <p>Enter admin PIN to enable the attendance sidebar and admin tools.</p>
+            <p>Enter your Cimmple password to enable the attendance sidebar and admin tools.</p>
 
             <label className="admin-unlock-label" htmlFor="admin-unlock-password">
-              PIN
+              Password
             </label>
             <div className="admin-unlock-input-wrap">
               <input
@@ -1424,7 +1486,7 @@ export const PunchInOut: React.FC = () => {
                 className="admin-unlock-input"
                 value={adminUnlockPassword}
                 onChange={(event) => setAdminUnlockPassword(event.target.value)}
-                placeholder="Enter admin PIN"
+                placeholder="Enter your password"
                 autoComplete="current-password"
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -1437,8 +1499,8 @@ export const PunchInOut: React.FC = () => {
                 type="button"
                 className="admin-unlock-eye"
                 onClick={() => setAdminUnlockPinVisible((prev) => !prev)}
-                aria-label={adminUnlockPinVisible ? "Hide PIN" : "Show PIN"}
-                title={adminUnlockPinVisible ? "Hide PIN" : "Show PIN"}
+                aria-label={adminUnlockPinVisible ? "Hide password" : "Show password"}
+                title={adminUnlockPinVisible ? "Hide password" : "Show password"}
               >
                 {adminUnlockPinVisible ? (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

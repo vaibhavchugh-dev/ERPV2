@@ -155,10 +155,12 @@ $sidebar-width: 260px;
         &:hover {
           background-color: #f9fafb;
         }
-      }
 
-      &.is-selected {
-        background-color: #eef2ff;
+        // Selected must win over hover so highlight shows while the cursor is on the row
+        &.is-selected,
+        &.is-selected:hover {
+          background-color: #eef2ff;
+        }
       }
 
       &.is-muted td {
@@ -221,6 +223,70 @@ $sidebar-width: 260px;
   .cpo-qty {
     width: 5rem;
     text-align: right;
+  }
+
+  .cpo-discount-heading {
+    text-align: left !important;
+  }
+
+  .cpo-discount-cell {
+    text-align: left;
+  }
+
+  .cpo-discount {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .cpo-discount-input {
+    width: 4.5rem;
+    text-align: right;
+  }
+
+  .cpo-discount-type {
+    width: 3.25rem;
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+  }
+
+  .cpo-status-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .cpo-status-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+  }
+
+  .cpo-status-primary {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .cpo-status-success {
+    background-color: #d1fae5;
+    color: #065f46;
+  }
+
+  .cpo-status-info {
+    background-color: #e0e7ff;
+    color: #3730a3;
+  }
+
+  .cpo-status-danger {
+    background-color: #fee2e2;
+    color: #991b1b;
+  }
+
+  .cpo-status-muted {
+    background-color: #f3f4f6;
+    color: #4b5563;
   }
 
   .cpo-badge {
