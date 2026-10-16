@@ -320,8 +320,22 @@
   background-color: #e0e7ff;
 }
 
-.multi-vendor-dialog-list-item:hover:not(.is-selected) {
+.multi-vendor-dialog-list-item:hover:not(.is-selected):not(.is-no-portal) {
   background-color: #f9fafb;
+}
+
+.multi-vendor-portal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  white-space: nowrap;
 }
 
 .multi-vendor-dialog-list-empty {

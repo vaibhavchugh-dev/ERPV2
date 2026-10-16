@@ -247,12 +247,29 @@ namespace CimmpleAPI.Controllers
                 // User Management focuses on account management only (roles, permissions, status, security)
                 // Profile data (name, email, phone, address) should be managed via Employee Master
 
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
                 var effectiveRole = userDto.Role.HasValue
                     ? (userDto.Role.Value > 0 ? userDto.Role : null)
                     : user.Role;
                 var effectiveStatus = !string.IsNullOrWhiteSpace(userDto.Status)
                     ? NormalizeAccountStatus(userDto.Status)
                     : user.Status;
+
+                var adminTargetBlock = AccountProtection.GetAdminTargetMutationBlockReason(
+                    _context, callerIsAdmin, user.Role);
+                if (adminTargetBlock != null)
+                {
+                    return StatusCode(403, new { message = adminTargetBlock });
+                }
+
+                var roleChangeBlock = AccountProtection.GetUserManagementRoleChangeBlockReason(
+                    _context, callerIsAdmin, userDto.TenantID, GetUserId(), user, effectiveRole);
+                if (roleChangeBlock != null)
+                {
+                    return StatusCode(403, new { message = roleChangeBlock });
+                }
+
                 var deactivateBlockReason = AccountProtection.GetDeactivationBlockReason(
                     _context, user.User_UniqueID, effectiveRole, effectiveStatus, GetUserId());
                 if (deactivateBlockReason != null)
@@ -315,8 +332,17 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { message = "User not found" });
                 }
 
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var adminTargetBlock = AccountProtection.GetAdminTargetMutationBlockReason(
+                    _context, callerIsAdmin, user.Role);
+                if (adminTargetBlock != null)
+                {
+                    return StatusCode(403, new { message = adminTargetBlock });
+                }
+
                 var deleteBlockReason = AccountProtection.GetDeleteBlockReason(
-                    _context, user.User_UniqueID, user.Role, GetUserId());
+                    _context, user.User_UniqueID, user.Role, GetUserId(), softDeactivate: true);
                 if (deleteBlockReason != null)
                 {
                     return BadRequest(new { message = deleteBlockReason });
@@ -356,6 +382,15 @@ namespace CimmpleAPI.Controllers
                 if (user == null)
                 {
                     return NotFound(new { message = "User not found" });
+                }
+
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var resetBlock = AccountProtection.GetResetPasswordBlockReason(
+                    _context, callerIsAdmin, user.Role);
+                if (resetBlock != null)
+                {
+                    return StatusCode(403, new { message = resetBlock });
                 }
 
                 var settings = await _context.SystemSettings.FirstOrDefaultAsync(s => s.TenantId == tenantId)
@@ -526,6 +561,13 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                if (!callerIsAdmin)
+                {
+                    return StatusCode(403, new { message = "Only an administrator can clear permissions." });
+                }
+
                 var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
                 if (effectiveTenantId <= 0)
                 {
@@ -563,6 +605,13 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                if (!callerIsAdmin)
+                {
+                    return StatusCode(403, new { message = "Only an administrator can seed or reset permissions." });
+                }
+
                 var effectiveTenantId = tenantId > 0 ? tenantId : GetTenantId();
                 if (effectiveTenantId <= 0)
                 {
@@ -684,6 +733,15 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var roleDefBlock = AccountProtection.GetAdminRoleDefinitionBlockReason(
+                    _context, callerIsAdmin, dto.RoleId);
+                if (roleDefBlock != null)
+                {
+                    return StatusCode(403, new { message = roleDefBlock });
+                }
+
                 // Remove existing permissions for this role
                 var existingPermissions = await _context.PermissionRole
                     .Where(pr => pr.RoleId == dto.RoleId && pr.TenantId == dto.TenantId)
@@ -716,6 +774,15 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var createBlock = AccountProtection.GetAdminRoleDefinitionBlockReason(
+                    _context, callerIsAdmin, null, dto.RoleName, dto.Description ?? dto.RoleName);
+                if (createBlock != null)
+                {
+                    return StatusCode(403, new { message = createBlock });
+                }
+
                 // Check if role name already exists for this tenant
                 var existingRole = await _context.UserRole
                     .Where(r => r.RoleName == dto.RoleName && r.TenantId == dto.TenantId)
@@ -781,6 +848,19 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { message = "Role not found" });
                 }
 
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var updateBlock = AccountProtection.GetAdminRoleDefinitionBlockReason(
+                    _context,
+                    callerIsAdmin,
+                    dto.RoleId,
+                    !string.IsNullOrEmpty(dto.RoleName) ? dto.RoleName : role.RoleName,
+                    dto.Description ?? role.RoleTag);
+                if (updateBlock != null)
+                {
+                    return StatusCode(403, new { message = updateBlock });
+                }
+
                 // Check if new name conflicts with existing role
                 if (!string.IsNullOrEmpty(dto.RoleName) && dto.RoleName != role.RoleName)
                 {
@@ -826,6 +906,15 @@ namespace CimmpleAPI.Controllers
                 if (role == null)
                 {
                     return NotFound(new { message = "Role not found" });
+                }
+
+                var callerIsAdmin = AccountProtection.IsAdminCaller(
+                    _context, CanAccessAllLocations(), GetCallerRoleId());
+                var deleteRoleBlock = AccountProtection.GetAdminRoleDefinitionBlockReason(
+                    _context, callerIsAdmin, roleId);
+                if (deleteRoleBlock != null)
+                {
+                    return StatusCode(403, new { message = deleteRoleBlock });
                 }
 
                 // Check if role is assigned to any users

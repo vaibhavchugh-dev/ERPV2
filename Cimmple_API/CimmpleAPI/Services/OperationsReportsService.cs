@@ -286,6 +286,10 @@ public static class OperationsReportsService
         {
             foreach (var step in ParseSteps(j.RoutingStepsJson))
             {
+                // Measure started/processed work only — exclude not-started steps from Est and Actual.
+                if (!IsStepStartedOrProcessed(step))
+                    continue;
+
                 var name = string.IsNullOrWhiteSpace(step.processName) ? "(unnamed)" : step.processName.Trim();
                 var est = step.estimatedTime ?? 0;
                 var actual = (decimal)(GetElapsedSeconds(step) / 60d);
@@ -296,7 +300,7 @@ public static class OperationsReportsService
         }
 
         var table = ReportResultFactory.Section(
-                "Efficiency by process",
+                "Efficiency by process (started steps)",
                 "Process", "Steps", "Est Min", "Actual Min", "Efficiency %")
             .WithNumeric(1, 2, 3, 4);
 
@@ -325,7 +329,12 @@ public static class OperationsReportsService
         if (byProcess.Count == 0)
         {
             report.SummaryNote =
-                "No job-tracking routing data in this period. Enable job tracking and record step times to populate efficiency.";
+                "No started routing steps in this period. Efficiency includes only steps that have been started or have recorded time.";
+        }
+        else
+        {
+            report.SummaryNote =
+                "Estimated and actual minutes include started/processed steps only (pending/not-started steps are excluded).";
         }
 
         return report;
@@ -532,6 +541,31 @@ public static class OperationsReportsService
         if (step.elapsedSeconds.HasValue && step.elapsedSeconds.Value >= 0)
             return step.elapsedSeconds.Value;
         return (step.elapsedTime ?? 0) * 60d;
+    }
+
+    /// <summary>
+    /// True when a routing step has been started or processed (has elapsed time,
+    /// or a status other than pending / not started / waiting).
+    /// </summary>
+    private static bool IsStepStartedOrProcessed(RoutingStepParse step)
+    {
+        if (GetElapsedSeconds(step) > 0)
+            return true;
+
+        var status = (step.status ?? "").Trim();
+        if (string.IsNullOrEmpty(status))
+            return false;
+
+        if (status.Equals("Pending", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Not Started", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("NotStarted", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Waiting", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // In Progress, Completed, Paused, etc.
+        return true;
     }
 
     private static double Median(List<double> values)

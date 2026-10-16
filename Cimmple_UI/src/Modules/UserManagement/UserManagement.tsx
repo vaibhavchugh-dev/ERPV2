@@ -11,11 +11,14 @@ import { formatDate } from "../../Common/Utils/Formatting";
 import SortableTh from "../../Common/Components/SortableTh";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
+import { AuthService } from "../../Common/Services/AuthService";
+import { isAdminRoleName } from "../../Common/Utils/accountProtection";
 import "./UserManagement.scss";
 
 const UserManagementComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const isAdminSession = AuthService.isAdminSession();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [users, setUsers] = useState<UserManagementType[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -144,12 +147,20 @@ const UserManagementComponent: React.FC = () => {
   // Note: Users are created via Employee Master
   // User Management focuses on account management (roles, permissions, status, security)
 
-  const handleEditUser = (userId: number) => {
+  const handleEditUser = (userId: number, roleName?: string) => {
+    if (!isAdminSession && isAdminRoleName(roleName)) {
+      toast.error("Only an administrator can edit an Admin account.");
+      return;
+    }
     setSelectedUserId(userId);
     setShowSlideout(true);
   };
 
-  const handleDeleteUser = async (userId: number) => {
+  const handleDeleteUser = async (userId: number, roleName?: string) => {
+    if (!isAdminSession && isAdminRoleName(roleName)) {
+      toast.error("Only an administrator can deactivate an Admin account.");
+      return;
+    }
     if (!window.confirm("Are you sure you want to deactivate this user?")) {
       return;
     }
@@ -175,6 +186,11 @@ const UserManagementComponent: React.FC = () => {
   };
 
   const handleResetPassword = (user: UserManagementType) => {
+    const roleLabel = getRoleName(user.role, user.roleName);
+    if (!isAdminSession && isAdminRoleName(roleLabel)) {
+      toast.error("Only an administrator can reset an Admin account password.");
+      return;
+    }
     const displayName = `${user.firstName || ""} ${user.lastName || ""}`.trim();
     setResetPasswordUser({
       userId: user.userUniqueID,
@@ -182,6 +198,15 @@ const UserManagementComponent: React.FC = () => {
       displayName: displayName || undefined,
       email: user.email,
     });
+  };
+
+  const handleManageRolePermissions = (roleId: number, roleName?: string) => {
+    if (!isAdminSession) {
+      toast.error("Only an administrator can manage roles and permissions.");
+      return;
+    }
+    setSelectedRoleId(roleId);
+    setShowRolePermissionManager(true);
   };
 
   const getUserSortValue = useCallback(
@@ -203,11 +228,6 @@ const UserManagementComponent: React.FC = () => {
     setPagination(prev => ({ ...prev, pageNumber: page }));
   };
 
-  const handleManageRolePermissions = (roleId: number) => {
-    setSelectedRoleId(roleId);
-    setShowRolePermissionManager(true);
-  };
-
   const getStatusBadge = (status?: string) => {
     const statusClass = status?.toLowerCase() === 'active' ? 'status-active' :
                        status?.toLowerCase() === 'inactive' ? 'status-inactive' : 'status-pending';
@@ -224,9 +244,11 @@ const UserManagementComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" onClick={() => setShowRoleManager(true)}>
-            <i className="fas fa-user-tag"></i> Manage Roles
-          </button>
+          {isAdminSession && (
+            <button className="btn btn-secondary" onClick={() => setShowRoleManager(true)}>
+              <i className="fas fa-user-tag"></i> Manage Roles
+            </button>
+          )}
         </div>
       </div>
 
@@ -308,7 +330,9 @@ const UserManagementComponent: React.FC = () => {
                       <tr
                         key={user.userUniqueID}
                         className="clickable"
-                        onClick={rowClickHandler(() => handleEditUser(user.userUniqueID))}
+                        onClick={rowClickHandler(() =>
+                          handleEditUser(user.userUniqueID, getRoleName(user.role, user.roleName))
+                        )}
                       >
                         <td>{user.userName || '-'}</td>
                         <td>{`${user.firstName || ''} ${user.lastName || ''}`.trim() || '-'}</td>
@@ -316,15 +340,22 @@ const UserManagementComponent: React.FC = () => {
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span>{getRoleName(user.role, user.roleName)}</span>
-                            <button
-                              className="btn btn-xs btn-info"
-                              onClick={() => handleManageRolePermissions(user.role || 0)}
-                              title="Manage permissions for this role"
-                              disabled={!user.role || user.role === 0}
-                              style={{ minWidth: '32px', padding: '0.25rem 0.5rem' }}
-                            >
-                              <i className="fas fa-cog" style={{ fontSize: '0.75rem' }}></i>
-                            </button>
+                            {isAdminSession && (
+                              <button
+                                className="btn btn-sm btn-info"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleManageRolePermissions(
+                                    user.role || 0,
+                                    getRoleName(user.role, user.roleName)
+                                  );
+                                }}
+                                title="Manage permissions for this role"
+                                disabled={!user.role || user.role === 0}
+                              >
+                                <i className="fas fa-cog"></i>
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td>{getStatusBadge(user.status)}</td>
@@ -332,25 +363,65 @@ const UserManagementComponent: React.FC = () => {
                         <td>
                           <div className="action-buttons">
                             <button
-                              className="btn btn-sm btn-secondary"
-                              onClick={() => handleEditUser(user.userUniqueID)}
-                              title="Edit User"
+                              type="button"
+                              className="btn btn-sm btn-secondary action-icon-btn"
+                              onClick={() =>
+                                handleEditUser(
+                                  user.userUniqueID,
+                                  getRoleName(user.role, user.roleName)
+                                )
+                              }
+                              title={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                                  ? "Only an administrator can edit an Admin account"
+                                  : "Edit User"
+                              }
+                              disabled={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                              }
                             >
-                              <i className="fas fa-edit"></i>
+                              <i className="fas fa-fw fa-edit" aria-hidden="true" />
                             </button>
                             <button
-                              className="btn btn-sm btn-warning"
+                              type="button"
+                              className="btn btn-sm btn-warning action-icon-btn"
                               onClick={() => handleResetPassword(user)}
-                              title="Reset Password"
+                              title={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                                  ? "Only an administrator can reset an Admin password"
+                                  : "Reset Password"
+                              }
+                              disabled={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                              }
                             >
-                              <i className="fas fa-key"></i>
+                              <i className="fas fa-fw fa-key" aria-hidden="true" />
                             </button>
                             <button
-                              className="btn btn-sm btn-danger"
-                              onClick={() => handleDeleteUser(user.userUniqueID)}
-                              title="Deactivate User"
+                              type="button"
+                              className="btn btn-sm btn-danger action-icon-btn"
+                              onClick={() =>
+                                handleDeleteUser(
+                                  user.userUniqueID,
+                                  getRoleName(user.role, user.roleName)
+                                )
+                              }
+                              title={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                                  ? "Only an administrator can deactivate an Admin account"
+                                  : "Deactivate User"
+                              }
+                              disabled={
+                                !isAdminSession &&
+                                isAdminRoleName(getRoleName(user.role, user.roleName))
+                              }
                             >
-                              <i className="fas fa-trash"></i>
+                              <i className="fas fa-fw fa-user-slash" aria-hidden="true" />
                             </button>
                           </div>
                         </td>

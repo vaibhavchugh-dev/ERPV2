@@ -40,10 +40,27 @@ namespace CimmpleAPI.Controllers
             var startUtc = ToUtc(tenantId, startLocal);
             var endUtc = ToUtc(tenantId, endLocal);
 
-            var employees = await _db.UserDetails.AsNoTracking()
+            var callerIsAdmin = AccountProtection.IsAdminCaller(
+                _db, CanAccessAllLocations(), GetCallerRoleId());
+            var callerUserId = GetUserId() ?? 0;
+
+            var employeesQuery = _db.UserDetails.AsNoTracking()
                 .Where(u => u.TenantID == tenantId
                     && (u.VendorId == null || u.VendorId == 0)
-                    && (u.Status == null || u.Status == "Active"))
+                    && (u.Status == null || u.Status == "Active"));
+
+            // Non-admins only see themselves on the punch board.
+            if (!callerIsAdmin)
+            {
+                if (callerUserId <= 0)
+                {
+                    return BadRequest(new { message = "User is required" });
+                }
+
+                employeesQuery = employeesQuery.Where(u => u.User_UniqueID == callerUserId);
+            }
+
+            var employees = await employeesQuery
                 .Select(u => new
                 {
                     u.User_UniqueID,
@@ -503,6 +520,12 @@ namespace CimmpleAPI.Controllers
                 return Ok(new { result = new { success = false, message = "Employee not found" } });
             }
 
+            var punchSelfBlock = GetPunchSelfOnlyBlockReason(employee.User_UniqueID);
+            if (punchSelfBlock != null)
+            {
+                return Ok(new { result = new { success = false, message = punchSelfBlock } });
+            }
+
             if (!string.Equals(employee.Status, "Active", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(employee.Status))
             {
@@ -604,6 +627,12 @@ namespace CimmpleAPI.Controllers
                 return Ok(new { result = new { success = false, message = "Employee not found" } });
             }
 
+            var punchSelfBlock = GetPunchSelfOnlyBlockReason(employee.User_UniqueID);
+            if (punchSelfBlock != null)
+            {
+                return Ok(new { result = new { success = false, message = punchSelfBlock } });
+            }
+
             if (!_faceRecognition.IsConfigured)
             {
                 return Ok(new
@@ -703,6 +732,22 @@ namespace CimmpleAPI.Controllers
                     confidence = verify.confidence * 100
                 }
             });
+        }
+
+        /// <summary>Non-admins may only punch for themselves.</summary>
+        private string? GetPunchSelfOnlyBlockReason(int targetUserUniqueId)
+        {
+            var callerIsAdmin = AccountProtection.IsAdminCaller(
+                _db, CanAccessAllLocations(), GetCallerRoleId());
+            if (callerIsAdmin) return null;
+
+            var callerUserId = GetUserId() ?? 0;
+            if (callerUserId <= 0 || callerUserId != targetUserUniqueId)
+            {
+                return "You can only punch for your own account.";
+            }
+
+            return null;
         }
 
         private async Task WriteFailedPunchAsync(

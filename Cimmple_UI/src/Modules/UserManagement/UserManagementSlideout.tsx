@@ -9,7 +9,7 @@ import {
 } from "../../Common/Services/UserManagementService";
 import { AuthService } from "../../Common/Services/AuthService";
 import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
-import { getKeepActiveReason } from "../../Common/Utils/accountProtection";
+import { getKeepActiveReason, isAdminRoleName } from "../../Common/Utils/accountProtection";
 import "./UserManagementSlideout.scss";
 
 interface UserManagementSlideoutProps {
@@ -23,6 +23,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
   onClose,
   onSave
 }) => {
+  const isAdminSession = AuthService.isAdminSession();
   // All hooks must be called unconditionally
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -155,13 +156,21 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     }
   };
 
-  const keepActiveReason = getKeepActiveReason(
-    roles.find((r) => Number(r.id) === Number(userData.role))?.name || userData.roleName,
-    userData.userUniqueID
-  );
+  const targetRoleName =
+    roles.find((r) => Number(r.id) === Number(userData.role))?.name || userData.roleName;
+  const targetIsAdmin = isAdminRoleName(targetRoleName);
+  const canEditSecurity = isAdminSession || !targetIsAdmin;
+  const canEditRole = isAdminSession;
+
+  const keepActiveReason = getKeepActiveReason(targetRoleName, userData.userUniqueID);
 
   const validateForm = (): string[] => {
     const errors: string[] = [];
+
+    if (!canEditSecurity) {
+      errors.push("Only an administrator can edit an Admin account.");
+      return errors;
+    }
 
     // Only validate account management fields
     if (!userData.status?.trim()) errors.push("Status is required");
@@ -284,6 +293,13 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       </div>
 
       <h3>Account Management</h3>
+      {!isAdminSession && (
+        <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: '#fffbeb', borderRadius: '0.375rem', fontSize: '0.875rem', color: '#92400e' }}>
+          {targetIsAdmin
+            ? "This is an Admin account. Only an administrator can edit it."
+            : "Only an administrator can change user roles. You can update status for non-admin users."}
+        </div>
+      )}
       <div className="form-row">
         <div className="form-group">
           <label htmlFor="role">Role *</label>
@@ -292,6 +308,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
               id="role"
               value={userData.role && userData.role > 0 ? userData.role : ""}
               onChange={(e) => {
+                if (!canEditRole) return;
                 const roleValue = e.target.value ? parseInt(e.target.value, 10) : undefined;
                 if (roleValue && !isNaN(roleValue) && roleValue > 0) {
                   handleInputChange("role", roleValue);
@@ -301,7 +318,9 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
               }}
               className="form-select"
               required
-              style={{ flex: 1 }}
+              disabled={!canEditRole}
+              title={!canEditRole ? "Only an administrator can change user roles" : undefined}
+              style={{ flex: 1, cursor: !canEditRole ? "not-allowed" : undefined }}
             >
               <option value="">Select Role</option>
               {userData.role &&
@@ -353,9 +372,20 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
             onChange={(e) => handleInputChange("status", e.target.value)}
             className="form-select"
             required
-            title={keepActiveReason || undefined}
-            disabled={!!keepActiveReason && (userData.status || "Active") === "Active"}
-            style={keepActiveReason && (userData.status || "Active") === "Active" ? { cursor: "not-allowed" } : undefined}
+            title={
+              !canEditSecurity
+                ? "Only an administrator can change an Admin account"
+                : keepActiveReason || undefined
+            }
+            disabled={
+              !canEditSecurity ||
+              (!!keepActiveReason && (userData.status || "Active") === "Active")
+            }
+            style={
+              !canEditSecurity || (keepActiveReason && (userData.status || "Active") === "Active")
+                ? { cursor: "not-allowed" }
+                : undefined
+            }
           >
             <option value="Active">Active</option>
             <option value="Inactive">Inactive</option>
@@ -458,19 +488,21 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
             onClick={handleDismiss}
             disabled={saving}
           >
-            Cancel
+            {canEditSecurity ? "Cancel" : "Close"}
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? "Saving..." : (
-              <>
-                <i className="fas fa-save"></i> Update Account
-              </>
-            )}
-          </button>
+          {canEditSecurity && (
+            <button
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : (
+                <>
+                  <i className="fas fa-save"></i> Update Account
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

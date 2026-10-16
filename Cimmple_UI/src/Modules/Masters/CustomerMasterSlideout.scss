@@ -178,6 +178,14 @@
   min-height: 0;
 }
 
+.tab-content.admin-profile-locked {
+  /* Keep scrolling; block edits without fieldset (fieldset breaks flex scroll). */
+  :is(input, select, textarea, button, .checkbox-wrapper, .location-access-mode) {
+    pointer-events: none;
+    opacity: 0.75;
+  }
+}
+
 .tab-content.tab-hidden {
   display: none;
 }

@@ -3304,12 +3304,34 @@ namespace CimmpleAPI.Controllers
 
                 var createdQuotationIds = new List<int>();
                 var skippedVendorIds = new List<int>();
+                var skippedNoPortalVendorIds = new List<int>();
+
+                // Multi-send is portal delivery — only vendors with an active portal login can receive RFQs.
+                var portalReadyVendorIds = _context.UserDetails
+                    .AsNoTracking()
+                    .Where(u =>
+                        u.TenantID == tenantid &&
+                        u.VendorId != null &&
+                        u.VendorId > 0 &&
+                        !string.IsNullOrEmpty(u.Password) &&
+                        (string.IsNullOrWhiteSpace(u.Status)
+                            || u.Status == "Active"
+                            || u.Status == "A"))
+                    .Select(u => u.VendorId!.Value)
+                    .Distinct()
+                    .ToHashSet();
 
                 // Handle each vendor — keep master pricing; create blank-price copies for additional vendors
                 foreach (var vendorId in vendorIds)
                 {
                     if (sourceQuotation.VendorID == vendorId)
                     {
+                        if (!portalReadyVendorIds.Contains(vendorId))
+                        {
+                            skippedNoPortalVendorIds.Add(vendorId);
+                            continue;
+                        }
+
                         // Master vendor: mark Sent for bidding, but keep existing line prices / totals
                         sourceQuotation.Status = "Sent";
                         sourceQuotation.isSent = true;
@@ -3336,6 +3358,12 @@ namespace CimmpleAPI.Controllers
                     if (existingChildVendorIds.Contains(vendorId))
                     {
                         skippedVendorIds.Add(vendorId);
+                        continue;
+                    }
+
+                    if (!portalReadyVendorIds.Contains(vendorId))
+                    {
+                        skippedNoPortalVendorIds.Add(vendorId);
                         continue;
                     }
 
@@ -3431,7 +3459,10 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // If only additional vendors were selected (master not in list), still link/mark master as Sent
-                if (!vendorIds.Contains(sourceQuotation.VendorID))
+                // when the master itself has portal access (RFQs are portal-delivered).
+                if (!vendorIds.Contains(sourceQuotation.VendorID) &&
+                    portalReadyVendorIds.Contains(sourceQuotation.VendorID) &&
+                    createdQuotationIds.Count > 0)
                 {
                     sourceQuotation.Status = "Sent";
                     sourceQuotation.isSent = true;
@@ -3442,9 +3473,27 @@ namespace CimmpleAPI.Controllers
                         createdQuotationIds.Add(sourceQuotationId);
                 }
 
-                var message = skippedVendorIds.Count > 0
-                    ? $"Created {createdQuotationIds.Count} quotation(s); skipped {skippedVendorIds.Count} vendor(s) that already have a copy"
-                    : $"Created {createdQuotationIds.Count} quotation(s) for selected vendors";
+                if (createdQuotationIds.Count == 0)
+                {
+                    if (skippedNoPortalVendorIds.Count > 0)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "None of the selected vendors have Vendor Portal access enabled. Enable portal access in Vendor Master first."
+                        });
+                    }
+                    return BadRequest(new { error = "No quotations were created for the selected vendors." });
+                }
+
+                var parts = new List<string>
+                {
+                    $"Created {createdQuotationIds.Count} quotation(s) for selected vendors"
+                };
+                if (skippedVendorIds.Count > 0)
+                    parts.Add($"skipped {skippedVendorIds.Count} already sent");
+                if (skippedNoPortalVendorIds.Count > 0)
+                    parts.Add($"skipped {skippedNoPortalVendorIds.Count} without portal access");
+                var message = string.Join("; ", parts);
 
                 return Ok(new
                 {
@@ -3452,6 +3501,7 @@ namespace CimmpleAPI.Controllers
                     {
                         quotationIds = createdQuotationIds,
                         skippedVendorIds,
+                        skippedNoPortalVendorIds,
                         message
                     }
                 });

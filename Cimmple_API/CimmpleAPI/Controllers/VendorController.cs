@@ -40,6 +40,21 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                // Active portal users with a password can receive RFQs in the vendor portal.
+                var portalReadyVendorIds = _context.UserDetails
+                    .AsNoTracking()
+                    .Where(u =>
+                        u.TenantID == tenantid &&
+                        u.VendorId != null &&
+                        u.VendorId > 0 &&
+                        !string.IsNullOrEmpty(u.Password) &&
+                        (string.IsNullOrWhiteSpace(u.Status)
+                            || u.Status == "Active"
+                            || u.Status == "A"))
+                    .Select(u => u.VendorId!.Value)
+                    .Distinct()
+                    .ToHashSet();
+
                 var vendors = _context.VendorMaster
                     .Where(v => v.Tenantid == tenantid)
                     .Select(v => new
@@ -102,7 +117,8 @@ namespace CimmpleAPI.Controllers
                         v.ship_via,
                         fullAddress = BuildFullAddress(v.address, v.city, v.state, v.zip),
                         v.contactPerson,
-                        v.phone_number
+                        v.phone_number,
+                        portalAccessEnabled = portalReadyVendorIds.Contains(v.vendor_id)
                     })
                     .ToList();
 

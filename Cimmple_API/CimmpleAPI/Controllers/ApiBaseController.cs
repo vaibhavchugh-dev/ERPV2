@@ -114,6 +114,13 @@ namespace CimmpleAPI.Controllers
             return string.Equals(claim, "true", StringComparison.OrdinalIgnoreCase);
         }
 
+        protected int? GetCallerRoleId()
+        {
+            var claim = User?.FindFirst("roleId")?.Value
+                ?? User?.FindFirst(ClaimTypes.Role)?.Value;
+            return int.TryParse(claim, out var roleId) && roleId > 0 ? roleId : null;
+        }
+
         protected IReadOnlyList<int> GetAllowedLocationIds()
         {
             if (string.Equals(User?.FindFirst(AuthClaimTypes.LocationIdsTruncated)?.Value, "true", StringComparison.OrdinalIgnoreCase))

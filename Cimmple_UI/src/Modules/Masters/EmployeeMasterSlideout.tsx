@@ -12,7 +12,7 @@ import { COUNTRIES, US_STATES } from "../../Common/Components/MasterSlideout/Sha
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import PasswordInput from "../../Common/Components/PasswordInput";
-import { getKeepActiveReason } from "../../Common/Utils/accountProtection";
+import { getKeepActiveReason, isAdminRoleName } from "../../Common/Utils/accountProtection";
 import "./CustomerMasterSlideout.scss";
 
 interface EmployeeMasterSlideoutProps {
@@ -24,6 +24,8 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   employeeId,
   onClose,
 }) => {
+  const isAdminSession = AuthService.isAdminSession();
+  const [loadedRoleName, setLoadedRoleName] = useState("");
   const [formData, setFormData] = useState<EmployeeMasterReq>({
     User_UniqueID: 0,
     FirstName: "",
@@ -98,6 +100,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     if (employeeId > 0) {
       loadEmployee();
     } else {
+      setLoadedRoleName("");
       setLoginAccessEnabled(false);
       setHasPassword(false);
       setFaceEnrolled(false);
@@ -354,6 +357,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         setLoginPassword("");
         setLoginPasswordConfirm("");
         setSendWelcomeEmail(false);
+        setLoadedRoleName(employee.RoleName || "");
 
         loadProfilePic(employee.User_UniqueID);
       }
@@ -499,7 +503,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
       if (zipError) newErrors.Zip = zipError;
     }
 
-    if (loginAccessEnabled) {
+    if (loginAccessEnabled && isAdminSession) {
       const enablingFirstTime = !initialLoginAccessEnabled || !hasPassword;
       if (enablingFirstTime && !loginPassword.trim()) {
         newErrors.loginPassword = "Password is required to enable login access";
@@ -525,6 +529,10 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
   const handleDelete = async () => {
     if (employeeId === 0) return;
+    if (adminProfileLocked) {
+      toast.error("Only an administrator can edit an Admin account.");
+      return;
+    }
     
     setLoading(true);
     try {
@@ -585,6 +593,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    if (adminProfileLocked) {
+      toast.error("Only an administrator can edit an Admin account.");
+      return;
+    }
     
     if (!validateForm()) {
       return;
@@ -605,7 +618,24 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         delete (submitData as any).DOB;
         delete (submitData as any).SSN;
       }
-      if (loginAccessEnabled) {
+      if (!isAdminSession) {
+        // Non-admins keep existing login + role; never clear or set credentials/roles.
+        if (loginAccessEnabled) {
+          const existingUserName = (formData.UserName || "").trim();
+          submitData.UserName =
+            existingUserName && existingUserName !== "enabled" ? existingUserName : "";
+        } else {
+          submitData.UserName = "";
+        }
+        delete submitData.Password;
+        delete submitData.SendWelcomeEmail;
+        // Preserve loaded role — non-admins cannot change roles.
+        if (employeeId > 0) {
+          submitData.Role = formData.Role;
+        } else {
+          submitData.Role = undefined;
+        }
+      } else if (loginAccessEnabled) {
         const existingUserName = (formData.UserName || "").trim();
         // Only auto-generate username for new employees / first-time login enablement.
         // Do not overwrite an existing username when First/Last Name change.
@@ -679,10 +709,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     onClose();
   };
 
-  const keepActiveReason = getKeepActiveReason(
-    roles.find((r) => r.roleID === formData.Role)?.roleName,
-    employeeId
-  );
+  const currentRoleName =
+    roles.find((r) => r.roleID === formData.Role)?.roleName || loadedRoleName;
+  const adminProfileLocked =
+    !isAdminSession && employeeId > 0 && isAdminRoleName(currentRoleName);
+  const keepActiveReason = getKeepActiveReason(currentRoleName, employeeId);
 
   if (loading && employeeId > 0) {
     return (
@@ -707,8 +738,9 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                 type="button"
                 className="btn p-0 border-0 bg-transparent position-relative"
                 onClick={openProfilePicModal}
-                title="Edit profile picture"
-                style={{ width: "100%", height: "100%" }}
+                title={adminProfileLocked ? "View only — Admin account" : "Edit profile picture"}
+                disabled={adminProfileLocked}
+                style={{ width: "100%", height: "100%", cursor: adminProfileLocked ? "default" : undefined }}
               >
                 <img
                   src={getProfilePicSrc()}
@@ -721,26 +753,28 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                     border: "1px solid #d7dde5",
                   }}
                 />
-                <span
-                  className="edit-icon d-flex align-items-center justify-content-center"
-                  style={{
-                    position: "absolute",
-                    right: "0px",
-                    bottom: "0px",
-                    width: "20px",
-                    height: "20px",
-                    borderRadius: "50%",
-                    background: "#164DA0",
-                    color: "#fff",
-                    border: "2px solid #fff",
-                    fontSize: "11px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}
-                >
-                  ✎
-                </span>
+                {!adminProfileLocked && (
+                  <span
+                    className="edit-icon d-flex align-items-center justify-content-center"
+                    style={{
+                      position: "absolute",
+                      right: "0px",
+                      bottom: "0px",
+                      width: "20px",
+                      height: "20px",
+                      borderRadius: "50%",
+                      background: "#164DA0",
+                      color: "#fff",
+                      border: "2px solid #fff",
+                      fontSize: "11px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}
+                  >
+                    ✎
+                  </span>
+                )}
               </button>
             </div>
             <div>
@@ -771,8 +805,15 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
                   title={keepActiveReason || undefined}
-                  disabled={!!keepActiveReason && formData.Status === "Active"}
-                  style={keepActiveReason && formData.Status === "Active" ? { cursor: "not-allowed" } : undefined}
+                  disabled={
+                    adminProfileLocked ||
+                    (!!keepActiveReason && formData.Status === "Active")
+                  }
+                  style={
+                    adminProfileLocked || (keepActiveReason && formData.Status === "Active")
+                      ? { cursor: "not-allowed" }
+                      : undefined
+                  }
                 >
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>
@@ -787,7 +828,25 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
         <form className="airframe-form" onSubmit={handleSubmit}>
           <>
-              <div className="tab-content">
+              {adminProfileLocked && (
+                <div
+                  style={{
+                    marginBottom: "1rem",
+                    padding: "0.75rem 1rem",
+                    backgroundColor: "#fffbeb",
+                    border: "1px solid #f59e0b",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.875rem",
+                    color: "#92400e",
+                  }}
+                >
+                  This is an Admin account. Only an administrator can change name, details, or security settings.
+                </div>
+              )}
+              <div
+                className={`tab-content${adminProfileLocked ? " admin-profile-locked" : ""}`}
+                aria-disabled={adminProfileLocked || undefined}
+              >
                 {/* Basic Information */}
                 <div style={{ marginBottom: '2rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', paddingBottom: '0.75rem', borderBottom: '1px solid #e5e7eb' }}>
@@ -799,11 +858,24 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                       Login Access is only enabled when a password is set and the employee can sign in.
                     </p>
                   </div>
-                  <label className="checkbox-wrapper" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <label
+                    className="checkbox-wrapper"
+                    style={{
+                      margin: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      cursor: isAdminSession ? 'pointer' : 'not-allowed',
+                      opacity: isAdminSession ? 1 : 0.65,
+                    }}
+                    title={isAdminSession ? undefined : "Only an administrator can change login access"}
+                  >
                     <input
                       type="checkbox"
                       checked={loginAccessEnabled}
+                      disabled={!isAdminSession}
                       onChange={(e) => {
+                        if (!isAdminSession) return;
                         const enabled = e.target.checked;
                         setLoginAccessEnabled(enabled);
                         setLoginPassword("");
@@ -826,7 +898,26 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                   </label>
                 </div>
 
-                {loginAccessEnabled && (
+                {!isAdminSession && (
+                  <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '1rem' }}>
+                    Only an administrator can enable login access, set passwords, or assign the Admin role.
+                  </p>
+                )}
+
+                {loginAccessEnabled && !isAdminSession && (
+                  <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: '0.5rem', border: '1px solid #e5e7eb' }}>
+                    <p style={{ fontSize: '0.8125rem', color: '#374151', margin: 0 }}>
+                      Login username:{" "}
+                      <strong>
+                        {formData.UserName && formData.UserName !== "enabled"
+                          ? formData.UserName
+                          : "—"}
+                      </strong>
+                    </p>
+                  </div>
+                )}
+
+                {loginAccessEnabled && isAdminSession && (
                   <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: '0.5rem', border: '1px solid #e5e7eb' }}>
                     {(formData.UserName && formData.UserName !== "enabled") ? (
                       <p style={{ fontSize: '0.8125rem', color: '#374151', marginBottom: '0.75rem' }}>
@@ -1199,7 +1290,17 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                         name="Role"
                         className="form-input"
                         value={formData.Role || 0}
-                        onChange={(e) => handleInputChange("Role", e.target.value ? parseInt(e.target.value) : undefined)}
+                        disabled={!isAdminSession}
+                        title={
+                          !isAdminSession
+                            ? "Only an administrator can change roles"
+                            : undefined
+                        }
+                        onChange={(e) => {
+                          if (!isAdminSession) return;
+                          const nextRoleId = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                          handleInputChange("Role", nextRoleId);
+                        }}
                       >
                         <option value={0}>Select Role</option>
                         {roles.map((role) => (
@@ -1504,7 +1605,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
               {/* Form Actions */}
               <div className="form-actions" style={{ flexShrink: 0 }}>
-                {employeeId > 0 && (
+                {employeeId > 0 && !adminProfileLocked && (
                   <button
                     type="button"
                     onClick={handleDelete}
@@ -1537,15 +1638,17 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                   onClick={handleDismiss}
                   disabled={loading}
                 >
-                  Cancel
+                  {adminProfileLocked ? "Close" : "Cancel"}
                 </button>
-                <button
-                  type="submit"
-                  className="btn-submit"
-                  disabled={loading}
-                >
-                  {loading ? "Saving..." : employeeId > 0 ? "Update Employee" : "Add Employee"}
-                </button>
+                {!adminProfileLocked && (
+                  <button
+                    type="submit"
+                    className="btn-submit"
+                    disabled={loading}
+                  >
+                    {loading ? "Saving..." : employeeId > 0 ? "Update Employee" : "Add Employee"}
+                  </button>
+                )}
               </div>
           </>
         </form>

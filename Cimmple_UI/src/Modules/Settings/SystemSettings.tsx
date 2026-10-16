@@ -17,6 +17,7 @@ import "./SystemSettings.scss";
 const SystemSettingsComponent: React.FC = () => {
   const history = useHistory();
   const { refreshSettings } = useSettings();
+  const isAdminSession = AuthService.isAdminSession();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [defaultLocationId, setDefaultLocationId] = useState<number>(0);
@@ -131,15 +132,22 @@ const SystemSettingsComponent: React.FC = () => {
 
   const handleSaveSettings = async () => {
     if (!settings) return;
-    
-    // Validation
-    if (settings.minPasswordLength < 6 || settings.minPasswordLength > 20) {
-      toast.error('Password length must be between 6 and 20 characters');
+
+    if (!isAdminSession && activeTab === "security") {
+      toast.error("Only an administrator can change security settings.");
       return;
     }
-    if (settings.sessionTimeoutMinutes < 5 || settings.sessionTimeoutMinutes > 480) {
-      toast.error('Session timeout must be between 5 and 480 minutes');
-      return;
+    
+    // Validation (security fields only matter when admin is saving them)
+    if (isAdminSession || activeTab === "security") {
+      if (settings.minPasswordLength < 6 || settings.minPasswordLength > 20) {
+        toast.error('Password length must be between 6 and 20 characters');
+        return;
+      }
+      if (settings.sessionTimeoutMinutes < 5 || settings.sessionTimeoutMinutes > 480) {
+        toast.error('Session timeout must be between 5 and 480 minutes');
+        return;
+      }
     }
     if (settings.smtpPort && (settings.smtpPort < 1 || settings.smtpPort > 65535)) {
       toast.error('SMTP port must be between 1 and 65535');
@@ -311,26 +319,28 @@ const SystemSettingsComponent: React.FC = () => {
               Configure application-wide preferences — date, currency, security, notifications, and default location
             </p>
           </div>
-          <button
-            onClick={activeTab === 'company' ? handleSaveDefaultLocation : handleSaveSettings}
-            disabled={saving || (activeTab === 'company' && loadingLocations)}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: saving ? '#9ca3af' : '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontSize: '0.875rem',
-              fontWeight: '500',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
-          >
-            <FontAwesomeIcon icon={faSave} />
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+          {!( !isAdminSession && activeTab === 'security') && (
+            <button
+              onClick={activeTab === 'company' ? handleSaveDefaultLocation : handleSaveSettings}
+              disabled={saving || (activeTab === 'company' && loadingLocations)}
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: saving ? '#9ca3af' : '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.375rem',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <FontAwesomeIcon icon={faSave} />
+              {saving ? 'Saving...' : activeTab === 'company' ? 'Save Location' : 'Save Settings'}
+            </button>
+          )}
         </div>
         {usingDefaults && (
           <div style={{
@@ -801,7 +811,32 @@ const SystemSettingsComponent: React.FC = () => {
               <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
                 Security Settings
               </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+              {!isAdminSession && (
+                <div
+                  style={{
+                    marginBottom: '1rem',
+                    padding: '0.75rem 1rem',
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #f59e0b',
+                    borderRadius: '0.375rem',
+                    fontSize: '0.875rem',
+                    color: '#92400e',
+                  }}
+                >
+                  Only an administrator can change security settings. You can view the current values.
+                </div>
+              )}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '1.5rem',
+                  ...( !isAdminSession
+                    ? { pointerEvents: 'none' as const, opacity: 0.75 }
+                    : {}),
+                }}
+                aria-disabled={!isAdminSession || undefined}
+              >
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
                     Minimum Password Length

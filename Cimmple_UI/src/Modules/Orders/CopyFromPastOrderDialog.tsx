@@ -39,6 +39,8 @@ interface CopyFromPastOrderDialogProps {
   excludeOrderId: number;
   /** Display-format order date of the order being edited; due dates are computed from it. */
   orderDate: string;
+  /** Prefer past orders from this site (order site or active working site). */
+  locationId?: number;
   existingPartNos: string[];
   hasExistingLines: boolean;
   /** Replacing is only offered when none of the existing lines have been saved. */
@@ -52,6 +54,8 @@ interface ReviewRow extends CopySourceLine {
   qty: string;
   dueDateIso: string;
   alreadyOnOrder: boolean;
+  /** Editable discount amount/percent entered as string for controlled input. */
+  discountInput: string;
 }
 
 type PriceMode = "current" | "last";
@@ -64,13 +68,50 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
   customerName,
   excludeOrderId,
   orderDate,
+  locationId,
   existingPartNos,
   hasExistingLines,
   canReplace,
   onCancel,
   onConfirm,
 }) => {
-  const { formatCurrency, formatDateOnlyFromApi } = useFormatting();
+  const { formatCurrency, formatDateOnlyFromApi, currencySymbol } = useFormatting();
+
+  const getStatusBadge = (status: string) => {
+    if (!status || status.trim() === "") {
+      return <span className="cpo-status-badge cpo-status-muted">-</span>;
+    }
+    const statusLower = status.toLowerCase().trim();
+    if (statusLower === "draft") {
+      return <span className="cpo-status-badge cpo-status-warning">Draft</span>;
+    }
+    if (statusLower === "in progress" || statusLower === "in-progress") {
+      return <span className="cpo-status-badge cpo-status-primary">In Progress</span>;
+    }
+    if (statusLower === "partially shipped" || statusLower === "partially-shipped") {
+      return <span className="cpo-status-badge cpo-status-primary">Partially Shipped</span>;
+    }
+    if (statusLower === "shipped") {
+      return <span className="cpo-status-badge cpo-status-success">Shipped</span>;
+    }
+    if (statusLower === "partially invoiced" || statusLower === "partially-invoiced") {
+      return <span className="cpo-status-badge cpo-status-info">Partially Invoiced</span>;
+    }
+    if (
+      statusLower === "fully invoiced" ||
+      statusLower === "fully-invoiced" ||
+      statusLower === "invoiced"
+    ) {
+      return <span className="cpo-status-badge cpo-status-success">Fully Invoiced</span>;
+    }
+    if (statusLower === "completed") {
+      return <span className="cpo-status-badge cpo-status-success">Completed</span>;
+    }
+    if (statusLower === "cancelled" || statusLower === "canceled") {
+      return <span className="cpo-status-badge cpo-status-danger">Cancelled</span>;
+    }
+    return <span className="cpo-status-badge cpo-status-muted">{status}</span>;
+  };
 
   const [step, setStep] = useState<"pick" | "review">("pick");
   const [orders, setOrders] = useState<CopySourceOrder[]>([]);
@@ -82,6 +123,10 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
   const [mode, setMode] = useState<"append" | "replace">("append");
 
   const orderDateIso = toHtmlDateInputValue(orderDate) || moment().format("YYYY-MM-DD");
+  const preferredLocationId =
+    locationId && locationId > 0
+      ? locationId
+      : Number(localStorage.getItem("locationId") || 0) || undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -110,7 +155,11 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
     const loadOrders = async () => {
       setOrdersLoading(true);
       try {
-        const result = await OrderService.GetRecentOrdersByCustomer(customerId, excludeOrderId);
+        const result = await OrderService.GetRecentOrdersByCustomer(
+          customerId,
+          excludeOrderId,
+          { locationId: preferredLocationId }
+        );
         if (cancelled) return;
         setOrders(result);
         setHighlighted(result[0] || null);
@@ -128,7 +177,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, customerId, excludeOrderId]);
+  }, [isOpen, customerId, excludeOrderId, preferredLocationId]);
 
   const reviewOrder = useCallback(
     async (order: CopySourceOrder) => {
@@ -153,6 +202,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                 .add(line.leadDays, "days")
                 .format("YYYY-MM-DD"),
               alreadyOnOrder,
+              discountInput: String(line.discount ?? 0),
             };
           })
         );
@@ -203,6 +253,15 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
       return;
     }
 
+    const invalidDiscount = selectedRows.find((r) => {
+      const d = Number(r.discountInput);
+      return Number.isNaN(d) || d < 0;
+    });
+    if (invalidDiscount) {
+      toast.error(`Discount for ${invalidDiscount.partNo || "a line"} must be zero or greater`);
+      return;
+    }
+
     onConfirm({
       sourceOrder: {
         orderId: highlighted.orderId,
@@ -216,7 +275,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
         unit: r.unit,
         qtyOrdered: Number(r.qty),
         unitPrice: priceFor(r),
-        discount: r.discount,
+        discount: Number(r.discountInput) || 0,
         discountType: r.discountType,
         productId: r.productId,
         notes: r.notes,
@@ -246,7 +305,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
             <p>
               {step === "pick"
                 ? `Pick one of ${customerName || "this customer"}'s recent orders to copy lines from.`
-                : "Choose the lines to add and adjust quantities, prices and due dates."}
+                : "Choose the lines to add and adjust quantities, prices, discounts and due dates."}
             </p>
           </div>
           <button type="button" className="cpo-close" onClick={onCancel} title="Close">
@@ -276,8 +335,12 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                 ) : orders.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="cpo-empty">
-                      <p>No past orders found</p>
-                      <small>Cancelled orders and orders from locations you can't access are not listed.</small>
+                      <p>
+                        {preferredLocationId
+                          ? "No past orders found for this location"
+                          : "No past orders found"}
+                      </p>
+                      <small>Cancelled orders and orders from other locations are not listed.</small>
                     </td>
                   </tr>
                 ) : (
@@ -290,7 +353,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                     >
                       <td className="cpo-strong">{orderLabel(order.orderNumber)}</td>
                       <td>{formatDateOnlyFromApi(order.orderDate, true)}</td>
-                      <td>{order.status}</td>
+                      <td>{getStatusBadge(order.status)}</td>
                       <td className="cpo-num">{order.lineCount}</td>
                       <td className="cpo-num">{formatCurrency(order.totalAmount)}</td>
                     </tr>
@@ -361,6 +424,7 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                     <th className="cpo-num">Last Price</th>
                     <th className="cpo-num">Current Price</th>
                     <th className="cpo-num">Price Used</th>
+                    <th className="cpo-discount-heading">Discount</th>
                     <th>Due Date</th>
                     <th></th>
                   </tr>
@@ -368,13 +432,13 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                 <tbody>
                   {linesLoading ? (
                     <tr>
-                      <td colSpan={10} className="cpo-empty">
+                      <td colSpan={11} className="cpo-empty">
                         Loading lines...
                       </td>
                     </tr>
                   ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="cpo-empty">
+                      <td colSpan={11} className="cpo-empty">
                         <p>This order has no lines that can be copied</p>
                       </td>
                     </tr>
@@ -411,6 +475,37 @@ const CopyFromPastOrderDialog: React.FC<CopyFromPastOrderDialogProps> = ({
                             {row.currentPrice != null ? formatCurrency(row.currentPrice) : "—"}
                           </td>
                           <td className="cpo-num cpo-strong">{formatCurrency(priceFor(row))}</td>
+                          <td className="cpo-discount-cell">
+                            <div className="cpo-discount">
+                              <select
+                                className="cpo-input cpo-discount-type"
+                                value={row.discountType}
+                                onChange={(e) =>
+                                  updateRow(index, {
+                                    discountType: e.target.value === "Amount" ? "Amount" : "Percent",
+                                  })
+                                }
+                                title="Discount type"
+                              >
+                                <option value="Percent">%</option>
+                                <option value="Amount">{currencySymbol}</option>
+                              </select>
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                className="cpo-input cpo-discount-input"
+                                value={row.discountInput}
+                                onChange={(e) =>
+                                  updateRow(index, {
+                                    discountInput: e.target.value,
+                                    discount: Number(e.target.value) || 0,
+                                  })
+                                }
+                                title="Discount"
+                              />
+                            </div>
+                          </td>
                           <td>
                             <input
                               type="date"

@@ -131,27 +131,32 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
     if (!canCreate || creating) return;
     setCreating(true);
     try {
-      const partName = (suggestedPartName || "").trim() || typedPartNo;
+      // Part No / Part Name from entered values; Vendor + Unit Cost seeded from PO/quote line when present.
+      const enteredName = (suggestedPartName || "").trim();
+      const partName = enteredName || typedPartNo;
       const unit = (suggestedUnit || "").trim() || "EA";
       const unitCost =
         suggestedUnitCost && suggestedUnitCost > 0 ? suggestedUnitCost : 0;
+      const defaultVendorId = vendorId && vendorId > 0 ? vendorId : undefined;
       const payload = {
         partNo: typedPartNo,
         partName,
         unit,
         unitCost,
-        vendorId: vendorId && vendorId > 0 ? vendorId : undefined,
+        vendorId: defaultVendorId,
       };
       let saved: { id: number } | null = null;
+      let savedWithoutVendor = false;
       try {
         saved = await InventoryService.SaveRawMaterial(payload);
       } catch (err: any) {
         const msg = String(err?.response?.data?.error || err?.message || "");
-        if (vendorId && /vendor/i.test(msg)) {
+        if (defaultVendorId && /vendor/i.test(msg)) {
           saved = await InventoryService.SaveRawMaterial({
             ...payload,
             vendorId: undefined,
           });
+          savedWithoutVendor = true;
         } else {
           throw err;
         }
@@ -166,14 +171,23 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
         partName,
         unit,
         unitCost,
-        vendorId: vendorId && vendorId > 0 ? vendorId : undefined,
+        vendorId: savedWithoutVendor ? undefined : defaultVendorId,
         isActive: true,
       };
       setMaterials((prev) => [created, ...prev.filter((m) => m.id !== created.id)]);
       onSelect(created);
       setFilter(typedPartNo);
       setOpen(false);
-      toast.success(`Added ${typedPartNo} to Raw Material Master`);
+      const extras: string[] = [];
+      if (!enteredName) extras.push("name set to part no");
+      if (unitCost > 0) extras.push(`cost ${unitCost}`);
+      if (created.vendorId) extras.push("default vendor set");
+      else if (savedWithoutVendor) extras.push("vendor skipped");
+      toast.success(
+        extras.length > 0
+          ? `Added ${typedPartNo} to Raw Material Master (${extras.join(", ")})`
+          : `Added ${typedPartNo} to Raw Material Master`
+      );
     } catch (err: any) {
       const message =
         err?.response?.data?.error || err.message || "Failed to add raw material";

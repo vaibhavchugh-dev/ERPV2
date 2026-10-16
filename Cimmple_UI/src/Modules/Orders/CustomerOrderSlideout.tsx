@@ -540,22 +540,53 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     }
   };
 
+  const isDetailInvoiced = (d?: OrderDetailReq | null): boolean => {
+    if (!d) return false;
+    const qty = Number(d.InvoicedQty ?? 0);
+    if (qty > 0) return true;
+    const status = String(d.InvoiceStatus ?? "").toLowerCase().trim();
+    return (
+      status === "fully invoiced" ||
+      status === "partially invoiced" ||
+      status === "invoiced"
+    );
+  };
+
+  const isDetailShipped = (d?: OrderDetailReq | null): boolean => {
+    if (!d) return false;
+    return Number(d.ShippedQty ?? 0) > 0;
+  };
+
+  const getLineFloorQty = (d?: OrderDetailReq | null): number => {
+    if (!d) return 0;
+    return Math.max(Number(d.ShippedQty ?? 0), Number(d.InvoicedQty ?? 0));
+  };
+
   const applyCustomerPart = (index: number, part: CustomerPartOption) => {
+    const current = formData.Details[index];
+    if (isDetailInvoiced(current)) {
+      toast.error("Invoiced line items cannot be edited");
+      return;
+    }
+    if (isDetailShipped(current)) {
+      toast.error("Shipped line items cannot change part identity. Adjust shipments first.");
+      return;
+    }
     setFormData((prev) => {
       const newDetails = [...prev.Details];
-      const current = newDetails[index];
-      if (!current) return prev;
+      const row = newDetails[index];
+      if (!row) return prev;
       newDetails[index] = {
-        ...current,
+        ...row,
         PartNo: part.partNo,
-        PartName: part.partName || current.PartName,
-        Unit: part.unit || current.Unit || "EA",
-        UnitPrice: part.unitPrice > 0 ? part.unitPrice : current.UnitPrice,
-        ProductId: part.productId ?? current.ProductId,
+        PartName: part.partName || row.PartName,
+        Unit: part.unit || row.Unit || "EA",
+        UnitPrice: part.unitPrice > 0 ? part.unitPrice : row.UnitPrice,
+        ProductId: part.productId ?? row.ProductId,
         QtyOrdered:
           part.suggestedQty && part.suggestedQty > 0
             ? part.suggestedQty
-            : current.QtyOrdered || 1,
+            : row.QtyOrdered || 1,
       };
       const total = newDetails.reduce((sum, d) => sum + calculateLineTotal(d), 0);
       return { ...prev, Details: newDetails, TotalAmount: total };
@@ -641,6 +672,33 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleDetailChange = (index: number, field: keyof OrderDetailReq, value: any) => {
+    const detailToEdit = formData.Details[index];
+    const invoiced = isDetailInvoiced(detailToEdit);
+    const shipped = isDetailShipped(detailToEdit);
+
+    // Notes remain editable after ship/invoice (informational only).
+    if (field !== "Notes") {
+      if (invoiced) {
+        toast.error("Invoiced line items cannot be edited. Void the invoice first.");
+        return;
+      }
+      if (
+        shipped &&
+        (field === "PartNo" || field === "PartName" || field === "ProductId" || field === "Unit")
+      ) {
+        toast.error("Shipped line items cannot change part identity. Adjust shipments first.");
+        return;
+      }
+      if (shipped && field === "QtyOrdered") {
+        const floor = getLineFloorQty(detailToEdit);
+        const nextQty = Number(value);
+        if (nextQty < floor) {
+          toast.error(`Quantity cannot be less than shipped quantity (${floor})`);
+          return;
+        }
+      }
+    }
+
     setFormData((prev) => {
       const newDetails = [...prev.Details];
       newDetails[index] = { ...newDetails[index], [field]: value };
@@ -651,8 +709,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       }, 0);
 
       // Clear validation errors for this field when user makes changes
-      setLineItemErrors((prev) => {
-        const newMap = new Map(prev);
+      setLineItemErrors((prevErrors) => {
+        const newMap = new Map(prevErrors);
         const itemErrors = newMap.get(index);
         if (itemErrors) {
           // Clear errors for the changed field and related fields
@@ -725,6 +783,15 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   const handleDeleteDetail = (index: number) => {
     const detail = formData.Details[index];
+
+    if (isDetailInvoiced(detail)) {
+      toast.error("Invoiced line items cannot be removed. Void the invoice first.");
+      return;
+    }
+    if (isDetailShipped(detail)) {
+      toast.error("Shipped line items cannot be removed. Adjust or delete shipments first.");
+      return;
+    }
 
     // Check if this line item has an associated Job Order
     const hasJobOrder = detail.ID > 0 && jobOrderDetailIds.has(detail.ID);
@@ -1856,6 +1923,13 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         const itemErrors = lineItemErrors.get(index) || {};
                         const hasPartError = !!(itemErrors.PartNo || itemErrors.PartName);
                         const historyHint = formatPartHistoryHint(partHistoryByRow.get(detail.ItemNo));
+                        const isInvoiced = isDetailInvoiced(detail);
+                        const isShipped = isDetailShipped(detail);
+                        const isIdentityLocked = isInvoiced || isShipped;
+                        const isCommercialLocked = isInvoiced;
+                        const lockedBg = isCommercialLocked || isIdentityLocked ? "#f3f4f6" : undefined;
+                        const lockedCursor =
+                          isCommercialLocked || isIdentityLocked ? "not-allowed" : undefined;
                         return (
                           <React.Fragment key={detail.ItemNo}>
                           <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
@@ -1880,6 +1954,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 customerSelected={!!formData.CustomerID && formData.CustomerID > 0}
                                 excludeOrderId={effectiveOrderId}
                                 hasError={hasPartError}
+                                disabled={isIdentityLocked}
                                 scrollContainerSelector=".customer-order-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
                                 onSelectPart={(part) => applyCustomerPart(index, part)}
@@ -1916,7 +1991,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 style={{ 
                                   width: "100%", 
                                   minWidth: "150px", 
-                                  cursor: "pointer",
+                                  cursor: isIdentityLocked ? "not-allowed" : "pointer",
+                                  backgroundColor: isIdentityLocked ? "#f3f4f6" : undefined,
                                   textOverflow: "ellipsis",
                                   overflow: "hidden",
                                   whiteSpace: "nowrap",
@@ -1925,12 +2001,20 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 }}
                                 value={getFirstLine(detail.PartName || "")}
                                 onClick={() => {
+                                  if (isIdentityLocked) return;
                                   setEditingField({ index, field: "PartName", value: detail.PartName });
                                   setShowTextEditorPopup(true);
                                 }}
                                 placeholder="Click to edit description"
                                 readOnly
-                                title={detail.PartName || "Click to edit description"}
+                                disabled={isIdentityLocked}
+                                title={
+                                  isInvoiced
+                                    ? "Description locked: line has been invoiced"
+                                    : isShipped
+                                      ? "Description locked: line has been shipped"
+                                      : detail.PartName || "Click to edit description"
+                                }
                               />
                               {itemErrors.PartName && (
                                 <div style={{ 
@@ -1954,14 +2038,18 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               <input
                                 type="date"
                                 className="form-input"
+                                disabled={isCommercialLocked}
                                 style={{ 
                                   width: "100%", 
                                   minWidth: "120px",
+                                  backgroundColor: isCommercialLocked ? "#f3f4f6" : undefined,
+                                  cursor: isCommercialLocked ? "not-allowed" : undefined,
                                   borderColor: itemErrors.DueDate ? "#ef4444" : undefined,
                                   borderWidth: itemErrors.DueDate ? "2px" : "1px"
                                 }}
                                 value={convertToDateInputFormat(detail.LeadTime || detail.DueDate)}
                                 min={convertToDateInputFormat(formData.OrderDate) || undefined}
+                                title={isInvoiced ? "Due date locked: line has been invoiced" : undefined}
                                 onChange={(e) => {
                                   const estDate = convertFromDateInputFormat(e.target.value);
                                   handleDetailChange(index, "LeadTime", estDate);
@@ -1991,15 +2079,26 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 <input
                                   type="text"
                                   className="form-input"
+                                  disabled={isIdentityLocked}
+                                  title={
+                                    isInvoiced
+                                      ? "Unit locked: line has been invoiced"
+                                      : isShipped
+                                        ? "Unit locked: line has been shipped"
+                                        : undefined
+                                  }
                                   style={{ 
                                     width: "100%", 
                                     minWidth: "80px", 
                                     paddingRight: "2rem",
+                                    backgroundColor: lockedBg,
+                                    cursor: lockedCursor,
                                     borderColor: itemErrors.Unit ? "#ef4444" : undefined,
                                     borderWidth: itemErrors.Unit ? "2px" : "1px"
                                   }}
                                   value={detail.Unit || ""}
                                   onChange={(e) => {
+                                    if (isIdentityLocked) return;
                                     handleDetailChange(index, "Unit", e.target.value);
                                     // Filter options as user types
                                     setUnitDropdownOpen(prev => {
@@ -2016,6 +2115,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                     }
                                   }}
                                   onFocus={(e) => {
+                                    if (isIdentityLocked) return;
                                     updateUnitDropdownPosition(index);
                                     setUnitDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -2037,7 +2137,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 />
                                 <button
                                   type="button"
+                                  disabled={isIdentityLocked}
                                   onClick={(e) => {
+                                    if (isIdentityLocked) return;
                                     updateUnitDropdownPosition(index);
                                     setUnitDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -2052,7 +2154,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                     transform: "translateY(-50%)",
                                     background: "none",
                                     border: "none",
-                                    cursor: "pointer",
+                                    cursor: isIdentityLocked ? "not-allowed" : "pointer",
                                     fontSize: "0.75rem",
                                     color: "#6b7280",
                                     padding: "0.25rem",
@@ -2154,14 +2256,25 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 type="text"
                                 inputMode="numeric"
                                 className="form-input no-spinner"
+                                disabled={isCommercialLocked}
+                                title={
+                                  isInvoiced
+                                    ? "Quantity locked: line has been invoiced"
+                                    : isShipped
+                                      ? `Quantity cannot be less than shipped (${getLineFloorQty(detail)})`
+                                      : undefined
+                                }
                                 style={{ 
                                   width: "100%", 
                                   minWidth: "80px",
+                                  backgroundColor: isCommercialLocked ? "#f3f4f6" : undefined,
+                                  cursor: isCommercialLocked ? "not-allowed" : undefined,
                                   borderColor: itemErrors.QtyOrdered ? "#ef4444" : undefined,
                                   borderWidth: itemErrors.QtyOrdered ? "2px" : "1px"
                                 }}
                                 value={numericDisplayValues.get(`qty-${index}`) ?? (detail.QtyOrdered === 0 ? "" : detail.QtyOrdered.toString())}
                                 onChange={(e) => {
+                                  if (isCommercialLocked) return;
                                   const inputVal = e.target.value.replace(/[^0-9]/g, '');
                                   // Update display value immediately
                                   setNumericDisplayValues(prev => {
@@ -2180,6 +2293,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   });
                                 }}
                                 onBlur={(e) => {
+                                  if (isCommercialLocked) return;
                                   // Convert empty to 1 (default) only on blur and clear display value
                                   const val = e.target.value === "" ? 1 : parseInt(e.target.value) || 1;
                                   handleDetailChange(index, "QtyOrdered", val);
@@ -2213,14 +2327,19 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 type="text"
                                 inputMode="decimal"
                                 className="form-input no-spinner"
+                                disabled={isCommercialLocked}
+                                title={isInvoiced ? "Price locked: line has been invoiced" : undefined}
                                 style={{ 
                                   width: "100%", 
                                   minWidth: "100px",
+                                  backgroundColor: isCommercialLocked ? "#f3f4f6" : undefined,
+                                  cursor: isCommercialLocked ? "not-allowed" : undefined,
                                   borderColor: itemErrors.UnitPrice ? "#ef4444" : undefined,
                                   borderWidth: itemErrors.UnitPrice ? "2px" : "1px"
                                 }}
                                 value={numericDisplayValues.get(`price-${index}`) ?? (detail.UnitPrice === 0 ? "" : detail.UnitPrice.toString())}
                                 onChange={(e) => {
+                                  if (isCommercialLocked) return;
                                   const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
                                     return string.indexOf('.') === offset ? match : '';
                                   });
@@ -2241,6 +2360,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   });
                                 }}
                                 onBlur={(e) => {
+                                  if (isCommercialLocked) return;
                                   // Convert empty to 0 only on blur and clear display value
                                   const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
                                   handleDetailChange(index, "UnitPrice", val);
@@ -2273,7 +2393,14 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               <div style={{ display: "flex", gap: "0.25rem", alignItems: "center", minWidth: "140px" }}>
                                 <select
                                   className="form-input"
-                                  style={{ width: "52px", padding: "0.35rem", flexShrink: 0 }}
+                                  disabled={isCommercialLocked}
+                                  style={{
+                                    width: "52px",
+                                    padding: "0.35rem",
+                                    flexShrink: 0,
+                                    backgroundColor: isCommercialLocked ? "#f3f4f6" : undefined,
+                                    cursor: isCommercialLocked ? "not-allowed" : undefined,
+                                  }}
                                   value={detail.DiscountType === "Amount" ? "Amount" : "Percent"}
                                   onChange={(e) =>
                                     handleDetailChange(
@@ -2282,7 +2409,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                       e.target.value === "Amount" ? "Amount" : "Percent"
                                     )
                                   }
-                                  title="Discount type"
+                                  title={isInvoiced ? "Discount locked: line has been invoiced" : "Discount type"}
                                 >
                                   <option value="Percent">%</option>
                                   <option value="Amount">{currencySymbol}</option>
@@ -2291,9 +2418,17 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                   type="text"
                                   inputMode="decimal"
                                   className="form-input no-spinner"
-                                  style={{ width: "100%", minWidth: "70px" }}
+                                  disabled={isCommercialLocked}
+                                  title={isInvoiced ? "Discount locked: line has been invoiced" : undefined}
+                                  style={{
+                                    width: "100%",
+                                    minWidth: "70px",
+                                    backgroundColor: isCommercialLocked ? "#f3f4f6" : undefined,
+                                    cursor: isCommercialLocked ? "not-allowed" : undefined,
+                                  }}
                                   value={numericDisplayValues.get(`discount-${index}`) ?? (detail.Discount === 0 ? "" : detail.Discount.toString())}
                                   onChange={(e) => {
+                                    if (isCommercialLocked) return;
                                     const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
                                       return string.indexOf('.') === offset ? match : '';
                                     });
@@ -2312,6 +2447,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                     }
                                   }}
                                   onBlur={(e) => {
+                                    if (isCommercialLocked) return;
                                     // Convert empty to 0 only on blur and clear display value
                                     const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
                                     handleDetailChange(index, "Discount", val);
@@ -2506,12 +2642,20 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 {/* Delete Button */}
                                 {(() => {
                                   const hasJobOrder = detail.ID > 0 && jobOrderDetailIds.has(detail.ID);
+                                  const deleteLocked = hasJobOrder || isInvoiced || isShipped;
+                                  const deleteTitle = hasJobOrder
+                                    ? "Cannot delete: Job Order exists for this line item"
+                                    : isInvoiced
+                                      ? "Cannot delete: line has been invoiced"
+                                      : isShipped
+                                        ? "Cannot delete: line has been shipped"
+                                        : undefined;
                                   return (
                                     <DeleteIconButton
                                       label="Delete line"
-                                      onClick={() => !hasJobOrder && handleDeleteDetail(index)}
-                                      disabled={hasJobOrder}
-                                      title={hasJobOrder ? "Cannot delete: Job Order exists for this line item" : undefined}
+                                      onClick={() => !deleteLocked && handleDeleteDetail(index)}
+                                      disabled={deleteLocked}
+                                      title={deleteTitle}
                                     />
                                   );
                                 })()}
@@ -2905,6 +3049,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
         customerName={formData.CustomerName}
         excludeOrderId={effectiveOrderId}
         orderDate={formData.OrderDate}
+        locationId={
+          formData.LocationId && formData.LocationId > 0
+            ? formData.LocationId
+            : Number(localStorage.getItem("locationId") || 0) || undefined
+        }
         existingPartNos={existingLines.map((d) => d.PartNo || "")}
         hasExistingLines={existingLines.length > 0}
         canReplace={existingLines.every((d) => d.ID <= 0)}

@@ -36,6 +36,8 @@ export interface EmployeeMasterReq {
   UserName: string;
   Status: string;
   Role?: number;
+  /** Display name of Role — returned from GET, not sent on save */
+  RoleName?: string;
   EmployeeType: string;
   EmployeeCategory: string;
   EmpCode: string;
@@ -187,6 +189,7 @@ export class EmployeeService {
         UserName: result.userName,
         Status: result.status,
         Role: result.role,
+        RoleName: result.roleName || "",
         EmployeeType: result.employeeType,
         EmployeeCategory: result.employeeCategory || "",
         EmpCode: result.empCode,
