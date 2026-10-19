@@ -134,6 +134,7 @@ const ChartofAccountsMaster: React.FC = () => {
   return (
     <>
       <MasterListPage
+        permissionPath="/masters/chartofaccounts"
         title="Chart of Accounts Master"
         subtitle="Manage your chart of accounts"
         loading={loading}

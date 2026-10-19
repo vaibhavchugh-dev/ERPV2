@@ -15,8 +15,11 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { formatTimeOnly, todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "../Masters/CustomerMaster.scss";
 import "../Masters/CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/attendance";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "workDate", label: "Date", sortKey: "workDate", locked: true },
@@ -76,6 +79,8 @@ const displayName = (row: { firstName?: string; lastName?: string }) =>
 
 const AttendanceRegister: React.FC = () => {
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { can, ensure } = usePagePermissions(PAGE_PATH);
+  const canExport = can("Export");
   const [fromDate, setFromDate] = useState(todayIso);
   const [toDate, setToDate] = useState(todayIso);
   const [employeeId, setEmployeeId] = useState(0);
@@ -244,6 +249,7 @@ const AttendanceRegister: React.FC = () => {
   };
 
   const handleExport = () => {
+    if (!ensure("Export")) return;
     const headers = visibleColumns.map((c) => c.label);
     const csvRows = sortedRows.map((row) =>
       visibleColumns.map((column) => renderCellText(row, column.key))
@@ -280,9 +286,11 @@ const AttendanceRegister: React.FC = () => {
           <p className="page-subtitle">Daily Time Clock punches by employee</p>
         </div>
         <div className="page-actions">
+          {canExport && (
           <button className="btn-secondary" type="button" onClick={handleExport}>
             <span>Export</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}

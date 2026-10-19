@@ -66,6 +66,7 @@ const NCRCodeMasterPage: React.FC = () => {
   return (
     <>
       <MasterListPage
+        permissionPath="/quality/ncr-codes"
         title="NCR Code Master"
         subtitle="Maintain standard non-conformance codes used on NCR reports."
         columns={columns}

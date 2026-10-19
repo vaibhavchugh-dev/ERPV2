@@ -10,7 +10,10 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import LocationMasterSlideout from "./LocationMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/location";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "code", label: "Code", sortKey: "code", locked: true },
@@ -33,6 +36,7 @@ const COLUMN_PREFERENCE_KEY = "locationMaster.hiddenColumns";
 const LocationMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd } = usePagePermissions(PAGE_PATH);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState<number>(0);
@@ -266,10 +270,12 @@ const LocationMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddLocation}>
-            <span>+</span>
-            <span>Add Location</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddLocation}>
+              <span>+</span>
+              <span>Add Location</span>
+            </button>
+          )}
         </div>
       </div>
 

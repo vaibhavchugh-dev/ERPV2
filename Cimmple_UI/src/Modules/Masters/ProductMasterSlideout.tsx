@@ -8,7 +8,10 @@ import {
 import CustomerOrderSlideout from "../Orders/CustomerOrderSlideout";
 import CustomerQuotationSlideout from "../Quotations/CustomerQuotationSlideout";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/product";
 
 interface ProductMasterSlideoutProps {
   partNo: string;
@@ -20,6 +23,7 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
   onClose,
 }) => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
+  const { canEdit } = usePagePermissions(PAGE_PATH);
   const formatCurrency = (value?: number) => {
     if (value === undefined || value === null) return "N/A";
     return formatCurrencyRaw(value);
@@ -85,7 +89,7 @@ const ProductMasterSlideout: React.FC<ProductMasterSlideoutProps> = ({
 
   const productMasterId = productData.id || productData.productId;
   const canEditReorder =
-    productData.source === "ProductMaster" && !!productMasterId;
+    canEdit && productData.source === "ProductMaster" && !!productMasterId;
 
   const parseOptionalNumber = (value: string): number | null | undefined => {
     const trimmed = value.trim();

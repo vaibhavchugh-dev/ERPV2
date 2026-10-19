@@ -37,8 +37,8 @@ namespace CimmpleAPI.Services.Auth
                 return;
             }
 
-            var required = ErpApiPermissionCatalog.ResolveRequiredPermissionUrl(context.HttpContext);
-            if (required == null)
+            var requiredPages = ErpApiPermissionCatalog.ResolveRequiredPermissionUrls(context.HttpContext);
+            if (requiredPages == null || requiredPages.Length == 0)
             {
                 if (ErpApiPermissionCatalog.IsUtilityController(
                         context.RouteData.Values["controller"]?.ToString()))
@@ -46,33 +46,50 @@ namespace CimmpleAPI.Services.Auth
                     var any = await GetPermissionUrlsAsync(context);
                     if (any.Count == 0)
                     {
-                        context.Result = new ObjectResult(new { message = "Access denied" })
-                        {
-                            StatusCode = StatusCodes.Status403Forbidden
-                        };
+                        Forbid(context);
                     }
                 }
 
                 return;
             }
 
-            if (required == "__deny_non_admin__")
+            if (requiredPages.Any(r => r == "__deny_non_admin__"))
             {
-                context.Result = new ObjectResult(new { message = "Access denied" })
-                {
-                    StatusCode = StatusCodes.Status403Forbidden
-                };
+                Forbid(context);
+                return;
+            }
+
+            // User Management is administrator-only regardless of role grants.
+            if (requiredPages.Any(ErpPermissionActions.IsAdminOnlyPage))
+            {
+                Forbid(context);
                 return;
             }
 
             var urls = await GetPermissionUrlsAsync(context);
-            if (!urls.Contains(NormalizeUrl(required)))
+            var action = ErpPermissionActions.ResolveActionFromRequest(
+                context.HttpContext.Request.Method,
+                context.HttpContext.Request.Path.Value ?? "");
+
+            // OR across alternate page permissions (e.g. AP ↔ Vendor Invoices).
+            foreach (var required in requiredPages)
             {
-                context.Result = new ObjectResult(new { message = "Access denied" })
-                {
-                    StatusCode = StatusCodes.Status403Forbidden
-                };
+                var page = ErpPermissionActions.NormalizePageUrl(required);
+                if (!urls.Contains(page))
+                    continue;
+                if (ErpPermissionActions.HasAction(urls, page, action))
+                    return;
             }
+
+            Forbid(context);
+        }
+
+        private static void Forbid(AuthorizationFilterContext context)
+        {
+            context.Result = new ObjectResult(new { message = "Access denied" })
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
         }
 
         private static bool IsAdminSession(ClaimsPrincipal user)
@@ -83,18 +100,6 @@ namespace CimmpleAPI.Services.Auth
             }
 
             return false;
-        }
-
-        private static string NormalizeUrl(string url)
-        {
-            var u = (url ?? "").Trim();
-            if (u.Length == 0) return "/";
-            if (!u.StartsWith('/')) u = "/" + u;
-            return u.TrimEnd('/').ToLowerInvariant() switch
-            {
-                "" => "/",
-                var x => x
-            };
         }
 
         private static async Task<HashSet<string>> GetPermissionUrlsAsync(AuthorizationFilterContext context)
@@ -127,7 +132,7 @@ namespace CimmpleAPI.Services.Auth
 
                 foreach (var url in list)
                 {
-                    urls.Add(NormalizeUrl(url));
+                    urls.Add(ErpPermissionActions.NormalizePermissionUrl(url));
                 }
             }
             catch

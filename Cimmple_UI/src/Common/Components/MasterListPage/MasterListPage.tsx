@@ -8,6 +8,7 @@ import { useLockedColumnWidths } from "../../Hooks/useLockedColumnWidths";
 import { PAGE_SIZE_OPTIONS, useListPageSize } from "../../Hooks/useListPageSize";
 import { matchFieldValue } from "../../Utils/listSearchMatch";
 import { rowClickHandler } from "../../Utils/rowClick";
+import { AuthService } from "../../Services/AuthService";
 import "./MasterListPage.scss";
 
 // Column configuration
@@ -80,6 +81,11 @@ export interface MasterListPageProps<T = any> {
   columnPreferenceKey?: string;
   /** Column keys hidden until the user enables them. */
   defaultHiddenColumns?: string[];
+  /**
+   * When set, Level-2 Add permission for this page path gates the Add button
+   * (e.g. `/masters/customer`). Edit/Delete are still controlled by each page.
+   */
+  permissionPath?: string;
 }
 
 const slugPreferenceKey = (title: string) =>
@@ -110,8 +116,13 @@ const MasterListPage = <T extends Record<string, any>>({
   pageSize,
   columnPreferenceKey,
   defaultHiddenColumns = [],
+  permissionPath,
 }: MasterListPageProps<T>) => {
   const settings = useSettingsSafe();
+  const canAdd =
+    !permissionPath ||
+    AuthService.hasActionPermission(permissionPath, "Add");
+  const effectiveOnAdd = canAdd ? onAdd : undefined;
   const [searchTerm, setSearchTerm] = useState(() =>
     (initialSearchTerm || "").trim()
   );
@@ -311,8 +322,8 @@ const MasterListPage = <T extends Record<string, any>>({
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          {onAdd && (
-            <button className="btn-primary" onClick={onAdd}>
+          {effectiveOnAdd && (
+            <button className="btn-primary" onClick={effectiveOnAdd}>
               <span>+</span>
               <span>{addButtonLabel}</span>
             </button>

@@ -51,7 +51,9 @@ export class CustomerShipmentsService {
     searchTerm: string = "",
     customerId?: number,
     dateRange: string = "Last 30 Days",
-    locationId?: number
+    locationId?: number,
+    startDate?: string,
+    endDate?: string
   ): Promise<CustomerShipmentSummary[] | null> => {
     const url = `/Shipping/GetAllShipments`;
     try {
@@ -61,7 +63,9 @@ export class CustomerShipmentsService {
           searchTerm,
           customerId,
           dateRange,
-          locationId
+          locationId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
         }
       });
       const result = response.data.result as CustomerShipmentSummary[];

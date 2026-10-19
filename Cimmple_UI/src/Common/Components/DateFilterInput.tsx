@@ -12,6 +12,12 @@ const isCompleteDate = (value: string): boolean => {
   return year >= MIN_YEAR && year <= MAX_YEAR;
 };
 
+const parseYmd = (value: string): { y: string; m: string; d: string } | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  return { y: match[1], m: match[2], d: match[3] };
+};
+
 type DateFilterInputProps = Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
   "type" | "value" | "onChange" | "defaultValue"
@@ -24,9 +30,10 @@ type DateFilterInputProps = Omit<
 
 /**
  * Native date input for list/report filters that trigger a reload.
- * Browsers emit a "valid" value mid-typing (year 0002 → 0020 → 0202 → 2026), so typed
- * input is held as a draft and committed once complete — after a short pause, on Enter,
- * or on blur. Calendar-picker selections commit immediately.
+ * Typed input is held as a draft and committed once complete — after a short pause,
+ * on Enter, or on blur. Calendar month/year navigation that keeps the same day is
+ * not committed until blur/Enter, so changing months does not reload the list before
+ * a day is chosen. Selecting a different day commits immediately.
  */
 const DateFilterInput: React.FC<DateFilterInputProps> = ({
   value,
@@ -62,16 +69,36 @@ const DateFilterInput: React.FC<DateFilterInputProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value;
+    const previousDraft = draft;
     setDraft(next);
     clearTimer();
     const isTyping = Date.now() - lastKeyAtRef.current < KEY_TO_CHANGE_WINDOW_MS;
-    if (!isTyping) {
+
+    if (isTyping) {
+      if (isCompleteDate(next)) {
+        timerRef.current = window.setTimeout(() => commit(next), TYPING_COMMIT_DELAY_MS);
+      }
+      return;
+    }
+
+    if (next === "") {
       commit(next);
       return;
     }
-    if (isCompleteDate(next)) {
-      timerRef.current = window.setTimeout(() => commit(next), TYPING_COMMIT_DELAY_MS);
+    if (!isCompleteDate(next)) return;
+
+    // Month/year spinner often keeps the same day — hold as draft until blur/Enter.
+    const prevParts = parseYmd(previousDraft || value);
+    const nextParts = parseYmd(next);
+    if (prevParts && nextParts) {
+      const monthOrYearChanged = prevParts.y !== nextParts.y || prevParts.m !== nextParts.m;
+      const dayUnchanged = prevParts.d === nextParts.d;
+      if (monthOrYearChanged && dayUnchanged) {
+        return;
+      }
     }
+
+    commit(next);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -83,7 +110,7 @@ const DateFilterInput: React.FC<DateFilterInputProps> = ({
   };
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    if (isCompleteDate(draft)) {
+    if (isCompleteDate(draft) || draft === "") {
       commit(draft);
     } else {
       clearTimer();

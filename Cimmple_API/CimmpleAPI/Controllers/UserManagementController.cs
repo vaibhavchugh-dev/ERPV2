@@ -735,11 +735,34 @@ namespace CimmpleAPI.Controllers
             {
                 var callerIsAdmin = AccountProtection.IsAdminCaller(
                     _context, CanAccessAllLocations(), GetCallerRoleId());
+                if (!callerIsAdmin)
+                {
+                    return StatusCode(403, new { message = "Only an administrator can assign permissions." });
+                }
+
                 var roleDefBlock = AccountProtection.GetAdminRoleDefinitionBlockReason(
                     _context, callerIsAdmin, dto.RoleId);
                 if (roleDefBlock != null)
                 {
                     return StatusCode(403, new { message = roleDefBlock });
+                }
+
+                var targetRole = await _context.UserRole.AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.RoleID == dto.RoleId);
+                var targetIsAdmin = targetRole != null
+                    && ErpPermissionSeedService.IsAdminRoleName(targetRole.RoleName, targetRole.RoleTag);
+
+                var permissionIds = dto.PermissionIds?.Distinct().ToList() ?? new List<int>();
+
+                // Never grant User Management to non-admin roles.
+                if (!targetIsAdmin)
+                {
+                    var adminOnlyIds = await _context.PermissionMaster.AsNoTracking()
+                        .Where(p => p.Url == ErpPermissionActions.UserManagementUrl
+                                    || (p.Url != null && p.Url.StartsWith(ErpPermissionActions.UserManagementUrl + "#")))
+                        .Select(p => p.PermissionId)
+                        .ToListAsync();
+                    permissionIds = permissionIds.Where(id => !adminOnlyIds.Contains(id)).ToList();
                 }
 
                 // Remove existing permissions for this role
@@ -750,7 +773,7 @@ namespace CimmpleAPI.Controllers
                 _context.PermissionRole.RemoveRange(existingPermissions);
 
                 // Add new permissions
-                var newPermissions = dto.PermissionIds.Select(permissionId => new PermissionRole
+                var newPermissions = permissionIds.Select(permissionId => new PermissionRole
                 {
                     RoleId = dto.RoleId,
                     PermissionId = permissionId,

@@ -420,6 +420,8 @@ namespace CimmpleAPI.Controllers
             [FromQuery] string searchTerm = "",
             [FromQuery] int? customerId = null,
             [FromQuery] string dateRange = "Last 30 Days",
+            [FromQuery] string startDate = null,
+            [FromQuery] string endDate = null,
             [FromQuery] int? locationId = null)
         {
             try
@@ -473,45 +475,61 @@ namespace CimmpleAPI.Controllers
                     shipmentsQuery = shipmentsQuery.Where(x => x.order.CustomerID == customerId.Value);
                 }
 
-                // Date range filter
-                DateTime? startDate = null;
-                DateTime? endDate = null;
+                // Date range filter (presets + optional custom start/end, aligned with Customer Invoices)
+                var now = DateTime.Now;
+                DateTime? reqStartDate = null;
+                DateTime? reqEndDate = null;
                 switch ((dateRange ?? "").Trim().ToLowerInvariant())
                 {
                     case "this week":
-                        startDate = DateTime.Now.Date.AddDays(-(int)DateTime.Now.DayOfWeek);
-                        endDate = startDate.Value.AddDays(6);
+                        reqStartDate = now.Date.AddDays(-(int)now.DayOfWeek);
+                        reqEndDate = reqStartDate.Value.AddDays(6);
                         break;
                     case "last 7 days":
-                        startDate = DateTime.Now.Date.AddDays(-7);
+                        reqStartDate = now.Date.AddDays(-7);
                         break;
                     case "last 30 days":
-                        startDate = DateTime.Now.Date.AddDays(-30);
+                        reqStartDate = now.Date.AddDays(-30);
                         break;
                     case "last 90 days":
-                        startDate = DateTime.Now.Date.AddDays(-90);
+                        reqStartDate = now.Date.AddDays(-90);
                         break;
                     case "this month":
-                        startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+                        reqStartDate = new DateTime(now.Year, now.Month, 1);
                         break;
                     case "last month":
-                        startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1);
-                        endDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddDays(-1);
+                        reqStartDate = new DateTime(now.Year, now.Month, 1).AddMonths(-1);
+                        reqEndDate = new DateTime(now.Year, now.Month, 1).AddDays(-1);
                         break;
+                    case "this year":
+                        reqStartDate = new DateTime(now.Year, 1, 1);
+                        break;
+                    case "custom":
                     case "all":
+                    case "all dates":
                         break;
                     default:
-                        startDate = DateTime.Now.Date.AddDays(-30);
+                        // Unknown preset: do not silently rewrite to last 30 days
                         break;
                 }
 
-                if (startDate.HasValue)
+                if (!string.IsNullOrWhiteSpace(startDate) && DateTime.TryParse(startDate, out var parsedStart))
                 {
-                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= startDate.Value);
-                    if (endDate.HasValue)
-                    {
-                        shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate <= endDate.Value);
-                    }
+                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= parsedStart.Date);
+                }
+                else if (reqStartDate.HasValue)
+                {
+                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate >= reqStartDate.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(endDate) && DateTime.TryParse(endDate, out var parsedEnd))
+                {
+                    var endOfDay = parsedEnd.Date.AddDays(1).AddTicks(-1);
+                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate <= endOfDay);
+                }
+                else if (reqEndDate.HasValue)
+                {
+                    shipmentsQuery = shipmentsQuery.Where(x => x.shipment.ShipmentDate <= reqEndDate.Value);
                 }
 
                 // Get results and format

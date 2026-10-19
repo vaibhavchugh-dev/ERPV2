@@ -7,10 +7,15 @@ import {
 } from "../../Common/Services/CategoryService";
 import CategoryTypeSlideout from "./CategoryTypeSlideout";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
 import "./CategoryMaster.scss";
 
+const PAGE_PATH = "/masters/category";
+
 const CategoryMasterComponent: React.FC = () => {
+  const { canAdd, canEdit, canDelete, can } = usePagePermissions(PAGE_PATH);
+  const canSeed = can("Seed");
   const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -215,18 +220,22 @@ const CategoryMasterComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
-          <button
-            className="btn-secondary"
-            onClick={handleLoadDefaults}
-            type="button"
-            disabled={seeding}
-          >
-            <span>{seeding ? "Loading..." : "Load Default Types"}</span>
-          </button>
-          <button className="btn-primary" onClick={handleAddType} type="button">
-            <span>+</span>
-            <span>Add Category Type</span>
-          </button>
+          {canSeed && (
+            <button
+              className="btn-secondary"
+              onClick={handleLoadDefaults}
+              type="button"
+              disabled={seeding}
+            >
+              <span>{seeding ? "Loading..." : "Load Default Types"}</span>
+            </button>
+          )}
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddType} type="button">
+              <span>+</span>
+              <span>Add Category Type</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -265,30 +274,34 @@ const CategoryMasterComponent: React.FC = () => {
                     </span>
                   </div>
                   <div className="category-type-actions">
-                    <button
-                      type="button"
-                      className="category-icon-button"
-                      title="Edit category type"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditType(type);
-                      }}
-                    >
-                      ✎
-                    </button>
-                    <DeleteIconButton
-                      label="Delete category type"
-                      title={
-                        type.isSystem
-                          ? "System category types cannot be deleted"
-                          : undefined
-                      }
-                      disabled={type.isSystem}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteType(type);
-                      }}
-                    />
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="category-icon-button"
+                        title="Edit category type"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditType(type);
+                        }}
+                      >
+                        ✎
+                      </button>
+                    )}
+                    {canDelete && (
+                      <DeleteIconButton
+                        label="Delete category type"
+                        title={
+                          type.isSystem
+                            ? "System category types cannot be deleted"
+                            : undefined
+                        }
+                        disabled={type.isSystem}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteType(type);
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               ))}
@@ -305,7 +318,7 @@ const CategoryMasterComponent: React.FC = () => {
               </span>
             </div>
 
-            {selectedType && (
+            {selectedType && canAdd && (
               <div className="category-add-row">
                 <input
                   type="text"
@@ -346,7 +359,11 @@ const CategoryMasterComponent: React.FC = () => {
                       className="category-value-input"
                       defaultValue={value.name}
                       maxLength={150}
-                      onBlur={(e) => handleRenameValue(value.id, value.name, e.currentTarget)}
+                      readOnly={!canEdit}
+                      onBlur={(e) => {
+                        if (!canEdit) return;
+                        handleRenameValue(value.id, value.name, e.currentTarget);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.currentTarget.blur();
@@ -356,16 +373,18 @@ const CategoryMasterComponent: React.FC = () => {
                     <span className="category-value-usage">
                       {value.usageCount ? `${value.usageCount} in use` : "unused"}
                     </span>
-                    <DeleteIconButton
-                      label="Delete category value"
-                      title={
-                        value.usageCount
-                          ? "In use by one or more templates"
-                          : undefined
-                      }
-                      disabled={!!value.usageCount}
-                      onClick={() => handleDeleteValue(value.id, value.name)}
-                    />
+                    {canDelete && (
+                      <DeleteIconButton
+                        label="Delete category value"
+                        title={
+                          value.usageCount
+                            ? "In use by one or more templates"
+                            : undefined
+                        }
+                        disabled={!!value.usageCount}
+                        onClick={() => handleDeleteValue(value.id, value.name)}
+                      />
+                    )}
                   </div>
                 ))
               )}

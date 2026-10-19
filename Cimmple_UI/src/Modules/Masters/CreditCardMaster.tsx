@@ -9,7 +9,10 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import CreditCardMasterSlideout from "./CreditCardMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/creditcard";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "cardNumber", label: "Card Number", sortKey: "cardNumber", locked: true },
@@ -31,6 +34,7 @@ const COLUMN_PREFERENCE_KEY = "creditCardMaster.hiddenColumns";
 const CreditCardMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd } = usePagePermissions(PAGE_PATH);
   const [creditCards, setCreditCards] = useState<CreditCardMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedCreditCardId, setSelectedCreditCardId] = useState<number>(0);
@@ -241,10 +245,12 @@ const CreditCardMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddCreditCard}>
-            <span>+</span>
-            <span>Add Credit Card</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddCreditCard}>
+              <span>+</span>
+              <span>Add Credit Card</span>
+            </button>
+          )}
         </div>
       </div>
 

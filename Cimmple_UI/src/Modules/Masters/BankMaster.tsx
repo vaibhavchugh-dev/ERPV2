@@ -134,6 +134,7 @@ const BankMasterComponent: React.FC = () => {
   return (
     <>
       <MasterListPage
+        permissionPath="/masters/bank"
         title="Bank Master"
         subtitle="Manage your bank accounts"
         addButtonLabel="Add Bank"

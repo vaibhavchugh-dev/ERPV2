@@ -8,7 +8,10 @@ import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { VendorInvoiceService } from "../../Common/Services/VendorInvoiceService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/chartofaccounts";
 
 interface ChartofAccountsMasterSlideoutProps {
   accountId: number;
@@ -30,6 +33,8 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   accountId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = accountId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<ChartofAccountMasterReq>({
     AccountID: 0,
     AccountCode: "",
@@ -758,7 +763,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
           </div>
 
           <div className="form-actions">
-            {accountId > 0 && (
+            {canDelete && accountId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -788,9 +793,11 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : accountId > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : accountId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

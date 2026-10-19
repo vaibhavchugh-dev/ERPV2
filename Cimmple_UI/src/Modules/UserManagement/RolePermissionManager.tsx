@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
 import {
   UserManagementService,
-  Role,
   PermissionDetail,
   AssignPermissionsRequest
 } from "../../Common/Services/UserManagementService";
+import { AuthService } from "../../Common/Services/AuthService";
 import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
 import "./RolePermissionManager.scss";
 
@@ -15,6 +15,19 @@ interface RolePermissionManagerProps {
   onClose: () => void;
   onSave: () => void;
 }
+
+const USER_MGMT_URL = "/user-management";
+
+const pageUrlOf = (p: PermissionDetail): string => {
+  const raw = (p.url || "").split("#")[0].replace(/\/$/, "") || "";
+  return raw.toLowerCase();
+};
+
+const isActionPerm = (p: PermissionDetail) =>
+  p.levelInfo === 2 || !!(p.url && p.url.includes("#"));
+
+const isAdminOnlyPerm = (p: PermissionDetail) =>
+  pageUrlOf(p) === USER_MGMT_URL || AuthService.isAdminOnlyPath(p.url || "");
 
 const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   roleId,
@@ -27,6 +40,7 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   const [allPermissions, setAllPermissions] = useState<PermissionDetail[]>([]);
   const [selectedPermissions, setSelectedPermissions] = useState<Set<number>>(new Set());
   const [roleName, setRoleName] = useState<string>("");
+  const [targetIsAdmin, setTargetIsAdmin] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
 
   const handleDismiss = () => {
@@ -37,34 +51,21 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // Load all permissions
-      console.log('[RolePermissionManager] Loading all permissions for tenant:', tenantId);
       const permissions = await UserManagementService.GetAllPermissions(tenantId);
-      console.log('[RolePermissionManager] Loaded permissions:', permissions);
-      console.log('[RolePermissionManager] Permissions type:', typeof permissions);
-      console.log('[RolePermissionManager] Is array?', Array.isArray(permissions));
-      console.log('[RolePermissionManager] Permissions count:', permissions?.length || 0);
-      
       const permissionsArray = Array.isArray(permissions) ? permissions : [];
       setAllPermissions(permissionsArray);
-      console.log('[RolePermissionManager] Set allPermissions to:', permissionsArray.length, 'items');
 
-      if (!permissionsArray || permissionsArray.length === 0) {
-        console.log('[RolePermissionManager] No permissions found - seed button should be visible');
-      }
-
-      // Load current role permissions
       const rolePermissions = await UserManagementService.GetPermissionsByRole(roleId, tenantId);
-      setSelectedPermissions(new Set(rolePermissions.map(p => p.permissionId)));
+      setSelectedPermissions(new Set(rolePermissions.map((p) => p.permissionId)));
 
-      // Get role name
       const roles = await UserManagementService.GetRoles(tenantId);
-      const role = roles.find(r => r.id === roleId);
+      const role = roles.find((r) => r.id === roleId);
       setRoleName(role?.name || "Unknown Role");
+      setTargetIsAdmin(/admin/i.test(role?.name || "") || /admin/i.test(role?.description || ""));
     } catch (error: any) {
-      console.error('Error loading data:', error);
-      toast.error(`Failed to load permissions: ${error.message || 'Unknown error'}`);
-      setAllPermissions([]); // Ensure it's set to empty array on error
+      console.error("Error loading data:", error);
+      toast.error(`Failed to load permissions: ${error.message || "Unknown error"}`);
+      setAllPermissions([]);
     } finally {
       setLoading(false);
     }
@@ -74,59 +75,115 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
     loadData();
   }, [loadData]);
 
-  const handlePermissionToggle = (permissionId: number) => {
+  /** Permissions shown in the UI (hide User Management for non-admin target roles). */
+  const visiblePermissions = useMemo(() => {
+    if (targetIsAdmin) return allPermissions;
+    return allPermissions.filter((p) => !isAdminOnlyPerm(p));
+  }, [allPermissions, targetIsAdmin]);
+
+  const pagePermissions = useMemo(
+    () => visiblePermissions.filter((p) => !isActionPerm(p)),
+    [visiblePermissions]
+  );
+
+  const actionsByPage = useMemo(() => {
+    const map = new Map<string, PermissionDetail[]>();
+    for (const p of visiblePermissions.filter(isActionPerm)) {
+      const key = pageUrlOf(p);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    }
+    map.forEach((list) => {
+      list.sort((a, b) => (a.orderNo || 0) - (b.orderNo || 0));
+    });
+    return map;
+  }, [visiblePermissions]);
+
+  const groupedPages = useMemo(() => {
+    return pagePermissions.reduce((acc, perm) => {
+      const module = perm.moduleName || "General";
+      if (!acc[module]) acc[module] = [];
+      acc[module].push(perm);
+      return acc;
+    }, {} as Record<string, PermissionDetail[]>);
+  }, [pagePermissions]);
+
+  const handlePageToggle = (page: PermissionDetail) => {
     setIsDirty(true);
-    setSelectedPermissions(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(permissionId)) {
-        newSet.delete(permissionId);
+    const actions = actionsByPage.get(pageUrlOf(page)) || [];
+    setSelectedPermissions((prev) => {
+      const next = new Set(prev);
+      const turningOn = !next.has(page.permissionId);
+      if (turningOn) {
+        next.add(page.permissionId);
+        // Default: grant all Level-2 actions when enabling a page
+        actions.forEach((a) => next.add(a.permissionId));
       } else {
-        newSet.add(permissionId);
+        next.delete(page.permissionId);
+        actions.forEach((a) => next.delete(a.permissionId));
       }
-      return newSet;
+      return next;
+    });
+  };
+
+  const handleActionToggle = (page: PermissionDetail, action: PermissionDetail) => {
+    setIsDirty(true);
+    setSelectedPermissions((prev) => {
+      const next = new Set(prev);
+      if (next.has(action.permissionId)) {
+        next.delete(action.permissionId);
+      } else {
+        next.add(action.permissionId);
+        next.add(page.permissionId); // ensure Level-1 parent
+      }
+      return next;
     });
   };
 
   const handleSelectAll = () => {
     setIsDirty(true);
-    if (selectedPermissions.size === allPermissions.length) {
+    const ids = visiblePermissions.map((p) => p.permissionId);
+    const allSelected = ids.every((id) => selectedPermissions.has(id));
+    if (allSelected) {
       setSelectedPermissions(new Set());
     } else {
-      setSelectedPermissions(new Set(allPermissions.map(p => p.permissionId)));
+      setSelectedPermissions(new Set(ids));
     }
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
+      let ids = Array.from(selectedPermissions);
+      if (!targetIsAdmin) {
+        const banned = new Set(
+          allPermissions.filter(isAdminOnlyPerm).map((p) => p.permissionId)
+        );
+        ids = ids.filter((id) => !banned.has(id));
+      }
+
       const request: AssignPermissionsRequest = {
         roleId,
         tenantId,
-        permissionIds: Array.from(selectedPermissions)
+        permissionIds: ids
       };
 
       await UserManagementService.AssignPermissionsToRole(request);
-      toast.success("Permissions updated successfully");
+      toast.success(
+        "Permissions updated. Users must sign out and sign in again for changes to take effect."
+      );
       onSave();
     } catch (error: any) {
-      console.error('Error saving permissions:', error);
-      toast.error(`Error saving permissions: ${error.message || 'Unknown error'}`);
+      console.error("Error saving permissions:", error);
+      toast.error(`Error saving permissions: ${error.message || "Unknown error"}`);
     } finally {
       setSaving(false);
     }
   };
 
-  // Group permissions by module
-  const groupedPermissions = allPermissions.reduce((acc, perm) => {
-    const module = perm.moduleName || "General";
-    if (!acc[module]) {
-      acc[module] = [];
-    }
-    acc[module].push(perm);
-    return acc;
-  }, {} as Record<string, PermissionDetail[]>);
-
-  console.log('[RolePermissionManager] Rendering - loading:', loading, 'permissions:', allPermissions?.length || 0);
+  const selectedVisibleCount = visiblePermissions.filter((p) =>
+    selectedPermissions.has(p.permissionId)
+  ).length;
 
   if (loading) {
     return (
@@ -146,181 +203,73 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
       <div className="role-permission-manager-panel">
         <div className="role-permission-manager-header">
           <h2>Manage Permissions: {roleName}</h2>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
-            {allPermissions && allPermissions.length > 0 ? (
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0 }}>
+            {allPermissions.length > 0 ? (
               <button
                 className="btn btn-sm btn-warning"
                 onClick={async () => {
-                  if (!window.confirm(
-                    `This will clear all ${allPermissions.length} permission definitions and ALL role assignments, then reseed.\n\n` +
-                    `Admin roles will get all permissions; other roles will get Dashboard only.\n\nContinue?`
-                  )) {
+                  if (
+                    !window.confirm(
+                      `This will clear role assignments for this tenant and reseed permission definitions.\n\n` +
+                        `Admin roles get all pages + actions; other roles get Dashboard only.\n\n` +
+                        `User Management stays administrator-only.\n\nContinue?`
+                    )
+                  ) {
                     return;
                   }
                   try {
-                    console.log('[Clear and Reseed] Clicked - Current permissions:', allPermissions?.length || 0);
-                    toast.info('Clearing existing permissions and reseeding...');
+                    toast.info("Clearing and reseeding permissions...");
                     const result = await UserManagementService.SeedPermissions(true);
                     toast.success(
                       result.message ||
-                        'Permissions cleared and reseeded. Admin roles have all permissions; other roles have Dashboard only.'
+                        "Permissions cleared and reseeded. Admin roles have full access; others have Dashboard only."
                     );
-                    await loadData(); // Reload after seeding
+                    await loadData();
                   } catch (error: any) {
-                    console.error('Error clearing and reseeding permissions:', error);
-                    toast.error(`Failed to clear and reseed permissions: ${error.message || 'Unknown error'}`);
+                    toast.error(
+                      `Failed to clear and reseed permissions: ${error.message || "Unknown error"}`
+                    );
                   }
                 }}
-                style={{ 
-                  fontSize: '0.875rem', 
-                  padding: '0.5rem 1rem',
-                  backgroundColor: '#f59e0b',
-                  color: 'white',
-                  border: '2px solid #d97706',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  minWidth: '160px',
-                  display: 'inline-block',
-                  visibility: 'visible',
-                  opacity: 1,
-                  zIndex: 1000,
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                style={{
+                  fontSize: "0.875rem",
+                  padding: "0.5rem 1rem",
+                  backgroundColor: "#f59e0b",
+                  color: "white",
+                  border: "2px solid #d97706",
+                  borderRadius: "0.375rem",
+                  fontWeight: 600
                 }}
-                title={`Clear ${allPermissions?.length || 0} existing permissions and reseed with Admin=all / others=Dashboard`}
               >
-                🔄 Clear & Reseed
+                Clear &amp; Reseed
               </button>
-            ) : (
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={async () => {
-                  try {
-                    console.log('[Seed Button] Clicked - Current permissions:', allPermissions?.length || 0);
-                    toast.info('Seeding permissions...');
-                    const result = await UserManagementService.SeedPermissions();
-                    toast.success(result.message || 'Permissions seeded successfully');
-                    await loadData(); // Reload after seeding
-                  } catch (error: any) {
-                    console.error('Error seeding permissions:', error);
-                    toast.error(`Failed to seed permissions: ${error.message || 'Unknown error'}`);
-                  }
-                }}
-                style={{ 
-                  fontSize: '0.875rem', 
-                  padding: '0.5rem 1rem',
-                  backgroundColor: '#6366f1',
-                  color: 'white',
-                  border: '2px solid #4f46e5',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  minWidth: '150px',
-                  display: 'inline-block',
-                  visibility: 'visible',
-                  opacity: 1,
-                  zIndex: 1000,
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                }}
-                title={`Seed permissions (Current: ${allPermissions?.length || 0})`}
-              >
-                🌱 Seed Permissions
-              </button>
-            )}
-            <button className="close-button" onClick={handleDismiss}>
-              <i className="fas fa-times"></i>
+            ) : null}
+            <button className="close-button" onClick={handleDismiss} aria-label="Close">
+              ×
             </button>
           </div>
         </div>
 
         <div className="role-permission-manager-content">
-          {(!allPermissions || allPermissions.length === 0) ? (
-            <div style={{ padding: '2rem', textAlign: 'center' }}>
-              <div style={{ marginBottom: '1.5rem' }}>
-                <p style={{ color: '#6b7280', marginBottom: '0.5rem', fontSize: '1rem', fontWeight: 600 }}>
-                  No Permissions Available
-                </p>
-                <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>
-                  The PermissionMaster table is empty. Click the button below to seed initial permissions.
-                </p>
-              </div>
+          {visiblePermissions.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "2rem" }}>
+              <p style={{ color: "#6b7280", marginBottom: "1rem" }}>
+                No permissions found. Seed the catalog to continue.
+              </p>
               <button
                 className="btn btn-primary"
                 onClick={async () => {
                   try {
-                    toast.info('Seeding permissions...');
                     const result = await UserManagementService.SeedPermissions();
-                    toast.success(result.message || 'Permissions seeded successfully');
-                    await loadData(); // Reload after seeding
+                    toast.success(result.message || "Permissions seeded");
+                    await loadData();
                   } catch (error: any) {
-                    console.error('Error seeding permissions:', error);
-                    toast.error(`Failed to seed permissions: ${error.message || 'Unknown error'}`);
+                    toast.error(`Failed to seed: ${error.message || "Unknown error"}`);
                   }
                 }}
-                style={{ 
-                  padding: '0.75rem 1.5rem', 
-                  fontSize: '1rem',
-                  fontWeight: 500,
-                  marginBottom: '1rem',
-                  backgroundColor: '#6366f1',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '0.375rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                }}
               >
-                🌱 Seed Initial Permissions
+                Seed Permissions
               </button>
-              {allPermissions && allPermissions.length > 0 && (
-                <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: '#fef3c7', borderRadius: '0.375rem', border: '1px solid #fbbf24' }}>
-                  <p style={{ color: '#92400e', fontSize: '0.875rem', marginBottom: '0.5rem', fontWeight: 500 }}>
-                    ⚠️ Permissions already exist ({allPermissions.length} records)
-                  </p>
-                  <p style={{ color: '#92400e', fontSize: '0.75rem', marginBottom: '0.75rem' }}>
-                    To update permissions to match the current menu structure, use the "🔄 Clear & Reseed" button in the header.
-                    Admin roles will get all permissions; other roles will get Dashboard only.
-                  </p>
-                  <button
-                    className="btn btn-warning"
-                    onClick={async () => {
-                      if (!window.confirm(
-                        `This will clear all ${allPermissions.length} permission definitions and ALL role assignments, then reseed.\n\n` +
-                        `Admin roles will get all permissions; other roles will get Dashboard only. Continue?`
-                      )) {
-                        return;
-                      }
-                      try {
-                        toast.info('Clearing existing permissions and reseeding...');
-                        const result = await UserManagementService.SeedPermissions(true);
-                        toast.success(
-                          result.message ||
-                            'Permissions cleared and reseeded. Admin roles have all permissions; other roles have Dashboard only.'
-                        );
-                        await loadData(); // Reload after seeding
-                      } catch (error: any) {
-                        console.error('Error clearing and reseeding permissions:', error);
-                        toast.error(`Failed to clear and reseed permissions: ${error.message || 'Unknown error'}`);
-                      }
-                    }}
-                    style={{ 
-                      padding: '0.5rem 1rem', 
-                      fontSize: '0.875rem',
-                      fontWeight: 500,
-                      backgroundColor: '#f59e0b',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '0.375rem',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    🔄 Clear & Reseed Permissions
-                  </button>
-                </div>
-              )}
-              <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '1rem', maxWidth: '500px', margin: '1rem auto 0' }}>
-                This will create 26 common permissions including: User Management, Vendors, Accounting, Reports, Labor Management, and more.
-              </p>
             </div>
           ) : (
             <>
@@ -330,33 +279,80 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
                   className="btn btn-sm permission-select-all-btn"
                   onClick={handleSelectAll}
                 >
-                  {selectedPermissions.size === allPermissions.length ? "Deselect All" : "Select All"}
+                  {selectedVisibleCount === visiblePermissions.length
+                    ? "Deselect All"
+                    : "Select All"}
                 </button>
                 <span className="permission-count">
-                  {selectedPermissions.size} of {allPermissions.length} permissions selected
+                  {selectedVisibleCount} of {visiblePermissions.length} selected
+                  {" · "}
+                  Level 1 = page (View), Level 2 = actions
                 </span>
               </div>
 
+              {!targetIsAdmin && (
+                <p className="permission-admin-note">
+                  User Management is administrator-only and cannot be granted to this role.
+                </p>
+              )}
+
               <div className="permissions-list">
-                {Object.entries(groupedPermissions).map(([module, permissions]) => (
+                {Object.entries(groupedPages).map(([module, pages]) => (
                   <div key={module} className="permission-module">
                     <h3>{module}</h3>
-                    <div className="permission-items">
-                      {permissions.map(permission => (
-                        <label key={permission.permissionId} className="permission-item">
-                          <input
-                            type="checkbox"
-                            checked={selectedPermissions.has(permission.permissionId)}
-                            onChange={() => handlePermissionToggle(permission.permissionId)}
-                          />
-                          <span className="permission-name">
-                            {permission.displayName || permission.permissionName || `Permission ${permission.permissionId}`}
-                          </span>
-                          {permission.levelInfo > 0 && (
-                            <span className="permission-level">Level {permission.levelInfo}</span>
-                          )}
-                        </label>
-                      ))}
+                    <div className="permission-pages">
+                      {pages
+                        .sort((a, b) => (a.orderNo || 0) - (b.orderNo || 0))
+                        .map((page) => {
+                          const actions = actionsByPage.get(pageUrlOf(page)) || [];
+                          const pageOn = selectedPermissions.has(page.permissionId);
+                          return (
+                            <div key={page.permissionId} className="permission-page-card">
+                              <label className="permission-item permission-page">
+                                <input
+                                  type="checkbox"
+                                  checked={pageOn}
+                                  onChange={() => handlePageToggle(page)}
+                                />
+                                <span className="permission-name">
+                                  {page.displayName || page.permissionName}
+                                </span>
+                                <span className="permission-level permission-level--l1" title="Page access">
+                                  Level 1
+                                </span>
+                              </label>
+                              {actions.length > 0 && (
+                                <div
+                                  className={`permission-actions-row ${
+                                    pageOn ? "" : "permission-actions-row--disabled"
+                                  }`}
+                                >
+                                  <div className="permission-actions-heading">
+                                    <span className="permission-level permission-level--l2" title="Action permissions">
+                                      Level 2
+                                    </span>
+                                  </div>
+                                  {actions.map((action) => (
+                                    <label
+                                      key={action.permissionId}
+                                      className="permission-item permission-action"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedPermissions.has(action.permissionId)}
+                                        disabled={!pageOn}
+                                        onChange={() => handleActionToggle(page, action)}
+                                      />
+                                      <span className="permission-name">
+                                        {action.displayName || action.permissionName}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 ))}
@@ -366,19 +362,13 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
         </div>
 
         <div className="role-permission-manager-footer">
-          <button
-            className="btn btn-secondary"
-            onClick={handleDismiss}
-            disabled={saving}
-          >
+          <button className="btn btn-secondary" onClick={handleDismiss} disabled={saving}>
             Cancel
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? "Saving..." : (
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? (
+              "Saving..."
+            ) : (
               <>
                 <i className="fas fa-save"></i> Save Permissions
               </>
@@ -391,4 +381,3 @@ const RolePermissionManager: React.FC<RolePermissionManagerProps> = ({
 };
 
 export default RolePermissionManager;
-

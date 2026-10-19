@@ -1,4 +1,5 @@
 import Instense from "./Axios-config";
+import { PAGES_WITH_LEVEL2_ACTIONS } from "../Utils/pagePermissionCatalog";
 
 export interface AuthLocation {
   locationId: number;
@@ -288,11 +289,25 @@ export class AuthService {
   /** Paths allowed when a non-admin role has no permissions assigned (deny-by-default). */
   private static readonly EMPTY_PERM_ALLOWED_PATHS = new Set(["/home", "/"]);
 
+  /** User Management is administrator-only (never granted to non-admin roles). */
+  public static readonly ADMIN_ONLY_PATHS = new Set(["/user-management"]);
+
+  public static normalizePageUrl(path: string): string {
+    const raw = (path || "").split("#")[0].trim();
+    const normalized = raw.replace(/\/$/, "") || "/";
+    return normalized.toLowerCase() === "" ? "/" : normalized;
+  }
+
+  public static isAdminOnlyPath(path: string): boolean {
+    return AuthService.ADMIN_ONLY_PATHS.has(AuthService.normalizePageUrl(path));
+  }
+
   public static hasPermissionForPath(path: string): boolean {
-    // Administrators always see the full app until fine-grained RBAC is fully assigned
     if (AuthService.isAdminSession()) return true;
 
-    const normalized = path.replace(/\/$/, "") || "/";
+    const normalized = AuthService.normalizePageUrl(path);
+    if (AuthService.isAdminOnlyPath(normalized)) return false;
+
     const perms = AuthService.getPermissions();
 
     // No permissions assigned → deny all modules; Dashboard only
@@ -300,12 +315,40 @@ export class AuthService {
       return AuthService.EMPTY_PERM_ALLOWED_PATHS.has(normalized);
     }
 
-    // Exact URL match only so sibling routes (e.g. /quality vs /quality/ncr-codes) stay independent
+    // Level-1 page URLs only (ignore Level-2 action urls like /masters/customer#Add)
     return perms.some((p) => {
-      if (!p.url) return false;
-      const url = p.url.replace(/\/$/, "") || "/";
+      if (!p.url || p.url.includes("#")) return false;
+      const url = AuthService.normalizePageUrl(p.url);
       return url === normalized;
     });
+  }
+
+  /**
+   * Level-2 action check. Requires Level-1 page access.
+   * - If the role has any Level-2 grants for the page → only those actions are allowed.
+   * - If the page has a Level-2 catalog but the role has none → View only.
+   * - Unknown pages with no Level-2 grants → allow (legacy).
+   */
+  public static hasActionPermission(pagePath: string, action: string): boolean {
+    if (AuthService.isAdminSession()) return true;
+    if (!AuthService.hasPermissionForPath(pagePath)) return false;
+
+    const page = AuthService.normalizePageUrl(pagePath);
+    const actionKey = (action || "").trim().toLowerCase();
+    if (!actionKey || actionKey === "view") return true;
+
+    const perms = AuthService.getPermissions();
+    const prefix = `${page}#`;
+    const actionUrls = perms
+      .map((p) => (p.url || "").replace(/\/$/, "").toLowerCase())
+      .filter((u) => u.startsWith(prefix));
+
+    if (actionUrls.length === 0) {
+      // Page supports Level-2 in catalog but none assigned → View-only
+      if (PAGES_WITH_LEVEL2_ACTIONS.has(page)) return false;
+      return true;
+    }
+    return actionUrls.includes(`${page}#${actionKey}`);
   }
 
   /** First permitted app path from candidates (used after login / denied-route redirect). */
@@ -319,8 +362,10 @@ export class AuthService {
     if (!AuthService.getPermissions().length) {
       return "/home";
     }
-    // Role has permissions, but none match known routes — use first permission URL if any
-    const firstPermUrl = AuthService.getPermissions().find((p) => !!p.url)?.url;
+    // Prefer Level-1 page URLs (skip action fragments)
+    const firstPermUrl = AuthService.getPermissions().find(
+      (p) => !!p.url && !p.url.includes("#")
+    )?.url;
     return firstPermUrl || candidatePaths[0] || "/home";
   }
 

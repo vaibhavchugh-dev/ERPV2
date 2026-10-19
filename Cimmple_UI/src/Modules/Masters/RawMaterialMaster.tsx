@@ -25,9 +25,12 @@ import {
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
 import "./RawMaterialMaster.scss";
 import "../Inventory/Inventory.scss";
+
+const PAGE_PATH = "/masters/raw-material";
 
 function unitSelectValue(unit: string): string {
   const c = canonicalUomCode(unit);
@@ -127,6 +130,7 @@ const COLUMN_PREFERENCE_KEY = "cimmple_raw_material_master_hidden_columns";
 const RawMaterialMaster: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd, canEdit } = usePagePermissions(PAGE_PATH);
   const processedOpenIdRef = useRef<string | null>(null);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
@@ -134,7 +138,7 @@ const RawMaterialMaster: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showInactive, setShowInactive] = useState(false);
+  const [filterValue, setFilterValue] = useState("all");
   const [sortColumn, setSortColumn] = useState<RawMaterialSortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [showForm, setShowForm] = useState(false);
@@ -242,6 +246,7 @@ const RawMaterialMaster: React.FC = () => {
   };
 
   const handleToggleStatus = async (material: RawMaterial) => {
+    if (!canEdit) return;
     const next = !(material.isActive ?? true);
     const verb = next ? "activate" : "deactivate";
     const label = material.partNo || material.partName || `#${material.id}`;
@@ -337,6 +342,8 @@ const RawMaterialMaster: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const canSave = form.id ? canEdit : canAdd;
+    if (!canSave) return;
     setFormError("");
     const partNo = form.partNo.trim();
     const partName = form.partName.trim();
@@ -509,7 +516,9 @@ const RawMaterialMaster: React.FC = () => {
   const filteredMaterials = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     return materials.filter((material) => {
-      if (!showInactive && material.isActive === false) return false;
+      const isActive = material.isActive !== false;
+      if (filterValue === "active" && !isActive) return false;
+      if (filterValue === "inactive" && isActive) return false;
       if (!term) return true;
       return [
         material.partNo,
@@ -523,12 +532,12 @@ const RawMaterialMaster: React.FC = () => {
         material.bin,
         material.box,
         material.vendorName,
-        material.isActive ? "active" : "inactive",
+        isActive ? "active" : "inactive",
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term));
     });
-  }, [materials, searchTerm, showInactive]);
+  }, [materials, searchTerm, filterValue]);
 
   const sortedMaterials = useMemo(() => {
     if (!sortColumn) return filteredMaterials;
@@ -565,7 +574,7 @@ const RawMaterialMaster: React.FC = () => {
     showControls,
     pageSize,
     setPageSize,
-  } = useClientPagination(sortedMaterials, [searchTerm, showInactive, sortColumn, sortDirection]);
+  } = useClientPagination(sortedMaterials, [searchTerm, filterValue, sortColumn, sortDirection]);
 
   const parentOptions = useMemo(() => {
     const id = form.id;
@@ -645,6 +654,7 @@ const RawMaterialMaster: React.FC = () => {
           </span>
         );
       case "action":
+        if (!canEdit) return null;
         return (
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "nowrap" }}>
             <button
@@ -706,6 +716,7 @@ const RawMaterialMaster: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button
             type="button"
             className="btn-primary"
@@ -719,6 +730,7 @@ const RawMaterialMaster: React.FC = () => {
           >
             Add Raw Material
           </button>
+          )}
         </div>
       </div>
 
@@ -1228,9 +1240,11 @@ const RawMaterialMaster: React.FC = () => {
               >
                 Cancel
               </button>
+              {(form.id ? canEdit : canAdd) && (
               <button type="submit" className="btn-primary" disabled={saving}>
                 {saving ? "Saving..." : form.id ? "Update" : "Save"}
               </button>
+              )}
             </div>
           </form>
         </div>
@@ -1259,14 +1273,17 @@ const RawMaterialMaster: React.FC = () => {
             className="search-input"
           />
         </div>
-        <label className="filter-checkbox">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />
-          Show inactive
-        </label>
+        <div className="filter-group">
+          <select
+            value={filterValue}
+            onChange={(e) => setFilterValue(e.target.value)}
+            className="filter-select"
+          >
+            <option value="all">All Materials</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
       </div>
 
       <div className="table-card">

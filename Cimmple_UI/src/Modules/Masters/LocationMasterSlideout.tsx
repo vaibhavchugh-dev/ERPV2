@@ -11,7 +11,10 @@ import { API_ROOT } from "../../Common/Services/Api-config";
 import { COUNTRIES, US_STATES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { validateEmail, validatePhone, validateZipCode } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/location";
 
 const apiError = (error: any) =>
   error?.response?.data?.error || error?.response?.data?.message || error?.message || "Unknown error";
@@ -25,6 +28,8 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
   locationId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = locationId === 0 ? canAdd : canEdit;
   const emptyForm = (): LocationMasterReq => ({
     LocationId: 0,
     Code: "",
@@ -984,7 +989,7 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
 
           {/* Footer */}
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            {locationId > 0 && (
+            {canDelete && locationId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1014,9 +1019,11 @@ const LocationMasterSlideout: React.FC<LocationMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : locationId > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : locationId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

@@ -16,24 +16,37 @@ import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import SortIndicator from "../../Common/Components/SortIndicator";
 import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import StockMovementModal from "./StockMovementModal";
 import "./Inventory.scss";
+
+const PAGE_PATH = "/inventory";
 
 type MovementType = "receive" | "issue" | "transfer" | "adjust" | "reserve" | null;
 type RowActionKey = Exclude<MovementType, null> | "history";
 
-const ROW_ACTIONS: { key: RowActionKey; label: string }[] = [
-  { key: "receive", label: "Receive" },
-  { key: "issue", label: "Issue" },
-  { key: "reserve", label: "Reserve" },
-  { key: "transfer", label: "Transfer" },
-  { key: "adjust", label: "Adjust" },
+const MOVEMENT_ACTION_MAP: Record<Exclude<MovementType, null>, string> = {
+  receive: "Receive",
+  issue: "Issue",
+  reserve: "Reserve",
+  transfer: "Transfer",
+  adjust: "Adjust",
+};
+
+const ALL_ROW_ACTIONS: { key: RowActionKey; label: string; permission?: string }[] = [
+  { key: "receive", label: "Receive", permission: "Receive" },
+  { key: "issue", label: "Issue", permission: "Issue" },
+  { key: "reserve", label: "Reserve", permission: "Reserve" },
+  { key: "transfer", label: "Transfer", permission: "Transfer" },
+  { key: "adjust", label: "Adjust", permission: "Adjust" },
   { key: "history", label: "History" },
 ];
 
 const InventoryRowActions: React.FC<{
   onAction: (key: RowActionKey) => void;
-}> = ({ onAction }) => {
+  allowedKeys: RowActionKey[];
+}> = ({ onAction, allowedKeys }) => {
+  const actions = ALL_ROW_ACTIONS.filter((a) => allowedKeys.includes(a.key));
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -102,7 +115,7 @@ const InventoryRowActions: React.FC<{
               zIndex: 10050,
             }}
           >
-            {ROW_ACTIONS.map((action) => (
+            {actions.map((action) => (
               <button
                 key={action.key}
                 type="button"
@@ -127,6 +140,20 @@ const Inventory: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
   const { locationId: activeLocationId } = useActiveLocation();
+  const { can, ensure } = usePagePermissions(PAGE_PATH);
+  const canReceive = can("Receive");
+  const canIssue = can("Issue");
+  const canReserve = can("Reserve");
+  const canTransfer = can("Transfer");
+  const canAdjust = can("Adjust");
+  const rowActionKeys: RowActionKey[] = [
+    ...(canReceive ? (["receive"] as RowActionKey[]) : []),
+    ...(canIssue ? (["issue"] as RowActionKey[]) : []),
+    ...(canReserve ? (["reserve"] as RowActionKey[]) : []),
+    ...(canTransfer ? (["transfer"] as RowActionKey[]) : []),
+    ...(canAdjust ? (["adjust"] as RowActionKey[]) : []),
+    "history",
+  ];
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [alerts, setAlerts] = useState<LowStockAlert[]>([]);
   const [locations, setLocations] = useState<{ locationId: number; name: string }[]>([]);
@@ -235,6 +262,7 @@ const Inventory: React.FC = () => {
   };
 
   const handleOpenMovement = (type: MovementType, balance?: InventoryBalance) => {
+    if (type && MOVEMENT_ACTION_MAP[type] && !ensure(MOVEMENT_ACTION_MAP[type])) return;
     setMovementType(type);
     setSelectedBalance(balance || null);
     setShowMovementModal(true);
@@ -278,6 +306,7 @@ const Inventory: React.FC = () => {
   };
 
   const handleReleaseReservation = async (reservation: InventoryReservation) => {
+    if (!ensure("Reserve")) return;
     const result = await InventoryService.ReleaseReservation(reservation.id);
     if (result.success) {
       toast.success("Reservation released");
@@ -398,41 +427,51 @@ const Inventory: React.FC = () => {
             <span>RM</span>
             <span>Raw Material Master</span>
           </button>
-          <button
-            className="btn-primary"
-            onClick={() => handleOpenMovement("receive")}
-          >
-            <span>+</span>
-            <span>Receive</span>
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => handleOpenMovement("issue")}
-          >
-            <span>−</span>
-            <span>Issue</span>
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => handleOpenMovement("reserve")}
-          >
-            <span>◎</span>
-            <span>Reserve</span>
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => handleOpenMovement("transfer")}
-          >
-            <span>↔</span>
-            <span>Transfer</span>
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => handleOpenMovement("adjust")}
-          >
-            <span>±</span>
-            <span>Adjust</span>
-          </button>
+          {canReceive && (
+            <button
+              className="btn-primary"
+              onClick={() => handleOpenMovement("receive")}
+            >
+              <span>+</span>
+              <span>Receive</span>
+            </button>
+          )}
+          {canIssue && (
+            <button
+              className="btn-secondary"
+              onClick={() => handleOpenMovement("issue")}
+            >
+              <span>−</span>
+              <span>Issue</span>
+            </button>
+          )}
+          {canReserve && (
+            <button
+              className="btn-secondary"
+              onClick={() => handleOpenMovement("reserve")}
+            >
+              <span>◎</span>
+              <span>Reserve</span>
+            </button>
+          )}
+          {canTransfer && (
+            <button
+              className="btn-secondary"
+              onClick={() => handleOpenMovement("transfer")}
+            >
+              <span>↔</span>
+              <span>Transfer</span>
+            </button>
+          )}
+          {canAdjust && (
+            <button
+              className="btn-secondary"
+              onClick={() => handleOpenMovement("adjust")}
+            >
+              <span>±</span>
+              <span>Adjust</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -574,6 +613,7 @@ const Inventory: React.FC = () => {
                     </td>
                     <td className="actions-col">
                       <InventoryRowActions
+                        allowedKeys={rowActionKeys}
                         onAction={(key) => {
                           if (key === "history") {
                             handleOpenHistory(b);
@@ -632,12 +672,14 @@ const Inventory: React.FC = () => {
                     <td>{r.jobLabel || "—"}</td>
                     <td className="text-right">{r.quantity}</td>
                     <td className="actions-col">
+                      {canReserve && (
                       <button
                         className="btn-small"
                         onClick={() => handleReleaseReservation(r)}
                       >
                         Release
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))

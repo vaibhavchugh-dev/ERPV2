@@ -34,6 +34,7 @@ namespace CimmpleAPI.Services
                     await EnsureNvarcharColumnAsync(context, "VendorQuotationsDetails", "LineType", 50);
                     await EnsureIntColumnAsync(context, "VendorOrderDetails", "RawMaterialId");
                     await EnsureIntColumnAsync(context, "VendorQuotationsDetails", "RawMaterialId");
+                    await EnsureIntColumnAsync(context, "VendorQuotationsDetails", "ConvertedVendorOrderId");
 
                     lock (_lock)
                     {

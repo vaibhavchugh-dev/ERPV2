@@ -82,6 +82,7 @@ export interface Permission {
 export interface PermissionDetail extends Permission {
   orderNo?: number;
   moduleName?: string;
+  url?: string;
 }
 
 export interface AssignPermissionsRequest {

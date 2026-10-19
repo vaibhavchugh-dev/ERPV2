@@ -384,15 +384,45 @@ export class InventoryService {
 
   public static GetRawMaterials = async (params?: {
     includeInactive?: boolean;
+    /** When set, returns materials with this default vendor or no default vendor. */
+    vendorId?: number;
+    /** Keep this master row in the result even if it fails the vendor filter (current line). */
+    includeId?: number;
   }): Promise<RawMaterial[] | null> => {
     const tenantId = getTenantId();
     const response = await Instense.get("/Inventory/GetRawMaterials", {
       params: {
         tenantId,
         ...(params?.includeInactive ? { includeInactive: true } : {}),
+        ...(params?.vendorId && params.vendorId > 0
+          ? { vendorId: params.vendorId }
+          : {}),
+        ...(params?.includeId && params.includeId > 0
+          ? { includeId: params.includeId }
+          : {}),
       },
     });
     return response.data.result as RawMaterial[];
+  };
+
+  /** Find-or-create by part number; sets default vendor only when blank. */
+  public static EnsureRawMaterial = async (request: {
+    partNo: string;
+    partName?: string;
+    unit?: string;
+    unitCost?: number;
+    vendorId?: number;
+  }): Promise<(RawMaterial & { created?: boolean }) | null> => {
+    const tenantId = getTenantId();
+    const response = await Instense.post("/Inventory/EnsureRawMaterial", {
+      tenantid: tenantId,
+      partNo: request.partNo,
+      partName: request.partName,
+      unit: request.unit,
+      unitCost: request.unitCost ?? 0,
+      vendorId: request.vendorId,
+    });
+    return (response.data?.result as RawMaterial & { created?: boolean }) ?? null;
   };
 
   public static GetMovementDocuments = async (): Promise<MovementDocuments | null> => {

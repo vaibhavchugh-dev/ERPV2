@@ -60,12 +60,28 @@ import {
 } from "../../Common/Components/CustomerPartCombobox";
 import "./VendorQuotationSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 
+const PAGE_PATH = "/quotations/vendor";
+
 /** Statuses that saving must keep; "Save" must not drop these back to Draft. */
-const SENT_OR_LATER_STATUSES = ["Sent", "Responded", "Accepted", "Rejected", "Converted"];
+const SENT_OR_LATER_STATUSES = [
+  "Sent",
+  "Responded",
+  "Accepted",
+  "Rejected",
+  "Partially Converted",
+  "Converted",
+];
 /** Once the vendor has responded or the quote is converted, it cannot be reverted to Draft. */
-const DRAFT_LOCKED_STATUSES = ["Responded", "Accepted", "Rejected", "Converted"];
+const DRAFT_LOCKED_STATUSES = [
+  "Responded",
+  "Accepted",
+  "Rejected",
+  "Partially Converted",
+  "Converted",
+];
 
 interface VendorQuotationSlideoutProps {
   quotationId: number;
@@ -79,6 +95,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   onSaved,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
+  const {
+    canEdit,
+    canDelete,
+    canPrint,
+    canSend,
+    canConvert,
+    canDuplicate,
+    canAdd,
+    ensure,
+  } = usePagePermissions(PAGE_PATH);
+  const isNew = quotationId <= 0;
+  const canSave = isNew ? canAdd : canEdit;
 
   const [formData, setFormData] = useState<VendorQuotationMasterReq & { QuotationType?: string }>({
     OrderID: 0,
@@ -169,6 +197,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [selectedLineItems, setSelectedLineItems] = useState<Set<number>>(new Set());
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set());
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
+  const [orderSlideoutId, setOrderSlideoutId] = useState<number>(0);
   // Refs for job order input fields
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   // Store display values for numeric fields (as strings) to allow clearing
@@ -855,6 +884,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handlePrint = async () => {
+    if (!ensure("Print")) return;
     if (!formData.VendorID || !formData.Details || formData.Details.length === 0) {
       toast.error("Please ensure the quotation has a vendor and at least one line item before printing");
       return;
@@ -888,6 +918,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
+    if (!ensure("Duplicate")) return;
     if (quotationId <= 0) return;
     const confirmText =
       "Create a Draft copy of this quotation dated today?\n\n" +
@@ -923,7 +954,44 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   /** Only uploaded attachments can be copied to the vendor order. */
   const convertibleAttachments = attachments.filter((a) => !a.isPending && a.id > 0);
 
+  const isLineAlreadyConverted = (d: QuotationDetailReq) =>
+    !!(d.ConvertedVendorOrderId && d.ConvertedVendorOrderId > 0);
+
+  const unconvertedDetails = (formData.Details || []).filter(
+    (d) => !isBlankQuoteOrOrderLine(d) && !isLineAlreadyConverted(d)
+  );
+
+  // Slideout Convert: hide only when this quotation's lines are all on POs.
+  const isFullyConverted =
+    formData.allLinesConverted === true ||
+    (unconvertedDetails.length === 0 &&
+      (formData.Details || []).some((d) => !isBlankQuoteOrOrderLine(d))) ||
+    (formData.Status === "Converted" && unconvertedDetails.length === 0);
+
+  const convertedOrderChips =
+    formData.convertedOrders && formData.convertedOrders.length > 0
+      ? formData.convertedOrders
+      : formData.convertedOrderId && formData.convertedOrderId > 0
+        ? [
+            {
+              orderId: formData.convertedOrderOrderId || 0,
+              poNumber: formData.convertedOrderId,
+              displayNumber:
+                formData.convertedOrderId < 1000
+                  ? formData.convertedOrderId + 999
+                  : formData.convertedOrderId,
+            },
+          ]
+        : [];
+
+  const openConvertedOrder = (orderId: number) => {
+    if (!orderId) return;
+    setOrderSlideoutId(orderId);
+    setShowOrderSlideout(true);
+  };
+
   const handleConvertToOrder = async () => {
+    if (!ensure("Convert")) return;
     if (!quotationId || quotationId <= 0) {
       toast.error("Invalid quotation ID. Please refresh and try again.");
       return;
@@ -936,13 +1004,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       toast.error("At least one line item is required to convert quotation to order");
       return;
     }
-    if (formData.Status === "Converted") {
-      toast.warning("This quotation has already been converted to an order");
+    if (isFullyConverted || unconvertedDetails.length === 0) {
+      toast.warning("All line items on this quotation are already converted to orders");
       return;
     }
 
-    // Initialize selection: all items and saved attachments selected by default
-    setSelectedLineItems(new Set(formData.Details.map((d) => d.ItemNo)));
+    // Pre-select only lines that are not yet on a PO
+    setSelectedLineItems(new Set(unconvertedDetails.map((d) => d.ItemNo)));
     setSelectedAttachments(new Set(convertibleAttachments.map((a) => a.id)));
     setShowConvertToOrderDialog(true);
   };
@@ -966,7 +1034,14 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     setLoading(true);
     try {
       const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
-      const selectedDetails = formData.Details.filter((d) => selectedLineItems.has(d.ItemNo));
+      const selectedDetails = formData.Details.filter(
+        (d) => selectedLineItems.has(d.ItemNo) && !isLineAlreadyConverted(d)
+      );
+      if (selectedDetails.length === 0) {
+        toast.error("Select at least one unconverted line item");
+        setLoading(false);
+        return;
+      }
 
       // Convert quotation data to vendor order format
       const quotationNumber = formData.PONumber < 1000
@@ -1200,6 +1275,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleDelete = async () => {
+    if (!ensure("Delete")) return;
     setLoading(true);
     try {
       const response = await QuotationService.CheckVendorQuotationDeletionImpact(quotationId);
@@ -1230,6 +1306,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleSendToMultipleVendors = async () => {
+    if (!ensure("Send")) return;
     if (quotationId === 0) {
       toast.error("Please save the quotation first before sending to multiple vendors");
       return;
@@ -1494,6 +1571,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleSave = async (mode: "draft" | "submit") => {
+    if (!ensure(isNew ? "Add" : "Edit")) return;
     if (!formData.VendorID || formData.VendorID <= 0) {
       toast.error("Vendor is required");
       return;
@@ -1653,25 +1731,24 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             {quotationId > 0 && formData.PONumber > 0 && (
               <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
                 Quotation Number: {formData.PONumber < 1000 ? `VQ#${formData.PONumber + 999}` : `VQ#${formData.PONumber}`}
-                {formData.convertedOrderId && formData.convertedOrderId > 0 ? (
+                {convertedOrderChips.length > 0 ? (
                   <span style={{ marginLeft: "1rem", color: "#10b981", fontWeight: 500 }}>
-                    → Converted to Order:{" "}
-                    <span
-                      style={{
-                        cursor: formData.convertedOrderOrderId ? "pointer" : "default",
-                        textDecoration: formData.convertedOrderOrderId ? "underline" : "none",
-                      }}
-                      onClick={() => {
-                        if (formData.convertedOrderOrderId) {
-                          setShowOrderSlideout(true);
-                        }
-                      }}
-                      title={formData.convertedOrderOrderId ? "Click to view order" : undefined}
-                    >
-                      {formData.convertedOrderId < 1000
-                        ? `VO#${formData.convertedOrderId + 999}`
-                        : `VO#${formData.convertedOrderId}`}
-                    </span>
+                    → Converted to Order{convertedOrderChips.length > 1 ? "s" : ""}:{" "}
+                    {convertedOrderChips.map((o, i) => (
+                      <span key={`${o.orderId}-${o.poNumber}`}>
+                        {i > 0 ? ", " : ""}
+                        <span
+                          style={{
+                            cursor: o.orderId ? "pointer" : "default",
+                            textDecoration: o.orderId ? "underline" : "none",
+                          }}
+                          onClick={() => openConvertedOrder(o.orderId)}
+                          title={o.orderId ? "Click to view order" : undefined}
+                        >
+                          VO#{o.displayNumber || o.poNumber}
+                        </span>
+                      </span>
+                    ))}
                   </span>
                 ) : null}
               </div>
@@ -1680,6 +1757,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {quotationId > 0 && (
               <>
+                {canPrint && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1693,6 +1771,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <rect x="6" y="14" width="12" height="8"></rect>
                   </svg>
                 </button>
+                )}
+                {canSend && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1705,6 +1785,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
+                )}
+                {canDuplicate && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1717,23 +1799,33 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                   </svg>
                 </button>
+                )}
+                {canConvert && (
                 <button
                   type="button"
                   className="btn-icon"
                   onClick={handleConvertToOrder}
-                  title={formData.Status === "Converted" ? "Already Converted" : "Convert to Order"}
+                  title={
+                    isFullyConverted
+                      ? "All lines already converted"
+                      : unconvertedDetails.length < (formData.Details?.length || 0)
+                        ? "Convert remaining lines to order"
+                        : "Convert to Order"
+                  }
                   style={{ 
-                    color: quotationId === 0 || formData.Status === "Converted" ? "#9ca3af" : "#10b981",
-                    cursor: quotationId === 0 || formData.Status === "Converted" ? "not-allowed" : "pointer",
-                    opacity: quotationId === 0 || formData.Status === "Converted" ? 0.5 : 1
+                    color: quotationId === 0 || isFullyConverted ? "#9ca3af" : "#10b981",
+                    cursor: quotationId === 0 || isFullyConverted ? "not-allowed" : "pointer",
+                    opacity: quotationId === 0 || isFullyConverted ? 0.5 : 1
                   }}
-                  disabled={quotationId === 0 || formData.Status === "Converted"}
+                  disabled={quotationId === 0 || isFullyConverted}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M9 11l3 3L22 4"></path>
                     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
                   </svg>
                 </button>
+                )}
+                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -1745,6 +1837,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
+                )}
+                {canSend && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1764,6 +1858,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                   </svg>
                 </button>
+                )}
               </>
             )}
             <div className="status-field-inline">
@@ -1795,6 +1890,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   <option value="Responded">Responded</option>
                   <option value="Accepted">Accepted</option>
                   <option value="Rejected">Rejected</option>
+                  <option value="Partially Converted">Partially Converted</option>
                   <option value="Converted">Converted</option>
                 </select>
               </div>
@@ -1979,6 +2075,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     <tbody>
                       {formData.Details.map((detail, index) => {
                         const lineTotal = calculateLineTotal(detail);
+                        const lineLocked = isLineAlreadyConverted(detail);
                         const selectedJobOrderIds = selectedJobOrders.get(index) || new Set<number>();
                         const isJobOrderDropdownOpen = jobOrderDropdownOpen.get(index) || false;
                         const selectedJobOrdersList = Array.from(selectedJobOrderIds)
@@ -1994,13 +2091,25 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
                         return (
                           <React.Fragment key={detail.ItemNo}>
-                          <tr style={{ borderBottom: historyHint ? "none" : "1px solid #e5e7eb", verticalAlign: "middle" }}>
-                            <td style={{ padding: "0.75rem" }}>{detail.ItemNo}</td>
+                          <tr
+                            style={{
+                              borderBottom: historyHint ? "none" : "1px solid #e5e7eb",
+                              verticalAlign: "middle",
+                            }}
+                          >
+                            <td style={{ padding: "0.75rem" }}>
+                              {detail.ItemNo}
+                            </td>
                             <td style={{ padding: "0.75rem" }}>
                               <select
                                 className={`form-input vo-line-type-select ${lineTypeAccentClass(lineType)}`}
-                                title="Line type is copied to the vendor PO on convert. Check this before saving."
+                                title={
+                                  lineLocked
+                                    ? "Line already converted to a vendor order"
+                                    : "Line type is copied to the vendor PO on convert. Check this before saving."
+                                }
                                 value={lineType}
+                                disabled={lineLocked}
                                 onChange={(e) =>
                                   handleDetailChange(index, "LineType", e.target.value)
                                 }
@@ -2021,6 +2130,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   suggestedUnit={detail.Unit}
                                   suggestedUnitCost={detail.UnitPrice}
                                   vendorId={formData.VendorID}
+                                  vendorSelected={!!formData.VendorID && formData.VendorID > 0}
+                                  disabled={lineLocked}
                                   scrollContainerSelector=".vendor-quotation-slideout-content"
                                   onChange={(partNo) => {
                                     setFormData((prev) => {
@@ -2041,6 +2152,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 <ProductMasterCombobox
                                   value={looksLikeJobPartNo(detail.PartNo) ? "" : (detail.PartNo || "")}
                                   productId={detail.ProductId}
+                                  disabled={lineLocked}
                                   scrollContainerSelector=".vendor-quotation-slideout-content"
                                   onChange={(partNo) => {
                                     setFormData((prev) => {
@@ -2064,6 +2176,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 vendorSelected={!!formData.VendorID && formData.VendorID > 0}
                                 lineType={lineType}
                                 excludeQuotationId={formData.OrderID > 0 ? formData.OrderID : quotationId}
+                                disabled={lineLocked}
                                 scrollContainerSelector=".vendor-quotation-slideout-content"
                                 onChange={(partNo) => handleDetailChange(index, "PartNo", partNo)}
                                 onSelectPart={(part) => applyVendorPart(index, part)}
@@ -2091,12 +2204,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 }}
                                 value={getFirstLine(detail.PartName || "")}
                                 onClick={() => {
+                                  if (lineLocked) return;
                                   setEditingField({ index, field: "PartName", value: detail.PartName || "" });
                                   setShowTextEditorPopup(true);
                                 }}
                                 placeholder="Click to edit item name"
                                 readOnly
-                                title={detail.PartName || "Click to edit item name"}
+                                disabled={lineLocked}
+                                title={
+                                  lineLocked
+                                    ? "Line already converted to a vendor order"
+                                    : detail.PartName || "Click to edit item name"
+                                }
                               />
                             </td>
                             <td style={{ padding: "0.75rem", position: "relative" }}>
@@ -2104,9 +2223,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 <input
                                   type="text"
                                   className="form-input"
-                                  style={{ width: "100%", minWidth: "150px", cursor: "pointer" }}
+                                  style={{ width: "100%", minWidth: "150px", cursor: lineLocked ? "not-allowed" : "pointer" }}
                                   value={displayText}
-                                  title={displayText}
+                                  title={lineLocked ? "Line already converted to a vendor order" : displayText}
+                                  disabled={lineLocked}
                                   ref={(el) => {
                                     if (el) {
                                       jobOrderInputRefs.current.set(index, el);
@@ -2115,6 +2235,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                     }
                                   }}
                                   onClick={() => {
+                                    if (lineLocked) return;
                                     updateJobOrderDropdownPosition(index);
                                     setJobOrderDropdownOpen(prev => {
                                       const newMap = new Map(prev);
@@ -2237,12 +2358,14 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 type="text"
                                 inputMode="numeric"
                                 className="form-input no-spinner"
+                                disabled={lineLocked}
                                 style={{ 
                                   width: "100%",
                                   minWidth: "80px"
                                 }}
                                 value={numericDisplayValues.get(`qty-${index}`) ?? (detail.QtyOrdered === 0 ? "" : detail.QtyOrdered.toString())}
                                 onChange={(e) => {
+                                  if (lineLocked) return;
                                   const inputVal = e.target.value.replace(/[^0-9]/g, '');
                                   setNumericDisplayValues(prev => {
                                     const newMap = new Map(prev);
@@ -2260,6 +2383,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   });
                                 }}
                                 onBlur={(e) => {
+                                  if (lineLocked) return;
                                   const val = e.target.value === "" ? 1 : parseInt(e.target.value) || 1;
                                   handleDetailChange(index, "QtyOrdered", val);
                                   setNumericDisplayValues(prev => {
@@ -2419,12 +2543,14 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                 type="text"
                                 inputMode="decimal"
                                 className="form-input no-spinner"
+                                disabled={lineLocked}
                                 style={{ 
                                   width: "100%",
                                   minWidth: "100px"
                                 }}
                                 value={numericDisplayValues.get(`price-${index}`) ?? (detail.UnitPrice === 0 ? "" : detail.UnitPrice.toString())}
                                 onChange={(e) => {
+                                  if (lineLocked) return;
                                   const inputVal = e.target.value.replace(/[^0-9.]/g, '').replace(/\./g, (match, offset, string) => {
                                     return string.indexOf('.') === offset ? match : '';
                                   });
@@ -2444,6 +2570,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   });
                                 }}
                                 onBlur={(e) => {
+                                  if (lineLocked) return;
                                   const val = e.target.value === "" || e.target.value === "." ? 0 : parseFloat(e.target.value) || 0;
                                   handleDetailChange(index, "UnitPrice", val);
                                   setNumericDisplayValues(prev => {
@@ -2551,7 +2678,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               />
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              <DeleteIconButton label="Delete line" onClick={() => handleDeleteDetail(index)} />
+                              {canEdit && (
+                              <DeleteIconButton
+                                label={lineLocked ? "Line already converted — cannot delete" : "Delete line"}
+                                onClick={() => {
+                                  if (lineLocked) {
+                                    toast.warning("This line is already on a vendor order and cannot be removed");
+                                    return;
+                                  }
+                                  handleDeleteDetail(index);
+                                }}
+                              />
+                              )}
                             </td>
                           </tr>
                           {historyHint ? (
@@ -2663,9 +2801,16 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
+            {!canSave && (
+              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
+                View only — you don&apos;t have permission to save changes.
+              </span>
+            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
+            <>
             <button
               type="button"
               className="btn-draft"
@@ -2682,6 +2827,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             >
               {savingAction === "submit" ? "Saving..." : "Mark as Sent"}
             </button>
+            </>
+            )}
           </div>
         </form>
       </div>
@@ -2983,7 +3130,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     Deselect All
                   </button>
                   <span style={{ marginLeft: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
-                    {selectedLineItems.size} of {formData.Details.length} items selected
+                    {selectedLineItems.size} of {unconvertedDetails.length} unconverted items selected
                   </span>
                 </div>
 
@@ -2994,10 +3141,15 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                         <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: 600, width: "50px" }}>
                           <input
                             type="checkbox"
-                            checked={selectedLineItems.size === formData.Details.length && formData.Details.length > 0}
+                            checked={
+                              unconvertedDetails.length > 0 &&
+                              selectedLineItems.size === unconvertedDetails.length
+                            }
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedLineItems(new Set(formData.Details.map((d) => d.ItemNo)));
+                                setSelectedLineItems(
+                                  new Set(unconvertedDetails.map((d) => d.ItemNo))
+                                );
                               } else {
                                 setSelectedLineItems(new Set());
                               }
@@ -3015,6 +3167,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     </thead>
                     <tbody>
                       {formData.Details.map((detail, index) => {
+                        const alreadyConverted = isLineAlreadyConverted(detail);
                         const isSelected = selectedLineItems.has(detail.ItemNo);
                         return (
                           <tr
@@ -3028,7 +3181,9 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                               <input
                                 type="checkbox"
                                 checked={isSelected}
+                                disabled={alreadyConverted}
                                 onChange={(e) => {
+                                  if (alreadyConverted) return;
                                   const newSelection = new Set(selectedLineItems);
                                   if (e.target.checked) {
                                     newSelection.add(detail.ItemNo);
@@ -3037,10 +3192,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                                   }
                                   setSelectedLineItems(newSelection);
                                 }}
-                                style={{ cursor: "pointer" }}
+                                style={{ cursor: alreadyConverted ? "not-allowed" : "pointer" }}
                               />
                             </td>
-                            <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{detail.ItemNo}</td>
+                            <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>
+                              {detail.ItemNo}
+                            </td>
                             <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{detail.PartNo || "-"}</td>
                             <td style={{ padding: "0.75rem", fontSize: "0.875rem" }}>{getFirstLine(detail.PartName || "") || "-"}</td>
                             <td style={{ padding: "0.75rem", textAlign: "right", fontSize: "0.875rem" }}>{detail.QtyOrdered}</td>
@@ -3183,11 +3340,14 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
         )}
 
       {/* Converted Vendor Order Slideout */}
-      {showOrderSlideout && formData.convertedOrderOrderId ? (
+      {showOrderSlideout && orderSlideoutId > 0 ? (
         <div onClick={(e) => e.stopPropagation()}>
           <VendorOrderSlideout
-            orderId={formData.convertedOrderOrderId}
-            onClose={() => setShowOrderSlideout(false)}
+            orderId={orderSlideoutId}
+            onClose={() => {
+              setShowOrderSlideout(false);
+              setOrderSlideoutId(0);
+            }}
           />
         </div>
       ) : null}

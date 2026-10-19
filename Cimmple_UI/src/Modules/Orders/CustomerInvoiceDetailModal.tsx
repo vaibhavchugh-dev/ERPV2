@@ -10,12 +10,15 @@ import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDi
 import BankAccountSelect from '../../Common/Components/BankAccountSelect';
 import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { usePagePermissions } from '../../Common/Hooks/usePagePermissions';
 import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 import {
   getApiErrorMessage,
   isApiForbidden,
   clearOpenQueryFromUrl,
 } from '../../Common/Services/FileUploadHelper';
+
+const PAGE_PATH = "/orders/customer-invoices";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -371,6 +374,8 @@ interface CustomerInvoiceDetailModalProps {
   initialShowPayment?: boolean;
   onPaymentComplete?: () => void;
   onInvoiceDeleted?: () => void;
+  /** Override when opened from Accounts Receivable */
+  permissionPath?: string;
 }
 
 const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
@@ -379,9 +384,19 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   invoiceId,
   initialShowPayment = false,
   onPaymentComplete,
-  onInvoiceDeleted
+  onInvoiceDeleted,
+  permissionPath = PAGE_PATH,
 }) => {
   const { formatCurrency, formatDate } = useFormatting();
+  const {
+    canDelete,
+    canPrint,
+    canSend,
+    can,
+    ensure,
+  } = usePagePermissions(permissionPath);
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const [invoice, setInvoice] = useState<CustomerInvoiceDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -471,6 +486,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   };
 
   const handlePayInvoice = () => {
+    if (!ensure("Pay")) return;
     if (invoice) {
       const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
       if (isVoided) {
@@ -482,6 +498,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   };
 
   const handlePrintInvoice = async () => {
+    if (!ensure("Print")) return;
     if (!invoice?.id) {
       toast.error('Invoice not loaded');
       return;
@@ -516,6 +533,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   };
 
   const handleVoidInvoice = async () => {
+    if (!ensure("Void")) return;
     if (!invoice?.id) return;
     if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
       return;
@@ -543,6 +561,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
   };
 
   const handleDeleteInvoice = async () => {
+    if (!ensure("Delete")) return;
     if (!invoice?.id) return;
     try {
       const response = await InvoiceService.CheckInvoiceDeletionImpact(invoice.id);
@@ -1015,7 +1034,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                 const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
                 const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
 
-                if (isPaid || isVoided) return null;
+                if (!canPay || isPaid || isVoided) return null;
 
                 return (
                   <button
@@ -1039,6 +1058,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                   </button>
                 );
               })()}
+              {canPrint && (
               <button
                 onClick={handlePrintInvoice}
                 style={{
@@ -1058,6 +1078,8 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faPrint} />
                 Print
               </button>
+              )}
+              {canSend && (
               <button
                 onClick={() => setShowEmailDialog(true)}
                 style={{
@@ -1077,7 +1099,8 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faEnvelope} />
                 Email
               </button>
-              {invoice.status === 'Unpaid' && (
+              )}
+              {canVoid && invoice.status === 'Unpaid' && (
                 <button
                   onClick={handleVoidInvoice}
                   style={{
@@ -1098,6 +1121,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                   Void
                 </button>
               )}
+              {canDelete && (
               <button
                 onClick={handleDeleteInvoice}
                 style={{
@@ -1117,6 +1141,7 @@ const CustomerInvoiceDetailModal: React.FC<CustomerInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faTrash} />
                 Delete
               </button>
+              )}
             </div>
           </div>
         )}

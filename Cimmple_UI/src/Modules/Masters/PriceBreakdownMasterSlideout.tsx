@@ -5,7 +5,10 @@ import {
   PriceBreakdownMasterReq,
 } from "../../Common/Services/PriceBreakdownService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/pricebreakdown";
 
 interface PriceBreakdownMasterSlideoutProps {
   priceBreakdownId: number;
@@ -16,6 +19,8 @@ const PriceBreakdownMasterSlideout: React.FC<PriceBreakdownMasterSlideoutProps> 
   priceBreakdownId,
   onClose,
 }) => {
+  const { canAdd, canEdit } = usePagePermissions(PAGE_PATH);
+  const canSave = priceBreakdownId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<PriceBreakdownMasterReq>({
     Id: 0,
     ItemName: "",
@@ -117,6 +122,7 @@ const PriceBreakdownMasterSlideout: React.FC<PriceBreakdownMasterSlideoutProps> 
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canSave) return;
 
     if (!validateForm()) {
       toast.error("Please fix the errors in the form");
@@ -249,9 +255,11 @@ const PriceBreakdownMasterSlideout: React.FC<PriceBreakdownMasterSlideoutProps> 
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? "Saving..." : priceBreakdownId > 0 ? "Update" : "Save"}
             </button>
+            )}
           </div>
         </form>
       </div>

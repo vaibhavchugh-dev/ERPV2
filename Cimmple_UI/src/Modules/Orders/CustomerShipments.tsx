@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import { faEye, faTrash, faTruck, faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
+import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { CustomerShipmentsService, CustomerShipmentSummary } from "../../Common/Services/CustomerShipmentsService";
 import { ShippingService } from "../../Common/Services/ShippingService";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -17,6 +18,8 @@ interface FilterOptions {
   dateRange: string;
   customerId?: number;
   searchTerm: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 const CustomerShipments: React.FC = () => {
@@ -27,9 +30,12 @@ const CustomerShipments: React.FC = () => {
   const returnToRef = useRef<string | null>(null);
   const [shipments, setShipments] = useState<CustomerShipmentSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
     dateRange: 'Last 30 Days',
-    searchTerm: ''
+    searchTerm: '',
+    startDate: '',
+    endDate: '',
   });
 
   // Modal states
@@ -61,7 +67,8 @@ const CustomerShipments: React.FC = () => {
   }, [filters, locationIdParam]);
 
   const loadShipments = async () => {
-    setLoading(true);
+    // Full-page skeleton only on first load; filter changes keep the list visible.
+    if (!hasLoadedOnce) setLoading(true);
     try {
       console.log("[CustomerShipments] Loading shipments with filters:", filters);
       const result = await CustomerShipmentsService.GetAllShipments(
@@ -69,7 +76,9 @@ const CustomerShipments: React.FC = () => {
         filters.searchTerm,
         filters.customerId,
         filters.dateRange,
-        locationIdParam
+        locationIdParam,
+        filters.startDate,
+        filters.endDate
       );
 
       console.log("[CustomerShipments] API result:", result);
@@ -80,10 +89,12 @@ const CustomerShipments: React.FC = () => {
         setShipments([]);
         console.log("[CustomerShipments] No shipments returned from API");
       }
+      setHasLoadedOnce(true);
     } catch (error: any) {
       console.error("[CustomerShipments] Error loading shipments:", error);
       toast.error(`Error loading shipments: ${error.message || "Unknown error"}`);
       setShipments([]);
+      setHasLoadedOnce(true);
     } finally {
       setLoading(false);
     }
@@ -113,7 +124,7 @@ const CustomerShipments: React.FC = () => {
       return;
     }
 
-    const toastId = toast.info("Generating shipment PDF… this may take a moment.", {
+    const toastId = toast.info("Generating shipment PDFâ€¦ this may take a moment.", {
       autoClose: false,
     });
     try {
@@ -186,10 +197,14 @@ const CustomerShipments: React.FC = () => {
   };
 
   const handleFilterChange = (filterType: keyof FilterOptions, value: any) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterType]: value
-    }));
+    setFilters(prev => {
+      const next = { ...prev, [filterType]: value };
+      if (filterType === 'dateRange' && value !== 'Custom') {
+        next.startDate = '';
+        next.endDate = '';
+      }
+      return next;
+    });
   };
 
   const columns = [
@@ -331,12 +346,15 @@ const CustomerShipments: React.FC = () => {
     { value: 'Last 30 Days', label: 'Last 30 Days' },
     { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
-    { value: 'Last Month', label: 'Last Month' }
+    { value: 'Last Month', label: 'Last Month' },
+    { value: 'This Year', label: 'This Year' },
+    { value: 'Custom', label: 'Custom' },
   ];
 
   return (
     <div style={{ padding: "1rem" }}>
       <MasterListPage
+        permissionPath="/orders/customer-shipments"
         title="Customer Shipments"
         subtitle="Manage all customer shipments across orders"
         data={shipments}
@@ -355,6 +373,58 @@ const CustomerShipments: React.FC = () => {
             onChange: (value) => handleFilterChange('dateRange', value)
           }
         ]}
+        extraFilters={
+          filters.dateRange === 'Custom' ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                flex: '1 1 100%',
+                width: '100%',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
+                <DateFilterInput
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.startDate || ''}
+                  onCommit={(value) => setFilters(prev => ({ ...prev, startDate: value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>To:</label>
+                <DateFilterInput
+                  className="filter-select"
+                  style={{ paddingRight: '0.75rem', backgroundImage: 'none' }}
+                  value={filters.endDate || ''}
+                  onCommit={(value) => setFilters(prev => ({ ...prev, endDate: value }))}
+                />
+              </div>
+              {(filters.startDate || filters.endDate) && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(prev => ({ ...prev, startDate: '', endDate: '' }))}
+                  title="Clear custom dates"
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#f3f4f6',
+                    color: '#374151',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.8125rem',
+                    cursor: 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  Clear Dates
+                </button>
+              )}
+            </div>
+          ) : undefined
+        }
         emptyMessage="No customer shipments found"
       />
 

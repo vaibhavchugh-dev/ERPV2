@@ -343,18 +343,13 @@ const JobOrders: React.FC = () => {
   return (
     <div className="job-orders">
       <MasterListPage
+        permissionPath="/job-orders"
         title="Job Orders"
         columns={columns}
         data={filteredJobOrders}
         loading={loading}
         enablePagination
         matchRowSearch={matchJobOrderSearch}
-        onAdd={() => {
-          toast.info("Redirecting to Customer Orders to create job orders from order line items.", {
-            autoClose: 4000
-          });
-          history.push("/orders/customer");
-        }}
         onRowClick={handleRowClick}
         filters={[
           masterListFilter,

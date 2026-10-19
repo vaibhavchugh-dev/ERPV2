@@ -16,7 +16,7 @@ import {
   isApiForbidden,
   clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
-import "./Documents.scss";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faUpload,
@@ -28,6 +28,9 @@ import {
   faHistory,
   faTags,
 } from "@fortawesome/free-solid-svg-icons";
+import "./Documents.scss";
+
+const PAGE_PATH = "/documents";
 
 const parseTags = (tags?: string): string[] =>
   (tags || "")
@@ -46,6 +49,11 @@ const Documents: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { can, ensure } = usePagePermissions(PAGE_PATH);
+  const canUpload = can("Upload");
+  const canDownload = can("Download");
+  const canDelete = can("Delete");
+  const canManage = can("Manage");
   const [documents, setDocuments] = useState<Document[]>([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -87,7 +95,7 @@ const Documents: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("upload") === "1") {
-      setShowUploadModal(true);
+      if (canUpload) setShowUploadModal(true);
       history.replace(location.pathname);
       return;
     }
@@ -167,6 +175,7 @@ const Documents: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
+    if (!ensure("Delete")) return;
     if (!window.confirm("Are you sure you want to delete this document?")) {
       return;
     }
@@ -177,11 +186,12 @@ const Documents: React.FC = () => {
       loadDocuments();
     } catch (error: any) {
       console.error("Error deleting document:", error);
-      toast.error(`Error deleting document: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error deleting document"));
     }
   };
 
   const handleDownload = async (document: Document, versionId?: number) => {
+    if (!ensure("Download")) return;
     const toastId = toast.info("Downloading document...", { autoClose: false });
     try {
       const blob = await DocumentService.DownloadDocument(document.id, versionId);
@@ -198,7 +208,7 @@ const Documents: React.FC = () => {
     } catch (error: any) {
       console.error("Error downloading document:", error);
       toast.dismiss(toastId);
-      toast.error(`Error downloading document: ${error.message || "Unknown error"}`);
+      toast.error(getApiErrorMessage(error, "Error downloading document"));
     }
   };
 
@@ -339,9 +349,14 @@ const Documents: React.FC = () => {
           <p className="page-subtitle">Upload, organise and version your company documents</p>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
+          {canUpload && (
+          <button type="button" className="btn-primary" onClick={() => {
+            if (!ensure("Upload")) return;
+            setShowUploadModal(true);
+          }}>
             <FontAwesomeIcon icon={faUpload} /> Upload Document
           </button>
+          )}
         </div>
       </div>
 
@@ -436,9 +451,14 @@ const Documents: React.FC = () => {
         <div className="empty-state">
           <FontAwesomeIcon icon={faFile} size="3x" />
           <p>No documents found</p>
-          <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
+          {canUpload && (
+          <button type="button" className="btn-primary" onClick={() => {
+            if (!ensure("Upload")) return;
+            setShowUploadModal(true);
+          }}>
             Upload Your First Document
           </button>
+          )}
         </div>
       ) : filteredDocuments.length === 0 ? (
         <div className="empty-state">
@@ -492,6 +512,7 @@ const Documents: React.FC = () => {
                 </p>
               </div>
               <div className="document-actions">
+                {canDownload && (
                 <button
                   className="btn-icon"
                   onClick={() => handlePreview(document)}
@@ -499,6 +520,8 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faEye} />
                 </button>
+                )}
+                {canDownload && (
                 <button
                   className="btn-icon"
                   onClick={() => handleDownload(document)}
@@ -506,7 +529,8 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faDownload} />
                 </button>
-                {document.requiresVersionControl && (
+                )}
+                {canManage && document.requiresVersionControl && (
                   <button
                     className="btn-icon"
                     onClick={() => handleDocumentClick(document)}
@@ -515,6 +539,7 @@ const Documents: React.FC = () => {
                     <FontAwesomeIcon icon={faHistory} />
                   </button>
                 )}
+                {canDelete && (
                 <button
                   className="btn-icon btn-danger"
                   onClick={() => handleDelete(document.id)}
@@ -522,6 +547,7 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faTrash} />
                 </button>
+                )}
               </div>
             </div>
           ))}
@@ -580,6 +606,7 @@ const Documents: React.FC = () => {
                   <td>{formatDate(document.createdDate)}</td>
                   <td>
                     <div className="action-buttons" onClick={(e) => e.stopPropagation()}>
+                      {canDownload && (
                       <button
                         type="button"
                         className="btn-icon"
@@ -588,6 +615,8 @@ const Documents: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faEye} />
                       </button>
+                      )}
+                      {canDownload && (
                       <button
                         type="button"
                         className="btn-icon"
@@ -596,10 +625,13 @@ const Documents: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faDownload} />
                       </button>
+                      )}
+                      {canDelete && (
                       <DeleteIconButton
                         label="Delete document"
                         onClick={() => handleDelete(document.id)}
                       />
+                      )}
                     </div>
                   </td>
                 </tr>

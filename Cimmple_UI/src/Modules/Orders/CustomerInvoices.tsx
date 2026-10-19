@@ -15,6 +15,9 @@ import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+
+const PAGE_PATH = "/orders/customer-invoices";
 
 // Customer Payment Modal Component
 interface CustomerPaymentModalProps {
@@ -147,7 +150,7 @@ const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invoice, on
               color: '#6b7280'
             }}
           >
-            ×
+            Ã—
           </button>
         </div>
 
@@ -370,8 +373,17 @@ const CustomerInvoices: React.FC = () => {
   const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const {
+    canPrint,
+    canSend,
+    can,
+    ensure,
+  } = usePagePermissions(PAGE_PATH);
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
     status: 'All',
     dateRange: 'Last 30 Days',
@@ -391,12 +403,7 @@ const CustomerInvoices: React.FC = () => {
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<CustomerInvoiceSummary | null>(null);
   const [emailInvoiceId, setEmailInvoiceId] = useState<number | null>(null);
 
-  const customRangeIncomplete =
-    filters.dateRange === 'Custom' && (!filters.startDate || !filters.endDate);
-
   useEffect(() => {
-    // A half-entered custom range would load every invoice (no date filter) or reload per field.
-    if (customRangeIncomplete) return;
     loadInvoices();
   }, [
     filters.status,
@@ -465,7 +472,8 @@ const CustomerInvoices: React.FC = () => {
   }, []);
 
   const loadInvoices = async () => {
-    setLoading(true);
+    // Full-page skeleton only on first load; filter changes keep the list visible.
+    if (!hasLoadedOnce) setLoading(true);
     try {
       const result = await CustomerInvoicesService.GetAllInvoices(
         filters.status,
@@ -482,10 +490,12 @@ const CustomerInvoices: React.FC = () => {
       } else {
         setInvoices([]);
       }
+      setHasLoadedOnce(true);
     } catch (error: any) {
       console.error("Error loading invoices:", error);
       toast.error(`Error loading invoices: ${error.message || "Unknown error"}`);
       setInvoices([]);
+      setHasLoadedOnce(true);
     } finally {
       setLoading(false);
     }
@@ -499,7 +509,7 @@ const CustomerInvoices: React.FC = () => {
     } else if (statusLower === 'partially paid') {
       return (
         <span className="badge badge-info">
-          Partially Paid{daysOverdue && daysOverdue > 0 ? ` · ${daysOverdue}d overdue` : ''}
+          Partially Paid{daysOverdue && daysOverdue > 0 ? ` Â· ${daysOverdue}d overdue` : ''}
         </span>
       );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
@@ -542,6 +552,7 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handlePayInvoice = (invoice: CustomerInvoiceSummary) => {
+    if (!ensure("Pay")) return;
     const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
     if (isVoided) {
       toast.error("Cannot record payment for a voided invoice");
@@ -552,12 +563,13 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handlePrintInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!ensure("Print")) return;
     if (!invoice?.id) {
       toast.error("Invoice not loaded");
       return;
     }
 
-    const toastId = toast.info("Generating invoice PDF… this may take a moment.", {
+    const toastId = toast.info("Generating invoice PDFâ€¦ this may take a moment.", {
       autoClose: false,
     });
     try {
@@ -586,6 +598,7 @@ const CustomerInvoices: React.FC = () => {
   };
 
   const handleVoidInvoice = async (invoice: CustomerInvoiceSummary) => {
+    if (!ensure("Void")) return;
     if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
       return;
     }
@@ -701,7 +714,7 @@ const CustomerInvoices: React.FC = () => {
             const isVoided = !!(row.status && (row.status.toLowerCase().includes("void") || row.status.toLowerCase() === "cancelled"));
             const isPaid = row.status?.toLowerCase() === 'paid' || (row.balanceDue !== undefined && row.balanceDue <= 0);
 
-            if (isPaid || isVoided) return null;
+            if (!canPay || isPaid || isVoided) return null;
 
             return (
               <button
@@ -722,6 +735,7 @@ const CustomerInvoices: React.FC = () => {
               </button>
             );
           })()}
+          {canPrint && (
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -738,6 +752,8 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
+          )}
+          {canSend && (
           <button
             type="button"
             onClick={() => setEmailInvoiceId(row.id)}
@@ -754,7 +770,8 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} />
           </button>
-          {row.status === 'Unpaid' && (
+          )}
+          {canVoid && row.status === 'Unpaid' && (
             <button
               type="button"
               onClick={() => handleVoidInvoice(row)}
@@ -800,6 +817,7 @@ const CustomerInvoices: React.FC = () => {
   return (
     <div style={{ padding: "1rem" }}>
       <MasterListPage
+        permissionPath="/orders/customer-invoices"
         title="Customer Invoices"
         subtitle="Manage all customer invoices across orders"
         data={invoices}
@@ -828,7 +846,16 @@ const CustomerInvoices: React.FC = () => {
         ]}
         extraFilters={
           filters.dateRange === 'Custom' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                flex: '1 1 100%',
+                width: '100%',
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                 <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
                 <DateFilterInput
@@ -847,11 +874,6 @@ const CustomerInvoices: React.FC = () => {
                   onCommit={(value) => setFilters(prev => ({ ...prev, endDate: value }))}
                 />
               </div>
-              {customRangeIncomplete && (
-                <span style={{ fontSize: '0.8125rem', color: '#6b7280' }}>
-                  Select both dates to apply
-                </span>
-              )}
               {(filters.startDate || filters.endDate) && (
                 <button
                   type="button"
@@ -868,7 +890,7 @@ const CustomerInvoices: React.FC = () => {
                     fontWeight: 500
                   }}
                 >
-                  Clear
+                  Clear Dates
                 </button>
               )}
             </div>

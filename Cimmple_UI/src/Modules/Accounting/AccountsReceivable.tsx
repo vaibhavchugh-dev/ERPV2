@@ -13,6 +13,10 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
+import { STANDARD_LIST_DATE_RANGE_PRESETS } from "../../Common/Utils/listDateRangeFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+
+const PAGE_PATH = "/accounts/receivable";
 
 interface ARFilterOptions {
   status: string;
@@ -223,6 +227,9 @@ const getInvoiceSortValue = (invoice: InvoiceSummary, key: string): unknown =>
 const AccountsReceivable: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { can } = usePagePermissions(PAGE_PATH);
+  const canPay = can("Pay");
+  const canSend = can("Send");
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ARFilterOptions>({
@@ -553,6 +560,7 @@ const AccountsReceivable: React.FC = () => {
             </p>
           </div>
           <div style={{ display: "flex", gap: "1rem" }}>
+            {canSend && (
             <button
               onClick={handleBulkReminders}
               disabled={sendingBulkReminders || sendingReminderId != null}
@@ -574,6 +582,8 @@ const AccountsReceivable: React.FC = () => {
               <FontAwesomeIcon icon={sendingBulkReminders ? faSpinner : faEnvelope} spin={sendingBulkReminders} />
               {sendingBulkReminders ? "Sending Reminders…" : "Send Bulk Reminders"}
             </button>
+            )}
+            {canPay && (
             <button
               onClick={handleRecordPaymentsClick}
               style={{
@@ -594,6 +604,7 @@ const AccountsReceivable: React.FC = () => {
               Record Payments
               {selectedPayable.length > 0 ? ` (${selectedPayable.length})` : ""}
             </button>
+            )}
           </div>
         </div>
 
@@ -670,7 +681,7 @@ const AccountsReceivable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
             className="filter-select"
           >
-            <option value="All">All Status</option>
+            <option value="All">All Statuses</option>
             <option value="Paid">Paid</option>
             <option value="Unpaid">Unpaid</option>
             <option value="Partially Paid">Partially Paid</option>
@@ -705,11 +716,11 @@ const AccountsReceivable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
             className="filter-select"
           >
-            <option value="All">All Dates</option>
-            <option value="This Week">This Week</option>
-            <option value="This Month">This Month</option>
-            <option value="Last 30 Days">Last 30 Days</option>
-            <option value="Last 90 Days">Last 90 Days</option>
+            {STANDARD_LIST_DATE_RANGE_PRESETS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
 
           <select
@@ -856,6 +867,7 @@ const AccountsReceivable: React.FC = () => {
 
                         {canRecordPayment(invoice) && (
                           <>
+                            {canSend && (
                             <button
                               onClick={() => handleSendReminder(invoice)}
                               disabled={sendingReminderId != null || sendingBulkReminders}
@@ -888,6 +900,8 @@ const AccountsReceivable: React.FC = () => {
                                 spin={sendingReminderId === invoice.id}
                               />
                             </button>
+                            )}
+                            {canPay && (
                             <button
                               onClick={() => handleRecordPayment(invoice)}
                               style={{
@@ -903,6 +917,7 @@ const AccountsReceivable: React.FC = () => {
                             >
                               <FontAwesomeIcon icon={faCreditCard} />
                             </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -928,6 +943,7 @@ const AccountsReceivable: React.FC = () => {
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
         onInvoiceDeleted={loadInvoices}
+        permissionPath={PAGE_PATH}
       />
 
       {showBulkPayment && bulkTargets.length > 1 && (

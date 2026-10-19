@@ -6,7 +6,10 @@ import { PriceBreakdownService, PriceBreakdownMaster, PriceBreakdownMasterReq } 
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/pricebreakdown";
 
 interface EditablePriceBreakdown extends PriceBreakdownMaster {
   isNew?: boolean;
@@ -28,6 +31,7 @@ const apiError = (error: unknown): string => {
 };
 
 const PriceBreakdownMasterComponent: React.FC = () => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
   const [priceBreakdowns, setPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [originalPriceBreakdowns, setOriginalPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,6 +118,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (!canEdit && !canAdd) return;
     // Validate all rows
     const emptyRows = priceBreakdowns.filter(p => !p.itemName || p.itemName.trim() === "");
     if (emptyRows.length > 0) {
@@ -192,6 +197,8 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             placeholder="Enter item name"
             maxLength={500}
             data-pb-item-index={index}
+            readOnly={!canEdit && !priceBreakdown.isNew}
+            disabled={!canEdit && !priceBreakdown.isNew}
           />
         );
       case "status":
@@ -201,7 +208,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              cursor: "pointer",
+              cursor: canEdit || priceBreakdown.isNew ? "pointer" : "default",
               gap: "0.5rem",
               margin: 0,
             }}
@@ -210,16 +217,18 @@ const PriceBreakdownMasterComponent: React.FC = () => {
               type="checkbox"
               checked={priceBreakdown.status === 1}
               onChange={() => handleStatusToggle(index)}
+              disabled={!canEdit && !priceBreakdown.isNew}
               style={{
                 width: "18px",
                 height: "18px",
-                cursor: "pointer",
+                cursor: canEdit || priceBreakdown.isNew ? "pointer" : "not-allowed",
                 margin: 0,
               }}
             />
           </label>
         );
       case "actions":
+        if (!canDelete && !(priceBreakdown.isNew && canAdd)) return null;
         return (
           <DeleteIconButton
             onClick={(e) => {
@@ -312,10 +321,12 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddRow}>
             <span>+</span>
             <span>Add Item</span>
           </button>
+          )}
         </div>
       </div>
 
@@ -375,7 +386,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
       />
 
       {/* Footer with Save/Discard buttons */}
-      {isStateChanged && (
+      {isStateChanged && (canEdit || canAdd) && (
         <div style={{
           marginTop: "1.5rem",
           padding: "1rem 1.5rem",

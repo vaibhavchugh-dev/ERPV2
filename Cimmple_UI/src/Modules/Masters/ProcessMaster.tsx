@@ -10,7 +10,10 @@ import ProcessMasterSlideout from "./ProcessMasterSlideout";
 import ProcessMasterImportModal from "./ProcessMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/process";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "srno", label: "Sr. No.", sortKey: "srno" },
@@ -29,6 +32,8 @@ const COLUMN_PREFERENCE_KEY = "processMaster.hiddenColumns";
 const ProcessMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd, can } = usePagePermissions(PAGE_PATH);
+  const canImport = can("Import");
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -233,13 +238,15 @@ const ProcessMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage manufacturing processes and routing defaults</p>
         </div>
         <div className="page-actions">
-          <button
-            className="btn-secondary"
-            onClick={() => setShowImport(true)}
-            type="button"
-          >
-            <span>Import</span>
-          </button>
+          {canImport && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowImport(true)}
+              type="button"
+            >
+              <span>Import</span>
+            </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -248,10 +255,12 @@ const ProcessMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddProcess} type="button">
-            <span>+</span>
-            <span>Add Process</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddProcess} type="button">
+              <span>+</span>
+              <span>Add Process</span>
+            </button>
+          )}
         </div>
       </div>
 

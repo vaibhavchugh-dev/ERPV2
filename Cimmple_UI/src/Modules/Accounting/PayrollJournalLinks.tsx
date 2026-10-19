@@ -51,14 +51,14 @@ const ymd = (d: Date) => {
 };
 
 const fmtDate = (v?: string | null) => {
-  if (!v) return "—";
+  if (!v) return "â€”";
   return formatDateOnlyFromApi(v, true) || v;
 };
 
 const fmtMoney = (n?: number | null) =>
   n != null
     ? n.toLocaleString(undefined, { style: "currency", currency: "USD" })
-    : "—";
+    : "â€”";
 
 const PayrollJournalLinks: React.FC = () => {
   const history = useHistory();
@@ -244,7 +244,7 @@ const PayrollJournalLinks: React.FC = () => {
       label: "Period",
       sortable: true,
       render: (_value, row) =>
-        `${fmtDate(row.payPeriodStart)} – ${fmtDate(row.payPeriodEnd)}`,
+        `${fmtDate(row.payPeriodStart)} â€“ ${fmtDate(row.payPeriodEnd)}`,
     },
     {
       key: "referenceNumber",
@@ -277,7 +277,7 @@ const PayrollJournalLinks: React.FC = () => {
       key: "status",
       label: "Status",
       sortable: true,
-      render: (value) => value || "—",
+      render: (value) => value || "â€”",
     },
     {
       key: "journalEntryId",
@@ -319,8 +319,8 @@ const PayrollJournalLinks: React.FC = () => {
               <div className="je-muted">
                 Paid {fmtMoney(row.paymentAmount)}
                 {remaining > 0.009
-                  ? ` · Remaining ${fmtMoney(remaining)}`
-                  : " · Paid in full"}
+                  ? ` Â· Remaining ${fmtMoney(remaining)}`
+                  : " Â· Paid in full"}
               </div>
             </>
           );
@@ -359,7 +359,7 @@ const PayrollJournalLinks: React.FC = () => {
         const showTax =
           !row.taxRemittanceJournalEntryId && row.status === "Posted";
         if (!showPay && !showTax) {
-          return <span className="je-muted">—</span>;
+          return <span className="je-muted">â€”</span>;
         }
         return (
           <div
@@ -395,6 +395,7 @@ const PayrollJournalLinks: React.FC = () => {
   return (
     <div className="journal-entries-page payroll-journals-page">
       <MasterListPage
+        permissionPath="/accounts/payroll"
         title="Payroll Journals"
         subtitle="Accrual journals from CimmplePay, manual entry, or import. After accrual, post net pay and tax remittance when cash leaves the bank."
         columns={columns}
@@ -403,7 +404,7 @@ const PayrollJournalLinks: React.FC = () => {
         enablePagination
         onAdd={() => history.push("/accounts/payroll/manual")}
         addButtonLabel="Manual payroll"
-        searchPlaceholder="Search reference, JE #, description…"
+        searchPlaceholder="Search reference, JE #, descriptionâ€¦"
         searchFields={[
           "id",
           "journalEntryId",
@@ -441,7 +442,7 @@ const PayrollJournalLinks: React.FC = () => {
         }
         customActionButtons={[
           {
-            label: loading ? "Loading…" : "Refresh",
+            label: loading ? "Loadingâ€¦" : "Refresh",
             onClick: () => void loadList(),
             disabled: loading,
             className: "btn-secondary",
@@ -549,15 +550,15 @@ const PayrollJournalLinks: React.FC = () => {
                 {cashMode === "payment"
                   ? "Post net-pay payment"
                   : "Post tax remittance"}{" "}
-                — {cashLink.referenceNumber}
+                â€” {cashLink.referenceNumber}
               </h3>
               <button type="button" onClick={closeCashModal} aria-label="Close">
-                ×
+                Ã—
               </button>
             </div>
             <div style={{ padding: "1rem 1.25rem" }}>
               {cashLoading ? (
-                <p>Loading preview…</p>
+                <p>Loading previewâ€¦</p>
               ) : cashMode === "payment" ? (
                 <>
                   <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>
@@ -565,9 +566,9 @@ const PayrollJournalLinks: React.FC = () => {
                     <strong>Cr payroll bank</strong>. Suggested net{" "}
                     {fmtMoney(suggestedNet)}
                     {paidAmount > 0
-                      ? ` · Already paid ${fmtMoney(paidAmount)}`
+                      ? ` Â· Already paid ${fmtMoney(paidAmount)}`
                       : ""}
-                    {" · "}Remaining {fmtMoney(remainingNet)}. Partial payments
+                    {" Â· "}Remaining {fmtMoney(remainingNet)}. Partial payments
                     are allowed.
                   </p>
                   <label
@@ -622,7 +623,7 @@ const PayrollJournalLinks: React.FC = () => {
                       disabled={cashPosting}
                       onClick={() => void submitPayment()}
                     >
-                      {cashPosting ? "Posting…" : "Post payment journal"}
+                      {cashPosting ? "Postingâ€¦" : "Post payment journal"}
                     </button>
                   </div>
                 </>
@@ -731,7 +732,7 @@ const PayrollJournalLinks: React.FC = () => {
                       disabled={cashPosting || taxLines.length === 0}
                       onClick={() => void submitTaxRemittance()}
                     >
-                      {cashPosting ? "Posting…" : "Post remittance journal"}
+                      {cashPosting ? "Postingâ€¦" : "Post remittance journal"}
                     </button>
                   </div>
                 </>

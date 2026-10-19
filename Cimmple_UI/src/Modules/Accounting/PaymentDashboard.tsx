@@ -6,6 +6,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AccountingService, PaymentDashboardMetrics, RecentTransaction } from "../../Common/Services/AccountingService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { STANDARD_LIST_DATE_RANGE_PRESETS } from "../../Common/Utils/listDateRangeFilter";
 
 // Using interfaces from AccountingService
 
@@ -16,6 +17,7 @@ const PaymentDashboard: React.FC = () => {
   const [summary, setSummary] = useState<PaymentDashboardMetrics | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [dateRange, setDateRange] = useState('All');
   const [showFilters, setShowFilters] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<'all' | 'money-in' | 'money-out' | 'invoice'>('all');
@@ -27,22 +29,31 @@ const PaymentDashboard: React.FC = () => {
   }, [dateRange, locationIdParam]);
 
   const loadDashboardData = async () => {
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
     try {
       // Load dashboard metrics from real API
-      const dashboardMetrics = await AccountingService.GetPaymentDashboardMetrics(dateRange, locationIdParam);
+      const dashboardMetrics = await AccountingService.GetPaymentDashboardMetrics(
+        dateRange,
+        locationIdParam
+      );
       if (dashboardMetrics) {
         setSummary(dashboardMetrics);
       }
 
       // Load recent transactions from real API (same date range as metrics)
-      const transactions = await AccountingService.GetRecentTransactions(100, dateRange, locationIdParam);
+      const transactions = await AccountingService.GetRecentTransactions(
+        100,
+        dateRange,
+        locationIdParam
+      );
       if (transactions) {
         setRecentTransactions(transactions);
       }
+      setHasLoadedOnce(true);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       toast.error('Failed to load dashboard data');
+      setHasLoadedOnce(true);
     } finally {
       setLoading(false);
     }
@@ -79,10 +90,9 @@ const PaymentDashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="payment-dashboard" style={{ padding: '1.5rem', width: '100%' }}>
-        <div style={{ textAlign: 'center', padding: '2rem' }}>
-          <div>Loading payment dashboard...</div>
-        </div>
+      <div className="page-loading">
+        <div className="loading-spinner"></div>
+        <p>Loading payment dashboard...</p>
       </div>
     );
   }
@@ -100,7 +110,7 @@ const PaymentDashboard: React.FC = () => {
               Overview of accounts receivable and payable
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <select
               value={dateRange}
               onChange={(e) => setDateRange(e.target.value)}
@@ -111,11 +121,11 @@ const PaymentDashboard: React.FC = () => {
                 fontSize: '0.875rem'
               }}
             >
-              <option value="All">All Dates</option>
-              <option value="This Week">This Week</option>
-              <option value="This Month">This Month</option>
-              <option value="Last 30 Days">Last 30 Days</option>
-              <option value="Last 90 Days">Last 90 Days</option>
+              {STANDARD_LIST_DATE_RANGE_PRESETS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
             <select
               value={masterListFilter.value}

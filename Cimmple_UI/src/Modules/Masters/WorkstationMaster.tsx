@@ -10,7 +10,10 @@ import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
 import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/workstation";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "workstationName", label: "Workstation Name", sortKey: "workstationName", locked: true },
@@ -23,6 +26,8 @@ const COLUMN_PREFERENCE_KEY = "workstationMaster.hiddenColumns";
 const WorkstationMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd, can } = usePagePermissions(PAGE_PATH);
+  const canImport = can("Import");
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -221,9 +226,11 @@ const WorkstationMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your workstations and user assignments</p>
         </div>
         <div className="page-actions">
-          <button className="btn-secondary" onClick={() => setShowImport(true)} type="button">
-            <span>Import</span>
-          </button>
+          {canImport && (
+            <button className="btn-secondary" onClick={() => setShowImport(true)} type="button">
+              <span>Import</span>
+            </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -232,10 +239,12 @@ const WorkstationMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddWorkstation}>
-            <span>+</span>
-            <span>Add Workstation</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddWorkstation}>
+              <span>+</span>
+              <span>Add Workstation</span>
+            </button>
+          )}
         </div>
       </div>
 

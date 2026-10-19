@@ -21,7 +21,11 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+import { getApiErrorMessage, isApiForbidden } from "../../Common/Services/FileUploadHelper";
 import "./ScheduledReports.scss";
+
+const PAGE_PATH = "/reports/schedules";
 
 const freqLabel = (s: ReportScheduleDto) => {
   const time = minutesToTimeInput(s.timeOfDayMinutes);
@@ -50,6 +54,11 @@ const getScheduleSortValue = (s: ReportScheduleDto, key: string): unknown => {
 
 const ScheduledReports: React.FC = () => {
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { can, ensure } = usePagePermissions(PAGE_PATH);
+  const canEdit = can("Edit");
+  const canDelete = can("Delete");
+  const canSend = can("Send");
+  const canManage = can("Manage");
   const [items, setItems] = useState<ReportScheduleDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -63,9 +72,9 @@ const ScheduledReports: React.FC = () => {
       });
       setItems(list);
     } catch (error: any) {
-      toast.error(
-        error?.response?.data?.message || error?.message || "Failed to load schedules"
-      );
+      if (!isApiForbidden(error)) {
+        toast.error(getApiErrorMessage(error, "Failed to load schedules"));
+      }
     } finally {
       setLoading(false);
     }
@@ -82,28 +91,32 @@ const ScheduledReports: React.FC = () => {
   const sortProps = { activeKey: sortKey, direction: sortDirection, onSort: toggleSort };
 
   const toggleEnabled = async (item: ReportScheduleDto) => {
+    if (!ensure("Manage")) return;
     setBusyId(item.id);
     try {
       await ReportScheduleService.SetEnabled(item.id, !item.isEnabled);
       toast.success(item.isEnabled ? "Schedule paused" : "Schedule enabled");
       await load();
     } catch (error: any) {
-      toast.error(error?.response?.data?.message || "Failed to update schedule");
+      if (!isApiForbidden(error)) {
+        toast.error(getApiErrorMessage(error, "Failed to update schedule"));
+      }
     } finally {
       setBusyId(null);
     }
   };
 
   const runNow = async (item: ReportScheduleDto) => {
+    if (!ensure("Send")) return;
     setBusyId(item.id);
     try {
       await ReportScheduleService.RunNow(item.id);
       toast.success("Report generated and queued for email delivery");
       await load();
     } catch (error: any) {
-      toast.error(
-        error?.response?.data?.message || error?.message || "Failed to run schedule"
-      );
+      if (!isApiForbidden(error)) {
+        toast.error(getApiErrorMessage(error, "Failed to run schedule"));
+      }
       await load();
     } finally {
       setBusyId(null);
@@ -111,6 +124,7 @@ const ScheduledReports: React.FC = () => {
   };
 
   const remove = async (item: ReportScheduleDto) => {
+    if (!ensure("Delete")) return;
     if (!window.confirm(`Delete schedule for “${item.reportName}”?`)) return;
     setBusyId(item.id);
     try {
@@ -118,7 +132,9 @@ const ScheduledReports: React.FC = () => {
       toast.success("Schedule deleted");
       await load();
     } catch (error: any) {
-      toast.error(error?.response?.data?.message || "Failed to delete schedule");
+      if (!isApiForbidden(error)) {
+        toast.error(getApiErrorMessage(error, "Failed to delete schedule"));
+      }
     } finally {
       setBusyId(null);
     }
@@ -191,7 +207,10 @@ const ScheduledReports: React.FC = () => {
                   <tr
                     key={item.id}
                     className={`clickable${!item.isEnabled ? " is-disabled" : ""}`}
-                    onClick={rowClickHandler(() => setEditing(item))}
+                    onClick={rowClickHandler(() => {
+                      if (!canEdit) return;
+                      setEditing(item);
+                    })}
                   >
                     <td>
                       <div className="sr-name">{item.reportName}</div>
@@ -243,6 +262,7 @@ const ScheduledReports: React.FC = () => {
                     </td>
                     <td>{item.isEnabled ? "Enabled" : "Paused"}</td>
                     <td className="sr-actions">
+                      {canEdit && (
                       <button
                         type="button"
                         title="Edit"
@@ -251,6 +271,8 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faEdit} />
                       </button>
+                      )}
+                      {canManage && (
                       <button
                         type="button"
                         title={item.isEnabled ? "Pause" : "Enable"}
@@ -261,6 +283,8 @@ const ScheduledReports: React.FC = () => {
                           icon={item.isEnabled ? faToggleOn : faToggleOff}
                         />
                       </button>
+                      )}
+                      {canSend && (
                       <button
                         type="button"
                         title="Run now"
@@ -269,6 +293,8 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faPlay} />
                       </button>
+                      )}
+                      {canDelete && (
                       <button
                         type="button"
                         title="Delete"
@@ -277,6 +303,7 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faTrash} />
                       </button>
+                      )}
                     </td>
                   </tr>
                 );

@@ -16,7 +16,10 @@ import { CustomerService, CustomerMaster } from "../../Common/Services/CustomerS
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import NonConformanceReportSlideout from "./NonConformanceReportSlideout";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./Quality.scss";
+
+const PAGE_PATH = "/quality";
 
 const DEFAULT_FILTERS = {
   status: "all",
@@ -34,6 +37,7 @@ const Quality: React.FC = () => {
   const history = useHistory();
   const returnToRef = useRef<string | null>(null);
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { ensure } = usePagePermissions(PAGE_PATH);
   const [ncrs, setNcrs] = useState<NonConformanceReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -168,6 +172,7 @@ const Quality: React.FC = () => {
   };
 
   const handleCreateNCR = () => {
+    if (!ensure("Add")) return;
     setSelectedNCRId(0);
     setShowSlideout(true);
   };
@@ -504,6 +509,7 @@ const Quality: React.FC = () => {
       )}
 
       <MasterListPage
+        permissionPath="/quality"
         title="Quality - Non Conformance Reports"
         subtitle="Track and resolve manufacturing quality issues"
         data={ncrs}
