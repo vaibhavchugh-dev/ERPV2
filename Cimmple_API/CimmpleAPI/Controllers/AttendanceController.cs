@@ -18,11 +18,19 @@ namespace CimmpleAPI.Controllers
     {
         private readonly CimmpleDbContext _db;
         private readonly FaceRecognitionService _faceRecognition;
+        private readonly ICimmplePayAttendanceSyncService _payAttendanceSync;
+        private readonly ILogger<AttendanceController> _logger;
 
-        public AttendanceController(CimmpleDbContext db, FaceRecognitionService faceRecognition)
+        public AttendanceController(
+            CimmpleDbContext db,
+            FaceRecognitionService faceRecognition,
+            ICimmplePayAttendanceSyncService payAttendanceSync,
+            ILogger<AttendanceController> logger)
         {
             _db = db;
             _faceRecognition = faceRecognition;
+            _payAttendanceSync = payAttendanceSync;
+            _logger = logger;
         }
 
         [HttpGet("GetPunchBoard")]
@@ -549,6 +557,7 @@ namespace CimmpleAPI.Controllers
 
             var direction = await GetNextDirectionAsync(tenantId, employee.User_UniqueID);
 
+            var punchTime = DateTime.UtcNow;
             var log = new FaceAttendanceLog
             {
                 TenantId = tenantId,
@@ -556,7 +565,7 @@ namespace CimmpleAPI.Controllers
                 UserName = employee.UserName,
                 LocationId = locationId,
                 Direction = direction,
-                PunchTime = DateTime.UtcNow,
+                PunchTime = punchTime,
                 Confidence = 100,
                 IsSuccess = true,
                 FailureReason = "",
@@ -568,6 +577,14 @@ namespace CimmpleAPI.Controllers
 
             _db.FaceAttendanceLog.Add(log);
             await _db.SaveChangesAsync();
+
+            await SyncPunchToCimmplePayAsync(
+                tenantId,
+                employee.User_UniqueID,
+                direction,
+                punchTime,
+                log.Id,
+                locationId);
 
             return Ok(new
             {
@@ -702,15 +719,16 @@ namespace CimmpleAPI.Controllers
 
             var locationId = request.LocationId ?? employee.DefaultLocationId ?? 0;
             var direction = await GetNextDirectionAsync(tenantId, employee.User_UniqueID);
+            var punchTime = DateTime.UtcNow;
 
-            _db.FaceAttendanceLog.Add(new FaceAttendanceLog
+            var log = new FaceAttendanceLog
             {
                 TenantId = tenantId,
                 UserUniqueId = employee.User_UniqueID,
                 UserName = employee.UserName,
                 LocationId = locationId,
                 Direction = direction,
-                PunchTime = DateTime.UtcNow,
+                PunchTime = punchTime,
                 Confidence = verify.confidence * 100,
                 IsSuccess = true,
                 FailureReason = "",
@@ -718,8 +736,17 @@ namespace CimmpleAPI.Controllers
                 ImageUrl = "",
                 VerificationType = "FACE",
                 CreatedBy = operatorId
-            });
+            };
+            _db.FaceAttendanceLog.Add(log);
             await _db.SaveChangesAsync();
+
+            await SyncPunchToCimmplePayAsync(
+                tenantId,
+                employee.User_UniqueID,
+                direction,
+                punchTime,
+                log.Id,
+                locationId);
 
             return Ok(new
             {
@@ -732,6 +759,42 @@ namespace CimmpleAPI.Controllers
                     confidence = verify.confidence * 100
                 }
             });
+        }
+
+        private async Task SyncPunchToCimmplePayAsync(
+            int tenantId,
+            int flowUserUniqueId,
+            string direction,
+            DateTime punchTimeUtc,
+            int faceAttendanceLogId,
+            int locationId)
+        {
+            try
+            {
+                string? locationName = null;
+                if (locationId > 0)
+                {
+                    locationName = await _db.Locations.AsNoTracking()
+                        .Where(l => l.LocationId == locationId)
+                        .Select(l => l.Name)
+                        .FirstOrDefaultAsync();
+                }
+
+                await _payAttendanceSync.SyncSuccessfulPunchAsync(
+                    tenantId,
+                    flowUserUniqueId,
+                    direction,
+                    punchTimeUtc,
+                    faceAttendanceLogId,
+                    locationName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "CimmplePay punch sync threw after FaceAttendanceLog {LogId}",
+                    faceAttendanceLogId);
+            }
         }
 
         /// <summary>Non-admins may only punch for themselves.</summary>
