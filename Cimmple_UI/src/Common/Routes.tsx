@@ -32,6 +32,7 @@ const PaymentDashboard = React.lazy(() => import("../Modules/Accounting/PaymentD
 const AccountsPayable = React.lazy(() => import("../Modules/Accounting/AccountsPayable"));
 const AccountsReceivable = React.lazy(() => import("../Modules/Accounting/AccountsReceivable"));
 const BankReconciliation = React.lazy(() => import("../Modules/Accounting/BankReconciliation"));
+const BankCashEntries = React.lazy(() => import("../Modules/Accounting/BankCashEntries"));
 const FinancialReports = React.lazy(() => import("../Modules/Accounting/FinancialReports"));
 const JournalEntries = React.lazy(() => import("../Modules/Accounting/JournalEntries"));
 const GeneralLedger = React.lazy(() => import("../Modules/Accounting/GeneralLedger"));
@@ -206,6 +207,11 @@ export const protectedRoutes: any[] = [
     path: "/accounts/banks",
     name: "Bank Reconciliation",
     Component: BankReconciliation,
+  },
+  {
+    path: "/accounts/bank-cash",
+    name: "Deposits & Withdrawals",
+    Component: BankCashEntries,
   },
   {
     path: "/accounts/reports",

@@ -16,6 +16,7 @@ import {
   faDollarSign,
   faCreditCard,
   faChartLine,
+  faExchangeAlt,
   faFileInvoice,
   faFileInvoiceDollar,
   faShoppingCart,
@@ -118,6 +119,7 @@ const Sidebar: React.FC = () => {
         { icon: faDollarSign, title: "Accounts Payable (AP)", path: "/accounts/payable" },
         { icon: faCreditCard, title: "Accounts Receivable (AR)", path: "/accounts/receivable" },
         { icon: faUniversity, title: "Bank Reconciliation", path: "/accounts/banks" },
+        { icon: faExchangeAlt, title: "Deposits & Withdrawals", path: "/accounts/bank-cash" },
       ],
     },
     {

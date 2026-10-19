@@ -594,6 +594,323 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// List standalone bank deposits and withdrawals (no customer/vendor invoice link).
+        /// </summary>
+        [HttpGet("ListBankCashEntries")]
+        public IActionResult ListBankCashEntries(
+            [FromQuery] string? entryType = null,
+            [FromQuery] int? bankId = null,
+            [FromQuery] string? startDate = null,
+            [FromQuery] string? endDate = null,
+            [FromQuery] int? locationId = null)
+        {
+            try
+            {
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+                if (!TryResolveListLocationFilter(locationId, out var filterLocationId, out var forbid, out var restrictToLocationIds))
+                    return forbid!;
+
+                var cashTypes = new[] { "Deposit", "Withdrawal" };
+                var query = _context.Transactions.AsNoTracking()
+                    .Where(t => t.TenantId == tenantId &&
+                                t.TransactionType != null &&
+                                cashTypes.Contains(t.TransactionType));
+
+                if (!string.IsNullOrWhiteSpace(entryType) &&
+                    !entryType.Equals("All", StringComparison.OrdinalIgnoreCase))
+                {
+                    var typeFilter = entryType.Trim();
+                    query = query.Where(t => t.TransactionType != null &&
+                                            t.TransactionType.ToLower() == typeFilter.ToLower());
+                }
+
+                if (bankId.HasValue && bankId.Value > 0)
+                    query = query.Where(t => t.BankId == bankId.Value);
+
+                if (filterLocationId.HasValue)
+                    query = query.Where(t => t.locationId == filterLocationId.Value);
+                else if (restrictToLocationIds != null)
+                {
+                    var allowed = restrictToLocationIds.ToList();
+                    query = allowed.Count == 0
+                        ? query.Where(_ => false)
+                        : query.Where(t => allowed.Contains(t.locationId));
+                }
+
+                if (DateTime.TryParse(startDate, out var startParsed))
+                    query = query.Where(t => t.TransactionDate != null && t.TransactionDate >= startParsed.Date);
+                if (DateTime.TryParse(endDate, out var endParsed))
+                {
+                    var endInclusive = endParsed.Date.AddDays(1).AddTicks(-1);
+                    query = query.Where(t => t.TransactionDate != null && t.TransactionDate <= endInclusive);
+                }
+
+                var raw = query
+                    .OrderByDescending(t => t.TransactionDate)
+                    .ThenByDescending(t => t.TransactionID)
+                    .Take(500)
+                    .Select(t => new
+                    {
+                        t.TransactionID,
+                        t.TransactionDate,
+                        t.TransactionType,
+                        t.Amount,
+                        t.Description,
+                        t.CheckNo,
+                        t.invoiceNo,
+                        t.BankId,
+                        t.IsReconciled,
+                        t.locationId,
+                        t.PaymentMethod
+                    })
+                    .ToList();
+
+                var bankIds = raw.Where(t => t.BankId.HasValue && t.BankId.Value > 0)
+                    .Select(t => t.BankId!.Value)
+                    .Distinct()
+                    .ToList();
+                var bankNames = bankIds.Count == 0
+                    ? new Dictionary<int, string>()
+                    : _context.BankMaster.AsNoTracking()
+                        .Where(b => b.TenantId == tenantId && bankIds.Contains(b.Id))
+                        .Select(b => new { b.Id, Name = b.NickName ?? b.BankName ?? ("Bank #" + b.Id) })
+                        .ToDictionary(b => b.Id, b => b.Name);
+
+                var refs = raw
+                    .Select(t => t.invoiceNo)
+                    .Where(r => !string.IsNullOrWhiteSpace(r))
+                    .Distinct()
+                    .ToList();
+                var jeByRef = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                if (refs.Count > 0)
+                {
+                    var jeRows = _context.JournalEntries.AsNoTracking()
+                        .Where(j => j.TenantId == tenantId && j.ReferenceNumber != null && refs.Contains(j.ReferenceNumber!))
+                        .Select(j => new { j.ReferenceNumber, j.Id })
+                        .ToList();
+                    foreach (var group in jeRows.GroupBy(j => j.ReferenceNumber!, StringComparer.OrdinalIgnoreCase))
+                    {
+                        jeByRef[group.Key] = group.First().Id;
+                    }
+                }
+
+                var rows = raw.Select(t =>
+                {
+                    var type = t.TransactionType ?? "";
+                    var amount = t.Amount ?? 0m;
+                    jeByRef.TryGetValue(t.invoiceNo ?? "", out var journalEntryId);
+                    return new
+                    {
+                        id = t.TransactionID,
+                        entryType = type,
+                        entryDate = t.TransactionDate.HasValue ? t.TransactionDate.Value.ToString("yyyy-MM-dd") : "",
+                        amount,
+                        description = t.Description ?? "",
+                        reference = t.invoiceNo ?? t.CheckNo ?? "",
+                        checkNo = t.CheckNo ?? "",
+                        bankId = t.BankId,
+                        bankName = t.BankId.HasValue && bankNames.ContainsKey(t.BankId.Value)
+                            ? bankNames[t.BankId.Value]
+                            : "",
+                        isReconciled = t.IsReconciled,
+                        locationId = t.locationId,
+                        paymentMethod = t.PaymentMethod ?? "",
+                        journalEntryId = journalEntryId > 0 ? (int?)journalEntryId : null
+                    };
+                }).ToList();
+
+                return Ok(new { result = rows });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in ListBankCashEntries: {ex}");
+                return StatusCode(500, new { error = ex.InnerException?.Message ?? ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Create a bank deposit or withdrawal with no customer/vendor order link.
+        /// Posts a balanced journal entry and a bank Transactions row for reconciliation.
+        /// </summary>
+        [HttpPost("CreateBankCashEntry")]
+        public IActionResult CreateBankCashEntry([FromBody] CreateBankCashEntryRequest request)
+        {
+            using var transaction = _context.Database.BeginTransaction();
+            try
+            {
+                if (request == null)
+                    return BadRequest(new { error = "Request body is required." });
+
+                AccountingGapSchemaService.EnsureAsync(_context).GetAwaiter().GetResult();
+                var tenantId = GetTenantId();
+
+                var entryType = (request.EntryType ?? "").Trim();
+                var isDeposit = entryType.Equals("Deposit", StringComparison.OrdinalIgnoreCase);
+                var isWithdrawal = entryType.Equals("Withdrawal", StringComparison.OrdinalIgnoreCase);
+                if (!isDeposit && !isWithdrawal)
+                    return BadRequest(new { error = "Entry type must be Deposit or Withdrawal." });
+
+                if (request.BankId <= 0)
+                    return BadRequest(new { error = "Bank account is required." });
+
+                if (request.OffsetAccountId <= 0)
+                    return BadRequest(new { error = "Offset GL account is required." });
+
+                var amount = Math.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
+                if (amount <= 0m)
+                    return BadRequest(new { error = "Amount must be greater than zero." });
+
+                var bank = _context.BankMaster.AsNoTracking()
+                    .FirstOrDefault(b => b.Id == request.BankId && b.TenantId == tenantId);
+                if (bank == null)
+                    return BadRequest(new { error = "Bank account not found." });
+
+                var bankAccountId = GlAccountResolutionService.ResolveBank(_context, tenantId, request.BankId);
+                if (!bankAccountId.HasValue)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Bank has no Chart of Accounts mapping. Set a GL account on the bank in Bank Master."
+                    });
+                }
+
+                if (!GlAccountResolutionService.IsActiveAccountForTenant(_context, tenantId, request.OffsetAccountId))
+                    return BadRequest(new { error = "Offset GL account is invalid or inactive." });
+
+                if (request.OffsetAccountId == bankAccountId.Value)
+                    return BadRequest(new { error = "Offset account cannot be the same as the bank GL account." });
+
+                var entryDate = (request.EntryDate ?? DateTime.Today).Date;
+                var periodKey = GlWorkflowService.PeriodKeyFromDate(entryDate);
+                if (GlWorkflowService.IsPeriodLocked(_context, tenantId, periodKey))
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Accounting period {periodKey} is closed. Open the period or choose another date."
+                    });
+                }
+
+                if (!TryResolveLocationId(request.LocationId, out var resolvedLoc, out var forbidLoc,
+                        fallback: bank.locationId > 0 ? bank.locationId : 1))
+                    return forbidLoc!;
+
+                var desc = string.IsNullOrWhiteSpace(request.Description)
+                    ? (isDeposit ? "Bank deposit" : "Bank withdrawal")
+                    : request.Description.Trim();
+                var userRef = string.IsNullOrWhiteSpace(request.Reference) ? null : request.Reference.Trim();
+                var postingRef = $"{(isDeposit ? "BANKDEP" : "BANKWTH")}-{entryDate:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+
+                var journalHeader = new JournalEntry
+                {
+                    EntryDate = entryDate,
+                    ReferenceNumber = postingRef,
+                    Description = desc,
+                    AccountingPeriod = periodKey,
+                    TenantId = tenantId,
+                    locationId = resolvedLoc,
+                    createdby = GetUserId(),
+                    createdDate = DateTime.UtcNow
+                };
+                _context.JournalEntries.Add(journalHeader);
+                _context.SaveChanges();
+
+                if (isDeposit)
+                {
+                    // Dr Bank / Cr Offset (income, liability clearance, etc.)
+                    _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                    {
+                        JournalEntryId = journalHeader.Id,
+                        AccountId = bankAccountId.Value,
+                        Amount = amount,
+                        Description = desc
+                    });
+                    _context.JournalEntryTo.Add(new JournalDetailsTo
+                    {
+                        JournalEntryId = journalHeader.Id,
+                        AccountId = request.OffsetAccountId,
+                        Amount = amount,
+                        Description = desc
+                    });
+                }
+                else
+                {
+                    // Dr Offset (expense, petty cash, etc.) / Cr Bank
+                    _context.JournalEntryFrom.Add(new JournalDetailsFrom
+                    {
+                        JournalEntryId = journalHeader.Id,
+                        AccountId = request.OffsetAccountId,
+                        Amount = amount,
+                        Description = desc
+                    });
+                    _context.JournalEntryTo.Add(new JournalDetailsTo
+                    {
+                        JournalEntryId = journalHeader.Id,
+                        AccountId = bankAccountId.Value,
+                        Amount = amount,
+                        Description = desc
+                    });
+                }
+
+                var txn = new Transactions
+                {
+                    TransactionType = isDeposit ? "Deposit" : "Withdrawal",
+                    PaymentMethod = string.IsNullOrWhiteSpace(request.PaymentMethod)
+                        ? (isDeposit ? "Deposit" : "Withdrawal")
+                        : request.PaymentMethod.Trim(),
+                    Amount = amount,
+                    TransactionDate = entryDate,
+                    AccountingPeriod = periodKey,
+                    Description = desc,
+                    CheckNo = userRef ?? "",
+                    invoiceNo = postingRef,
+                    TenantId = tenantId,
+                    locationId = resolvedLoc,
+                    BankId = request.BankId,
+                    approved = true,
+                    isCustomer = isDeposit ? 1 : 0,
+                    IsReconciled = false
+                };
+                _context.Transactions.Add(txn);
+
+                GlWorkflowService.AddAudit(
+                    _context,
+                    tenantId,
+                    isDeposit ? "BankDepositCreate" : "BankWithdrawalCreate",
+                    GetUserId(),
+                    journalHeader.Id,
+                    null,
+                    periodKey,
+                    postingRef);
+                _context.SaveChanges();
+                transaction.Commit();
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        transactionId = txn.TransactionID,
+                        journalEntryId = journalHeader.Id,
+                        referenceNumber = postingRef,
+                        entryType = txn.TransactionType,
+                        message = isDeposit
+                            ? "Deposit recorded and posted to GL."
+                            : "Withdrawal recorded and posted to GL."
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                transaction.Rollback();
+                Console.WriteLine($"Error in CreateBankCashEntry: {ex}");
+                return StatusCode(500, new
+                {
+                    error = ex.InnerException?.Message ?? ex.Message
+                });
+            }
+        }
+
         [HttpPost("ReconcileBankTransaction")]
         public IActionResult ReconcileBankTransaction([FromBody] ReconciliationRequest request)
         {
@@ -2524,6 +2841,22 @@ namespace CimmpleAPI.Controllers
     }
 
     // Request DTOs
+    public class CreateBankCashEntryRequest
+    {
+        /// <summary>Deposit or Withdrawal.</summary>
+        public string EntryType { get; set; }
+        public int BankId { get; set; }
+        /// <summary>Income / expense / petty cash (or other) offset account — not the bank GL.</summary>
+        public int OffsetAccountId { get; set; }
+        public decimal Amount { get; set; }
+        public DateTime? EntryDate { get; set; }
+        public string Description { get; set; }
+        /// <summary>Optional check # or external reference.</summary>
+        public string Reference { get; set; }
+        public string PaymentMethod { get; set; }
+        public int? LocationId { get; set; }
+    }
+
     public class ReconciliationRequest
     {
         public int TransactionId { get; set; }

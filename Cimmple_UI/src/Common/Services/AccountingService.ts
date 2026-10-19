@@ -720,6 +720,95 @@ export class AccountingService {
       { timeout: 300_000 }
     ).then((response) => response.data.result);
   };
+
+  public static ListBankCashEntries = async (params?: {
+    entryType?: string;
+    bankId?: number;
+    startDate?: string;
+    endDate?: string;
+    locationId?: number;
+  }): Promise<BankCashEntrySummary[] | null> => {
+    try {
+      const response = await Instense.get(`/Accounting/ListBankCashEntries`, {
+        params: {
+          entryType: params?.entryType || "All",
+          bankId: params?.bankId || undefined,
+          startDate: params?.startDate || undefined,
+          endDate: params?.endDate || undefined,
+          locationId: params?.locationId,
+        },
+      });
+      return (response.data.result as BankCashEntrySummary[]) || [];
+    } catch (error) {
+      console.error("Error listing bank cash entries:", error);
+      throw error;
+    }
+  };
+
+  public static CreateBankCashEntry = async (
+    body: CreateBankCashEntryRequest
+  ): Promise<CreateBankCashEntryResult | null> => {
+    try {
+      const response = await Instense.post(`/Accounting/CreateBankCashEntry`, {
+        EntryType: body.entryType,
+        BankId: body.bankId,
+        OffsetAccountId: body.offsetAccountId,
+        Amount: body.amount,
+        EntryDate: body.entryDate,
+        Description: body.description,
+        Reference: body.reference,
+        PaymentMethod: body.paymentMethod,
+        LocationId: body.locationId,
+      });
+      return response.data.result as CreateBankCashEntryResult;
+    } catch (error: any) {
+      console.error("Error creating bank cash entry:", error);
+      const data = error.response?.data;
+      const detail =
+        data?.error ||
+        data?.innerException ||
+        (typeof data === "string" ? data : null) ||
+        error.message ||
+        "Failed to create bank cash entry";
+      throw new Error(detail);
+    }
+  };
+}
+
+export interface BankCashEntrySummary {
+  id: number;
+  entryType: string;
+  entryDate: string;
+  amount: number;
+  description: string;
+  reference: string;
+  checkNo?: string;
+  bankId?: number | null;
+  bankName: string;
+  isReconciled: boolean;
+  locationId: number;
+  paymentMethod?: string;
+  journalEntryId?: number | null;
+}
+
+export interface CreateBankCashEntryRequest {
+  entryType: "Deposit" | "Withdrawal";
+  bankId: number;
+  offsetAccountId: number;
+  amount: number;
+  entryDate?: string;
+  description?: string;
+  reference?: string;
+  paymentMethod?: string;
+  locationId?: number;
+}
+
+export interface CreateBankCashEntryResult {
+  transactionId: number;
+  journalEntryId: number;
+  referenceNumber: string;
+  entryType: string;
+  message: string;
 }
 
 export {};
