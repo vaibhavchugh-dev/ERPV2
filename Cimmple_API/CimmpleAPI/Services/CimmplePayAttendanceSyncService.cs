@@ -156,14 +156,14 @@ namespace CimmpleAPI.Services
 
             var company = await _pay.Companies
                 .AsNoTracking()
-                .FirstOrDefaultAsync(
-                    c => c.ErpTenantId == tenantId && c.IntegrationMode == IntegrationModeLinkedToFlow,
-                    cancellationToken);
+                .Where(c => c.ErpTenantId == tenantId)
+                .OrderByDescending(c => c.IntegrationMode == IntegrationModeLinkedToFlow)
+                .FirstOrDefaultAsync(cancellationToken);
 
             if (company == null)
             {
-                _logger.LogDebug(
-                    "No LinkedToFlow CimmplePay company for tenant {TenantId}; punch stays in FaceAttendanceLog only",
+                _logger.LogInformation(
+                    "No CimmplePay company with ErpTenantId {TenantId}; punch stays in FaceAttendanceLog only",
                     tenantId);
                 return;
             }
