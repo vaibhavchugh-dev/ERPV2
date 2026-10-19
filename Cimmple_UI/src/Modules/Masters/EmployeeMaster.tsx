@@ -11,7 +11,10 @@ import EmployeeMasterSlideout from "./EmployeeMasterSlideout";
 import EmployeeMasterImportModal from "./EmployeeMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/employee";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "empCode", label: "Emp. Code", sortKey: "empCode", locked: true },
@@ -34,6 +37,8 @@ const EmployeeMasterComponent: React.FC = () => {
   const history = useHistory();
   const location = useLocation();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { canAdd, can } = usePagePermissions(PAGE_PATH);
+  const canImport = can("Import");
   const [employees, setEmployees] = useState<EmployeeMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -303,13 +308,15 @@ const EmployeeMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your employee database</p>
         </div>
         <div className="page-actions">
-          <button
-            className="btn-secondary"
-            onClick={() => setShowImport(true)}
-            type="button"
-          >
-            <span>Import</span>
-          </button>
+          {canImport && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowImport(true)}
+              type="button"
+            >
+              <span>Import</span>
+            </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -318,10 +325,12 @@ const EmployeeMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddEmployee}>
-            <span>+</span>
-            <span>Add Employee</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddEmployee}>
+              <span>+</span>
+              <span>Add Employee</span>
+            </button>
+          )}
         </div>
       </div>
 

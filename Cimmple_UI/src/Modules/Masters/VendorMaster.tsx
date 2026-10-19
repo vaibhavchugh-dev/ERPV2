@@ -10,7 +10,10 @@ import VendorMasterSlideout from "./VendorMasterSlideout";
 import VendorMasterImportModal from "./VendorMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/vendor";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "vendorcode", label: "Vendor Code", sortKey: "vendorcode", locked: true },
@@ -26,6 +29,8 @@ const COLUMN_PREFERENCE_KEY = "vendorMaster.hiddenColumns";
 const VendorMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
+  const { canAdd, can } = usePagePermissions(PAGE_PATH);
+  const canImport = can("Import");
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -237,13 +242,15 @@ const VendorMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your vendor database</p>
         </div>
         <div className="page-actions">
-          <button
-            className="btn-secondary"
-            onClick={() => setShowImport(true)}
-            type="button"
-          >
-            <span>Import</span>
-          </button>
+          {canImport && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowImport(true)}
+              type="button"
+            >
+              <span>Import</span>
+            </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -252,10 +259,12 @@ const VendorMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddVendor}>
-            <span>+</span>
-            <span>Add Vendor</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddVendor}>
+              <span>+</span>
+              <span>Add Vendor</span>
+            </button>
+          )}
         </div>
       </div>
 

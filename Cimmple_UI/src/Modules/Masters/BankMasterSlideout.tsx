@@ -12,8 +12,11 @@ import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlide
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import { maskAccountNumber } from "../../Common/Hooks/useCompanyBanks";
 import { LocationMaster } from "../../Common/Services/LocationService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/bank";
 
 interface BankMasterSlideoutProps {
   bankId: number;
@@ -31,6 +34,8 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
   defaultLocationId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = bankId === 0 ? canAdd : canEdit;
   const handleDismiss = () => onClose(false);
   const [formData, setFormData] = useState<BankMasterReq>({
     Id: 0,
@@ -1015,7 +1020,7 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
-            {bankId > 0 && (
+            {canDelete && bankId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1045,9 +1050,11 @@ const BankMasterSlideout: React.FC<BankMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : bankId > 0 ? "Update Bank" : "Add Bank"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : bankId > 0 ? "Update Bank" : "Add Bank"}
+              </button>
+            )}
           </div>
         </form>
 

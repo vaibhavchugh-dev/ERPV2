@@ -58,6 +58,8 @@ interface DetailData {
   glcode?: string;
   lineType?: string;
   rawMaterialId?: number;
+  /** Set when this line was converted onto a vendor PO — selection/edit should be disabled. */
+  convertedVendorOrderId?: number | null;
   attachments?: ComparisonAttachment[];
 }
 
@@ -210,12 +212,80 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       </div>
     );
   };
-  const loadComparisonData = async () => {
+  const isQuoteFullyConverted = (q: QuotationData): boolean => {
+    const statusLower = (q.status || "").toLowerCase().trim();
+    if (statusLower === "partially converted") return false;
+    return q.isConverted > 0 || statusLower === "converted";
+  };
+
+  const isDetailLineConverted = (d?: DetailData | null): boolean =>
+    !!(d?.convertedVendorOrderId && d.convertedVendorOrderId > 0);
+
+  /** Master RFQ line already on a PO via any vendor — disable further selection for that line. */
+  const isMasterLineCoveredByAnyVendor = (masterLine: DetailData): boolean =>
+    details.some((d) => {
+      if (!isDetailLineConverted(d)) return false;
+      if (d.itemNo > 0 && d.itemNo === masterLine.itemNo) return true;
+      const mPart = (masterLine.partNo || "").trim().toLowerCase();
+      const dPart = (d.partNo || "").trim().toLowerCase();
+      if (mPart && dPart && mPart === dPart) return true;
+      const mName = (masterLine.partName || "").trim().toLowerCase();
+      const dName = (d.partName || "").trim().toLowerCase();
+      return !!(mName && dName && mName === dName);
+    });
+
+  /** True when every master RFQ line is on a PO via any vendor (same or split). */
+  const areAllMasterLinesCovered = (
+    lineDetails: DetailData[],
+    masterOrderId: number
+  ): boolean => {
+    const masterLines = lineDetails
+      .filter((d) => d.orderID === masterOrderId)
+      .sort((a, b) => a.itemNo - b.itemNo);
+    if (masterLines.length === 0) return false;
+
+    return masterLines.every((masterLine) =>
+      lineDetails.some((d) => {
+        if (!isDetailLineConverted(d)) return false;
+        if (d.itemNo > 0 && d.itemNo === masterLine.itemNo) return true;
+        const mPart = (masterLine.partNo || "").trim().toLowerCase();
+        const dPart = (d.partNo || "").trim().toLowerCase();
+        if (mPart && dPart && mPart === dPart) return true;
+        const mName = (masterLine.partName || "").trim().toLowerCase();
+        const dName = (d.partName || "").trim().toLowerCase();
+        return !!(mName && dName && mName === dName);
+      })
+    );
+  };
+
+  /** Close Compare when all master lines are covered (listing will hide Compare). Stay open if only partial. */
+  const closeCompareIfConversionComplete = (
+    quotes: QuotationData[],
+    lineDetails: DetailData[]
+  ): boolean => {
+    const masterId =
+      quotes.find((q) => q.orderID === parentQuotationId)?.orderID ||
+      quotes.find((q) => !q.parentQuotationID || q.parentQuotationID === q.orderID)?.orderID ||
+      parentQuotationId;
+    const covered =
+      areAllMasterLinesCovered(lineDetails, masterId) ||
+      quotes.some(isQuoteFullyConverted);
+    if (!covered) return false;
+    listNeedsRefreshRef.current = true;
+    onClose(true);
+    return true;
+  };
+
+  const loadComparisonData = async (): Promise<{
+    quotes: QuotationData[];
+    details: DetailData[];
+  }> => {
     setLoading(true);
     try {
       const result = await QuotationService.GetVendorQuotationComparison(parentQuotationId);
       if (result) {
-        setQuotations(result.quotations || []);
+        const loadedQuotes = (result.quotations || []) as QuotationData[];
+        setQuotations(loadedQuotes);
         
         // Map details and ensure attachments are properly formatted
         const mappedDetails: DetailData[] = (result.details || []).map((d: any) => {
@@ -247,11 +317,38 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             glcode: d.glcode || d.Glcode || "",
             lineType: d.lineType || d.LineType || "",
             rawMaterialId: d.rawMaterialId || d.RawMaterialId,
+            convertedVendorOrderId:
+              d.convertedVendorOrderId || d.ConvertedVendorOrderId || null,
             attachments: attachments && attachments.length > 0 ? attachments : undefined
           };
         });
         
         setDetails(mappedDetails);
+        // Drop selections for lines that are already on a PO
+        setLineItemSelections((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Map(prev);
+          for (const [key, qid] of Array.from(next.entries())) {
+            const detail = mappedDetails.find(
+              (d) =>
+                d.orderID === qid &&
+                key === `${d.itemNo}-${d.partNo || ""}`
+            );
+            // Also match by master key: key is master itemNo-partNo; vendor detail may differ
+            const converted = mappedDetails.some(
+              (d) =>
+                d.orderID === qid &&
+                d.convertedVendorOrderId &&
+                d.convertedVendorOrderId > 0 &&
+                (key === `${d.itemNo}-${d.partNo || ""}` ||
+                  key.startsWith(`${d.itemNo}-`))
+            );
+            if (converted || (detail?.convertedVendorOrderId && detail.convertedVendorOrderId > 0)) {
+              next.delete(key);
+            }
+          }
+          return next;
+        });
         
         // Auto-switch to compact view if 4+ vendors for better UX
         const quotationCount = result.quotations?.length || 0;
@@ -279,10 +376,13 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             return acc;
           }, {}) || {}
         );
+        return { quotes: loadedQuotes, details: mappedDetails };
       }
+      return { quotes: [], details: [] };
     } catch (error: any) {
       console.error("Error loading comparison data:", error);
       toast.error(`Error loading comparison: ${error.message || "Unknown error"}`);
+      return { quotes: [], details: [] };
     } finally {
       setLoading(false);
     }
@@ -306,14 +406,48 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     return `VQ#${displayNumber}`;
   };
 
+  /** Status from this vendor's own line stamps only (ignore other vendors / master rollup). */
+  const getVendorOwnStatus = (q: QuotationData): string => {
+    const own = details.filter((d) => d.orderID === q.orderID);
+    const convertible = own.filter(
+      (d) =>
+        (d.partName || "").trim().length > 0 ||
+        (d.partNo || "").trim().length > 0 ||
+        (d.qtyOrdered || 0) > 0
+    );
+    const convertedCount = convertible.filter(isDetailLineConverted).length;
+    if (convertible.length > 0 && convertedCount > 0) {
+      if (convertedCount >= convertible.length) return "Converted";
+      return "Partially Converted";
+    }
+    const raw = (q.status || "").trim();
+    const lower = raw.toLowerCase();
+    if (lower.includes("convert")) {
+      const isChild =
+        !!q.parentQuotationID &&
+        q.parentQuotationID > 0 &&
+        q.parentQuotationID !== q.orderID;
+      if (isChild) return "Responded";
+      if (q.isSent) return "Sent";
+      return "Draft";
+    }
+    return raw || "Draft";
+  };
+
   const getStatusBadge = (status: string) => {
     if (!status || status.trim() === "") {
       return <span className="badge badge-secondary">-</span>;
     }
     const statusLower = status.toLowerCase().trim();
 
-    if (statusLower === "converted" || statusLower.includes("convert")) {
+    if (statusLower === "partially converted") {
+      return <span className="badge badge-info">Partially Converted</span>;
+    }
+    if (statusLower === "converted") {
       return <span className="badge badge-primary">Converted</span>;
+    }
+    if (statusLower.includes("convert")) {
+      return <span className="badge badge-primary">{status}</span>;
     } else if (statusLower === "draft") {
       return <span className="badge badge-warning">Draft</span>;
     } else if (statusLower === "sent" || statusLower === "active") {
@@ -490,13 +624,15 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
     });
   };
 
-  const handleCloseSlideout = (refreshList = false) => {
+  const handleCloseSlideout = async (refreshList = false) => {
     setShowSlideout(false);
     setSelectedQuotationId(null);
     setIsViewingQuotation(false); // Show comparison overlay again
     if (refreshList) {
       listNeedsRefreshRef.current = true;
-      loadComparisonData();
+      const { quotes, details: loadedDetails } = await loadComparisonData();
+      // Fully converted from slideout → close Compare; partial convert stays open.
+      closeCompareIfConversionComplete(quotes, loadedDetails);
     }
   };
 
@@ -511,8 +647,11 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       return;
     }
 
-    if (quotation.isConverted > 0 || quotation.status === "Converted") {
-      toast.warning("This quotation has already been converted to an order");
+    if (
+      quotation.isConverted > 0 ||
+      quotation.status === "Converted"
+    ) {
+      toast.warning("This quotation is fully converted. Open the existing vendor order(s) instead.");
       return;
     }
 
@@ -623,9 +762,10 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
       
       if (result && result.id) {
         toast.success(`Successfully converted quotation to order (Order #${result.poNumber || result.PONumber || result.id})`);
-        // Refresh data to show updated status
         listNeedsRefreshRef.current = true;
-        loadComparisonData();
+        const { quotes, details: loadedDetails } = await loadComparisonData();
+        // All master lines covered (any vendor mix) → close Compare. Partial → stay open.
+        closeCompareIfConversionComplete(quotes, loadedDetails);
       } else {
         toast.error("Failed to convert quotation to order");
       }
@@ -658,7 +798,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             .sort((a, b) => a.itemNo - b.itemNo);
           const matchedDetail = matchVendorDetailToMaster(lineItem, vendorDetails, lineIndex);
           
-          if (matchedDetail) {
+          if (matchedDetail && !isDetailLineConverted(matchedDetail)) {
             if (!ordersByVendor.has(selectedQuotationId)) {
               ordersByVendor.set(selectedQuotationId, []);
             }
@@ -752,7 +892,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
           ),
           QuotationId: quotation.orderID, // Link to the actual converted quotation (portal/child row)
           QuotationNo: masterQuotationNumber, // Always use master quotation number for reference
-          Details: items.map((item, idx) => {
+          Details: items.map((item) => {
             const rfqJobNumber =
               item.lineItem.JobNumber || item.detail.JobNumber || "";
             let jobId = 0;
@@ -765,7 +905,8 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
             return {
               ID: 0, // New detail
-              ItemNo: idx + 1,
+              // Keep VQ ItemNo so SaveVendorOrder stamps the correct quotation line.
+              ItemNo: item.detail.itemNo || item.lineItem.itemNo || 0,
               JobId: jobId,
               PartName: item.detail.partName,
               PartNo: item.detail.partNo,
@@ -808,11 +949,10 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
       if (createdOrders.length > 0) {
         toast.success(`Successfully created ${createdOrders.length} order(s)`);
-        // Clear selections
         setLineItemSelections(new Map());
-        // Refresh data
         listNeedsRefreshRef.current = true;
-        loadComparisonData();
+        const { quotes, details: loadedDetails } = await loadComparisonData();
+        closeCompareIfConversionComplete(quotes, loadedDetails);
       } else {
         toast.error("Failed to create orders");
       }
@@ -962,7 +1102,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                             <span style={{ color: "#9ca3af" }}>-</span>
                           )}
                         </td>
-                        <td>{getStatusBadge(quotation.status)}</td>
+                        <td>{getStatusBadge(getVendorOwnStatus(quotation))}</td>
                         <td>
                           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                             <button
@@ -973,7 +1113,10 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                             >
                               View
                             </button>
-                            {quotation.isConverted === 0 && quotation.status !== "Converted" && (
+                            {(() => {
+                              const ownStatus = getVendorOwnStatus(quotation);
+                              if (ownStatus === "Converted") return null;
+                              return (
                               <button
                                 type="button"
                                 className="btn-submit"
@@ -992,11 +1135,20 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                   cursor: convertingQuotationId === quotation.orderID ? "not-allowed" : "pointer",
                                   fontWeight: 500,
                                 }}
-                                title="Convert to Order"
+                                title={
+                                  ownStatus === "Partially Converted"
+                                    ? "Convert remaining lines to order"
+                                    : "Convert to Order"
+                                }
                               >
-                                {convertingQuotationId === quotation.orderID ? "Converting..." : "Convert to Order"}
+                                {convertingQuotationId === quotation.orderID
+                                  ? "Converting..."
+                                  : ownStatus === "Partially Converted"
+                                    ? "Convert remaining"
+                                    : "Convert to Order"}
                               </button>
-                            )}
+                              );
+                            })()}
                           </div>
                         </td>
                       </tr>
@@ -1079,14 +1231,21 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                   : 0;
 
                                 const isSelected = lineItemSelections.get(lineItemKey) === quotation.orderID;
+                                const lineConverted =
+                                  isDetailLineConverted(quotationDetail) ||
+                                  isMasterLineCoveredByAnyVendor(lineItem);
 
                                 return (
                                   <tr
                                     key={quotation.orderID}
                                     style={{
-                                      backgroundColor: isSelected ? "#dbeafe" : isBest ? "#d1fae5" : "transparent",
+                                      backgroundColor: isSelected
+                                          ? "#dbeafe"
+                                          : isBest
+                                            ? "#d1fae5"
+                                            : "transparent",
                                       borderBottom: "1px solid #e5e7eb",
-                                      transition: "all 0.15s"
+                                      transition: "all 0.15s",
                                     }}
                                   >
                                     {/* Select Column */}
@@ -1096,9 +1255,9 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                         name={`lineItem-${lineItemKey}`}
                                         checked={isSelected}
                                         onChange={() => handleLineItemVendorSelect(lineItemKey, quotation.orderID)}
-                                        disabled={!quotationDetail || quotation.isConverted > 0}
+                                        disabled={!quotationDetail || lineConverted}
                                         style={{ 
-                                          cursor: (!quotationDetail || quotation.isConverted > 0) ? "not-allowed" : "pointer",
+                                          cursor: (!quotationDetail || lineConverted) ? "not-allowed" : "pointer",
                                           width: "18px",
                                           height: "18px"
                                         }}
@@ -1260,6 +1419,9 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
                               const lineItemKey = `${lineItem.itemNo}-${lineItem.partNo}`;
                               const isSelected = lineItemSelections.get(lineItemKey) === quotation.orderID;
+                              const lineConverted =
+                                isDetailLineConverted(quotationDetail) ||
+                                isMasterLineCoveredByAnyVendor(lineItem);
 
                               return (
                                 <React.Fragment key={quotation.orderID}>
@@ -1269,8 +1431,9 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                       name={`lineItem-${lineItemKey}`}
                                       checked={isSelected}
                                       onChange={() => handleLineItemVendorSelect(lineItemKey, quotation.orderID)}
-                                      disabled={!quotationDetail || quotation.isConverted > 0}
-                                      style={{ cursor: (!quotationDetail || quotation.isConverted > 0) ? "not-allowed" : "pointer" }}
+                                      disabled={!quotationDetail || lineConverted}
+                                      style={{ cursor: (!quotationDetail || lineConverted) ? "not-allowed" : "pointer" }}
+                                      title={lineConverted ? "Already converted to a vendor order" : undefined}
                                     />
                                   </td>
                                   <td>{quotationDetail ? `${quotationDetail.qtyOrdered} ${quotationDetail.unit}` : "-"}</td>
@@ -1377,6 +1540,9 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
 
                               const lineItemKey = `${lineItem.itemNo}-${lineItem.partNo}`;
                               const isSelected = lineItemSelections.get(lineItemKey) === quotation.orderID;
+                              const lineConverted =
+                                isDetailLineConverted(quotationDetail) ||
+                                isMasterLineCoveredByAnyVendor(lineItem);
 
                               return (
                                 <td
@@ -1384,7 +1550,11 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                   style={{
                                     padding: "0.75rem",
                                     verticalAlign: "top",
-                                    backgroundColor: isSelected ? "#dbeafe" : isBest ? "#d1fae5" : "transparent",
+                                    backgroundColor: isSelected
+                                        ? "#dbeafe"
+                                        : isBest
+                                          ? "#d1fae5"
+                                          : "transparent",
                                   }}
                                 >
                                   {quotationDetail ? (
@@ -1395,8 +1565,9 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                                           name={`lineItem-${lineItemKey}`}
                                           checked={isSelected}
                                           onChange={() => handleLineItemVendorSelect(lineItemKey, quotation.orderID)}
-                                          disabled={quotation.isConverted > 0}
-                                          style={{ cursor: quotation.isConverted > 0 ? "not-allowed" : "pointer" }}
+                                          disabled={lineConverted}
+                                          style={{ cursor: lineConverted ? "not-allowed" : "pointer" }}
+                                          title={lineConverted ? "Already converted to a vendor order" : undefined}
                                         />
                                       </div>
                                       <div style={{ color: "#6b7280", fontSize: "0.75rem" }}>

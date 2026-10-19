@@ -2826,15 +2826,18 @@ namespace CimmpleAPI.Controllers
                     var sourceVq = await _context.VendorQuotations
                         .AsNoTracking()
                         .FirstOrDefaultAsync(q => q.OrderID == order.QuotationId.Value && q.Tenantid == order.Tenantid);
-                    if (sourceVq != null &&
-                        (sourceVq.isconverted == 1 ||
-                         (sourceVq.convertedOrderId.HasValue && sourceVq.convertedOrderId.Value > 0) ||
-                         string.Equals(sourceVq.Status, "Converted", StringComparison.OrdinalIgnoreCase)))
+                    if (sourceVq != null)
                     {
-                        return BadRequest(new
+                        await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+                        var fullyConverted = await VendorQuotationConversionService.IsQuotationFullyConvertedAsync(
+                            _context, order.Tenantid, sourceVq.OrderID);
+                        if (fullyConverted)
                         {
-                            error = $"Vendor quotation VQ#{sourceVq.PONumber} is already converted. Open the existing vendor order instead of converting again."
-                        });
+                            return BadRequest(new
+                            {
+                                error = $"Vendor quotation VQ#{sourceVq.PONumber} is fully converted. Open the existing vendor order(s) instead of converting again."
+                            });
+                        }
                     }
                 }
 
@@ -3288,80 +3291,27 @@ namespace CimmpleAPI.Controllers
                             {
                                 Console.WriteLine($"SaveVendorOrder: Found quotation {quotation.OrderID}, current status: '{quotation.Status}', current convertedOrderId: {quotation.convertedOrderId}");
                                 
-                                // CRITICAL: Ensure we're using PONumber, NOT OrderID
                                 if (poNumberToStore <= 0)
                                 {
                                     Console.WriteLine($"SaveVendorOrder: ERROR - PONumber is {poNumberToStore}, cannot use this value!");
                                     Console.WriteLine($"SaveVendorOrder: OrderID = {reloadedOrder.OrderID}, PONumber = {reloadedOrder.PONumber}");
-                                    // Don't update if PONumber is invalid
-                                }
-                                else if (poNumberToStore == reloadedOrder.OrderID)
-                                {
-                                    Console.WriteLine($"SaveVendorOrder: ERROR - PONumber equals OrderID ({poNumberToStore}), this should not happen!");
-                                    Console.WriteLine($"SaveVendorOrder: This indicates PONumber was not set correctly during order creation.");
                                 }
                                 else
                                 {
-                                    Console.WriteLine($"SaveVendorOrder: Setting convertedOrderId to PONumber {poNumberToStore} (NOT OrderID {reloadedOrder.OrderID})");
-                                    
-                                    quotation.Status = "Converted";
-                                    quotation.convertedOrderId = poNumberToStore; // Store PONumber instead of OrderID for display consistency
-                                    quotation.isconverted = 1;
-                                    
-                                    // Force EF to update this entity
-                                    _context.VendorQuotations.Update(quotation);
+                                    await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
 
-                                    // Roll conversion up to master RFQ so listing Order # populates
-                                    if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
-                                    {
-                                        var masterQuotation = await _context.VendorQuotations
-                                            .FirstOrDefaultAsync(q => q.OrderID == quotation.ParentQuotationID.Value && q.Tenantid == order.Tenantid);
-                                        if (masterQuotation != null &&
-                                            (!masterQuotation.convertedOrderId.HasValue || masterQuotation.convertedOrderId.Value <= 0))
-                                        {
-                                            masterQuotation.convertedOrderId = poNumberToStore;
-                                            masterQuotation.isconverted = 1;
-                                            _context.VendorQuotations.Update(masterQuotation);
-                                        }
-                                    }
+                                    // Stamp VQ lines on this PO (ItemNo, with PartNo/PartName fallback).
+                                    await VendorQuotationConversionService.StampLinesFromVendorOrderAsync(
+                                        _context,
+                                        order.Tenantid,
+                                        quotation.OrderID,
+                                        reloadedOrder.OrderID);
+
+                                    await VendorQuotationConversionService.RecalculateQuotationAndMasterAsync(
+                                        _context, quotation);
 
                                     await _context.SaveChangesAsync();
-                                    
-                                    Console.WriteLine($"SaveVendorOrder: Successfully updated quotation {quotation.OrderID} status to 'Converted' with order PONumber {poNumberToStore}");
-
-                                    // Verify the update immediately
-                                    var verifyQuotation = await _context.VendorQuotations
-                                        .AsNoTracking()
-                                        .FirstOrDefaultAsync(q => q.OrderID == order.QuotationId.Value);
-                                    Console.WriteLine($"SaveVendorOrder: Verification - quotation status: '{verifyQuotation?.Status}', convertedOrderId: {verifyQuotation?.convertedOrderId}");
-                                    
-                                    if (verifyQuotation?.convertedOrderId != poNumberToStore)
-                                    {
-                                        Console.WriteLine($"SaveVendorOrder: ERROR - Verification failed! Expected convertedOrderId: {poNumberToStore}, but got: {verifyQuotation?.convertedOrderId}");
-                                        Console.WriteLine($"SaveVendorOrder: This means the value was not saved correctly or was overwritten!");
-                                        
-                                        // Try to fix it one more time using direct SQL to bypass any EF tracking issues
-                                        try
-                                        {
-                                            var sql = "UPDATE CimmpleFlow.VendorQuotations SET convertedOrderId = {0} WHERE OrderID = {1}";
-                                            var rowsAffected = await _context.Database.ExecuteSqlRawAsync(sql, poNumberToStore, order.QuotationId.Value);
-                                            Console.WriteLine($"SaveVendorOrder: Direct SQL update affected {rowsAffected} row(s)");
-                                            
-                                            // Verify again
-                                            var reVerify = await _context.VendorQuotations
-                                                .AsNoTracking()
-                                                .FirstOrDefaultAsync(q => q.OrderID == order.QuotationId.Value);
-                                            Console.WriteLine($"SaveVendorOrder: After SQL fix - convertedOrderId: {reVerify?.convertedOrderId}");
-                                        }
-                                        catch (Exception sqlEx)
-                                        {
-                                            Console.WriteLine($"SaveVendorOrder: SQL fix failed: {sqlEx.Message}");
-                                        }
-                                    }
-                                    else
-                                    {
-                                        Console.WriteLine($"SaveVendorOrder: ✓ Verification passed - convertedOrderId correctly set to {poNumberToStore}");
-                                    }
+                                    Console.WriteLine($"SaveVendorOrder: Quotation {quotation.OrderID} conversion recalculated → status '{quotation.Status}', convertedOrderId={quotation.convertedOrderId}, isconverted={quotation.isconverted}");
                                 }
                             }
                             else
@@ -4106,28 +4056,58 @@ namespace CimmpleAPI.Controllers
 
         private async Task RevertVendorQuotationsForDeletedOrderAsync(VendorOrder order, int tenantId)
         {
-            var linkedQuotations = await GetVendorQuotationsLinkedToOrderAsync(order, tenantId);
-            foreach (var quotation in linkedQuotations)
-            {
-                var remainingOrder = await GetRemainingConvertedOrderAsync(quotation, order.OrderID, tenantId);
-                if (remainingOrder != null)
-                {
-                    // Keep Converted but retarget display link to a still-existing order
-                    quotation.isconverted = 1;
-                    quotation.Status = "Converted";
-                    quotation.convertedOrderId = remainingOrder.PONumber > 0
-                        ? remainingOrder.PONumber
-                        : remainingOrder.OrderID;
-                    continue;
-                }
+            await DiscountTypeSchemaService.EnsureColumnsAsync(_context);
+            var clearedQuotationIds = await VendorQuotationConversionService.ClearLinesForOrderAsync(
+                _context, tenantId, order.OrderID);
 
-                quotation.convertedOrderId = null;
-                var wasConverted = quotation.isconverted == 1
-                    || (quotation.Status ?? "").IndexOf("convert", StringComparison.OrdinalIgnoreCase) >= 0;
-                quotation.isconverted = 0;
-                if (wasConverted)
+            var linkedQuotations = await GetVendorQuotationsLinkedToOrderAsync(order, tenantId);
+            var linkedIds = linkedQuotations.Select(q => q.OrderID).ToHashSet();
+
+            var extraFromHeader = await _context.VendorQuotations
+                .Where(q => q.Tenantid == tenantId &&
+                            q.convertedOrderId.HasValue &&
+                            (q.convertedOrderId.Value == order.PONumber || q.convertedOrderId.Value == order.OrderID))
+                .ToListAsync();
+            foreach (var q in extraFromHeader)
+            {
+                if (linkedIds.Add(q.OrderID))
+                    linkedQuotations.Add(q);
+            }
+
+            foreach (var qid in clearedQuotationIds)
+            {
+                if (!linkedIds.Add(qid)) continue;
+                var q = await _context.VendorQuotations
+                    .FirstOrDefaultAsync(x => x.OrderID == qid && x.Tenantid == tenantId);
+                if (q != null)
+                    linkedQuotations.Add(q);
+            }
+
+            if (order.QuotationId.HasValue && order.QuotationId.Value > 0 && linkedIds.Add(order.QuotationId.Value))
+            {
+                var byQuotationId = await _context.VendorQuotations
+                    .FirstOrDefaultAsync(q => q.OrderID == order.QuotationId.Value && q.Tenantid == tenantId);
+                if (byQuotationId != null)
+                    linkedQuotations.Add(byQuotationId);
+            }
+
+            var excludeOrderId = order.OrderID;
+            var mastersTouched = new HashSet<int>();
+            foreach (var quotation in linkedQuotations.GroupBy(q => q.OrderID).Select(g => g.First()))
+            {
+                await VendorQuotationConversionService.RecalculateQuotationAsync(
+                    _context, quotation, excludeOrderId);
+                mastersTouched.Add(VendorQuotationConversionService.GetMasterId(quotation));
+            }
+
+            foreach (var masterId in mastersTouched)
+            {
+                var master = await _context.VendorQuotations
+                    .FirstOrDefaultAsync(q => q.OrderID == masterId && q.Tenantid == tenantId);
+                if (master != null)
                 {
-                    quotation.Status = ResolveVendorQuotationStatusAfterUnconvert(quotation);
+                    await VendorQuotationConversionService.RecalculateMasterRollupAsync(
+                        _context, master, excludeOrderId);
                 }
             }
         }

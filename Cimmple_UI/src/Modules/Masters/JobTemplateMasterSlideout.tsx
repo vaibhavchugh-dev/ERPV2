@@ -35,7 +35,10 @@ import DeletionImpactDialog, {
 } from "../../Common/Components/DeletionImpactDialog";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { InventoryService, RawMaterial } from "../../Common/Services/InventoryService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./JobTemplateMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/jobtemplate";
 
 interface JobTemplateMasterSlideoutProps {
   jobTemplateId: number;
@@ -134,8 +137,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   jobTemplateId: initialTemplateId,
   onClose: closeSlideout,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
   // A newly created template stays open (to add attachments), so the id can change after mount.
   const [jobTemplateId, setJobTemplateId] = useState(initialTemplateId);
+  const canSave = jobTemplateId === 0 ? canAdd : canEdit;
   const [listChanged, setListChanged] = useState(false);
   const onClose = (refreshList?: boolean) => closeSlideout(refreshList || listChanged);
   const [formData, setFormData] = useState<JobTemplateReq>(emptyForm());
@@ -2088,7 +2093,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
           </div>
 
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            {jobTemplateId > 0 && (
+            {canAdd && jobTemplateId > 0 && (
               <button
                 type="button"
                 className="btn-cancel"
@@ -2098,7 +2103,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                 Clone
               </button>
             )}
-            {jobTemplateId > 0 && !formData.IsSystem && (
+            {canDelete && jobTemplateId > 0 && !formData.IsSystem && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -2135,9 +2140,11 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={saving}>
-              {saving ? "Saving..." : jobTemplateId > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={saving}>
+                {saving ? "Saving..." : jobTemplateId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

@@ -8,7 +8,10 @@ import { COUNTRIES, US_STATES, Icons } from "../../Common/Components/MasterSlide
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import { validateEmail, validatePhone, validateZipCode, validateCardNumber, validateExpiryDate } from "../../Common/Utils/validation";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/creditcard";
 
 interface CreditCardMasterSlideoutProps {
   creditCardId: number;
@@ -22,6 +25,8 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
   creditCardId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = creditCardId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<CreditCardMasterReq>({
     Id: 0,
     CardNumber: "",
@@ -879,7 +884,7 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
           </div>
 
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            {creditCardId > 0 && (
+            {canDelete && creditCardId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -909,9 +914,11 @@ const CreditCardMasterSlideout: React.FC<CreditCardMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : creditCardId > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : creditCardId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

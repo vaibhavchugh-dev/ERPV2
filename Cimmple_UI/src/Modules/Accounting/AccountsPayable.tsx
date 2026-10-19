@@ -4,7 +4,6 @@ import { faCheckCircle, faTimesCircle, faDollarSign, faBuilding, faCalendar, faE
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { VendorInvoiceService, VendorInvoiceSummary } from "../../Common/Services/VendorInvoiceService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
-import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import VendorInvoiceDetailModal from "../Purchasing/VendorInvoiceDetailModal";
 import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import CreditCardAccountSelect from "../../Common/Components/CreditCardAccountSelect";
@@ -14,6 +13,13 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
+import {
+  matchesListDateRange,
+  STANDARD_LIST_DATE_RANGE_PRESETS,
+} from "../../Common/Utils/listDateRangeFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+
+const PAGE_PATH = "/accounts/payable";
 
 interface APFilterOptions {
   status: string;
@@ -249,6 +255,10 @@ const getInvoiceSortValue = (invoice: VendorInvoiceSummary, key: string): unknow
 const AccountsPayable: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { can } = usePagePermissions(PAGE_PATH);
+  const canApprove = can("Approve");
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<APFilterOptions>({
@@ -267,43 +277,6 @@ const AccountsPayable: React.FC = () => {
   useEffect(() => {
     loadInvoices();
   }, [filters, locationIdParam]);
-
-  const invoiceMatchesDateRange = (dateStr: string, range: string) => {
-    if (!dateStr || !range || range === "All" || range === "All Dates") return true;
-    const invDate = parseDateOnlyLocal(dateStr);
-    if (!invDate) return true;
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    switch (range) {
-      case "This Week":
-      case "Last 7 Days": {
-        const sevenDaysAgo = new Date(today);
-        sevenDaysAgo.setDate(today.getDate() - 7);
-        return invDate >= sevenDaysAgo;
-      }
-      case "Last 30 Days": {
-        const thirtyDaysAgo = new Date(today);
-        thirtyDaysAgo.setDate(today.getDate() - 30);
-        return invDate >= thirtyDaysAgo;
-      }
-      case "Last 90 Days": {
-        const ninetyDaysAgo = new Date(today);
-        ninetyDaysAgo.setDate(today.getDate() - 90);
-        return invDate >= ninetyDaysAgo;
-      }
-      case "This Month": {
-        return invDate.getFullYear() === now.getFullYear() && invDate.getMonth() === now.getMonth();
-      }
-      case "Last Month": {
-        const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        return invDate.getFullYear() === last.getFullYear() && invDate.getMonth() === last.getMonth();
-      }
-      default:
-        return true;
-    }
-  };
 
   useEffect(() => {
     setSelectedIds((prev) =>
@@ -342,7 +315,7 @@ const AccountsPayable: React.FC = () => {
 
         if (filters.dateRange && filters.dateRange !== "All") {
           filteredInvoices = filteredInvoices.filter((invoice) =>
-            invoiceMatchesDateRange(invoice.invoiceDate, filters.dateRange)
+            matchesListDateRange(invoice.invoiceDate, filters.dateRange)
           );
         }
 
@@ -585,6 +558,7 @@ const AccountsPayable: React.FC = () => {
             </p>
           </div>
           <div style={{ display: "flex", gap: "1rem" }}>
+            {canApprove && (
             <button
               onClick={handleBulkApprove}
               disabled={bulkPaying}
@@ -607,6 +581,8 @@ const AccountsPayable: React.FC = () => {
               Bulk Approve
               {selectedPending.length > 0 ? ` (${selectedPending.length})` : ""}
             </button>
+            )}
+            {canPay && (
             <button
               onClick={handleBulkPayApproved}
               disabled={bulkPaying || approvedPayable.length === 0}
@@ -629,6 +605,7 @@ const AccountsPayable: React.FC = () => {
               Bulk Pay Approved
               {selectedApproved.length > 0 ? ` (${selectedApproved.length})` : ""}
             </button>
+            )}
           </div>
         </div>
 
@@ -705,7 +682,7 @@ const AccountsPayable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
             className="filter-select"
           >
-            <option value="All">All Status</option>
+            <option value="All">All Statuses</option>
             <option value="Pending Approval">Pending Approval</option>
             <option value="Approved">Approved</option>
             <option value="Partially Paid">Partially Paid</option>
@@ -742,11 +719,11 @@ const AccountsPayable: React.FC = () => {
             onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
             className="filter-select"
           >
-            <option value="All">All Dates</option>
-            <option value="This Week">This Week</option>
-            <option value="This Month">This Month</option>
-            <option value="Last 30 Days">Last 30 Days</option>
-            <option value="Last 90 Days">Last 90 Days</option>
+            {STANDARD_LIST_DATE_RANGE_PRESETS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
 
           <select
@@ -891,6 +868,7 @@ const AccountsPayable: React.FC = () => {
 
                         {isPendingApproval(invoice) && (
                           <>
+                            {canApprove && (
                             <button
                               onClick={() => handleApproveInvoice(invoice)}
                               style={{
@@ -906,6 +884,8 @@ const AccountsPayable: React.FC = () => {
                             >
                               <FontAwesomeIcon icon={faCheckCircle} />
                             </button>
+                            )}
+                            {canVoid && (
                             <button
                               onClick={() => handleRejectInvoice(invoice)}
                               style={{
@@ -921,10 +901,11 @@ const AccountsPayable: React.FC = () => {
                             >
                               <FontAwesomeIcon icon={faTimesCircle} />
                             </button>
+                            )}
                           </>
                         )}
 
-                        {isApprovedForPay(invoice) && (
+                        {canPay && isApprovedForPay(invoice) && (
                           <button
                             onClick={() => handlePayInvoice(invoice)}
                             style={{
@@ -964,6 +945,7 @@ const AccountsPayable: React.FC = () => {
         initialShowPayment={openPaymentOnLoad}
         onPaymentComplete={loadInvoices}
         onInvoiceDeleted={loadInvoices}
+        permissionPath={PAGE_PATH}
       />
 
       {showBulkPayment && bulkPayTargets.length > 1 && (

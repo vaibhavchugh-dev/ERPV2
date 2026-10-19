@@ -20,10 +20,13 @@ export interface RawMaterialComboboxProps {
   suggestedUnit?: string;
   suggestedUnitCost?: number;
   vendorId?: number;
+  /** When false, list stays empty until a vendor is chosen (VQ/VO). */
+  vendorSelected?: boolean;
 }
 
 /**
- * Part No combobox backed by Raw Material Master (for vendor PO RawMaterial lines).
+ * Part No combobox backed by Raw Material Master (for vendor PO/VQ RawMaterial lines).
+ * When vendorSelected, lists materials for that default vendor plus unassigned.
  */
 const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
   value,
@@ -38,6 +41,7 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
   suggestedUnit,
   suggestedUnitCost,
   vendorId,
+  vendorSelected = false,
 }) => {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{
@@ -50,7 +54,10 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const loadedRef = useRef(false);
+  const loadedForVendorRef = useRef<number | null>(null);
+
+  const vendorReady =
+    vendorSelected && !!vendorId && vendorId > 0;
 
   const updatePosition = () => {
     const input = inputRef.current;
@@ -63,26 +70,44 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
     });
   };
 
-  const loadMaterials = async () => {
-    if (loadedRef.current) return;
+  const loadMaterials = async (force = false) => {
+    if (!vendorReady || !vendorId) {
+      setMaterials([]);
+      loadedForVendorRef.current = null;
+      return;
+    }
+    if (!force && loadedForVendorRef.current === vendorId) return;
     setLoading(true);
     try {
       const result = await InventoryService.GetRawMaterials({
         includeInactive: true,
+        vendorId,
+        includeId:
+          rawMaterialId && rawMaterialId > 0 ? rawMaterialId : undefined,
       });
       setMaterials(Array.isArray(result) ? result : []);
-      loadedRef.current = true;
+      loadedForVendorRef.current = vendorId;
     } catch (err) {
       console.error("Error loading raw materials:", err);
       setMaterials([]);
+      loadedForVendorRef.current = null;
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    loadedForVendorRef.current = null;
+    setMaterials([]);
+  }, [vendorId, vendorSelected]);
+
+  useEffect(() => {
     if (!open) return;
-    loadMaterials();
+    if (vendorReady) {
+      loadMaterials();
+    } else {
+      setMaterials([]);
+    }
     updatePosition();
     const onScrollOrResize = () => updatePosition();
     window.addEventListener("resize", onScrollOrResize);
@@ -96,10 +121,12 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
       scrollEl?.removeEventListener("scroll", onScrollOrResize, true);
       window.removeEventListener("scroll", onScrollOrResize, true);
     };
-  }, [open, scrollContainerSelector]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when open/vendor; loadMaterials uses current vendorId
+  }, [open, scrollContainerSelector, vendorId, vendorSelected, vendorReady]);
 
   const typedPartNo = (filter || value || "").trim();
   const canCreate =
+    vendorReady &&
     typedPartNo.length > 0 &&
     !looksLikeJobPartNo(typedPartNo) &&
     !materials.some(
@@ -128,66 +155,59 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
   }, [materials, rawMaterialId, value]);
 
   const handleCreate = async () => {
-    if (!canCreate || creating) return;
+    if (!canCreate || creating || !vendorReady || !vendorId) return;
     setCreating(true);
     try {
-      // Part No / Part Name from entered values; Vendor + Unit Cost seeded from PO/quote line when present.
       const enteredName = (suggestedPartName || "").trim();
       const partName = enteredName || typedPartNo;
       const unit = (suggestedUnit || "").trim() || "EA";
       const unitCost =
         suggestedUnitCost && suggestedUnitCost > 0 ? suggestedUnitCost : 0;
-      const defaultVendorId = vendorId && vendorId > 0 ? vendorId : undefined;
-      const payload = {
+
+      const saved = await InventoryService.EnsureRawMaterial({
         partNo: typedPartNo,
         partName,
         unit,
         unitCost,
-        vendorId: defaultVendorId,
-      };
-      let saved: { id: number } | null = null;
-      let savedWithoutVendor = false;
-      try {
-        saved = await InventoryService.SaveRawMaterial(payload);
-      } catch (err: any) {
-        const msg = String(err?.response?.data?.error || err?.message || "");
-        if (defaultVendorId && /vendor/i.test(msg)) {
-          saved = await InventoryService.SaveRawMaterial({
-            ...payload,
-            vendorId: undefined,
-          });
-          savedWithoutVendor = true;
-        } else {
-          throw err;
-        }
-      }
+        vendorId,
+      });
       if (!saved?.id) {
         toast.error("Could not add raw material");
         return;
       }
-      const created: RawMaterial = {
+      const material: RawMaterial = {
         id: saved.id,
-        partNo: typedPartNo,
-        partName,
-        unit,
-        unitCost,
-        vendorId: savedWithoutVendor ? undefined : defaultVendorId,
-        isActive: true,
+        partNo: saved.partNo || typedPartNo,
+        partName: saved.partName || partName,
+        unit: saved.unit || unit,
+        unitCost: saved.unitCost ?? unitCost,
+        vendorId: saved.vendorId,
+        vendorName: saved.vendorName,
+        isActive: saved.isActive !== false,
       };
-      setMaterials((prev) => [created, ...prev.filter((m) => m.id !== created.id)]);
-      onSelect(created);
-      setFilter(typedPartNo);
+      setMaterials((prev) => [material, ...prev.filter((m) => m.id !== material.id)]);
+      onSelect(material);
+      setFilter(material.partNo || typedPartNo);
       setOpen(false);
-      const extras: string[] = [];
-      if (!enteredName) extras.push("name set to part no");
-      if (unitCost > 0) extras.push(`cost ${unitCost}`);
-      if (created.vendorId) extras.push("default vendor set");
-      else if (savedWithoutVendor) extras.push("vendor skipped");
-      toast.success(
-        extras.length > 0
-          ? `Added ${typedPartNo} to Raw Material Master (${extras.join(", ")})`
-          : `Added ${typedPartNo} to Raw Material Master`
-      );
+
+      if (saved.created) {
+        const extras: string[] = [];
+        if (!enteredName) extras.push("name set to part no");
+        if (unitCost > 0) extras.push(`cost ${unitCost}`);
+        if (material.vendorId) extras.push("default vendor set");
+        toast.success(
+          extras.length > 0
+            ? `Added ${material.partNo} to Raw Material Master (${extras.join(", ")})`
+            : `Added ${material.partNo} to Raw Material Master`
+        );
+      } else {
+        toast.success(
+          `Linked existing raw material ${material.partNo}` +
+            (material.vendorId && material.vendorId !== vendorId
+              ? " (kept existing default vendor)"
+              : "")
+        );
+      }
     } catch (err: any) {
       const message =
         err?.response?.data?.error || err.message || "Failed to add raw material";
@@ -197,6 +217,11 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
     }
   };
 
+  const effectivePlaceholder = !vendorReady
+    ? "Select a vendor first…"
+    : placeholder;
+  const inputDisabled = disabled || !vendorReady;
+
   return (
     <>
       <input
@@ -205,14 +230,16 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
         className={`form-input${hasError ? " is-invalid" : ""}`}
         style={{ width: "100%", minWidth: "140px" }}
         value={open ? filter || value : selectedLabel || value}
-        disabled={disabled}
-        placeholder={placeholder}
+        disabled={inputDisabled}
+        placeholder={effectivePlaceholder}
         onFocus={() => {
+          if (!vendorReady) return;
           setFilter(value || "");
           setOpen(true);
           updatePosition();
         }}
         onChange={(e) => {
+          if (!vendorReady) return;
           const next = e.target.value;
           setFilter(next);
           onChange(next);
@@ -225,6 +252,7 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
       />
       {open &&
         position &&
+        vendorReady &&
         createPortal(
           <div
             style={{
@@ -249,7 +277,8 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
             )}
             {!loading && filtered.length === 0 && !canCreate && (
               <div style={{ padding: "0.75rem", color: "#6b7280", fontSize: 13 }}>
-                No raw materials found. Type a part number to add it here.
+                No raw materials for this vendor (or unassigned). Type a part
+                number to add or link one.
               </div>
             )}
             {!loading &&
@@ -286,6 +315,11 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
                   <div style={{ fontSize: 12, color: "#6b7280" }}>
                     {m.partName || "—"}
                     {m.unit ? ` · ${m.unit}` : ""}
+                    {m.vendorName
+                      ? ` · ${m.vendorName}`
+                      : !m.vendorId
+                        ? " · Any vendor"
+                        : ""}
                     {m.isActive === false ? " · Inactive" : ""}
                   </div>
                 </button>
@@ -311,7 +345,7 @@ const RawMaterialCombobox: React.FC<RawMaterialComboboxProps> = ({
               >
                 {creating
                   ? "Adding…"
-                  : `Add “${typedPartNo}” to Raw Material Master`}
+                  : `Add / link “${typedPartNo}” in Raw Material Master`}
               </button>
             )}
           </div>,

@@ -17,8 +17,11 @@ import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { useSettingsSafe } from "../../Common/Contexts/SettingsContext";
 import { formatDate as formatSystemDate } from "../../Common/Utils/Formatting";
 import JobTemplateMasterSlideout from "./JobTemplateMasterSlideout";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
 import "./JobTemplateMaster.scss";
+
+const PAGE_PATH = "/masters/jobtemplate";
 
 type SortDirection = "asc" | "desc";
 
@@ -49,6 +52,8 @@ const JobTemplateMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const settings = useSettingsSafe();
+  const { canAdd, can, ensure } = usePagePermissions(PAGE_PATH);
+  const canExport = can("Export");
 
   const [templates, setTemplates] = useState<JobTemplate[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -217,6 +222,7 @@ const JobTemplateMasterComponent: React.FC = () => {
   };
 
   const handleExport = async () => {
+    if (!ensure("Export")) return;
     setExporting(true);
     try {
       // pageSize 0 asks the API for every row matching the current filter,
@@ -320,6 +326,7 @@ const JobTemplateMasterComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
+          {canExport && (
           <button
             className="btn-secondary"
             onClick={handleExport}
@@ -328,6 +335,7 @@ const JobTemplateMasterComponent: React.FC = () => {
           >
             <span>{exporting ? "Exporting..." : "Export"}</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -336,10 +344,12 @@ const JobTemplateMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          <button className="btn-primary" onClick={handleAddTemplate} type="button">
-            <span>+</span>
-            <span>Add Template</span>
-          </button>
+          {canAdd && (
+            <button className="btn-primary" onClick={handleAddTemplate} type="button">
+              <span>+</span>
+              <span>Add Template</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -10,7 +10,10 @@ import ProductMasterSlideout from "./ProductMasterSlideout";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
+
+const PAGE_PATH = "/masters/product";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "partNo", label: "Part Number", sortKey: "partNo", locked: true },
@@ -31,6 +34,8 @@ const ProductMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
+  const { can } = usePagePermissions(PAGE_PATH);
+  const canSync = can("Sync");
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedPartNo, setSelectedPartNo] = useState<string>("");
@@ -273,6 +278,7 @@ const ProductMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canSync && (
           <button
             type="button"
             className="btn btn-primary"
@@ -282,6 +288,7 @@ const ProductMasterComponent: React.FC = () => {
           >
             {syncing ? "Syncing…" : "Sync from orders"}
           </button>
+          )}
         </div>
       </div>
 

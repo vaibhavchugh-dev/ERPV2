@@ -26,10 +26,7 @@ namespace CimmpleAPI.Services.Auth
             new(StringComparer.OrdinalIgnoreCase)
             {
                 ["Dashboard"] = "/home",
-                ["Customer"] = "/masters/customer",
-                ["Vendor"] = "/masters/vendor",
                 ["Employee"] = "/masters/employee",
-                ["Location"] = "/masters/location",
                 ["Workstation"] = "/masters/workstation",
                 ["Process"] = "/masters/process",
                 ["JobTemplate"] = "/masters/jobtemplate",
@@ -37,19 +34,16 @@ namespace CimmpleAPI.Services.Auth
                 ["ProductMaster"] = "/masters/product",
                 ["PriceBreakdown"] = "/masters/pricebreakdown",
                 ["NCRCode"] = "/quality/ncr-codes",
-                ["Bank"] = "/masters/bank",
                 ["CreditCard"] = "/masters/creditcard",
                 ["ChartofAccounts"] = "/masters/chartofaccounts",
                 ["UserManagement"] = "/user-management",
                 ["SystemSettings"] = "/settings",
-                ["Inventory"] = "/inventory",
                 ["JobOrder"] = "/job-orders",
                 ["Quality"] = "/quality",
                 ["Attendance"] = "/attendance",
                 ["Reports"] = "/reports",
                 ["ReportSchedule"] = "/reports/schedules",
                 ["Documents"] = "/documents",
-                ["Accounting"] = "/accounts/setup",
                 ["JournalEntry"] = "/accounts/journal-entries",
                 ["Payroll"] = "/accounts/payroll",
                 ["SupportTickets"] = "/home",
@@ -61,8 +55,12 @@ namespace CimmpleAPI.Services.Auth
         public static bool IsUtilityController(string? controller) =>
             !string.IsNullOrEmpty(controller) && UtilityControllers.Contains(controller);
 
-        /// <summary>Returns null when no module permission is required (utility/exempt).</summary>
-        public static string? ResolveRequiredPermissionUrl(HttpContext httpContext)
+        /// <summary>
+        /// Permission page URL(s) that may authorize the request (OR).
+        /// Null / empty = no module check (utility/exempt).
+        /// Single "__deny_non_admin__" = admin only.
+        /// </summary>
+        public static string[]? ResolveRequiredPermissionUrls(HttpContext httpContext)
         {
             var endpoint = httpContext.GetEndpoint();
             if (endpoint?.Metadata.GetMetadata<SkipErpPermissionCheckAttribute>() != null)
@@ -82,47 +80,212 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var path = httpContext.Request.Path.Value ?? "";
+            var method = httpContext.Request.Method ?? "GET";
 
             if (string.Equals(controller, "Quotation", StringComparison.OrdinalIgnoreCase))
             {
                 if (path.Contains("Vendor", StringComparison.OrdinalIgnoreCase))
-                    return "/quotations/vendor";
-                return "/quotations/customer";
+                    return One("/quotations/vendor");
+                return One("/quotations/customer");
             }
 
             if (string.Equals(controller, "Order", StringComparison.OrdinalIgnoreCase))
             {
                 if (path.Contains("Vendor", StringComparison.OrdinalIgnoreCase))
-                    return "/purchasing/vendor-orders";
+                    return One("/purchasing/vendor-orders");
                 if (path.Contains("Shipment", StringComparison.OrdinalIgnoreCase))
-                    return "/orders/customer-shipments";
-                return "/orders/customer";
+                    return One("/orders/customer-shipments");
+                return One("/orders/customer");
+            }
+
+            // Create JO from CO line — permission lives on Customer Orders (CreateJob).
+            if (string.Equals(controller, "JobOrder", StringComparison.OrdinalIgnoreCase)
+                && path.Contains("CreateJobOrderFromOrderDetail", StringComparison.OrdinalIgnoreCase))
+            {
+                return One("/orders/customer");
+            }
+
+            if (string.Equals(controller, "Accounting", StringComparison.OrdinalIgnoreCase))
+            {
+                if (path.Contains("GenerateFinancialReport", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("FinancialReport", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/reports");
+
+                if (path.Contains("SendArReminder", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("BulkArReminder", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("ArReminder", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/receivable");
+
+                if (path.Contains("Payable", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("VendorPayment", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/payable");
+
+                if (path.Contains("Receivable", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("CustomerPayment", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/receivable");
+
+                // Bank reconciliation + deposit/withdrawal cash lines on the bank register.
+                if (path.Contains("Bank", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("Reconcile", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("DeleteTransaction", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("ImportStatement", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("BankStatement", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/banks");
+
+                if (path.Contains("CloseAccountingPeriod", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("OpenAccountingPeriod", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("ListClosedPeriods", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("ListGlAuditTrail", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/periods");
+
+                if (path.Contains("GeneralLedger", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GlAccount", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/general-ledger");
+
+                if (path.Contains("Dashboard", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("RecentTransactions", StringComparison.OrdinalIgnoreCase))
+                    return One("/accounts/dashboard");
+
+                return One("/accounts/setup");
             }
 
             if (string.Equals(controller, "Invoice", StringComparison.OrdinalIgnoreCase))
             {
-                return "/orders/customer-invoices";
+                // Customer Invoices page and Accounts Receivable share these APIs.
+                return new[] { "/orders/customer-invoices", "/accounts/receivable" };
             }
 
             if (string.Equals(controller, "Shipping", StringComparison.OrdinalIgnoreCase))
             {
-                return "/orders/customer-shipments";
+                return One("/orders/customer-shipments");
             }
 
             if (string.Equals(controller, "VendorInvoice", StringComparison.OrdinalIgnoreCase))
             {
                 if (path.Contains("Receiving", StringComparison.OrdinalIgnoreCase))
-                    return "/purchasing/vendor-receiving";
-                return "/purchasing/vendor-invoices";
+                    return One("/purchasing/vendor-receiving");
+                // Vendor Invoices page and Accounts Payable share these APIs.
+                return new[] { "/purchasing/vendor-invoices", "/accounts/payable" };
+            }
+
+            if (string.Equals(controller, "Bank", StringComparison.OrdinalIgnoreCase))
+            {
+                // Mutating bank master requires Bank Master; reads also used by AP/AR/Bank Rec.
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetBank", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("RevealAccountNo", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/bank",
+                        "/accounts/banks",
+                        "/accounts/payable",
+                        "/accounts/receivable",
+                        "/purchasing/vendor-invoices",
+                        "/orders/customer-invoices",
+                    };
+                }
+
+                return One("/masters/bank");
+            }
+
+            if (string.Equals(controller, "CreditCard", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/creditcard",
+                        "/accounts/payable",
+                        "/purchasing/vendor-invoices",
+                    };
+                }
+
+                return One("/masters/creditcard");
+            }
+
+            // Raw Material Master lives under InventoryController endpoints.
+            if (string.Equals(controller, "Inventory", StringComparison.OrdinalIgnoreCase))
+            {
+                if (path.Contains("RawMaterial", StringComparison.OrdinalIgnoreCase))
+                    return new[] { "/masters/raw-material", "/inventory" };
+                return One("/inventory");
+            }
+
+            // Location / Vendor lists are used as lookups from Settings and other masters.
+            if (string.Equals(controller, "Location", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetLocation", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/location",
+                        "/settings",
+                        "/masters/raw-material",
+                        "/masters/employee",
+                        "/masters/bank",
+                        "/inventory",
+                    };
+                }
+
+                return One("/masters/location");
+            }
+
+            if (string.Equals(controller, "Vendor", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetVendor", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/vendor",
+                        "/masters/raw-material",
+                        "/purchasing/vendor-orders",
+                        "/purchasing/vendor-invoices",
+                        "/quotations/vendor",
+                        "/inventory",
+                    };
+                }
+
+                return One("/masters/vendor");
+            }
+
+            if (string.Equals(controller, "Customer", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetCustomer", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/customer",
+                        "/masters/product",
+                        "/orders/customer",
+                        "/quotations/customer",
+                        "/orders/customer-invoices",
+                    };
+                }
+
+                return One("/masters/customer");
             }
 
             if (controller != null && ControllerToPermissionUrl.TryGetValue(controller, out var url))
             {
-                return url;
+                return One(url);
             }
 
             // Unknown controller: require admin (handled by filter as deny non-admin).
-            return "__deny_non_admin__";
+            return new[] { "__deny_non_admin__" };
         }
+
+        /// <summary>Backward-compatible single-url resolver (first alternate).</summary>
+        public static string? ResolveRequiredPermissionUrl(HttpContext httpContext)
+        {
+            var urls = ResolveRequiredPermissionUrls(httpContext);
+            if (urls == null || urls.Length == 0) return null;
+            return urls[0];
+        }
+
+        private static string[] One(string url) => new[] { url };
     }
 }

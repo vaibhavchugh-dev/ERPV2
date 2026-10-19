@@ -12,12 +12,15 @@ import { useCompanyBanks } from '../../Common/Hooks/useCompanyBanks';
 import { useCompanyCreditCards } from '../../Common/Hooks/useCompanyCreditCards';
 import { VENDOR_ORDER_LINE_TYPES } from '../../Common/Constants/vendorOrderLineTypes';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { usePagePermissions } from '../../Common/Hooks/usePagePermissions';
 import { onBackdropClick } from '../../Common/Utils/dismissGuard';
 import {
   getApiErrorMessage,
   isApiForbidden,
   clearOpenQueryFromUrl,
 } from '../../Common/Services/FileUploadHelper';
+
+const PAGE_PATH = "/purchasing/vendor-invoices";
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -457,6 +460,8 @@ interface VendorInvoiceDetailModalProps {
   initialShowPayment?: boolean;
   onPaymentComplete?: () => void;
   onInvoiceDeleted?: () => void;
+  /** Override when opened from Accounts Payable */
+  permissionPath?: string;
 }
 
 const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
@@ -465,9 +470,19 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   invoiceId,
   initialShowPayment = false,
   onPaymentComplete,
-  onInvoiceDeleted
+  onInvoiceDeleted,
+  permissionPath = PAGE_PATH,
 }) => {
   const { formatCurrency, formatDate } = useFormatting();
+  const {
+    canDelete,
+    canPrint,
+    canSend,
+    can,
+    ensure,
+  } = usePagePermissions(permissionPath);
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -566,6 +581,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   };
 
   const handlePayInvoice = () => {
+    if (!ensure("Pay")) return;
     if (!invoice) return;
     const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
     if (isVoided) {
@@ -580,6 +596,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   };
 
   const handlePrintInvoice = async () => {
+    if (!ensure("Print")) return;
     if (!invoice?.id) {
       toast.error('Invoice not loaded');
       return;
@@ -614,6 +631,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   };
 
   const handleVoidInvoice = async () => {
+    if (!ensure("Void")) return;
     if (!invoice?.id) return;
     if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
       return;
@@ -629,6 +647,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   };
 
   const handleDeleteInvoice = async () => {
+    if (!ensure("Delete")) return;
     if (!invoice?.id) return;
     // For vendor invoices, we'll use a simple impact result since there's no backend endpoint yet
     const impact: DeletionImpactResult = {
@@ -1069,7 +1088,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
                 const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);
 
-                if (isPaid || isVoided || !invoice.isApproved) return null;
+                if (!canPay || isPaid || isVoided || !invoice.isApproved) return null;
 
                 return (
                   <button
@@ -1093,6 +1112,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                   </button>
                 );
               })()}
+              {canPrint && (
               <button
                 onClick={handlePrintInvoice}
                 style={{
@@ -1112,6 +1132,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faPrint} />
                 Print
               </button>
+              )}
+              {canSend && (
               <button
                 onClick={() => setShowEmailDialog(true)}
                 style={{
@@ -1131,7 +1153,8 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faEnvelope} />
                 Email
               </button>
-              {invoice.status === 'Unpaid' && (
+              )}
+              {canVoid && invoice.status === 'Unpaid' && (
                 <button
                   onClick={handleVoidInvoice}
                   style={{
@@ -1152,6 +1175,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                   Void
                 </button>
               )}
+              {canDelete && (
               <button
                 onClick={handleDeleteInvoice}
                 style={{
@@ -1171,6 +1195,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
                 <FontAwesomeIcon icon={faTrash} />
                 Delete
               </button>
+              )}
             </div>
           </div>
         )}

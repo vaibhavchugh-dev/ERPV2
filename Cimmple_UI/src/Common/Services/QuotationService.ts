@@ -105,6 +105,12 @@ export interface QuotationMasterReq {
   Comments?: QuotationComment[];
 }
 
+export interface ConvertedVendorOrderRef {
+  orderId: number;
+  poNumber: number;
+  displayNumber: number;
+}
+
 export interface VendorQuotationMaster {
   orderID: number;
   quotationNumber: number;
@@ -121,6 +127,17 @@ export interface VendorQuotationMaster {
   convertedOrderNumber?: number | null;
   /** VendorOrder.OrderID for opening slideout */
   convertedOrderOrderId?: number | null;
+  /** All POs created from this RFQ group (partial convert). */
+  convertedOrders?: ConvertedVendorOrderRef[];
+  /**
+   * Listing: true when Compare should hide (all master RFQ lines covered, any vendor mix).
+   * Slideout (by id): true when this quotation's own lines are all converted (hide Convert).
+   */
+  allLinesConverted?: boolean;
+  /** Listing: same as allLinesConverted for multi-vendor Compare gating. */
+  anyVendorFullyConverted?: boolean;
+  /** Listing: every master RFQ line is on some VO (possibly via different vendors). */
+  allMasterLinesCovered?: boolean;
   locationId?: number;
   quotationType?: string;
   parentQuotationID?: number;
@@ -172,6 +189,8 @@ export interface VendorQuotationMasterReq {
   convertedOrderId?: number;
   /** VendorOrder.OrderID for opening the converted order slideout (convertedOrderId holds the PONumber). */
   convertedOrderOrderId?: number | null;
+  convertedOrders?: ConvertedVendorOrderRef[];
+  allLinesConverted?: boolean;
   ParentQuotationID?: number;
   AdditionalNotes?: string;
   Details: QuotationDetailReq[];
@@ -197,6 +216,8 @@ export interface QuotationDetailReq {
   ProductId?: number;
   RawMaterialId?: number;
   LineType?: string;
+  /** VendorOrders.OrderID when this line was converted onto a PO. */
+  ConvertedVendorOrderId?: number;
   LeadTime: string;
   Notes: string;
   /** Expense GL account id (as string) or account code */
@@ -1185,6 +1206,8 @@ export class QuotationService {
           ProductId: d.productId || d.ProductId,
           RawMaterialId: d.rawMaterialId || d.RawMaterialId,
           LineType: d.lineType || d.LineType,
+          ConvertedVendorOrderId:
+            d.convertedVendorOrderId || d.ConvertedVendorOrderId || undefined,
           LeadTime: d.leadTime || d.LeadTime || "",
           Notes: d.notes || d.Notes || "",
           glcode: d.glcode || d.Glcode || "",
@@ -1203,6 +1226,19 @@ export class QuotationService {
 
       const rawExtDate = result.ExternalOrderDate || result.externalOrderDate || result.DueDate || result.dueDate;
       const rawOrderDate = result.OrderDate || result.orderDate;
+      const convertedOrdersRaw = result.convertedOrders || result.ConvertedOrders || [];
+      const convertedOrders = (Array.isArray(convertedOrdersRaw) ? convertedOrdersRaw : []).map(
+        (o: any) => ({
+          orderId: o.orderId ?? o.OrderId ?? 0,
+          poNumber: o.poNumber ?? o.PoNumber ?? 0,
+          displayNumber:
+            o.displayNumber ??
+            o.DisplayNumber ??
+            ((o.poNumber ?? o.PoNumber ?? 0) < 1000
+              ? (o.poNumber ?? o.PoNumber ?? 0) + 999
+              : o.poNumber ?? o.PoNumber ?? 0),
+        })
+      );
 
       return {
         OrderID: result.OrderID || result.orderID || 0,
@@ -1227,6 +1263,11 @@ export class QuotationService {
         LocationId: result.LocationId || result.locationId,
         convertedOrderId: result.convertedOrderId,
         convertedOrderOrderId: result.convertedOrderOrderId ?? null,
+        convertedOrders,
+        allLinesConverted: !!(result.allLinesConverted ?? result.AllLinesConverted),
+        anyVendorFullyConverted: !!(
+          result.anyVendorFullyConverted ?? result.AnyVendorFullyConverted
+        ),
         ParentQuotationID: result.ParentQuotationID || result.parentQuotationID,
         AdditionalNotes: result.AdditionalNotes || result.additionalNotes || "",
         Details: details,

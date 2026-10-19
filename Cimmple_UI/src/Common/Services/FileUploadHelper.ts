@@ -52,8 +52,9 @@ export function getApiErrorMessage(error: unknown, fallback = "Request failed"):
   const apiMsg = err?.response?.data?.error || err?.response?.data?.message;
   if (status === 403) {
     return (
-      (typeof apiMsg === "string" && apiMsg.trim()) ||
-      "You don't have access to this document."
+      (typeof apiMsg === "string" && apiMsg.trim() && !/^access denied$/i.test(apiMsg.trim()))
+        ? apiMsg
+        : "You don't have permission for this action. Contact an administrator if you need access."
     );
   }
   return apiMsg || err?.message || fallback;
@@ -63,6 +64,12 @@ export function getApiErrorMessage(error: unknown, fallback = "Request failed"):
 export function isApiForbidden(error: unknown): boolean {
   const status = (error as { response?: { status?: number } })?.response?.status;
   return status === 403;
+}
+
+/** Prefer this in catch blocks so permission denials do not surface as status-code toasts. */
+export function getActionErrorMessage(error: unknown, fallback = "Request failed"): string | null {
+  if (isApiForbidden(error)) return null;
+  return getApiErrorMessage(error, fallback);
 }
 
 /**

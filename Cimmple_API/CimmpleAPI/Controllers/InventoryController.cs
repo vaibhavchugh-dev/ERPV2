@@ -738,7 +738,11 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetRawMaterials")]
-        public async Task<IActionResult> GetRawMaterials([FromQuery] int tenantId, [FromQuery] bool? includeInactive = null)
+        public async Task<IActionResult> GetRawMaterials(
+            [FromQuery] int tenantId,
+            [FromQuery] bool? includeInactive = null,
+            [FromQuery] int? vendorId = null,
+            [FromQuery] int? includeId = null)
         {
             try
             {
@@ -757,6 +761,17 @@ namespace CimmpleAPI.Controllers
 
                 if (!include)
                     query = query.Where(r => r.IsActive);
+
+                // Vendor-scoped lists (VQ/VO): default vendor match, unassigned, and optionally the current line's id.
+                if (vendorId.HasValue && vendorId.Value > 0)
+                {
+                    var vid = vendorId.Value;
+                    var keepId = includeId.HasValue && includeId.Value > 0 ? includeId.Value : 0;
+                    query = query.Where(r =>
+                        r.VendorId == null ||
+                        r.VendorId == vid ||
+                        (keepId > 0 && r.Id == keepId));
+                }
 
                 var materials = await query
                     .OrderBy(r => r.IsRemnant)
@@ -798,6 +813,83 @@ namespace CimmpleAPI.Controllers
                     .ToListAsync();
 
                 return Ok(new { result = materials });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Find-or-create raw material by part number (tenant-wide). Sets default vendor only when blank.
+        /// Used by VQ/VO quick-add so the same part number never duplicates across vendors.
+        /// </summary>
+        [HttpPost("EnsureRawMaterial")]
+        public async Task<IActionResult> EnsureRawMaterial([FromBody] EnsureRawMaterialDto dto)
+        {
+            try
+            {
+                var tenantId = dto.Tenantid > 0 ? dto.Tenantid : GetTenantId();
+                var partNoNorm = (dto.PartNo ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(partNoNorm))
+                    return BadRequest(new { error = "Part number is required." });
+
+                var existed = await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .Where(r => r.Tenantid == tenantId)
+                    .ToListAsync();
+                var existedMatch = existed.FirstOrDefault(r =>
+                    string.Equals((r.PartNo ?? "").Trim(), partNoNorm, StringComparison.OrdinalIgnoreCase));
+                var wasExisting = existedMatch != null;
+
+                var id = await RawMaterialCatalog.EnsureAsync(
+                    _context,
+                    tenantId,
+                    partNoNorm,
+                    dto.PartName,
+                    dto.Unit,
+                    dto.UnitCost,
+                    dto.VendorId,
+                    reactivateInactive: true);
+
+                if (!id.HasValue || id.Value <= 0)
+                    return BadRequest(new { error = "Could not ensure raw material for this part number." });
+
+                // EnsureAsync saves new rows; persist blank-field fills on existing rows.
+                await _context.SaveChangesAsync();
+
+                var r = await _context.RawMaterialMaster
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == id.Value && x.Tenantid == tenantId);
+                if (r == null)
+                    return NotFound(new { error = "Raw material not found after ensure." });
+
+                string? vendorName = null;
+                if (r.VendorId.HasValue)
+                {
+                    vendorName = await _context.VendorMaster
+                        .AsNoTracking()
+                        .Where(v => v.Tenantid == tenantId && v.vendor_id == r.VendorId.Value)
+                        .Select(v => v.company_name)
+                        .FirstOrDefaultAsync();
+                }
+
+                return Ok(new
+                {
+                    result = new
+                    {
+                        id = r.Id,
+                        partNo = r.PartNo,
+                        partName = r.PartName,
+                        description = r.Description,
+                        unit = r.Unit,
+                        unitCost = r.UnitCost,
+                        vendorId = r.VendorId,
+                        vendorName,
+                        isActive = r.IsActive,
+                        created = !wasExisting
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -1756,5 +1848,15 @@ namespace CimmpleAPI.Controllers
         public int Id { get; set; }
         public int Tenantid { get; set; }
         public bool IsActive { get; set; }
+    }
+
+    public class EnsureRawMaterialDto
+    {
+        public int Tenantid { get; set; }
+        public string? PartNo { get; set; }
+        public string? PartName { get; set; }
+        public string? Unit { get; set; }
+        public decimal? UnitCost { get; set; }
+        public int? VendorId { get; set; }
     }
 }

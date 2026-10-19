@@ -131,6 +131,16 @@ Instense.interceptors.response.use(
     }
 
     const status = error?.response?.status;
+    // Prefer API message over Axios' "Request failed with status code 403".
+    if (status === 403 || status === 401) {
+      const apiMsg =
+        error?.response?.data?.message || error?.response?.data?.error;
+      if (typeof apiMsg === "string" && apiMsg.trim()) {
+        error.message = apiMsg.trim();
+      } else if (status === 403) {
+        error.message = "Access denied";
+      }
+    }
     const isAuthEndpoint =
       typeof original?.url === "string" &&
       (original.url.includes("/Auth/Login") ||

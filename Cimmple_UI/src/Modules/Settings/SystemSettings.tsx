@@ -12,12 +12,16 @@ import { getDefaultSystemSettings, SYSTEM_TIMEZONE_OPTIONS } from "../../Common/
 import { deriveCurrencySymbol } from "../../Common/Utils/Formatting";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import { useHistory } from "react-router-dom";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./SystemSettings.scss";
+
+const PAGE_PATH = "/settings";
 
 const SystemSettingsComponent: React.FC = () => {
   const history = useHistory();
   const { refreshSettings } = useSettings();
   const isAdminSession = AuthService.isAdminSession();
+  const { canEdit, canSend } = usePagePermissions(PAGE_PATH);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [defaultLocationId, setDefaultLocationId] = useState<number>(0);
@@ -39,6 +43,13 @@ const SystemSettingsComponent: React.FC = () => {
     loadLocations();
     loadDefaultLocation();
   }, []);
+
+  useEffect(() => {
+    // Security settings are administrator-only — never show that tab to non-admins.
+    if (!isAdminSession && activeTab === "security") {
+      setActiveTab("company");
+    }
+  }, [isAdminSession, activeTab]);
 
   useEffect(() => {
     if (defaultLocationId > 0 && locations.length > 0) {
@@ -132,14 +143,10 @@ const SystemSettingsComponent: React.FC = () => {
 
   const handleSaveSettings = async () => {
     if (!settings) return;
+    if (!canEdit) return;
 
-    if (!isAdminSession && activeTab === "security") {
-      toast.error("Only an administrator can change security settings.");
-      return;
-    }
-    
     // Validation (security fields only matter when admin is saving them)
-    if (isAdminSession || activeTab === "security") {
+    if (isAdminSession && activeTab === "security") {
       if (settings.minPasswordLength < 6 || settings.minPasswordLength > 20) {
         toast.error('Password length must be between 6 and 20 characters');
         return;
@@ -177,6 +184,7 @@ const SystemSettingsComponent: React.FC = () => {
   };
 
   const handleTestSmtp = async () => {
+    if (!canSend) return;
     if (!settings) return;
 
     const isCustom = (settings.emailDeliveryMode || "Hosted") === "Custom";
@@ -236,6 +244,7 @@ const SystemSettingsComponent: React.FC = () => {
   };
 
   const handleSaveDefaultLocation = async () => {
+    if (!canEdit) return;
     if (defaultLocationId === 0) {
       toast.error('Please select a default location');
       return;
@@ -286,7 +295,9 @@ const SystemSettingsComponent: React.FC = () => {
     { id: 'company', label: 'Default Location', icon: faMapMarkerAlt },
     { id: 'datetime', label: 'Date & Time', icon: faClock },
     { id: 'currency', label: 'Currency & Numbers', icon: faDollarSign },
-    { id: 'security', label: 'Security', icon: faShieldAlt },
+    ...(isAdminSession
+      ? [{ id: 'security' as const, label: 'Security', icon: faShieldAlt }]
+      : []),
     { id: 'email', label: 'Email Settings', icon: faEnvelope },
     { id: 'general', label: 'General', icon: faCog }
   ];
@@ -316,18 +327,17 @@ const SystemSettingsComponent: React.FC = () => {
               System Settings
             </h1>
             <p style={{ margin: '0.5rem 0 0 0', color: '#6b7280' }}>
-              Configure application-wide preferences — date, currency, security, notifications, and default location
+              Configure application-wide preferences — date, currency, notifications, and default location
             </p>
           </div>
-          {!( !isAdminSession && activeTab === 'security') && (
+          {canEdit && (
             <button
               onClick={activeTab === 'company' ? handleSaveDefaultLocation : handleSaveSettings}
               disabled={saving || (activeTab === 'company' && loadingLocations)}
               style={{
                 padding: '0.75rem 1.5rem',
                 backgroundColor: saving ? '#9ca3af' : '#10b981',
-                color: 'white',
-                border: 'none',
+                color: 'white',                border: 'none',
                 borderRadius: '0.375rem',
                 cursor: saving ? 'not-allowed' : 'pointer',
                 fontSize: '0.875rem',
@@ -806,36 +816,17 @@ const SystemSettingsComponent: React.FC = () => {
           )}
 
           {/* Security Settings */}
-          {activeTab === 'security' && (
+          {activeTab === 'security' && isAdminSession && (
             <div>
               <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
                 Security Settings
               </h3>
-              {!isAdminSession && (
-                <div
-                  style={{
-                    marginBottom: '1rem',
-                    padding: '0.75rem 1rem',
-                    backgroundColor: '#fffbeb',
-                    border: '1px solid #f59e0b',
-                    borderRadius: '0.375rem',
-                    fontSize: '0.875rem',
-                    color: '#92400e',
-                  }}
-                >
-                  Only an administrator can change security settings. You can view the current values.
-                </div>
-              )}
               <div
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '1fr 1fr',
                   gap: '1.5rem',
-                  ...( !isAdminSession
-                    ? { pointerEvents: 'none' as const, opacity: 0.75 }
-                    : {}),
                 }}
-                aria-disabled={!isAdminSession || undefined}
               >
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
@@ -1326,6 +1317,7 @@ const SystemSettingsComponent: React.FC = () => {
                   </>
                 )}
 
+                {canSend && (
                 <div style={{ gridColumn: '1 / -1', marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid #e5e7eb' }}>
                   <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
                     Test connection
@@ -1377,6 +1369,7 @@ const SystemSettingsComponent: React.FC = () => {
                     </button>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           )}

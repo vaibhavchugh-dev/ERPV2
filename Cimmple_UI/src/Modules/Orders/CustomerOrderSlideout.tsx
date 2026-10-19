@@ -42,8 +42,11 @@ import {
   formatDateOnlyFromApi,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./CustomerOrderSlideout.scss";
+
+const PAGE_PATH = "/orders/customer";
 
 const JobOrderSlideout = lazy(() => import("../JobOrders/JobOrderSlideout"));
 
@@ -59,6 +62,21 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   onSaved,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
+  const {
+    canEdit,
+    canDelete,
+    canPrint,
+    canSend,
+    canDuplicate,
+    canAdd,
+    can,
+    ensure,
+  } = usePagePermissions(PAGE_PATH);
+  const isNew = orderId <= 0;
+  const canSave = isNew ? canAdd : canEdit;
+  const canShip = can("Ship");
+  const canInvoice = can("Invoice");
+  const canCreateJob = can("CreateJob");
 
   const [formData, setFormData] = useState<OrderMasterReq>({
     OrderID: 0,
@@ -847,6 +865,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleCreateJobOrder = async (detail: OrderDetailReq, detailIndex: number) => {
+    if (!ensure("CreateJob")) return;
     if (!detail.ID || detail.ID === 0) {
       toast.error("Please save the order first before creating a job order");
       return;
@@ -902,6 +921,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   // Shipping functions
   const handleShipItem = (item: ShippableItem) => {
+    if (!ensure("Ship")) return;
     if (item.availableQty <= 0) {
       toast.warning(`No available quantity to ship for ${item.partNo}`);
       return;
@@ -915,6 +935,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleBatchShip = () => {
+    if (!ensure("Ship")) return;
     const readyItems = shippableItems.filter(item =>
       item.availableQty > 0 && (!item.hasJobOrder || isJobOrderCompleted(item.jobOrderStatus))
     );
@@ -957,6 +978,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   // Invoice functions
   const handleInvoiceItem = (item: InvoiceableItem) => {
+    if (!ensure("Invoice")) return;
     if (item.availableQty <= 0) {
       toast.warning(`No available quantity to invoice for ${item.partNo}`);
       return;
@@ -966,6 +988,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleBatchInvoice = () => {
+    if (!ensure("Invoice")) return;
     const readyItems = invoiceableItems.filter(item =>
       item.availableQty > 0 && (!item.hasJobOrder || isJobOrderCompleted(item.jobOrderStatus))
     );
@@ -1074,6 +1097,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!ensure(isNew ? "Add" : "Edit")) return;
 
     if (!validateForm()) {
       // Count line item errors
@@ -1349,6 +1373,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handlePrint = async () => {
+    if (!ensure("Print")) return;
     if (!formData.CustomerID || formData.Details.length === 0) {
       toast.error("Please ensure the order has a customer and at least one line item before printing");
       return;
@@ -1400,6 +1425,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleDelete = async () => {
+    if (!ensure("Delete")) return;
     setLoading(true);
     try {
       const response = await OrderService.CheckOrderDeletionImpact(orderId);
@@ -1521,6 +1547,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
+    if (!ensure("Duplicate")) return;
     const id = formData.OrderID > 0 ? formData.OrderID : orderId;
     if (id <= 0) return;
     const confirmText =
@@ -1664,6 +1691,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {effectiveOrderId > 0 && (
               <>
+                {canPrint && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1678,6 +1706,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     <rect x="6" y="14" width="12" height="8"></rect>
                   </svg>
                 </button>
+                )}
+                {canSend && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1690,6 +1720,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
+                )}
+                {canDuplicate && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1702,6 +1734,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                   </svg>
                 </button>
+                )}
+                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -1713,6 +1747,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
+                )}
               </>
             )}
             <div className="status-field-inline">
@@ -2531,7 +2566,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 >
                                   View JO
                                 </button>
-                              ) : (
+                              ) : canCreateJob ? (
                                 <button
                                   type="button"
                                   onClick={() => handleCreateJobOrder(detail, index)}
@@ -2550,6 +2585,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 >
                                   Create JO
                                 </button>
+                              ) : (
+                                <span style={{ color: "#9ca3af", fontSize: "0.75rem" }}>—</span>
                               )}
                               </div>
                             </td>
@@ -2593,12 +2630,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 }}
                               >
                                 {/* Ship Button */}
-                                {(() => {
+                                {canShip && (() => {
                                   const shippableItem = shippableItems.find(item => item.id === detail.ID);
-                                  const canShip = shippableItem && shippableItem.availableQty > 0 &&
+                                  const itemCanShip = shippableItem && shippableItem.availableQty > 0 &&
                                     (!shippableItem.hasJobOrder || isJobOrderCompleted(shippableItem.jobOrderStatus));
 
-                                  return canShip ? (
+                                  return itemCanShip ? (
                                     <button
                                       type="button"
                                       className="btn-icon"
@@ -2617,11 +2654,11 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                 })()}
 
                                 {/* Invoice Button */}
-                                {(() => {
+                                {canInvoice && (() => {
                                   const invoiceableItem = invoiceableItems.find(item => item.id === detail.ID);
-                                  const canInvoice = invoiceableItem && invoiceableItem.availableQty > 0;
+                                  const itemCanInvoice = invoiceableItem && invoiceableItem.availableQty > 0;
 
-                                  return canInvoice ? (
+                                  return itemCanInvoice ? (
                                     <button
                                       type="button"
                                       className="btn-icon"
@@ -2650,14 +2687,14 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                                       : isShipped
                                         ? "Cannot delete: line has been shipped"
                                         : undefined;
-                                  return (
+                                  return canEdit ? (
                                     <DeleteIconButton
                                       label="Delete line"
                                       onClick={() => !deleteLocked && handleDeleteDetail(index)}
                                       disabled={deleteLocked}
                                       title={deleteTitle}
                                     />
-                                  );
+                                  ) : null;
                                 })()}
                               </div>
                             </td>
@@ -2700,6 +2737,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>📦 Shipment History</h3>
+                {canShip && (
                 <button
                   type="button"
                   className="btn-secondary"
@@ -2719,6 +2757,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                 >
                   🚚 Create Shipment
                 </button>
+                )}
               </div>
 
               {shipments.length === 0 ? (
@@ -2796,6 +2835,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
             <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                 <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>💰 Invoice History</h3>
+                {canInvoice && (
                 <button
                   type="button"
                   className="btn-secondary"
@@ -2821,6 +2861,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                 >
                   Create Invoice
                 </button>
+                )}
               </div>
 
               {invoices.length === 0 ? (
@@ -2962,12 +3003,19 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
+            {!canSave && (
+              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
+                View only — you don&apos;t have permission to save changes.
+              </span>
+            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? "Saving..." : "Save"}
             </button>
+            )}
           </div>
         </form>
       </div>

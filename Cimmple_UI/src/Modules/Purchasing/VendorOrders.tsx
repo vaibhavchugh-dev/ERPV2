@@ -9,6 +9,9 @@ import MasterListPage from "../../Common/Components/MasterListPage/MasterListPag
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+
+const PAGE_PATH = "/purchasing/vendor-orders";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
@@ -16,6 +19,7 @@ const VendorOrders: React.FC = () => {
   const processedOrderIdRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { ensure } = usePagePermissions(PAGE_PATH);
   const [orders, setOrders] = useState<VendorOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -122,6 +126,7 @@ const VendorOrders: React.FC = () => {
   };
 
   const handleAddOrder = () => {
+    if (!ensure("Add")) return;
     setSelectedOrderId(0);
     setShowSlideout(true);
   };
@@ -170,21 +175,21 @@ const VendorOrders: React.FC = () => {
     if (typeLower === "material") {
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>📦</span>
+          <span>ðŸ“¦</span>
           <span>Material</span>
         </span>
       );
     } else if (typeLower === "service") {
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>🔧</span>
+          <span>ðŸ”§</span>
           <span>Service</span>
         </span>
       );
     } else if (typeLower === "mixed") {
       return (
         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>📦</span>
+          <span>ðŸ“¦</span>
           <span>Mixed</span>
         </span>
       );
@@ -288,6 +293,7 @@ const VendorOrders: React.FC = () => {
   return (
     <div className="vendor-orders">
       <MasterListPage
+        permissionPath="/purchasing/vendor-orders"
         title="Vendor Orders"
         columns={columns}
         data={filteredOrders}
@@ -300,7 +306,7 @@ const VendorOrders: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All" },
+              { value: "all", label: "All Statuses" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
               { value: "Partially Received", label: "Partially Received" },

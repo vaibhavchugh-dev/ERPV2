@@ -77,7 +77,7 @@ const statusLabelFor = (row: {
   if (kind === "paid") return "Paid";
   if (row.reversedByJournalEntryId) return `Reversed (#${row.reversedByJournalEntryId})`;
   if (row.reversesJournalEntryId) return `Reversal of #${row.reversesJournalEntryId}`;
-  return "—";
+  return "â€”";
 };
 
 const JournalEntries: React.FC = () => {
@@ -326,13 +326,13 @@ const JournalEntries: React.FC = () => {
       key: "referenceNumber",
       label: "Reference",
       sortable: true,
-      render: (value) => value || "—",
+      render: (value) => value || "â€”",
     },
     {
       key: "description",
       label: "Description",
       sortable: true,
-      render: (value) => value || "—",
+      render: (value) => value || "â€”",
     },
     {
       key: "statusLabel",
@@ -361,7 +361,7 @@ const JournalEntries: React.FC = () => {
               style: "currency",
               currency: "USD",
             })
-          : "—",
+          : "â€”",
     },
   ];
 
@@ -377,8 +377,9 @@ const JournalEntries: React.FC = () => {
   return (
     <div className="journal-entries-page">
       <MasterListPage
+        permissionPath="/accounts/journal-entries"
         title="Journal entries"
-        subtitle="Post balanced debits and credits to the general ledger. Closed periods block new posts — manage under Period close & audit."
+        subtitle="Post balanced debits and credits to the general ledger. Closed periods block new posts â€” manage under Period close & audit."
         columns={columns}
         data={items}
         loading={listLoading && items.length === 0}
@@ -386,7 +387,7 @@ const JournalEntries: React.FC = () => {
         onAdd={openNewEntry}
         addButtonLabel="New entry"
         onRowClick={(row) => void openDetail(row.id)}
-        searchPlaceholder="Search JE #, reference, description…"
+        searchPlaceholder="Search JE #, reference, descriptionâ€¦"
         matchRowSearch={(row, q) =>
           matchJeNumber(q, row.id) ||
           matchAmountValue(q, row.totalAmount) ||
@@ -405,7 +406,7 @@ const JournalEntries: React.FC = () => {
         }
         customActionButtons={[
           {
-            label: listLoading ? "Loading…" : "Refresh",
+            label: listLoading ? "Loadingâ€¦" : "Refresh",
             onClick: () => void loadList(),
             disabled: listLoading,
             className: "btn-secondary",
@@ -515,10 +516,10 @@ const JournalEntries: React.FC = () => {
                     setLines(next);
                   }}
                 >
-                  <option value="">Select…</option>
+                  <option value="">Selectâ€¦</option>
                   {accountOptions.map((a) => (
                     <option key={a.accountID} value={a.accountID}>
-                      {a.accountCode} — {a.accountName}
+                      {a.accountCode} â€” {a.accountName}
                     </option>
                   ))}
                 </select>
@@ -566,11 +567,11 @@ const JournalEntries: React.FC = () => {
         <div
           className={`je-balance ${balanced && totalDebit > 0 ? "" : "je-unbalanced"}`}
         >
-          Debits: <strong>{totalDebit.toFixed(2)}</strong> · Credits:{" "}
+          Debits: <strong>{totalDebit.toFixed(2)}</strong> Â· Credits:{" "}
           <strong>{totalCredit.toFixed(2)}</strong>
           {balanced && totalDebit > 0
-            ? " · Balanced"
-            : " · Must balance before posting"}
+            ? " Â· Balanced"
+            : " Â· Must balance before posting"}
         </div>
 
         <div className="je-line-actions">
@@ -587,7 +588,7 @@ const JournalEntries: React.FC = () => {
             disabled={posting || !balanced || totalDebit < 0.01}
             onClick={submitEntry}
           >
-            {posting ? "Posting…" : "Post entry"}
+            {posting ? "Postingâ€¦" : "Post entry"}
           </button>
         </div>
       </div>
@@ -611,15 +612,15 @@ const JournalEntries: React.FC = () => {
                 {detail?.id ? ` #${detail.id}` : ""}
               </h3>
               <button type="button" onClick={() => setDetailOpen(false)}>
-                ×
+                Ã—
               </button>
             </div>
             <div className="je-modal-body">
-              {detailLoading && <p>Loading…</p>}
+              {detailLoading && <p>Loadingâ€¦</p>}
               {!detailLoading && detail && (
                 <>
                   <p style={{ marginTop: 0 }}>
-                    <strong>Date:</strong> {detail.entryDate} ·{" "}
+                    <strong>Date:</strong> {detail.entryDate} Â·{" "}
                     <strong>Ref:</strong> {detail.referenceNumber}
                   </p>
                   <p>
@@ -662,20 +663,20 @@ const JournalEntries: React.FC = () => {
                           <td style={{ textAlign: "right" }}>
                             {Number(ln.debit) > 0
                               ? Number(ln.debit).toFixed(2)
-                              : "—"}
+                              : "â€”"}
                           </td>
                           <td style={{ textAlign: "right" }}>
                             {Number(ln.credit) > 0
                               ? Number(ln.credit).toFixed(2)
-                              : "—"}
+                              : "â€”"}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                   <p className="je-balance">
-                    Totals — Debit:{" "}
-                    <strong>{Number(detail.totalDebit).toFixed(2)}</strong> ·
+                    Totals â€” Debit:{" "}
+                    <strong>{Number(detail.totalDebit).toFixed(2)}</strong> Â·
                     Credit:{" "}
                     <strong>{Number(detail.totalCredit).toFixed(2)}</strong>
                   </p>
@@ -692,7 +693,7 @@ const JournalEntries: React.FC = () => {
                         postReversal();
                       }}
                     >
-                      {reversing ? "Posting…" : "Post reversal"}
+                      {reversing ? "Postingâ€¦" : "Post reversal"}
                     </button>
                     {detail.reversedByJournalEntryId ? (
                       <span

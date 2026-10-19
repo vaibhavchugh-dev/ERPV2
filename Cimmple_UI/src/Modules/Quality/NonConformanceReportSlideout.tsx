@@ -18,6 +18,7 @@ import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDi
 import { NCRCodeService, NCRCodeMaster } from "../../Common/Services/NCRCodeService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import {
   getApiErrorMessage,
@@ -25,6 +26,8 @@ import {
   clearOpenQueryFromUrl,
 } from "../../Common/Services/FileUploadHelper";
 import "./NonConformanceReportSlideout.scss";
+
+const PAGE_PATH = "/quality";
 
 interface NonConformanceReportSlideoutProps {
   ncrId: number;
@@ -179,6 +182,16 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   const { locationId: activeLocationId } = useActiveLocation();
   const { settings } = useFormatting();
   const currencySymbol = settings?.currencySymbol || "$";
+  const {
+    canEdit,
+    canDelete,
+    canPrint,
+    canSend,
+    canAdd,
+    ensure,
+  } = usePagePermissions(PAGE_PATH);
+  const isNew = ncrId <= 0;
+  const canSave = isNew ? canAdd : canEdit;
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -529,6 +542,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   };
 
   const handleSave = async () => {
+    if (!ensure(isNew ? "Add" : "Edit")) return;
     if (!ncr.title?.trim()) {
       toast.error("Please provide a title for the NCR");
       return;
@@ -650,6 +664,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   };
 
   const handleDelete = async () => {
+    if (!ensure("Delete")) return;
     if (ncrId === 0) return;
     setLoading(true);
     try {
@@ -711,6 +726,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   }, [vendorOrders, ncr.vendorId]);
 
   const handlePrint = async () => {
+    if (!ensure("Print")) return;
     if (ncrId <= 0) {
       toast.error("Save the NCR before printing");
       return;
@@ -780,6 +796,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {ncrId > 0 && (
               <>
+              {canPrint && (
               <button
                 type="button"
                 className="btn-icon"
@@ -794,6 +811,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                   <rect x="6" y="14" width="12" height="8"></rect>
                 </svg>
               </button>
+              )}
+              {canSend && (
               <button
                 type="button"
                 className="btn-icon"
@@ -807,6 +826,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                   <polyline points="22,6 12,13 2,6"></polyline>
                 </svg>
               </button>
+              )}
               </>
             )}
             <div className="status-field-inline">
@@ -1368,7 +1388,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           </div>
 
           <div className="ncr-slideout-footer">
-            {ncrId > 0 && (
+            {ncrId > 0 && canDelete && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1393,13 +1413,20 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                 Delete
               </button>
             )}
+            {!canSave && (
+              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
+                View only — you don&apos;t have permission to save changes.
+              </span>
+            )}
             <button type="button" className="btn-cancel" onClick={() => requestClose(false)} disabled={saving}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={saving}>
               <FontAwesomeIcon icon={faSave} style={{ marginRight: "0.5rem" }} />
               {saving ? "Saving..." : ncrId > 0 ? "Update NCR" : "Create NCR"}
             </button>
+            )}
           </div>
         </form>
 

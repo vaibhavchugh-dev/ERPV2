@@ -64,7 +64,12 @@ const Sidebar: React.FC = () => {
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
   const filterByPermission = <T extends { path: string }>(items: T[]): T[] =>
-    items.filter((item) => AuthService.hasPermissionForPath(item.path));
+    items.filter((item) => {
+      if (AuthService.isAdminOnlyPath(item.path)) {
+        return AuthService.isAdminSession();
+      }
+      return AuthService.hasPermissionForPath(item.path);
+    });
 
   const menuItems: NavItem[] = [
     { icon: faHome, title: "Dashboard", path: "/home" },

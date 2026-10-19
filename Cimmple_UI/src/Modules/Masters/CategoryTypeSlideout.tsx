@@ -3,7 +3,10 @@ import { toast } from "react-toastify";
 import { CategoryService, CategoryTypeReq } from "../../Common/Services/CategoryService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/category";
 
 interface CategoryTypeSlideoutProps {
   categoryType: CategoryTypeReq;
@@ -16,7 +19,9 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
   onClose,
   onSaved,
 }) => {
+  const { canAdd, canEdit } = usePagePermissions(PAGE_PATH);
   const [formData, setFormData] = useState<CategoryTypeReq>({ ...categoryType });
+  const canSave = formData.Id === 0 ? canAdd : canEdit;
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [isDirty, setIsDirty] = useState(false);
@@ -211,9 +216,11 @@ const CategoryTypeSlideout: React.FC<CategoryTypeSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleDismiss}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={saving}>
-              {saving ? "Saving..." : formData.Id > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={saving}>
+                {saving ? "Saving..." : formData.Id > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
       </div>

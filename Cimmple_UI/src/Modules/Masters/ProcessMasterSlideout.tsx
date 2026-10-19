@@ -11,7 +11,10 @@ import {
 } from "../../Common/Services/WorkstationService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/process";
 
 interface ProcessMasterSlideoutProps {
   processId: number;
@@ -39,6 +42,8 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
   processId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = processId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<ProcessMasterReq>(emptyForm());
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
   const [loading, setLoading] = useState(false);
@@ -529,7 +534,7 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
           </div>
 
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            {processId > 0 && !formData.IsSystem && (
+            {canDelete && processId > 0 && !formData.IsSystem && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -559,9 +564,11 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : processId > 0 ? "Update" : "Save"}
-            </button>
+            {canSave && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : processId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

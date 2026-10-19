@@ -64,6 +64,13 @@ namespace CimmpleAPI.Data.Models
         [MaxLength(50)]
         public string? LineType { get; set; }
 
+        /// <summary>
+        /// VendorOrders.OrderID when this quotation line was converted onto a PO.
+        /// Null means the line is still open for convert.
+        /// </summary>
+        [Column("ConvertedVendorOrderId")]
+        public int? ConvertedVendorOrderId { get; set; }
+
         public string notes { get; set; }
 
         public string PartNo { get; set; }

@@ -13,7 +13,10 @@ import { validateEmail, validatePhone, validateZipCode } from "../../Common/Util
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import { getKeepActiveReason, isAdminRoleName } from "../../Common/Utils/accountProtection";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
+
+const PAGE_PATH = "/masters/employee";
 
 interface EmployeeMasterSlideoutProps {
   employeeId: number;
@@ -24,6 +27,8 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   employeeId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
+  const canSave = employeeId === 0 ? canAdd : canEdit;
   const isAdminSession = AuthService.isAdminSession();
   const [loadedRoleName, setLoadedRoleName] = useState("");
   const [formData, setFormData] = useState<EmployeeMasterReq>({
@@ -1605,7 +1610,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
               {/* Form Actions */}
               <div className="form-actions" style={{ flexShrink: 0 }}>
-                {employeeId > 0 && !adminProfileLocked && (
+                {canDelete && employeeId > 0 && !adminProfileLocked && (
                   <button
                     type="button"
                     onClick={handleDelete}
@@ -1640,7 +1645,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                 >
                   {adminProfileLocked ? "Close" : "Cancel"}
                 </button>
-                {!adminProfileLocked && (
+                {canSave && !adminProfileLocked && (
                   <button
                     type="submit"
                     className="btn-submit"

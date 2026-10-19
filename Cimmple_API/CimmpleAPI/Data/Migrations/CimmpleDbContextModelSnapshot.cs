@@ -5207,6 +5207,10 @@ namespace CimmpleAPI.Data.Migrations
                     b.Property<int?>("RawMaterialId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("ConvertedVendorOrderId")
+                        .HasColumnType("int")
+                        .HasColumnName("ConvertedVendorOrderId");
+
                     b.HasKey("ID");
 
                     b.HasIndex("OrderID");
