@@ -84,6 +84,23 @@ builder.Services.AddCors(c =>
 // Configure Entity Framework
 builder.Services.AddDbContext<CimmpleDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DB")));
+builder.Services.AddDbContext<CimmpleAPI.Data.Pay.PayDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DB")));
+
+builder.Services.Configure<CimmpleAPI.Services.CimmplePayAttendanceSyncOptions>(
+    builder.Configuration.GetSection(CimmpleAPI.Services.CimmplePayAttendanceSyncOptions.SectionName));
+builder.Services.AddHttpClient("CimmplePay", (sp, client) =>
+{
+    var opt = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CimmpleAPI.Services.CimmplePayAttendanceSyncOptions>>().Value;
+    if (!string.IsNullOrWhiteSpace(opt.BaseUrl))
+    {
+        var root = opt.BaseUrl.TrimEnd('/') + "/";
+        client.BaseAddress = new Uri(root);
+    }
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(opt.TimeoutSeconds, 5, 120));
+});
+builder.Services.AddScoped<CimmpleAPI.Services.ICimmplePayAttendanceSyncService,
+    CimmpleAPI.Services.CimmplePayAttendanceSyncService>();
 
 // Register PDF Service
 builder.Services.AddScoped<CimmpleAPI.Services.Pdf.PdfService>();

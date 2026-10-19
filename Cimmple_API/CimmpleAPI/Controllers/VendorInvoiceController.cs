@@ -223,7 +223,7 @@ namespace CimmpleAPI.Controllers
                     vendorCode = invoice.VendorCode,
                     vendorId = invoice.vid,
                     orderId = lineOrderIds.Count == 1 ? lineOrderIds[0] : (int?)null,
-                    orderNumber = orderNumbers.Count > 0 ? string.Join(", ", orderNumbers) : null,
+                    orderNumber = orderNumbers.Count > 0 ? string.Join(", ", orderNumbers) : "Direct",
                     invoiceDate = invoice.InvoiceDate.ToString("yyyy-MM-dd"),
                     dueDate = invoice.DueDate.ToString("yyyy-MM-dd"),
                     amount = invoice.Amount,
@@ -271,11 +271,60 @@ namespace CimmpleAPI.Controllers
             {
                 try
                 {
+                    if (request == null)
+                        return BadRequest(new { error = "Request body is required." });
+
                     var tenantId = GetTenantId();
                     Console.WriteLine($"CreateVendorInvoice called - TenantId: {tenantId}, VendorId: {request.VendorId}");
 
-                    // Generate invoice number
-                    var invoiceNumber = GenerateVendorInvoiceNumber(tenantId);
+                    if (request.VendorId <= 0)
+                        return BadRequest(new { error = "Vendor is required." });
+
+                    if (request.LineItems == null || request.LineItems.Count == 0)
+                        return BadRequest(new { error = "At least one line item is required." });
+
+                    if (request.LineItems.Any(item => string.IsNullOrWhiteSpace(item.Description)))
+                        return BadRequest(new { error = "Each line item requires a description." });
+
+                    if (request.LineItems.Any(item => item.Amount <= 0))
+                        return BadRequest(new { error = "Each line item amount must be greater than zero." });
+
+                    var vendor = _context.VendorMaster.AsNoTracking()
+                        .FirstOrDefault(v => v.vendor_id == request.VendorId && v.Tenantid == tenantId);
+                    if (vendor == null)
+                        return BadRequest(new { error = "Vendor not found." });
+
+                    var vendorCode = !string.IsNullOrWhiteSpace(request.VendorCode)
+                        ? request.VendorCode.Trim()
+                        : (vendor.vendorcode ?? "");
+                    var vendorName = !string.IsNullOrWhiteSpace(request.VendorName)
+                        ? request.VendorName.Trim()
+                        : (vendor.company_name ?? "");
+
+                    // Prefer caller-supplied vendor bill #; otherwise generate system number.
+                    string invoiceNoDisplay;
+                    if (!string.IsNullOrWhiteSpace(request.InvoiceNo))
+                    {
+                        invoiceNoDisplay = request.InvoiceNo.Trim();
+                        var duplicateNo = _context.VendorInvoiceMaster.Any(v =>
+                            v.TenantId == tenantId &&
+                            v.vid == request.VendorId &&
+                            v.voideddate == null &&
+                            (v.InvoiceNo == invoiceNoDisplay || v.prefixinvoiceno == invoiceNoDisplay));
+                        if (duplicateNo)
+                        {
+                            return BadRequest(new
+                            {
+                                error = $"Vendor invoice number '{invoiceNoDisplay}' already exists for this vendor."
+                            });
+                        }
+                    }
+                    else
+                    {
+                        var invoiceNumber = GenerateVendorInvoiceNumber(tenantId);
+                        var invoiceDateForNo = request.InvoiceDate ?? DateTime.Now;
+                        invoiceNoDisplay = $"VINV-{invoiceDateForNo.Year}-{invoiceNumber:D4}";
+                    }
 
                     if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
                         return forbidLoc!;
@@ -342,14 +391,14 @@ namespace CimmpleAPI.Controllers
                     var invoice = new VendorInvoiceMaster
                     {
                         TenantId = tenantId,
-                        InvoiceNo = invoiceNumber.ToString(),
-                        prefixinvoiceno = $"VINV-{invoiceDate.Year}-{invoiceNumber:D4}",
+                        InvoiceNo = invoiceNoDisplay,
+                        prefixinvoiceno = invoiceNoDisplay,
                         InvoiceDate = invoiceDate,
                         DueDate = dueDate,
                         PaymentTermId = paymentTermId,
                         AccountingPeriod = GlWorkflowService.PeriodKeyFromDate(invoiceDate),
-                        VendorCode = request.VendorCode,
-                        VendorName = request.VendorName,
+                        VendorCode = vendorCode,
+                        VendorName = vendorName,
                         vid = request.VendorId,
                         locationId = resolvedInvoiceLoc,
                         Amount = netAmount,
@@ -358,6 +407,9 @@ namespace CimmpleAPI.Controllers
                         PaidAmount = 0,
                         PaymentMethod = "",
                         CkNo = "",
+                        Series = "",
+                        iscustomer = false,
+                        isPaid = 0,
                         Approved = false,
                         entrytype = "Vendor Invoice",
                         Adj = request.Notes ?? "",
@@ -368,21 +420,22 @@ namespace CimmpleAPI.Controllers
                     _context.VendorInvoiceMaster.Add(invoice);
                     _context.SaveChanges();
 
-                    // Create invoice details
+                    // Create invoice details (OrderId 0 = direct bill, no PO)
                     foreach (var item in request.LineItems)
                     {
                         var invoiceDetail = new VendorInvoiceDetail
                         {
                             InvoiceId = invoice.Id,
-                            OrderId = item.VendorOrderId,
+                            OrderId = item.VendorOrderId > 0 ? item.VendorOrderId : 0,
                             VendorOrderDetailID = item.VendorOrderDetailId,
                             accountid = item.AccountId,
-                            Description = item.Description,
-                            Amount = item.Amount,
-                            qty = item.Quantity,
-                            price = item.UnitPrice,
+                            Description = (item.Description ?? "").Trim(),
+                            Amount = Math.Round(item.Amount, 2),
+                            qty = item.Quantity ?? 1,
+                            price = item.UnitPrice ?? item.Amount,
                             VendorPoNumber = item.VendorPoNumber ?? "",
-                            OrderDate = item.OrderDate ?? DateTime.Now
+                            OrderDate = item.OrderDate ?? invoiceDate,
+                            ReconcileCL = ""
                         };
 
                         _context.VendorInvoiceDetail.Add(invoiceDetail);
@@ -512,7 +565,7 @@ namespace CimmpleAPI.Controllers
                     return Ok(new {
                         result = new {
                             invoiceId = invoice.Id,
-                            invoiceNumber = invoice.prefixinvoiceno,
+                            invoiceNumber = invoice.prefixinvoiceno ?? invoice.InvoiceNo,
                             message = "Vendor invoice created successfully"
                         }
                     });
@@ -1164,6 +1217,8 @@ namespace CimmpleAPI.Controllers
         public int VendorId { get; set; }
         public string VendorCode { get; set; }
         public string VendorName { get; set; }
+        /// <summary>Optional vendor bill / reference number. When omitted, a system VINV- number is generated.</summary>
+        public string InvoiceNo { get; set; }
         public int? LocationId { get; set; }
         public DateTime? InvoiceDate { get; set; }
         public DateTime? DueDate { get; set; }
