@@ -266,6 +266,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                ChartOfAccountsMainGroupBackfill.Ensure(_context);
                 var accounts = _context.ChartofAccounts
                     .Where(a => a.Tenantid == tenantid)
                     .Select(a => new
@@ -294,6 +295,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                ChartOfAccountsMainGroupBackfill.Ensure(_context);
                 var account = _context.ChartofAccounts
                     .Where(a => a.AccountID == accountId && a.Tenantid == tenantId)
                     .FirstOrDefault();
@@ -481,6 +483,7 @@ namespace CimmpleAPI.Controllers
         {
             try
             {
+                ChartOfAccountsMainGroupBackfill.Ensure(_context);
                 var mainGroups = _context.MainGroup
                     .Where(m => m.tenantid == tenantid)
                     .Select(m => new

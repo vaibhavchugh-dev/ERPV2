@@ -297,6 +297,19 @@ catch (Exception ex)
     Log.Warning(ex, "Tenant registry check at startup failed; it is retried when a tenant is provisioned.");
 }
 
+try
+{
+    using var coaScope = app.Services.CreateScope();
+    var linked = ChartOfAccountsMainGroupBackfill.Ensure(
+        coaScope.ServiceProvider.GetRequiredService<CimmpleDbContext>());
+    if (linked is > 0)
+        Log.Information("Linked {Count} existing chart of accounts to their main group.", linked);
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Chart of accounts main-group link at startup failed; it is retried when accounts are opened.");
+}
+
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {

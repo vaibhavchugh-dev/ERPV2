@@ -64,7 +64,11 @@ namespace CimmpleAPI.Services.Auth
                 new PermissionMaster { PermissionName = "System Settings", DisplayPermissionName = "System Settings", LevelInfo = 1, OrderNo = 91, Url = "/settings", ReportGroup = "Administration", ReportDescription = "Configure system settings" },
             };
 
-        /// <summary>Insert any catalog permissions missing from PermissionMaster (safe on every startup).</summary>
+        /// <summary>
+        /// Insert catalog pages and their Level-2 actions missing from PermissionMaster (safe on every startup).
+        /// New definitions are granted to admin roles that already have assignments. Roles with none are left
+        /// for <see cref="AssignDefaultRolePermissionsAsync"/>.
+        /// </summary>
         public static async Task<int> EnsureMissingPermissionsAsync(CimmpleDbContext context, ILogger? logger = null)
         {
             try
@@ -74,28 +78,35 @@ namespace CimmpleAPI.Services.Auth
                     return 0;
                 }
 
-                var catalog = BuildPermissionCatalog();
-                var existingUrls = await context.PermissionMaster
-                    .Where(p => p.Url != null)
-                    .Select(p => p.Url!)
-                    .ToListAsync();
+                var existingUrls = new HashSet<string>(
+                    await context.PermissionMaster
+                        .Where(p => p.Url != null)
+                        .Select(p => p.Url!)
+                        .ToListAsync(),
+                    StringComparer.OrdinalIgnoreCase);
 
-                var missing = catalog
+                var missingPages = BuildPermissionCatalog()
                     .Where(p => p.Url != null && !existingUrls.Contains(p.Url))
                     .ToList();
 
-                if (missing.Count > 0)
-                {
-                    await context.PermissionMaster.AddRangeAsync(missing);
-                    await context.SaveChangesAsync();
-                    logger?.LogInformation("ERP permissions: added {Count} missing definition(s)", missing.Count);
+                var added = await InsertAndAssignMissingAsync(context, missingPages, existingUrls, logger);
 
-                    var assignments = await AssignNewPermissionsToRolesAsync(context, missing);
-                    if (assignments > 0)
+                var pages = await context.PermissionMaster
+                    .Where(p => p.Url != null && !p.Url.Contains("#"))
+                    .ToListAsync();
+
+                var missingActions = new List<PermissionMaster>();
+                foreach (var page in pages)
+                {
+                    foreach (var action in ErpPermissionActions.BuildActionPermissions(page))
                     {
-                        logger?.LogInformation("ERP permissions: added {Count} role assignment(s) for new permission(s)", assignments);
+                        if (action.Url == null || !existingUrls.Add(action.Url))
+                            continue;
+                        missingActions.Add(action);
                     }
                 }
+
+                added += await InsertAndAssignMissingAsync(context, missingActions, existingUrls, logger);
 
                 var mirrored = await EnsureScheduledReportEmailsRoleMirroringAsync(context);
                 if (mirrored > 0)
@@ -103,12 +114,40 @@ namespace CimmpleAPI.Services.Auth
                     logger?.LogInformation("ERP permissions: mirrored Scheduled Report Emails onto {Count} role(s) with Reports access", mirrored);
                 }
 
-                return missing.Count;
+                return added;
             }
             catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
             {
                 return 0;
             }
+        }
+
+        private static async Task<int> InsertAndAssignMissingAsync(
+            CimmpleDbContext context,
+            List<PermissionMaster> missing,
+            HashSet<string> existingUrls,
+            ILogger? logger)
+        {
+            if (missing.Count == 0)
+                return 0;
+
+            await context.PermissionMaster.AddRangeAsync(missing);
+            await context.SaveChangesAsync();
+            foreach (var permission in missing)
+            {
+                if (permission.Url != null)
+                    existingUrls.Add(permission.Url);
+            }
+
+            logger?.LogInformation("ERP permissions: added {Count} missing definition(s)", missing.Count);
+
+            var assignments = await AssignNewPermissionsToRolesAsync(context, missing);
+            if (assignments > 0)
+            {
+                logger?.LogInformation("ERP permissions: added {Count} role assignment(s) for new permission(s)", assignments);
+            }
+
+            return missing.Count;
         }
 
         /// <summary>
@@ -153,6 +192,12 @@ namespace CimmpleAPI.Services.Auth
                 .Select(a => (a.RoleId, a.TenantId, a.PermissionId))
                 .ToHashSet();
 
+            // A role with no assignments yet is filled by AssignDefaultRolePermissionsAsync.
+            // Granting only the newly inserted rows here would mark it as already assigned.
+            var rolesWithAssignments = existingAssignments
+                .Select(a => (a.RoleId, a.TenantId))
+                .ToHashSet();
+
             var schedulesPermission = newlyAddedPermissions.FirstOrDefault(p =>
                 string.Equals(p.Url, ScheduledReportEmailsUrl, StringComparison.OrdinalIgnoreCase));
             int? schedulesPermissionId = schedulesPermission?.PermissionId;
@@ -178,6 +223,11 @@ namespace CimmpleAPI.Services.Auth
                 var tenantRoles = roles.Where(r => r.TenantId == tenantId).ToList();
                 foreach (var role in tenantRoles)
                 {
+                    if (!rolesWithAssignments.Contains((role.RoleID, tenantId)))
+                    {
+                        continue;
+                    }
+
                     if (IsAdminRoleName(role.RoleName, role.RoleTag))
                     {
                         foreach (var permissionId in newPermissionIds)
@@ -297,7 +347,8 @@ namespace CimmpleAPI.Services.Auth
         }
 
         /// <summary>
-        /// Default assignments for one tenant: admin roles get every permission; other roles get Dashboard only.
+        /// Default assignments for one tenant: admin roles get every page and Level-2 action;
+        /// other roles get Dashboard only.
         /// With <paramref name="onlyRolesWithoutAssignments"/> roles that already have permissions are left alone;
         /// otherwise every role's assignments in the tenant are replaced.
         /// </summary>
