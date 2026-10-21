@@ -28,6 +28,7 @@ BEGIN
         [Code] nvarchar(50) NULL,
         [Status] nvarchar(20) NOT NULL,
         [Plan] nvarchar(50) NULL,
+        [Industry] nvarchar(50) NULL,
         [ContactName] nvarchar(200) NULL,
         [ContactEmail] nvarchar(200) NULL,
         [Notes] nvarchar(2000) NULL,
@@ -84,6 +85,30 @@ END
 COMMIT;
 ";
 
+        private const string UpgradeSql = @"
+IF COL_LENGTH(N'CimmpleFlow.Tenant', N'Industry') IS NULL
+    ALTER TABLE CimmpleFlow.Tenant ADD [Industry] nvarchar(50) NULL;
+
+IF OBJECT_ID(N'CimmpleFlow.TenantMasterImport', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.TenantMasterImport (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [TenantId] int NOT NULL,
+        [MasterName] nvarchar(40) NOT NULL,
+        [Source] nvarchar(20) NOT NULL,
+        [FileName] nvarchar(260) NULL,
+        [CreatedCount] int NOT NULL,
+        [UpdatedCount] int NOT NULL,
+        [SkippedCount] int NOT NULL,
+        [FailedCount] int NOT NULL,
+        [CreatedBy] nvarchar(100) NULL,
+        [CreatedUtc] datetime2 NOT NULL,
+        CONSTRAINT [PK_TenantMasterImport] PRIMARY KEY ([Id])
+    );
+    CREATE INDEX [IX_TenantMasterImport_Tenant] ON CimmpleFlow.TenantMasterImport ([TenantId], [MasterName], [CreatedUtc]);
+END
+";
+
         public static async Task EnsureAsync(CimmpleDbContext context)
         {
             await EnsureTableAsync(context);
@@ -102,6 +127,7 @@ COMMIT;
                     return;
 
                 await context.Database.ExecuteSqlRawAsync(CreateTableSql);
+                await context.Database.ExecuteSqlRawAsync(UpgradeSql);
                 Volatile.Write(ref _tableEnsured, 1);
             }
             finally

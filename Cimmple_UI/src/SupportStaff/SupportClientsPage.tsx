@@ -3,6 +3,7 @@ import { toast } from "react-toastify";
 import { useFormatting } from "../Common/Hooks/useFormatting";
 import { SYSTEM_TIMEZONE_OPTIONS } from "../Common/Utils/defaultSystemSettings";
 import SupportHeader from "./SupportHeader";
+import SupportClientMasterData from "./SupportClientMasterData";
 import {
   apiError,
   PlatformTenantService,
@@ -27,6 +28,8 @@ const emptyForm: ProvisionTenantRequest = {
   currency: "USD",
   currencySymbol: "$",
   notes: "",
+  industry: "",
+  includeSampleData: false,
   sendInviteEmail: true,
 };
 
@@ -71,6 +74,7 @@ const SupportClientsPage: React.FC = () => {
   const [form, setForm] = useState<ProvisionTenantRequest>(emptyForm);
   const [busy, setBusy] = useState(false);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
+  const [industries, setIndustries] = useState<{ code: string; label: string }[]>([]);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -87,6 +91,10 @@ const SupportClientsPage: React.FC = () => {
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    void PlatformTenantService.industries().then(setIndustries).catch(() => undefined);
+  }, []);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -158,6 +166,7 @@ const SupportClientsPage: React.FC = () => {
       }
       if (result.success) {
         toast.success("Client created and ready to use.");
+        if (result.sampleError) toast.warning(`Sample master data: ${result.sampleError}`);
       } else {
         toast.warning(
           `Client created, but default data could not be finished: ${result.error || "unknown error"}. Use Resume setup to retry.`
@@ -408,6 +417,36 @@ const SupportClientsPage: React.FC = () => {
                   Internal notes
                   <textarea rows={3} value={form.notes} onChange={setField("notes")} maxLength={2000} />
                 </label>
+                <label>
+                  Industry
+                  <select
+                    value={form.industry}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        industry: value,
+                        includeSampleData: value ? prev.includeSampleData : false,
+                      }));
+                    }}
+                  >
+                    <option value="">None</option>
+                    {industries.map((industry) => (
+                      <option key={industry.code} value={industry.code}>
+                        {industry.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="sc-form__check sc-form__wide">
+                  <input
+                    type="checkbox"
+                    checked={form.includeSampleData}
+                    disabled={!form.industry}
+                    onChange={setField("includeSampleData")}
+                  />
+                  Include sample workstations, processes, and job templates
+                </label>
                 <label className="sc-form__check sc-form__wide">
                   <input type="checkbox" checked={form.sendInviteEmail} onChange={setField("sendInviteEmail")} />
                   Email the administrator their sign-in details
@@ -478,6 +517,8 @@ const SupportClientsPage: React.FC = () => {
               <div className="support-inbox__description">
                 <h3>Details</h3>
                 <dl className="sc-grid">
+                  <dt>Tenant ID</dt>
+                  <dd>{selected.tenantId}</dd>
                   <dt>Users</dt>
                   <dd>{selected.userCount}</dd>
                   <dt>Created</dt>
@@ -502,6 +543,8 @@ const SupportClientsPage: React.FC = () => {
                   </>
                 )}
               </div>
+
+              <SupportClientMasterData tenant={selected} busy={busy} onTenant={replaceTenant} />
 
               <div className="support-inbox__description">
                 <h3>Maintenance</h3>

@@ -89,6 +89,19 @@ export const PROCESS_IMPORT_HEADERS = [
 ] as const;
 
 export class ProcessService {
+  public static GetProcessCategories = async (): Promise<string[]> => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") {
+      tenantID = 1;
+    }
+    const response = await Instense.get("/Process/GetProcessCategories", {
+      params: { tenantid: tenantID },
+    });
+    const result = response.data?.result;
+    return Array.isArray(result) && result.length > 0 ? result : [...PROCESS_CATEGORIES];
+  };
+
   public static GetProcesses = async (
     request: { tenantid: number }
   ): Promise<ProcessMaster[] | null> => {

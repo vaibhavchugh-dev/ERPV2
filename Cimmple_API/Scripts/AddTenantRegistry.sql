@@ -61,3 +61,27 @@ WHERE NOT EXISTS (SELECT 1 FROM CimmpleFlow.Tenant t WHERE t.TenantId = i.Tenant
 SET IDENTITY_INSERT CimmpleFlow.Tenant OFF;
 COMMIT;
 GO
+
+IF COL_LENGTH(N'CimmpleFlow.Tenant', N'Industry') IS NULL
+    ALTER TABLE CimmpleFlow.Tenant ADD [Industry] nvarchar(50) NULL;
+GO
+
+IF OBJECT_ID(N'CimmpleFlow.TenantMasterImport', N'U') IS NULL
+BEGIN
+    CREATE TABLE CimmpleFlow.TenantMasterImport (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [TenantId] int NOT NULL,
+        [MasterName] nvarchar(40) NOT NULL,
+        [Source] nvarchar(20) NOT NULL,
+        [FileName] nvarchar(260) NULL,
+        [CreatedCount] int NOT NULL,
+        [UpdatedCount] int NOT NULL,
+        [SkippedCount] int NOT NULL,
+        [FailedCount] int NOT NULL,
+        [CreatedBy] nvarchar(100) NULL,
+        [CreatedUtc] datetime2 NOT NULL,
+        CONSTRAINT [PK_TenantMasterImport] PRIMARY KEY ([Id])
+    );
+    CREATE INDEX [IX_TenantMasterImport_Tenant] ON CimmpleFlow.TenantMasterImport ([TenantId], [MasterName], [CreatedUtc]);
+END
+GO

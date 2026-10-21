@@ -120,6 +120,7 @@ builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.ConversationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
 builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();
+builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.MasterDataSetupService>();
 builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.TenantProvisioningService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 

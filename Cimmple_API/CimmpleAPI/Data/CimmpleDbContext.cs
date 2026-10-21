@@ -108,6 +108,7 @@ namespace CimmpleAPI.Data
         public DbSet<Payment> Payment { get; set; }
 
         public DbSet<Tenant> Tenants { get; set; }
+        public DbSet<TenantMasterImport> TenantMasterImports { get; set; }
 
         // User Entities
         public DbSet<UserDetail> UserDetails { get; set; }
@@ -814,12 +815,24 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.Code).HasMaxLength(50);
                 entity.Property(e => e.Status).HasMaxLength(20);
                 entity.Property(e => e.Plan).HasMaxLength(50);
+                entity.Property(e => e.Industry).HasMaxLength(50);
                 entity.Property(e => e.ContactName).HasMaxLength(200);
                 entity.Property(e => e.ContactEmail).HasMaxLength(200);
                 entity.Property(e => e.Notes).HasMaxLength(2000);
                 entity.Property(e => e.LastProvisioningError).HasMaxLength(2000);
                 entity.Property(e => e.CreatedBy).HasMaxLength(100);
                 entity.HasIndex(e => e.Code).IsUnique().HasFilter("[Code] IS NOT NULL");
+            });
+
+            modelBuilder.Entity<TenantMasterImport>(entity =>
+            {
+                entity.ToTable("TenantMasterImport");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.MasterName).HasMaxLength(40);
+                entity.Property(e => e.Source).HasMaxLength(20);
+                entity.Property(e => e.FileName).HasMaxLength(260);
+                entity.Property(e => e.CreatedBy).HasMaxLength(100);
+                entity.HasIndex(e => new { e.TenantId, e.MasterName, e.CreatedUtc });
             });
 
             modelBuilder.Entity<EmailOutbox>(entity =>

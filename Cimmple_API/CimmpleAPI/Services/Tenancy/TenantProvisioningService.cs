@@ -21,6 +21,7 @@ namespace CimmpleAPI.Services.Tenancy
         private readonly EmailOutboxService _outbox;
         private readonly IConfiguration _configuration;
         private readonly ISessionValidationService _sessions;
+        private readonly MasterDataSetupService _masterData;
         private readonly ILogger<TenantProvisioningService> _logger;
 
         public TenantProvisioningService(
@@ -28,12 +29,14 @@ namespace CimmpleAPI.Services.Tenancy
             EmailOutboxService outbox,
             IConfiguration configuration,
             ISessionValidationService sessions,
+            MasterDataSetupService masterData,
             ILogger<TenantProvisioningService> logger)
         {
             _db = db;
             _outbox = outbox;
             _configuration = configuration;
             _sessions = sessions;
+            _masterData = masterData;
             _logger = logger;
         }
 
@@ -99,6 +102,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                     Code = code,
                     Status = TenantStatus.Provisioning,
                     Plan = TrimOrNull(request.Plan),
+                    Industry = IndustryPacks.Normalize(request.Industry),
                     ContactName = $"{request.AdminFirstName?.Trim()} {request.AdminLastName?.Trim()}".Trim(),
                     ContactEmail = adminEmail,
                     Notes = TrimOrNull(request.Notes),
@@ -202,6 +206,25 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 TemporaryPassword = temporaryPassword,
                 Steps = steps
             };
+
+            if (seedError == null && request.IncludeSampleData)
+            {
+                try
+                {
+                    var sample = await _masterData.ApplySamplesAsync(
+                        tenant.TenantId,
+                        request.Industry,
+                        new[] { MasterDataSetupService.Workstations, MasterDataSetupService.Processes, MasterDataSetupService.JobTemplates },
+                        createdBy);
+                    result.Steps.AddRange(sample.Steps);
+                    result.SampleError = sample.Success ? null : sample.Error;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Sample master data for tenant {TenantId} failed", tenant.TenantId);
+                    result.SampleError = ex.GetBaseException().Message;
+                }
+            }
 
             if (seedError == null && request.SendInviteEmail)
             {
@@ -452,6 +475,10 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 return "Time zone is not valid.";
             if (!string.IsNullOrWhiteSpace(request.Currency) && request.Currency.Trim().Length != 3)
                 return "Currency must be a 3-letter code such as USD.";
+            if (request.IncludeSampleData && IndustryPacks.Normalize(request.Industry) == null)
+                return "Choose an industry when including sample workstations, processes, and job templates.";
+            if (!string.IsNullOrWhiteSpace(request.Industry) && IndustryPacks.Normalize(request.Industry) == null)
+                return "Unknown industry.";
             return null;
         }
 
@@ -507,6 +534,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             Code = t.Code,
             Status = t.Status,
             Plan = t.Plan,
+            Industry = t.Industry,
             ContactName = t.ContactName,
             ContactEmail = t.ContactEmail,
             Notes = t.Notes,
@@ -539,6 +567,8 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public string? Currency { get; set; }
         public string? CurrencySymbol { get; set; }
         public string? Notes { get; set; }
+        public string? Industry { get; set; }
+        public bool IncludeSampleData { get; set; }
         public bool SendInviteEmail { get; set; } = true;
     }
 
@@ -549,6 +579,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public string? Code { get; set; }
         public string Status { get; set; } = "";
         public string? Plan { get; set; }
+        public string? Industry { get; set; }
         public string? ContactName { get; set; }
         public string? ContactEmail { get; set; }
         public string? Notes { get; set; }
@@ -576,6 +607,10 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
 
         public bool InviteQueued { get; set; }
         public string? InviteError { get; set; }
+
+        /// <summary>Set when the client was created but sample master data did not finish.</summary>
+        public string? SampleError { get; set; }
+
         public List<SeedStepResult> Steps { get; set; } = new();
 
         public static ProvisionTenantResult Fail(string error) => new() { Success = false, Error = error };

@@ -15,6 +15,9 @@ namespace CimmpleAPI.Data.Models
         public string Status { get; set; } = TenantStatus.Provisioning;
 
         public string? Plan { get; set; }
+
+        /// <summary>Industry pack code, e.g. machine-shop. Empty when no sample data applies.</summary>
+        public string? Industry { get; set; }
         public string? ContactName { get; set; }
         public string? ContactEmail { get; set; }
         public string? Notes { get; set; }
@@ -40,5 +43,21 @@ namespace CimmpleAPI.Data.Models
 
         public static string? Normalize(string? status) =>
             All.FirstOrDefault(s => string.Equals(s, status?.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>One row per master import run from the support portal.</summary>
+    public class TenantMasterImport
+    {
+        public int Id { get; set; }
+        public int TenantId { get; set; }
+        public string MasterName { get; set; } = "";
+        public string Source { get; set; } = "";
+        public string? FileName { get; set; }
+        public int CreatedCount { get; set; }
+        public int UpdatedCount { get; set; }
+        public int SkippedCount { get; set; }
+        public int FailedCount { get; set; }
+        public string? CreatedBy { get; set; }
+        public DateTime CreatedUtc { get; set; }
     }
 }

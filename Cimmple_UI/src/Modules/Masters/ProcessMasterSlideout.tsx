@@ -46,6 +46,7 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
   const canSave = processId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<ProcessMasterReq>(emptyForm());
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
+  const [categories, setCategories] = useState<string[]>([...PROCESS_CATEGORIES]);
   const [loading, setLoading] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -60,6 +61,9 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
     }));
 
     loadWorkstations();
+    void ProcessService.GetProcessCategories()
+      .then(setCategories)
+      .catch(() => undefined);
 
     if (processId > 0) {
       loadProcess();
@@ -374,13 +378,13 @@ const ProcessMasterSlideout: React.FC<ProcessMasterSlideoutProps> = ({
                     onChange={(e) => handleInputChange("ProcessCategory", e.target.value)}
                   >
                     <option value="">Select category...</option>
-                    {PROCESS_CATEGORIES.map((cat) => (
+                    {categories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
                     ))}
                     {formData.ProcessCategory &&
-                      !(PROCESS_CATEGORIES as readonly string[]).includes(formData.ProcessCategory) && (
+                      !categories.includes(formData.ProcessCategory) && (
                         <option value={formData.ProcessCategory}>{formData.ProcessCategory}</option>
                       )}
                   </select>

@@ -74,9 +74,19 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpGet("GetProcessCategories")]
-        public IActionResult GetProcessCategories()
+        public async Task<IActionResult> GetProcessCategories([FromQuery] int tenantid)
         {
-            return Ok(new { result = ProcessCategories });
+            var id = tenantid > 0 ? tenantid : GetTenantId();
+            string? industry = null;
+            if (id > 0)
+            {
+                industry = await _context.Tenants.AsNoTracking()
+                    .Where(t => t.TenantId == id)
+                    .Select(t => t.Industry)
+                    .FirstOrDefaultAsync();
+            }
+
+            return Ok(new { result = CimmpleAPI.Services.Tenancy.IndustryPacks.CategoriesFor(industry) });
         }
 
         [HttpGet("GetProcessById")]
