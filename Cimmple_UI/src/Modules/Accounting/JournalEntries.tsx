@@ -43,6 +43,14 @@ const ymdLocal = (d: Date) => {
   return `${y}-${m}-${day}`;
 };
 
+const currentMonthRange = () => {
+  const now = new Date();
+  return {
+    start: ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: ymdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+};
+
 const newLine = (): LineDraft => ({
   key: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
   accountId: 0,
@@ -94,12 +102,8 @@ const JournalEntries: React.FC = () => {
   const [items, setItems] = useState<JournalRow[]>([]);
   const [total, setTotal] = useState(0);
 
-  const [filterStart, setFilterStart] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    return ymdLocal(d);
-  });
-  const [filterEnd, setFilterEnd] = useState(() => ymdLocal(new Date()));
+  const [filterStart, setFilterStart] = useState(() => currentMonthRange().start);
+  const [filterEnd, setFilterEnd] = useState(() => currentMonthRange().end);
 
   const [entryDate, setEntryDate] = useState(() => ymdLocal(new Date()));
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -382,10 +386,7 @@ const JournalEntries: React.FC = () => {
   return (
     <div className="journal-entries-page">
       <MasterListPage
-<<<<<<< HEAD
         permissionPath={canAdd ? "/accounts/journal-entries" : undefined}
-=======
->>>>>>> origin/main
         title="Journal entries"
         subtitle="Post balanced debits and credits to the general ledger. Closed periods block new posts — manage under Period close & audit."
         columns={columns}
@@ -590,7 +591,6 @@ const JournalEntries: React.FC = () => {
           >
             Add line
           </button>
-<<<<<<< HEAD
           {canPostEntry && (
             <button
               type="button"
@@ -601,16 +601,6 @@ const JournalEntries: React.FC = () => {
               {posting ? "Posting…" : "Post entry"}
             </button>
           )}
-=======
-          <button
-            type="button"
-            className="je-submit"
-            disabled={posting || !balanced || totalDebit < 0.01}
-            onClick={submitEntry}
-          >
-            {posting ? "Posting…" : "Post entry"}
-          </button>
->>>>>>> origin/main
         </div>
       </div>
       )}
@@ -702,7 +692,6 @@ const JournalEntries: React.FC = () => {
                     <strong>{Number(detail.totalCredit).toFixed(2)}</strong>
                   </p>
                   <div style={{ marginTop: "1rem" }}>
-<<<<<<< HEAD
                     {canReverse && (
                       <button
                         type="button"
@@ -719,22 +708,6 @@ const JournalEntries: React.FC = () => {
                         {reversing ? "Posting…" : "Post reversal"}
                       </button>
                     )}
-=======
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      style={{ marginRight: "0.75rem" }}
-                      disabled={
-                        reversing || !!detail.reversedByJournalEntryId
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        postReversal();
-                      }}
-                    >
-                      {reversing ? "Posting…" : "Post reversal"}
-                    </button>
->>>>>>> origin/main
                     {detail.reversedByJournalEntryId ? (
                       <span
                         style={{

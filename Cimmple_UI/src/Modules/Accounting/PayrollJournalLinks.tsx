@@ -50,6 +50,14 @@ const ymd = (d: Date) => {
   return `${y}-${m}-${day}`;
 };
 
+const currentMonthRange = () => {
+  const now = new Date();
+  return {
+    start: ymd(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+};
+
 const fmtDate = (v?: string | null) => {
   if (!v) return "—";
   return formatDateOnlyFromApi(v, true) || v;
@@ -66,12 +74,8 @@ const PayrollJournalLinks: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PayrollLinkRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [filterStart, setFilterStart] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 6);
-    return ymd(d);
-  });
-  const [filterEnd, setFilterEnd] = useState(() => ymd(new Date()));
+  const [filterStart, setFilterStart] = useState(() => currentMonthRange().start);
+  const [filterEnd, setFilterEnd] = useState(() => currentMonthRange().end);
   const [source, setSource] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
 

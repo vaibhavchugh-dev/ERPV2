@@ -74,7 +74,9 @@ export interface MasterListPageProps<T = any> {
   extraFilters?: React.ReactNode;
   emptyMessage?: string;
   getRowId?: (row: T) => number | string; // Function to get unique ID for row
-  customActionButtons?: CustomActionButton[]; // Custom action buttons
+  customActionButtons?: CustomActionButton[]; // Custom action buttons, left of Columns
+  /** Action buttons rendered after Columns, at the top-right of the header. */
+  trailingActionButtons?: CustomActionButton[];
   enablePagination?: boolean; // Enable pagination (default: true — uses System Settings defaultPageSize)
   pageSize?: number; // Override default page size from settings
   /** Page path (e.g. `/masters/bank`). Hides Add when the user lacks the Add action. */
@@ -109,6 +111,7 @@ const MasterListPage = <T extends Record<string, any>>({
   emptyMessage = "No data available",
   getRowId,
   customActionButtons = [],
+  trailingActionButtons = [],
   enablePagination = true,
   pageSize,
   permissionPath,
@@ -315,6 +318,16 @@ const MasterListPage = <T extends Record<string, any>>({
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {trailingActionButtons.map((button, index) => (
+            <button
+              key={`trail-${index}`}
+              className={button.className || "btn-secondary"}
+              onClick={button.onClick}
+              disabled={button.disabled}
+            >
+              {button.label}
+            </button>
+          ))}
           {onAdd &&
             (!permissionPath ||
               AuthService.hasActionPermission(permissionPath, "Add")) && (

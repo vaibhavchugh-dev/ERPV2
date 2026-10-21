@@ -68,10 +68,13 @@ import {
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi, formatDateTime } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./JobOrderSlideout.scss";
+
+const PAGE_PATH = "/job-orders";
 
 interface JobOrderSlideoutProps {
   jobOrderId: number;
@@ -138,7 +141,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   headerPreview,
 }) => {
   const { locationId: activeLocationId } = useActiveLocation();
-<<<<<<< HEAD
   const {
     canEdit,
     canDelete,
@@ -152,8 +154,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const canSave = canEdit;
   const canManage = can("Manage");
   const canComplete = can("Complete");
-=======
->>>>>>> origin/main
   const [formData, setFormData] = useState<JobOrderMasterReq>({
     JobOrderID: 0,
     JobOrderNumber: headerPreview?.jobOrderNumber || 0,

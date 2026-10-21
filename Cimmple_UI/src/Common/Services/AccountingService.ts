@@ -765,6 +765,8 @@ export interface BankCashEntrySummary {
   amount: number;
   description: string;
   reference: string;
+  debitAccount?: string;
+  creditAccount?: string;
   checkNo?: string;
   bankId?: number | null;
   bankName: string;

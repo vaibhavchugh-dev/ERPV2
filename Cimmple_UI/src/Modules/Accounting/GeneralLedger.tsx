@@ -15,18 +15,22 @@ const ymdLocal = (d: Date) => {
   return `${y}-${m}-${day}`;
 };
 
+const currentMonthRange = () => {
+  const now = new Date();
+  return {
+    start: ymdLocal(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: ymdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+};
+
 const GeneralLedger: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const seededRef = useRef(false);
   const [accounts, setAccounts] = useState<ChartofAccountMaster[]>([]);
   const [accountId, setAccountId] = useState(0);
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    return ymdLocal(d);
-  });
-  const [endDate, setEndDate] = useState(() => ymdLocal(new Date()));
+  const [startDate, setStartDate] = useState(() => currentMonthRange().start);
+  const [endDate, setEndDate] = useState(() => currentMonthRange().end);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [pendingAutoRun, setPendingAutoRun] = useState(false);
