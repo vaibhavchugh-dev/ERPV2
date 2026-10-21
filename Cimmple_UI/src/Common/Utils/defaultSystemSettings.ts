@@ -37,6 +37,18 @@ export const getDefaultSystemSettings = (tenantId: number): SystemSettings => ({
   enableInAppNotifications: true,
 });
 
+/** Currencies offered when creating a client. Symbols come from the currency code. */
+export const SYSTEM_CURRENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "USD", label: "USD - US Dollar" },
+  { value: "EUR", label: "EUR - Euro" },
+  { value: "GBP", label: "GBP - British Pound" },
+  { value: "CAD", label: "CAD - Canadian Dollar" },
+  { value: "AUD", label: "AUD - Australian Dollar" },
+  { value: "JPY", label: "JPY - Japanese Yen" },
+  { value: "CNY", label: "CNY - Chinese Yuan" },
+  { value: "INR", label: "INR - Indian Rupee" },
+];
+
 /** Common IANA timezones for the settings picker. */
 export const SYSTEM_TIMEZONE_OPTIONS: { value: string; label: string }[] = [
   { value: "America/New_York", label: "Eastern Time (ET)" },

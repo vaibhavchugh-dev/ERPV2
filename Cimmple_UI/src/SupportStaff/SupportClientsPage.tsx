@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { useFormatting } from "../Common/Hooks/useFormatting";
-import { SYSTEM_TIMEZONE_OPTIONS } from "../Common/Utils/defaultSystemSettings";
+import { deriveCurrencySymbol } from "../Common/Utils/Formatting";
+import { SYSTEM_CURRENCY_OPTIONS, SYSTEM_TIMEZONE_OPTIONS } from "../Common/Utils/defaultSystemSettings";
 import SupportHeader from "./SupportHeader";
 import SupportClientMasterData from "./SupportClientMasterData";
 import {
@@ -407,11 +408,27 @@ const SupportClientsPage: React.FC = () => {
                 </label>
                 <label>
                   Currency
-                  <input value={form.currency} onChange={setField("currency")} maxLength={3} />
+                  <select
+                    value={form.currency}
+                    onChange={(e) => {
+                      const currency = e.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        currency,
+                        currencySymbol: deriveCurrencySymbol(currency),
+                      }));
+                    }}
+                  >
+                    {SYSTEM_CURRENCY_OPTIONS.map((currency) => (
+                      <option key={currency.value} value={currency.value}>
+                        {currency.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Currency symbol
-                  <input value={form.currencySymbol} onChange={setField("currencySymbol")} maxLength={5} />
+                  <input value={form.currencySymbol} readOnly />
                 </label>
                 <label className="sc-form__wide">
                   Internal notes
