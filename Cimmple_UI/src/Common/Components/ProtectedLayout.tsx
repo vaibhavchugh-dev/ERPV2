@@ -107,10 +107,7 @@ export const ProtectedLayout: React.FC = () => {
               exact
               path={route.path}
               render={(props) => {
-                const isAdminOnly =
-                  AuthService.isAdminOnlyPath(route.path) &&
-                  !AuthService.isAdminSession();
-                if (isAdminOnly || !AuthService.hasPermissionForPath(route.path)) {
+                if (!AuthService.hasPermissionForPath(route.path)) {
                   // Avoid redirect loops when landing itself is denied
                   if (landingPath === route.path || !AuthService.hasPermissionForPath(landingPath)) {
                     return <AccessDenied />;

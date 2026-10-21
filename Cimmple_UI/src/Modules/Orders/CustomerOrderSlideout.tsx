@@ -16,6 +16,8 @@ import { ShippingService, ShippableItem, Shipment } from "../../Common/Services/
 import { InvoiceService, InvoiceableItem, Invoice } from "../../Common/Services/InvoiceService";
 import ShippingModal from "./ShippingModal";
 import InvoiceModal from "./InvoiceModal";
+import CustomerShipmentDetailModal from "./CustomerShipmentDetailModal";
+import CustomerInvoiceDetailModal from "./CustomerInvoiceDetailModal";
 import CopyFromPastOrderDialog, { CopyFromPastOrderResult } from "./CopyFromPastOrderDialog";
 import { formatPrefixedDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
@@ -44,6 +46,7 @@ import {
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+import { getShipmentTrackingUrl } from "../../Common/Utils/shipmentTracking";
 import "./CustomerOrderSlideout.scss";
 
 const PAGE_PATH = "/orders/customer";
@@ -162,6 +165,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [selectedShippingItems, setSelectedShippingItems] = useState<ShippableItem[]>([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [viewShipmentId, setViewShipmentId] = useState(0);
 
   // Invoice related state
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -169,6 +173,7 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<InvoiceableItem[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [viewInvoiceId, setViewInvoiceId] = useState(0);
   
   // Default unit options for combobox
   const defaultUnitOptions = [
@@ -947,6 +952,14 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     setShowShippingModal(true);
   };
 
+  const reloadOrderFromServer = async () => {
+    const id = formData.OrderID > 0 ? formData.OrderID : orderId;
+    if (id > 0) {
+      listNeedsRefreshRef.current = true;
+      await loadOrder(id);
+    }
+  };
+
   const handleShipmentCreated = async () => {
     try {
       const id = formData.OrderID > 0 ? formData.OrderID : orderId;
@@ -1626,7 +1639,14 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
     <div
       className="customer-order-slideout-overlay"
       onClick={() => {
-        if (!showShippingModal && !showInvoiceModal && !showTextEditorPopup && !showCopyDialog) {
+        if (
+          !showShippingModal &&
+          !showInvoiceModal &&
+          !showTextEditorPopup &&
+          !showCopyDialog &&
+          viewShipmentId <= 0 &&
+          viewInvoiceId <= 0
+        ) {
           handleCancel();
         }
       }}
@@ -2766,7 +2786,9 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                 </p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                  {shipments.map((shipment) => (
+                  {shipments.map((shipment) => {
+                    const trackingUrl = getShipmentTrackingUrl(shipment.courier, shipment.trackingNumber);
+                    return (
                     <div key={shipment.id} style={{
                       padding: "1rem",
                       backgroundColor: "#ffffff",
@@ -2776,9 +2798,15 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.75rem" }}>
                         <div>
-                          <div style={{ fontWeight: "600", fontSize: "0.875rem", color: "#1f2937" }}>
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => setViewShipmentId(shipment.id)}
+                            title="Open shipment"
+                            style={{ fontSize: "0.875rem" }}
+                          >
                             Shipment #{shipment.shipmentNo}
-                          </div>
+                          </button>
                           <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
                             {formatDateOnlyFromApi(shipment.shipmentDate, true)}
                           </div>
@@ -2792,8 +2820,30 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               {shipment.boxes} box{shipment.boxes !== 1 ? 'es' : ''}
                             </div>
                             {shipment.trackingNumber && (
-                              <div style={{ fontSize: "0.75rem", color: "#3b82f6", fontWeight: "500" }}>
-                                Tracking: {shipment.trackingNumber}
+                              <div style={{ fontSize: "0.75rem", fontWeight: "500" }}>
+                                Tracking:{" "}
+                                {trackingUrl ? (
+                                  <a
+                                    className="link-button"
+                                    href={trackingUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Track shipment"
+                                    style={{ fontSize: "0.75rem" }}
+                                  >
+                                    {shipment.trackingNumber}
+                                  </a>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="link-button"
+                                    title="Tracking number"
+                                    style={{ fontSize: "0.75rem" }}
+                                    onClick={() => toast.info(`Tracking number: ${shipment.trackingNumber}`)}
+                                  >
+                                    {shipment.trackingNumber}
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2826,7 +2876,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2880,9 +2931,15 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.75rem" }}>
                         <div>
-                          <div style={{ fontWeight: "600", fontSize: "0.875rem", color: "#1f2937" }}>
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => setViewInvoiceId(invoice.id)}
+                            title="Open invoice"
+                            style={{ fontSize: "0.875rem" }}
+                          >
                             Invoice #{invoice.invoiceNo}
-                          </div>
+                          </button>
                           <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
                             {formatDateOnlyFromApi(invoice.invoiceDate, true)} • Due: {formatDateOnlyFromApi(invoice.dueDate, true)}
                           </div>
@@ -3074,6 +3131,54 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           selectedItems={selectedShippingItems}
           onShipmentCreated={handleShipmentCreated}
         />
+      )}
+
+      {viewShipmentId > 0 && createPortal(
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 1100 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <CustomerShipmentDetailModal
+            isOpen
+            shipmentId={viewShipmentId}
+            onClose={(refresh) => {
+              setViewShipmentId(0);
+              if (refresh) {
+                reloadOrderFromServer();
+              }
+            }}
+            onShipmentDeleted={() => {
+              listNeedsRefreshRef.current = true;
+            }}
+          />
+        </div>,
+        document.body
+      )}
+
+      {viewInvoiceId > 0 && createPortal(
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 1100 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <CustomerInvoiceDetailModal
+            isOpen
+            invoiceId={viewInvoiceId}
+            onClose={(refresh) => {
+              setViewInvoiceId(0);
+              if (refresh) {
+                reloadOrderFromServer();
+              }
+            }}
+            onPaymentComplete={() => {
+              listNeedsRefreshRef.current = true;
+              reloadOrderFromServer();
+            }}
+            onInvoiceDeleted={() => {
+              listNeedsRefreshRef.current = true;
+            }}
+          />
+        </div>,
+        document.body
       )}
 
       {/* Invoice Modal */}

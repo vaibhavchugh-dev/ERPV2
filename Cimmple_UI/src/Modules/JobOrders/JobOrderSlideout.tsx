@@ -68,13 +68,10 @@ import {
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi, formatDateTime } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./JobOrderSlideout.scss";
-
-const PAGE_PATH = "/job-orders";
 
 interface JobOrderSlideoutProps {
   jobOrderId: number;
@@ -141,6 +138,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   headerPreview,
 }) => {
   const { locationId: activeLocationId } = useActiveLocation();
+<<<<<<< HEAD
   const {
     canEdit,
     canDelete,
@@ -154,6 +152,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const canSave = canEdit;
   const canManage = can("Manage");
   const canComplete = can("Complete");
+=======
+>>>>>>> origin/main
   const [formData, setFormData] = useState<JobOrderMasterReq>({
     JobOrderID: 0,
     JobOrderNumber: headerPreview?.jobOrderNumber || 0,
@@ -996,7 +996,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ensure(isNew ? "Add" : "Edit")) return;
 
     const orderQty = formDataRef.current.QtyOrdered || 0;
     const stepsForCheck = routingStepsRef.current;
@@ -1106,7 +1105,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!ensure("Delete")) return;
     setLoading(true);
     try {
       const response = await JobOrderService.CheckJobOrderDeletionImpact(jobOrderId);
@@ -1445,7 +1443,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const openSaveAsTemplateDialog = () => {
-    if (!ensure("Manage")) return;
     if (!routingSteps.length) {
       toast.error("Add at least one routing step before saving as a template");
       return;
@@ -2110,7 +2107,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
 
   const openCreateNcrForStep = (stepId: number) => {
     setStepMenu(null);
-    if (!ensure("Manage")) return;
     const step = routingSteps.find((s) => s.id === stepId);
     if (!step) return;
 
@@ -2378,7 +2374,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handlePrintJobOrder = async () => {
-    if (!ensure("Print")) return;
     if (!jobOrderId || jobOrderId === 0) {
       toast.error('Job order not loaded');
       return;
@@ -2522,7 +2517,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {jobOrderId > 0 && (
               <>
-                {canPrint && (
                 <button
                   type="button"
                   onClick={() => void handlePrintJobOrder()}
@@ -2546,8 +2540,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   <FontAwesomeIcon icon={faPrint} spin={printing} />
                   {printing ? "Generating…" : "Print"}
                 </button>
-                )}
-                {canSend && (
                 <button
                   type="button"
                   onClick={() => setShowEmailDialog(true)}
@@ -2569,8 +2561,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   <FontAwesomeIcon icon={faEnvelope} />
                   Email
                 </button>
-                )}
-                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -2582,7 +2572,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
-                )}
               </>
             )}
             <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
@@ -3164,12 +3153,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                             : "Reserve"}
                                       </button>
                                     )}
-                                    {canEdit && (
                                     <DeleteIconButton
                                       label="Delete material"
                                       onClick={() => handleRemoveMaterialRequirement(index)}
                                     />
-                                    )}
                                     {showReserve && !canReserve && !canIssue ? (
                                       <div className="jo-material-stock-hint">
                                         No stock at job location
@@ -3367,24 +3354,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   )}
                 </div>
                 <div className="jo-router-header-actions">
-                  {canManage && (
                   <button
                     type="button"
                     className="jo-router-action-btn jo-router-action-btn--build"
                     title="Build router from a job template"
                     disabled={applyingTemplate}
-                    onClick={() => {
-                      if (!ensure("Manage")) return;
-                      setShowTemplatePicker(true);
-                    }}
+                    onClick={() => setShowTemplatePicker(true)}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
                       <path d="M12 5v14M5 12h14" />
                     </svg>
                     {applyingTemplate ? "Applying..." : "Build"}
                   </button>
-                  )}
-                  {canManage && (
                   <button
                     type="button"
                     className="jo-router-action-btn jo-router-action-btn--save-template"
@@ -3399,7 +3380,6 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     </svg>
                     {savingAsTemplate ? "Saving..." : "Save Template"}
                   </button>
-                  )}
                   <button
                     type="button"
                     className={`jo-router-action-btn jo-router-action-btn--track ${enableJobTracking ? "is-active" : ""}`}
@@ -3742,7 +3722,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                         {step.ncrFlags[0].ncrNumber ||
                                           `NCR-${step.ncrFlags[0].ncrId}`}
                                       </button>
-                                    ) : canManage ? (
+                                    ) : (
                                       <button
                                         type="button"
                                         role="menuitem"
@@ -3753,7 +3733,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       >
                                         Add NCR
                                       </button>
-                                    ) : null}
+                                    )}
                                     <button
                                       type="button"
                                       role="menuitem"
@@ -3770,12 +3750,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                             </div>
                           </td>
                           <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                            {canEdit && (
                             <DeleteIconButton
                               label="Delete routing step"
                               onClick={() => handleDeleteRoutingStep(step.id)}
                             />
-                            )}
                           </td>
                         </tr>
                       ))
@@ -4005,19 +3983,12 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           </div>
 
           <div className="job-order-slideout-footer">
-            {!canSave && (
-              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
-                View only — you don&apos;t have permission to save changes.
-              </span>
-            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? "Saving..." : "Save"}
             </button>
-            )}
           </div>
         </form>
       </div>

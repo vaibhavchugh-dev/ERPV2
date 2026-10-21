@@ -18,26 +18,16 @@ import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import SortIndicator from "../../Common/Components/SortIndicator";
-import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
-import { STANDARD_LIST_DATE_RANGE_OPTIONS } from "../../Common/Utils/listDateRangeFilter";
 import BankStatementImportModal from "./BankStatementImportModal";
 import type { BankStatementImportResult } from "./BankStatementImportModal";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 
 type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
-
-const PAGE_PATH = "/accounts/banks";
 
 const BankReconciliation: React.FC = () => {
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
   const formatCurrency = (amount: number) => formatCurrencyRaw(amount);
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const { can } = usePagePermissions(PAGE_PATH);
-  const canReconcileTxn = can("Reconcile");
-  const canImportStmt = can("Import");
-  const canExportRpt = can("Export");
-  const canClosePeriod = can("Close");
   const [selectedAccount, setSelectedAccount] = useState<number>(0);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [openingBalances, setOpeningBalances] = useState<Record<number, number>>({});
@@ -56,10 +46,8 @@ const BankReconciliation: React.FC = () => {
   const [differences, setDifferences] = useState<BankTransaction[]>([]);
   const [filters, setFilters] = useState({
     reconciled: "all",
-    dateRange: "All",
+    dateRange: "All Dates",
     amountRange: "All",
-    startDate: "",
-    endDate: "",
   });
   const [sortColumn, setSortColumn] = useState<ReconSortColumn>("date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
@@ -319,15 +307,6 @@ const BankReconciliation: React.FC = () => {
       let endYmd: string | undefined;
 
       switch (activeFilters.dateRange) {
-        case "This Week": {
-          const weekStart = new Date(endDate);
-          weekStart.setDate(endDate.getDate() - endDate.getDay());
-          startYmd = toLocalYmd(weekStart);
-          const weekEnd = new Date(weekStart);
-          weekEnd.setDate(weekStart.getDate() + 6);
-          endYmd = toLocalYmd(weekEnd);
-          break;
-        }
         case "Last 7 Days":
           startDate.setDate(endDate.getDate() - 7);
           startYmd = toLocalYmd(startDate);
@@ -343,27 +322,11 @@ const BankReconciliation: React.FC = () => {
           startYmd = toLocalYmd(startDate);
           endYmd = toLocalYmd(endDate);
           break;
-        case "This Month":
-          startYmd = toLocalYmd(new Date(endDate.getFullYear(), endDate.getMonth(), 1));
-          endYmd = toLocalYmd(endDate);
-          break;
-        case "Last Month": {
-          const lmStart = new Date(endDate.getFullYear(), endDate.getMonth() - 1, 1);
-          const lmEnd = new Date(endDate.getFullYear(), endDate.getMonth(), 0);
-          startYmd = toLocalYmd(lmStart);
-          endYmd = toLocalYmd(lmEnd);
-          break;
-        }
         case "This Year":
           startDate.setMonth(0, 1);
           startYmd = toLocalYmd(startDate);
           endYmd = toLocalYmd(endDate);
           break;
-        case "Custom":
-          startYmd = activeFilters.startDate || "1900-01-01";
-          endYmd = activeFilters.endDate || "2099-12-31";
-          break;
-        case "All":
         case "All Dates":
           startYmd = "1900-01-01";
           endYmd = "2099-12-31";
@@ -629,15 +592,11 @@ const BankReconciliation: React.FC = () => {
     skipTxnEffectRef.current = true;
     // Avoid empty list when import sets an older statement date against a rolling filter.
     setFilters((prev) =>
-      prev.dateRange === "All" || prev.dateRange === "All Dates"
-        ? prev
-        : { ...prev, dateRange: "All", startDate: "", endDate: "" }
+      prev.dateRange === "All Dates" ? prev : { ...prev, dateRange: "All Dates" }
     );
     filtersRef.current = {
       ...filtersRef.current,
-      dateRange: "All",
-      startDate: "",
-      endDate: "",
+      dateRange: "All Dates",
     };
 
     let nextDate = statementDateRef.current;
@@ -729,7 +688,6 @@ const BankReconciliation: React.FC = () => {
             Bank Reconciliation
           </h1>
           <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
-            {canImportStmt && (
             <button
               onClick={handleImportStatement}
               style={{
@@ -751,8 +709,6 @@ const BankReconciliation: React.FC = () => {
               <FontAwesomeIcon icon={faUpload} />
               Import Statement
             </button>
-            )}
-            {canExportRpt && (
             <button
               onClick={handleExportReport}
               style={{
@@ -773,12 +729,10 @@ const BankReconciliation: React.FC = () => {
               <FontAwesomeIcon icon={faDownload} />
               Export Report
             </button>
-            )}
           </div>
         </div>
         <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>
-          Match deposits, withdrawals, and payments to your bank statement, then close the GL month on
-          Period Close &amp; Audit.
+          Finish bank statement periods here, then close the GL month on Period Close &amp; Audit.
         </p>
       </div>
 
@@ -964,7 +918,6 @@ const BankReconciliation: React.FC = () => {
                   style={inputStyle}
                 />
               </div>
-              {canClosePeriod && (
               <button
                 type="button"
                 onClick={handleStartPeriod}
@@ -983,7 +936,6 @@ const BankReconciliation: React.FC = () => {
               >
                 {starting ? "Starting…" : "Start reconciliation"}
               </button>
-              )}
             </div>
           ) : (
             <>
@@ -1169,7 +1121,6 @@ const BankReconciliation: React.FC = () => {
                     {formatCurrency(differenceAmount)}
                   </span>
                 </div>
-                {canClosePeriod && (
                 <button
                   type="button"
                   onClick={handleCompletePeriod}
@@ -1192,7 +1143,6 @@ const BankReconciliation: React.FC = () => {
                       ? "Complete reconciliation"
                       : "Balance to zero to complete"}
                 </button>
-                )}
               </div>
             </>
           )}
@@ -1246,24 +1196,16 @@ const BankReconciliation: React.FC = () => {
 
           <select
             value={filters.dateRange}
-            onChange={(e) => {
-              const value = e.target.value;
-              setFilters((prev) => ({
-                ...prev,
-                dateRange: value,
-                ...(value !== "Custom" ? { startDate: "", endDate: "" } : {}),
-              }));
-            }}
+            onChange={(e) => setFilters((prev) => ({ ...prev, dateRange: e.target.value }))}
             className="filter-select"
           >
-            {STANDARD_LIST_DATE_RANGE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
+            <option value="Last 7 Days">Last 7 Days</option>
+            <option value="Last 30 Days">Last 30 Days</option>
+            <option value="Last 90 Days">Last 90 Days</option>
+            <option value="This Year">This Year</option>
+            <option value="All Dates">All Dates</option>
           </select>
 
-          {canReconcileTxn && (
           <button
             onClick={handleBulkReconcile}
             disabled={isBusyReconciling || loading || !hasOpenPeriod}
@@ -1285,58 +1227,6 @@ const BankReconciliation: React.FC = () => {
             <FontAwesomeIcon icon={faCheckCircle} />
             {bulkReconciling ? "Reconciling…" : "Reconcile All"}
           </button>
-          )}
-
-          {filters.dateRange === "Custom" && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                flexWrap: "wrap",
-                flex: "1 1 100%",
-                width: "100%",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
-                <label style={{ fontSize: "0.8125rem", color: "#4b5563", fontWeight: 500 }}>From:</label>
-                <DateFilterInput
-                  className="filter-select"
-                  style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
-                  value={filters.startDate || ""}
-                  onCommit={(value) => setFilters((prev) => ({ ...prev, startDate: value }))}
-                />
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
-                <label style={{ fontSize: "0.8125rem", color: "#4b5563", fontWeight: 500 }}>To:</label>
-                <DateFilterInput
-                  className="filter-select"
-                  style={{ paddingRight: "0.75rem", backgroundImage: "none" }}
-                  value={filters.endDate || ""}
-                  onCommit={(value) => setFilters((prev) => ({ ...prev, endDate: value }))}
-                />
-              </div>
-              {(filters.startDate || filters.endDate) && (
-                <button
-                  type="button"
-                  onClick={() => setFilters((prev) => ({ ...prev, startDate: "", endDate: "" }))}
-                  title="Clear custom dates"
-                  style={{
-                    padding: "0.5rem 0.75rem",
-                    backgroundColor: "#f3f4f6",
-                    color: "#374151",
-                    border: "1px solid #d1d5db",
-                    borderRadius: "0.5rem",
-                    fontSize: "0.8125rem",
-                    cursor: "pointer",
-                    fontWeight: 500,
-                  }}
-                >
-                  Clear Dates
-                </button>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -1482,7 +1372,6 @@ const BankReconciliation: React.FC = () => {
                       )}
                     </td>
                     <td style={{ padding: "1rem 1.5rem", textAlign: "center" }}>
-                      {canReconcileTxn ? (
                       <button
                         onClick={() => handleReconcile(transaction.id)}
                         disabled={isBusyReconciling || !hasOpenPeriod}
@@ -1514,9 +1403,6 @@ const BankReconciliation: React.FC = () => {
                             ? "Unreconcile"
                             : "Reconcile"}
                       </button>
-                      ) : (
-                        <span style={{ color: "#9ca3af", fontSize: "0.75rem" }}>—</span>
-                      )}
                     </td>
                   </tr>
                 ))}

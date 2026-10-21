@@ -1200,7 +1200,6 @@ namespace CimmpleAPI.Controllers
                     .ToList();
 
                 // Roll up child (response-only) conversions onto master rows for Order # display
-                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 var masterIds = quotations.Select(q => q.orderID).ToList();
                 var mastersWithChildren = _context.VendorQuotations
                     .AsNoTracking()
@@ -1210,64 +1209,54 @@ namespace CimmpleAPI.Controllers
                     .Select(q => q.ParentQuotationID!.Value)
                     .Distinct()
                     .ToHashSet();
-
-                // Preload child quotation ids per master for conversion chips / Compare gating
-                var childrenByMaster = _context.VendorQuotations
+                var childConversions = _context.VendorQuotations
                     .AsNoTracking()
                     .Where(q => q.Tenantid == tenantid
                         && q.ParentQuotationID.HasValue
                         && masterIds.Contains(q.ParentQuotationID.Value)
-                        && q.OrderID != q.ParentQuotationID.Value)
-                    .Select(q => new { ParentId = q.ParentQuotationID!.Value, q.OrderID })
+                        && q.convertedOrderId.HasValue
+                        && q.convertedOrderId.Value > 0)
+                    .Select(q => new { ParentId = q.ParentQuotationID!.Value, q.convertedOrderId, isConverted = q.isconverted ?? 0 })
                     .ToList()
                     .GroupBy(c => c.ParentId)
-                    .ToDictionary(g => g.Key, g => g.Select(x => x.OrderID).ToList());
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.convertedOrderId).First());
 
-                var result = new List<object>();
-                foreach (var q in quotations)
+                var poNumbers = quotations
+                    .Where(q => q.convertedOrderId.HasValue && q.convertedOrderId.Value > 0)
+                    .Select(q => q.convertedOrderId!.Value)
+                    .Concat(childConversions.Values.Select(c => c.convertedOrderId!.Value))
+                    .Distinct()
+                    .ToList();
+
+                var ordersByPo = poNumbers.Count == 0
+                    ? new Dictionary<int, int>()
+                    : _context.VendorOrders
+                        .AsNoTracking()
+                        .Where(o => o.Tenantid == tenantid && poNumbers.Contains(o.PONumber))
+                        .Select(o => new { o.PONumber, o.OrderID })
+                        .ToList()
+                        .GroupBy(o => o.PONumber)
+                        .ToDictionary(g => g.Key, g => g.First().OrderID);
+
+                var result = quotations.Select(q =>
                 {
-                    var groupIds = new List<int> { q.orderID };
-                    if (childrenByMaster.TryGetValue(q.orderID, out var childIds))
-                        groupIds.AddRange(childIds);
-
-                    var convertedOrders = VendorQuotationConversionService
-                        .GetConvertedOrdersAsync(_context, tenantid, groupIds)
-                        .GetAwaiter().GetResult()
-                        .Select(o => new
-                        {
-                            orderId = o.OrderId,
-                            poNumber = o.PoNumber,
-                            displayNumber = o.PoNumber < 1000 ? o.PoNumber + 999 : o.PoNumber
-                        })
-                        .ToList();
-
-                    // Hide Compare when all master RFQ lines are on VOs (any vendor mix).
-                    var hideCompare = VendorQuotationConversionService
-                        .ShouldHideCompareAsync(_context, tenantid, q.orderID)
-                        .GetAwaiter().GetResult();
-                    var allMasterLinesCovered = VendorQuotationConversionService
-                        .AreAllMasterLinesCoveredAsync(_context, tenantid, q.orderID)
-                        .GetAwaiter().GetResult();
-
-                    var primary = convertedOrders.LastOrDefault();
-                    var convertedPo = primary != null
-                        ? (int?)primary.poNumber
-                        : q.convertedOrderId;
-                    var convertedOrderOrderId = primary?.orderId;
-                    var isConverted = hideCompare ? 1 : (convertedOrders.Count > 0 ? 0 : q.isConverted);
-                    // Prefer live status; if children converted but master status stale, surface partial.
-                    var status = q.status;
-                    if (!hideCompare && convertedOrders.Count > 0 &&
-                        !status.Contains("convert", StringComparison.OrdinalIgnoreCase))
+                    var convertedPo = q.convertedOrderId;
+                    var isConverted = q.isConverted;
+                    if ((!convertedPo.HasValue || convertedPo.Value <= 0) &&
+                        childConversions.TryGetValue(q.orderID, out var childConv))
                     {
-                        status = VendorQuotationConversionService.StatusPartiallyConverted;
-                    }
-                    else if (hideCompare)
-                    {
-                        status = VendorQuotationConversionService.StatusConverted;
+                        convertedPo = childConv.convertedOrderId;
+                        isConverted = childConv.isConverted > 0 ? childConv.isConverted : 1;
                     }
 
-                    result.Add(new
+                    int? convertedOrderOrderId = null;
+                    if (convertedPo.HasValue && convertedPo.Value > 0 &&
+                        ordersByPo.TryGetValue(convertedPo.Value, out var orderId))
+                    {
+                        convertedOrderOrderId = orderId;
+                    }
+
+                    return new
                     {
                         q.orderID,
                         q.quotationNumber,
@@ -1276,22 +1265,20 @@ namespace CimmpleAPI.Controllers
                         q.vendorName,
                         q.orderDate,
                         q.totalAmount,
-                        status,
+                        q.status,
                         q.vendorRefNo,
                         isConverted,
                         convertedOrderId = convertedPo,
                         convertedOrderNumber = convertedPo,
                         convertedOrderOrderId,
-                        convertedOrders,
-                        allLinesConverted = hideCompare,
-                        anyVendorFullyConverted = hideCompare,
-                        allMasterLinesCovered,
                         q.locationId,
                         q.QuotationType,
                         q.parentQuotationID,
+                        // True when multi-vendor children exist (ParentQuotationID points at this master).
+                        // Masters no longer self-link ParentQuotationID; Compare uses this flag.
                         hasChildQuotations = mastersWithChildren.Contains(q.orderID)
-                    });
-                }
+                    };
+                }).ToList();
 
                 return Ok(new { result });
             }
@@ -1515,7 +1502,6 @@ namespace CimmpleAPI.Controllers
                         discountType = string.IsNullOrWhiteSpace(d.DiscountType) ? "Percent" : d.DiscountType,
                         productId = d.productid,
                         rawMaterialId = d.RawMaterialId,
-                        convertedVendorOrderId = d.ConvertedVendorOrderId,
                         lineType = NormalizeVendorQuotationLineType(d.LineType, quotation.VendorOrderType),
                         leadTime = "",
                         notes = d.notes ?? "",
@@ -1572,25 +1558,8 @@ namespace CimmpleAPI.Controllers
                     comments = null;
                 }
 
-                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
-                var convertedOrderTuples = VendorQuotationConversionService
-                    .GetConvertedOrdersAsync(_context, quotation.Tenantid, new[] { quotation.OrderID })
-                    .GetAwaiter().GetResult();
-                var convertedOrders = convertedOrderTuples
-                    .Select(o => new
-                    {
-                        orderId = o.OrderId,
-                        poNumber = o.PoNumber,
-                        displayNumber = o.PoNumber < 1000 ? o.PoNumber + 999 : o.PoNumber
-                    })
-                    .ToList();
-                var allLinesConverted = VendorQuotationConversionService
-                    .IsQuotationFullyConvertedAsync(_context, quotation.Tenantid, quotation.OrderID)
-                    .GetAwaiter().GetResult();
-
-                int? convertedOrderOrderId = convertedOrders.LastOrDefault()?.orderId;
-                if (convertedOrderOrderId == null &&
-                    quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0)
+                int? convertedOrderOrderId = null;
+                if (quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0)
                 {
                     var convertedPo = quotation.convertedOrderId.Value;
                     var quotationTenantId = quotation.Tenantid;
@@ -1627,8 +1596,6 @@ namespace CimmpleAPI.Controllers
                     LocationId = quotation.locationid,
                     convertedOrderId = quotation.convertedOrderId,
                     convertedOrderOrderId,
-                    convertedOrders,
-                    allLinesConverted,
                     ParentQuotationID = quotation.ParentQuotationID,
                     Details = details,
                     Attachments = attachments != null ? attachments.Select(a => new
@@ -2859,34 +2826,23 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Found quotation - OrderID: {quotation.OrderID}, PONumber: {quotation.PONumber}, Status: {quotation.Status}, convertedOrderId: {quotation.convertedOrderId}");
 
-                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
-                var fullyConverted = VendorQuotationConversionService
-                    .IsQuotationFullyConvertedAsync(_context, quotation.Tenantid, quotation.OrderID)
-                    .GetAwaiter().GetResult();
-                if (fullyConverted)
+                var alreadyConverted =
+                    quotation.isconverted == 1 ||
+                    (quotation.convertedOrderId.HasValue && quotation.convertedOrderId.Value > 0) ||
+                    string.Equals(quotation.Status, "Converted", StringComparison.OrdinalIgnoreCase);
+                if (alreadyConverted)
                 {
                     return BadRequest(new
                     {
-                        error = $"Vendor quotation VQ#{quotation.PONumber} is fully converted. Open the existing vendor order(s) instead of converting again."
+                        error = $"Vendor quotation VQ#{quotation.PONumber} is already converted. Open the existing vendor order instead of converting again."
                     });
                 }
 
-                // Get quotation details — convert only lines not already stamped onto a PO
+                // Get quotation details
                 var quotationDetails = _context.VendorQuotationsDetails
                     .Where(d => d.OrderID == quotationId)
                     .OrderBy(d => d.ItemNo)
-                    .ToList()
-                    .Where(d => VendorQuotationConversionService.IsConvertibleLine(d)
-                                && !VendorQuotationConversionService.IsLineConverted(d))
                     .ToList();
-
-                if (quotationDetails.Count == 0)
-                {
-                    return BadRequest(new
-                    {
-                        error = $"Vendor quotation VQ#{quotation.PONumber} has no remaining lines to convert."
-                    });
-                }
 
                 var userId = GetUserId() ?? 0;
                 var userToken = 0;
@@ -2976,19 +2932,28 @@ namespace CimmpleAPI.Controllers
 
                 _context.SaveChanges();
 
+                // Update quotation status to "Converted"
                 Console.WriteLine($"ConvertVendorQuotationToOrder: Before update - quotation.Status: '{quotation.Status}', convertedOrderId: {quotation.convertedOrderId}");
-                VendorQuotationConversionService.StampLinesFromVendorOrderAsync(
-                        _context,
-                        quotation.Tenantid,
-                        quotation.OrderID,
-                        vendorOrder.OrderID)
-                    .GetAwaiter().GetResult();
-                VendorQuotationConversionService.RecalculateQuotationAndMasterAsync(_context, quotation)
-                    .GetAwaiter().GetResult();
+                quotation.Status = "Converted";
+                quotation.convertedOrderId = vendorOrder.PONumber; // Store PONumber instead of OrderID for display consistency
+                quotation.isconverted = 1;
+
+                // Roll conversion up to master RFQ so the listing Order # column populates
+                if (quotation.ParentQuotationID.HasValue && quotation.ParentQuotationID.Value > 0)
+                {
+                    var masterQuotation = _context.VendorQuotations
+                        .FirstOrDefault(q => q.OrderID == quotation.ParentQuotationID.Value && q.Tenantid == quotation.Tenantid);
+                    if (masterQuotation != null &&
+                        (!masterQuotation.convertedOrderId.HasValue || masterQuotation.convertedOrderId.Value <= 0))
+                    {
+                        masterQuotation.convertedOrderId = vendorOrder.PONumber;
+                        masterQuotation.isconverted = 1;
+                    }
+                }
 
                 _context.SaveChanges();
                 transaction.Commit();
-                Console.WriteLine($"ConvertVendorQuotationToOrder: After update - quotation.Status: '{quotation.Status}', convertedOrderId: {quotation.convertedOrderId}");
+                Console.WriteLine($"ConvertVendorQuotationToOrder: After update - quotation.Status: '{quotation.Status}', convertedOrderId: {vendorOrder.PONumber}");
 
                 return Ok(new
                 {
@@ -3603,7 +3568,6 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Get details for all quotations
-                DiscountTypeSchemaService.EnsureColumnsAsync(_context).GetAwaiter().GetResult();
                 var quotationIds = quotationsResult.Select(q => q.orderID).ToList();
                 var allDetails = _context.VendorQuotationsDetails
                     .Where(d => quotationIds.Contains(d.OrderID) && d.Tenantid == tenantId)
@@ -3625,7 +3589,6 @@ namespace CimmpleAPI.Controllers
                         glcode = d.glcode ?? "",
                         lineType = d.LineType ?? "",
                         rawMaterialId = d.RawMaterialId,
-                        convertedVendorOrderId = d.ConvertedVendorOrderId,
                         attachments = !string.IsNullOrEmpty(d.AttachmentsJson)
                             ? JsonSerializer.Deserialize<List<QuotationAttachmentDto>>(d.AttachmentsJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true })
                             : null

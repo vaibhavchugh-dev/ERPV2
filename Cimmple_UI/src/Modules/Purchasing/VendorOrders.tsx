@@ -9,9 +9,7 @@ import MasterListPage from "../../Common/Components/MasterListPage/MasterListPag
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
-
-const PAGE_PATH = "/purchasing/vendor-orders";
+import OrderCategoryBadge from "../../Common/Components/OrderCategoryBadge";
 
 const VendorOrders: React.FC = () => {
   const location = useLocation();
@@ -19,7 +17,6 @@ const VendorOrders: React.FC = () => {
   const processedOrderIdRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const { ensure } = usePagePermissions(PAGE_PATH);
   const [orders, setOrders] = useState<VendorOrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -126,7 +123,6 @@ const VendorOrders: React.FC = () => {
   };
 
   const handleAddOrder = () => {
-    if (!ensure("Add")) return;
     setSelectedOrderId(0);
     setShowSlideout(true);
   };
@@ -164,38 +160,6 @@ const VendorOrders: React.FC = () => {
   const formatOrderNumber = (number: number): string => {
     const displayNumber = number < 1000 ? number + 999 : number;
     return `VO#${displayNumber}`;
-  };
-
-  const getOrderTypeBadge = (type: string) => {
-    if (!type || (typeof type === 'string' && type.trim() === "")) {
-      return <span style={{ color: "#9ca3af" }}>-</span>;
-    }
-    const typeLower = typeof type === 'string' ? type.toLowerCase().trim() : String(type).toLowerCase().trim();
-    
-    if (typeLower === "material") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ“¦</span>
-          <span>Material</span>
-        </span>
-      );
-    } else if (typeLower === "service") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ”§</span>
-          <span>Service</span>
-        </span>
-      );
-    } else if (typeLower === "mixed") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ“¦</span>
-          <span>Mixed</span>
-        </span>
-      );
-    }
-    
-    return <span>{type}</span>;
   };
 
   const columns = [
@@ -248,11 +212,9 @@ const VendorOrders: React.FC = () => {
       label: "Category",
       sortable: true,
       align: "center" as const,
-      render: (value: any, row: any) => {
-        // Try to get materialType from value or row
-        const orderType = value || row?.materialType || "";
-        return getOrderTypeBadge(orderType);
-      },
+      render: (value: any, row: any) => (
+        <OrderCategoryBadge type={value || row?.materialType || ""} />
+      ),
     },
     {
       key: "orderDate",
@@ -293,7 +255,6 @@ const VendorOrders: React.FC = () => {
   return (
     <div className="vendor-orders">
       <MasterListPage
-        permissionPath="/purchasing/vendor-orders"
         title="Vendor Orders"
         columns={columns}
         data={filteredOrders}
@@ -306,7 +267,7 @@ const VendorOrders: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All Statuses" },
+              { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
               { value: "Partially Received", label: "Partially Received" },

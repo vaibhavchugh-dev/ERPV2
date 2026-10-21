@@ -104,17 +104,36 @@ public static class ManufacturingChartOfAccountsSeed
     /// <returns>Counts of newly inserted rows and rows skipped because the code already exists.</returns>
     public static (int Inserted, int Skipped) Apply(CimmpleDbContext db, int tenantId)
     {
+        var groupIds = EnsureMainGroups(db, tenantId);
+
         var seedCodes = Rows.Select(r => r.Code).ToArray();
-        var existingCodes = db.ChartofAccounts
-            .Where(a => a.Tenantid == tenantId && seedCodes.Contains(a.AccountCode))
-            .Select(a => a.AccountCode)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingByCode = new Dictionary<string, ChartofAccounts>(StringComparer.OrdinalIgnoreCase);
+        foreach (var account in db.ChartofAccounts.Where(a => a.Tenantid == tenantId && seedCodes.Contains(a.AccountCode)))
+        {
+            if (!existingByCode.ContainsKey(account.AccountCode))
+                existingByCode[account.AccountCode] = account;
+        }
 
         var inserted = 0;
+        var linked = false;
         foreach (var row in Rows)
         {
-            if (existingCodes.Contains(row.Code))
+            groupIds.TryGetValue(row.MainGroup, out var groupId);
+
+            if (existingByCode.TryGetValue(row.Code, out var account))
+            {
+                if (groupId > 0
+                    && (account.Groupid is null or 0)
+                    && (string.IsNullOrWhiteSpace(account.MainGroup)
+                        || string.Equals(account.MainGroup.Trim(), row.MainGroup, StringComparison.OrdinalIgnoreCase)))
+                {
+                    account.Groupid = groupId;
+                    if (string.IsNullOrWhiteSpace(account.MainGroup))
+                        account.MainGroup = row.MainGroup;
+                    linked = true;
+                }
                 continue;
+            }
 
             db.ChartofAccounts.Add(new ChartofAccounts
             {
@@ -123,16 +142,59 @@ public static class ManufacturingChartOfAccountsSeed
                 AccountType = row.AccountType,
                 IsActive = true,
                 Tenantid = tenantId,
-                MainGroup = row.MainGroup
+                MainGroup = row.MainGroup,
+                Groupid = groupId > 0 ? groupId : null
             });
-            existingCodes.Add(row.Code);
             inserted++;
         }
 
-        if (inserted > 0)
+        if (inserted > 0 || linked || db.ChangeTracker.HasChanges())
             db.SaveChanges();
 
         var skipped = Rows.Length - inserted;
         return (inserted, skipped);
+    }
+
+    /// <summary>
+    /// One MainGroup row per distinct seed group name. Returns MainGroup name → MainGroupID.
+    /// MainGroupID is allocated per tenant, matching ChartofAccountsController.SaveMainGroup.
+    /// </summary>
+    private static Dictionary<string, int> EnsureMainGroups(CimmpleDbContext db, int tenantId)
+    {
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Rows)
+        {
+            if (seen.Add(row.MainGroup))
+                names.Add(row.MainGroup);
+        }
+
+        var existing = db.MainGroup.Where(m => m.tenantid == tenantId).ToList();
+        var byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in existing)
+        {
+            var name = group.MainGroupName?.Trim();
+            if (!string.IsNullOrEmpty(name) && !byName.ContainsKey(name))
+                byName[name] = group.MainGroupID;
+        }
+
+        var maxId = existing.Count == 0 ? 0 : existing.Max(m => m.MainGroupID);
+        foreach (var name in names)
+        {
+            if (byName.ContainsKey(name))
+                continue;
+
+            maxId++;
+            db.MainGroup.Add(new MainGroup
+            {
+                MainGroupID = maxId,
+                MainGroupName = name,
+                accountId = 0,
+                tenantid = tenantId
+            });
+            byName[name] = maxId;
+        }
+
+        return byName;
     }
 }

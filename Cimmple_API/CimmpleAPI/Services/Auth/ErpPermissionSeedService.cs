@@ -15,9 +15,8 @@ namespace CimmpleAPI.Services.Auth
         public const string BusinessReportsUrl = "/reports";
         public const string FinancialReportsUrl = "/accounts/reports";
 
-        public static IReadOnlyList<PermissionMaster> BuildPermissionCatalog()
-        {
-            var pages = new List<PermissionMaster>
+        public static IReadOnlyList<PermissionMaster> BuildPermissionCatalog() =>
+            new List<PermissionMaster>
             {
                 new PermissionMaster { PermissionName = "Dashboard", DisplayPermissionName = "Dashboard", LevelInfo = 1, OrderNo = 1, Url = "/home", ReportGroup = "Dashboard", ReportDescription = "Access main dashboard" },
                 new PermissionMaster { PermissionName = "Customer Quotations", DisplayPermissionName = "Customer Quotations", LevelInfo = 1, OrderNo = 10, Url = "/quotations/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer quotations" },
@@ -61,21 +60,15 @@ namespace CimmpleAPI.Services.Auth
                 new PermissionMaster { PermissionName = "Product Master", DisplayPermissionName = "Product Master", LevelInfo = 1, OrderNo = 79, Url = "/masters/product", ReportGroup = "Administration", ReportDescription = "Manage product master data" },
                 new PermissionMaster { PermissionName = "Raw Material Master", DisplayPermissionName = "Raw Material Master", LevelInfo = 1, OrderNo = 80, Url = "/masters/raw-material", ReportGroup = "Administration", ReportDescription = "Manage raw materials" },
                 new PermissionMaster { PermissionName = "Attendance Register", DisplayPermissionName = "Attendance Register", LevelInfo = 1, OrderNo = 89, Url = "/attendance", ReportGroup = "Administration", ReportDescription = "View Time Clock attendance by day" },
-                // Admin-only: never assigned to non-admin roles (see Assign* / AssignPermissionsToRole).
-                new PermissionMaster { PermissionName = "User Management", DisplayPermissionName = "User Management (Admin only)", LevelInfo = 1, OrderNo = 90, Url = ErpPermissionActions.UserManagementUrl, ReportGroup = "Administration", ReportDescription = "Administrator-only: manage users, roles, and permissions" },
+                new PermissionMaster { PermissionName = "User Management", DisplayPermissionName = "User Management", LevelInfo = 1, OrderNo = 90, Url = "/user-management", ReportGroup = "Administration", ReportDescription = "Manage users, roles, and permissions" },
                 new PermissionMaster { PermissionName = "System Settings", DisplayPermissionName = "System Settings", LevelInfo = 1, OrderNo = 91, Url = "/settings", ReportGroup = "Administration", ReportDescription = "Configure system settings" },
             };
 
-            var catalog = new List<PermissionMaster>();
-            foreach (var page in pages)
-            {
-                catalog.Add(page);
-                catalog.AddRange(ErpPermissionActions.BuildActionPermissions(page));
-            }
-            return catalog;
-        }
-
-        /// <summary>Insert any catalog permissions missing from PermissionMaster (safe on every startup).</summary>
+        /// <summary>
+        /// Insert catalog pages and their Level-2 actions missing from PermissionMaster (safe on every startup).
+        /// New definitions are granted to admin roles that already have assignments. Roles with none are left
+        /// for <see cref="AssignDefaultRolePermissionsAsync"/>.
+        /// </summary>
         public static async Task<int> EnsureMissingPermissionsAsync(CimmpleDbContext context, ILogger? logger = null)
         {
             try
@@ -85,40 +78,35 @@ namespace CimmpleAPI.Services.Auth
                     return 0;
                 }
 
-                var catalog = BuildPermissionCatalog();
-                var existingUrls = await context.PermissionMaster
-                    .Where(p => p.Url != null)
-                    .Select(p => p.Url!)
-                    .ToListAsync();
+                var existingUrls = new HashSet<string>(
+                    await context.PermissionMaster
+                        .Where(p => p.Url != null)
+                        .Select(p => p.Url!)
+                        .ToListAsync(),
+                    StringComparer.OrdinalIgnoreCase);
 
-                var missing = catalog
+                var missingPages = BuildPermissionCatalog()
                     .Where(p => p.Url != null && !existingUrls.Contains(p.Url))
                     .ToList();
 
-                if (missing.Count > 0)
-                {
-                    await context.PermissionMaster.AddRangeAsync(missing);
-                    await context.SaveChangesAsync();
-                    logger?.LogInformation("ERP permissions: added {Count} missing definition(s)", missing.Count);
+                var added = await InsertAndAssignMissingAsync(context, missingPages, existingUrls, logger);
 
-                    var assignments = await AssignNewPermissionsToRolesAsync(context, missing);
-                    if (assignments > 0)
+                var pages = await context.PermissionMaster
+                    .Where(p => p.Url != null && !p.Url.Contains("#"))
+                    .ToListAsync();
+
+                var missingActions = new List<PermissionMaster>();
+                foreach (var page in pages)
+                {
+                    foreach (var action in ErpPermissionActions.BuildActionPermissions(page))
                     {
-                        logger?.LogInformation("ERP permissions: added {Count} role assignment(s) for new permission(s)", assignments);
+                        if (action.Url == null || !existingUrls.Add(action.Url))
+                            continue;
+                        missingActions.Add(action);
                     }
                 }
 
-                var inherited = await InheritLevel2ActionsForExistingPageGrantsAsync(context);
-                if (inherited > 0)
-                {
-                    logger?.LogInformation("ERP permissions: inherited {Count} Level-2 action(s) onto roles with page access", inherited);
-                }
-
-                var stripped = await StripUserManagementFromNonAdminRolesAsync(context);
-                if (stripped > 0)
-                {
-                    logger?.LogInformation("ERP permissions: removed User Management from {Count} non-admin role assignment(s)", stripped);
-                }
+                added += await InsertAndAssignMissingAsync(context, missingActions, existingUrls, logger);
 
                 var mirrored = await EnsureScheduledReportEmailsRoleMirroringAsync(context);
                 if (mirrored > 0)
@@ -126,18 +114,40 @@ namespace CimmpleAPI.Services.Auth
                     logger?.LogInformation("ERP permissions: mirrored Scheduled Report Emails onto {Count} role(s) with Reports access", mirrored);
                 }
 
-                var removedObsolete = await RemoveObsoletePermissionDefinitionsAsync(context);
-                if (removedObsolete > 0)
-                {
-                    logger?.LogInformation("ERP permissions: removed {Count} obsolete permission definition(s)", removedObsolete);
-                }
-
-                return missing.Count;
+                return added;
             }
             catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
             {
                 return 0;
             }
+        }
+
+        private static async Task<int> InsertAndAssignMissingAsync(
+            CimmpleDbContext context,
+            List<PermissionMaster> missing,
+            HashSet<string> existingUrls,
+            ILogger? logger)
+        {
+            if (missing.Count == 0)
+                return 0;
+
+            await context.PermissionMaster.AddRangeAsync(missing);
+            await context.SaveChangesAsync();
+            foreach (var permission in missing)
+            {
+                if (permission.Url != null)
+                    existingUrls.Add(permission.Url);
+            }
+
+            logger?.LogInformation("ERP permissions: added {Count} missing definition(s)", missing.Count);
+
+            var assignments = await AssignNewPermissionsToRolesAsync(context, missing);
+            if (assignments > 0)
+            {
+                logger?.LogInformation("ERP permissions: added {Count} role assignment(s) for new permission(s)", assignments);
+            }
+
+            return missing.Count;
         }
 
         /// <summary>
@@ -182,6 +192,12 @@ namespace CimmpleAPI.Services.Auth
                 .Select(a => (a.RoleId, a.TenantId, a.PermissionId))
                 .ToHashSet();
 
+            // A role with no assignments yet is filled by AssignDefaultRolePermissionsAsync.
+            // Granting only the newly inserted rows here would mark it as already assigned.
+            var rolesWithAssignments = existingAssignments
+                .Select(a => (a.RoleId, a.TenantId))
+                .ToHashSet();
+
             var schedulesPermission = newlyAddedPermissions.FirstOrDefault(p =>
                 string.Equals(p.Url, ScheduledReportEmailsUrl, StringComparison.OrdinalIgnoreCase));
             int? schedulesPermissionId = schedulesPermission?.PermissionId;
@@ -200,18 +216,6 @@ namespace CimmpleAPI.Services.Auth
                 }
             }
 
-            // Map new L2 actions → parent page Url for inheritance onto roles that already have the page.
-            var newPermById = newlyAddedPermissions
-                .Where(p => p.PermissionId > 0)
-                .ToDictionary(p => p.PermissionId);
-            var allPages = await context.PermissionMaster.AsNoTracking()
-                .Where(p => p.LevelInfo == 1 && p.Url != null)
-                .Select(p => new { p.PermissionId, p.Url })
-                .ToListAsync();
-            var pageIdByUrl = allPages
-                .GroupBy(p => ErpPermissionActions.NormalizePageUrl(p.Url))
-                .ToDictionary(g => g.Key, g => g.First().PermissionId, StringComparer.OrdinalIgnoreCase);
-
             var toAdd = new List<PermissionRole>();
 
             foreach (var tenantId in tenantIds)
@@ -219,6 +223,11 @@ namespace CimmpleAPI.Services.Auth
                 var tenantRoles = roles.Where(r => r.TenantId == tenantId).ToList();
                 foreach (var role in tenantRoles)
                 {
+                    if (!rolesWithAssignments.Contains((role.RoleID, tenantId)))
+                    {
+                        continue;
+                    }
+
                     if (IsAdminRoleName(role.RoleName, role.RoleTag))
                     {
                         foreach (var permissionId in newPermissionIds)
@@ -238,33 +247,6 @@ namespace CimmpleAPI.Services.Auth
                         }
 
                         continue;
-                    }
-
-                    // Non-admin: never auto-grant User Management; inherit new L2 when page already granted.
-                    foreach (var permissionId in newPermissionIds)
-                    {
-                        if (!newPermById.TryGetValue(permissionId, out var perm))
-                            continue;
-                        if (ErpPermissionActions.IsAdminOnlyPage(perm.Url))
-                            continue;
-                        if (!ErpPermissionActions.IsActionUrl(perm.Url))
-                            continue;
-                        if (existingSet.Contains((role.RoleID, tenantId, permissionId)))
-                            continue;
-
-                        var pageUrl = ErpPermissionActions.NormalizePageUrl(perm.Url);
-                        if (!pageIdByUrl.TryGetValue(pageUrl, out var pagePermId))
-                            continue;
-                        if (!existingSet.Contains((role.RoleID, tenantId, pagePermId)))
-                            continue;
-
-                        toAdd.Add(new PermissionRole
-                        {
-                            RoleId = role.RoleID,
-                            TenantId = tenantId,
-                            PermissionId = permissionId
-                        });
-                        existingSet.Add((role.RoleID, tenantId, permissionId));
                     }
 
                     if (schedulesPermissionId.HasValue
@@ -365,7 +347,8 @@ namespace CimmpleAPI.Services.Auth
         }
 
         /// <summary>
-        /// Default assignments for one tenant: admin roles get every permission; other roles get Dashboard only.
+        /// Default assignments for one tenant: admin roles get every page and Level-2 action;
+        /// other roles get Dashboard only.
         /// With <paramref name="onlyRolesWithoutAssignments"/> roles that already have permissions are left alone;
         /// otherwise every role's assignments in the tenant are replaced.
         /// </summary>
@@ -421,7 +404,6 @@ namespace CimmpleAPI.Services.Auth
                 else if (dashboard != null)
                 {
                     nonAdminRoles++;
-                    // Dashboard page only (no User Management, no Level-2 until pages are granted).
                     toAdd.Add(new PermissionRole
                     {
                         RoleId = role.RoleID,
@@ -440,126 +422,7 @@ namespace CimmpleAPI.Services.Auth
             return (adminRoles, nonAdminRoles, toAdd.Count);
         }
 
-        /// <summary>
-        /// When a role already has a Level-1 page but is missing that page's Level-2 actions,
-        /// grant all Level-2 actions (one-time inheritance so existing roles keep full page access).
-        /// </summary>
-        public static async Task<int> InheritLevel2ActionsForExistingPageGrantsAsync(CimmpleDbContext context)
-        {
-            var allPerms = await context.PermissionMaster.AsNoTracking().ToListAsync();
-            var pagePerms = allPerms
-                .Where(p => p.LevelInfo == 1 && !string.IsNullOrEmpty(p.Url) && !ErpPermissionActions.IsActionUrl(p.Url))
-                .ToList();
-            var actionsByPage = allPerms
-                .Where(p => p.LevelInfo == 2 && ErpPermissionActions.IsActionUrl(p.Url))
-                .GroupBy(p => ErpPermissionActions.NormalizePageUrl(p.Url))
-                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-
-            if (actionsByPage.Count == 0) return 0;
-
-            var assignments = await context.PermissionRole.AsNoTracking()
-                .Select(pr => new { pr.RoleId, pr.TenantId, pr.PermissionId })
-                .ToListAsync();
-            var existingSet = assignments
-                .Select(a => (a.RoleId, a.TenantId, a.PermissionId))
-                .ToHashSet();
-
-            var roles = await context.UserRole.AsNoTracking().ToListAsync();
-            var toAdd = new List<PermissionRole>();
-
-            foreach (var a in assignments)
-            {
-                var page = pagePerms.FirstOrDefault(p => p.PermissionId == a.PermissionId);
-                if (page?.Url == null) continue;
-                if (ErpPermissionActions.IsAdminOnlyPage(page.Url)) continue;
-
-                var pageUrl = ErpPermissionActions.NormalizePageUrl(page.Url);
-                if (!actionsByPage.TryGetValue(pageUrl, out var actions)) continue;
-
-                var role = roles.FirstOrDefault(r => r.RoleID == a.RoleId);
-                if (role != null && IsAdminRoleName(role.RoleName, role.RoleTag))
-                    continue; // admins already get everything via AssignNewPermissions
-
-                // If this role already has any Level-2 action for the page, do not fill gaps —
-                // an admin intentionally configured (or removed) actions.
-                var hasAnyLevel2 = actions.Any(action =>
-                    existingSet.Contains((a.RoleId, a.TenantId, action.PermissionId)));
-                if (hasAnyLevel2)
-                    continue;
-
-                foreach (var action in actions)
-                {
-                    toAdd.Add(new PermissionRole
-                    {
-                        RoleId = a.RoleId,
-                        TenantId = a.TenantId,
-                        PermissionId = action.PermissionId
-                    });
-                    existingSet.Add((a.RoleId, a.TenantId, action.PermissionId));
-                }
-            }
-
-            if (toAdd.Count == 0) return 0;
-            await context.PermissionRole.AddRangeAsync(toAdd);
-            await context.SaveChangesAsync();
-            return toAdd.Count;
-        }
-
-        /// <summary>
-        /// Drop Level-2 definitions that are no longer in the catalog (e.g. Job Orders Add).
-        /// </summary>
-        public static async Task<int> RemoveObsoletePermissionDefinitionsAsync(CimmpleDbContext context)
-        {
-            var catalogUrls = new HashSet<string>(
-                BuildPermissionCatalog()
-                    .Where(p => !string.IsNullOrEmpty(p.Url))
-                    .Select(p => ErpPermissionActions.NormalizePermissionUrl(p.Url)),
-                StringComparer.OrdinalIgnoreCase);
-
-            var obsolete = await context.PermissionMaster
-                .Where(p => p.LevelInfo == 2 && p.Url != null && p.Url.Contains("#"))
-                .ToListAsync();
-
-            var toRemove = obsolete
-                .Where(p => !catalogUrls.Contains(ErpPermissionActions.NormalizePermissionUrl(p.Url)))
-                .ToList();
-            if (toRemove.Count == 0) return 0;
-
-            var ids = toRemove.Select(p => p.PermissionId).ToHashSet();
-            var roleLinks = await context.PermissionRole
-                .Where(pr => ids.Contains(pr.PermissionId))
-                .ToListAsync();
-            if (roleLinks.Count > 0)
-                context.PermissionRole.RemoveRange(roleLinks);
-            context.PermissionMaster.RemoveRange(toRemove);
-            await context.SaveChangesAsync();
-            return toRemove.Count;
-        }
-
-        public static async Task<int> StripUserManagementFromNonAdminRolesAsync(CimmpleDbContext context)
-        {
-            var um = await context.PermissionMaster.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.Url == ErpPermissionActions.UserManagementUrl);
-            if (um == null) return 0;
-
-            var roles = await context.UserRole.AsNoTracking().ToListAsync();
-            var nonAdminRoleIds = roles
-                .Where(r => !IsAdminRoleName(r.RoleName, r.RoleTag))
-                .Select(r => r.RoleID)
-                .ToHashSet();
-            if (nonAdminRoleIds.Count == 0) return 0;
-
-            var bad = await context.PermissionRole
-                .Where(pr => pr.PermissionId == um.PermissionId && nonAdminRoleIds.Contains(pr.RoleId))
-                .ToListAsync();
-            if (bad.Count == 0) return 0;
-
-            context.PermissionRole.RemoveRange(bad);
-            await context.SaveChangesAsync();
-            return bad.Count;
-        }
-
-        public static bool IsAdminRoleName(string? roleName, string? roleTag)
+        internal static bool IsAdminRoleName(string? roleName, string? roleTag)
         {
             static bool Match(string? value) =>
                 !string.IsNullOrEmpty(value)

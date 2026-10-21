@@ -1,5 +1,4 @@
 import Instense from "./Axios-config";
-import { PAGES_WITH_LEVEL2_ACTIONS } from "../Utils/pagePermissionCatalog";
 
 export interface AuthLocation {
   locationId: number;
@@ -289,25 +288,61 @@ export class AuthService {
   /** Paths allowed when a non-admin role has no permissions assigned (deny-by-default). */
   private static readonly EMPTY_PERM_ALLOWED_PATHS = new Set(["/home", "/"]);
 
-  /** User Management is administrator-only (never granted to non-admin roles). */
-  public static readonly ADMIN_ONLY_PATHS = new Set(["/user-management"]);
-
-  public static normalizePageUrl(path: string): string {
-    const raw = (path || "").split("#")[0].trim();
-    const normalized = raw.replace(/\/$/, "") || "/";
-    return normalized.toLowerCase() === "" ? "/" : normalized;
-  }
-
-  public static isAdminOnlyPath(path: string): boolean {
-    return AuthService.ADMIN_ONLY_PATHS.has(AuthService.normalizePageUrl(path));
-  }
+  /**
+   * Level-2 actions per page. Mirrors ErpPermissionActions.PageActions so the UI
+   * hides actions the API would reject when a page grant has no action grants.
+   */
+  private static readonly PAGE_ACTION_CATALOG: Record<string, string[]> = {
+    "/home": [],
+    "/quotations/customer": ["Add", "Edit", "Delete", "Convert", "Send", "Print", "Duplicate"],
+    "/orders/customer": ["Add", "Edit", "Delete", "Ship", "Invoice", "Send", "Print", "Duplicate", "CreateJob"],
+    "/orders/customer-shipments": ["Print", "Send", "Delete"],
+    "/orders/customer-invoices": ["Pay", "Print", "Send", "Void"],
+    "/job-orders": ["Edit", "Delete", "Complete", "Print", "Send", "Manage"],
+    "/quotations/vendor": ["Add", "Edit", "Delete", "Convert", "Compare", "Send", "Print", "Duplicate"],
+    "/purchasing/vendor-orders": ["Add", "Edit", "Delete", "Send", "Print", "Duplicate", "Invoice"],
+    "/purchasing/vendor-receiving": ["Receive"],
+    "/purchasing/vendor-invoices": ["Add", "Approve", "Pay", "Print", "Send", "Void", "Delete"],
+    "/inventory": ["Receive", "Issue", "Reserve", "Transfer", "Adjust"],
+    "/quality": ["Add", "Edit", "Delete", "Print", "Send"],
+    "/quality/ncr-codes": ["Add", "Edit", "Delete"],
+    "/reports": ["Export", "Schedule"],
+    "/reports/schedules": ["Edit", "Delete", "Send", "Manage"],
+    "/documents": ["Upload", "Download", "Delete", "Manage"],
+    "/accounts/dashboard": [],
+    "/accounts/payable": ["Approve", "Pay", "Void"],
+    "/accounts/receivable": ["Pay", "Send"],
+    "/accounts/banks": ["Reconcile", "Import", "Export", "Close", "Delete"],
+    "/accounts/reports": ["Export", "Schedule"],
+    "/accounts/setup": ["Edit"],
+    "/accounts/journal-entries": ["Add", "Post", "Delete", "Reverse"],
+    "/accounts/payroll": ["Add", "Import", "Post", "Pay"],
+    "/accounts/general-ledger": [],
+    "/accounts/periods": ["Close", "Reopen"],
+    "/masters/bank": ["Add", "Edit", "Delete"],
+    "/masters/creditcard": ["Add", "Edit", "Delete"],
+    "/masters/chartofaccounts": ["Add", "Edit", "Delete"],
+    "/masters/customer": ["Add", "Edit", "Delete", "Import"],
+    "/masters/vendor": ["Add", "Edit", "Delete", "Import"],
+    "/masters/workstation": ["Add", "Edit", "Delete", "Import"],
+    "/masters/employee": ["Add", "Edit", "Delete", "Import"],
+    "/masters/location": ["Add", "Edit", "Delete"],
+    "/masters/process": ["Add", "Edit", "Delete", "Import"],
+    "/masters/jobtemplate": ["Add", "Edit", "Delete", "Export"],
+    "/masters/category": ["Add", "Edit", "Delete", "Seed"],
+    "/masters/pricebreakdown": ["Add", "Edit", "Delete"],
+    "/masters/product": ["Edit", "Sync"],
+    "/masters/raw-material": ["Add", "Edit"],
+    "/attendance": ["Export"],
+    "/user-management": [],
+    "/settings": ["Edit", "Send"],
+  };
 
   public static hasPermissionForPath(path: string): boolean {
+    // Administrators always see the full app until fine-grained RBAC is fully assigned
     if (AuthService.isAdminSession()) return true;
 
-    const normalized = AuthService.normalizePageUrl(path);
-    if (AuthService.isAdminOnlyPath(normalized)) return false;
-
+    const normalized = path.replace(/\/$/, "") || "/";
     const perms = AuthService.getPermissions();
 
     // No permissions assigned → deny all modules; Dashboard only
@@ -315,40 +350,71 @@ export class AuthService {
       return AuthService.EMPTY_PERM_ALLOWED_PATHS.has(normalized);
     }
 
-    // Level-1 page URLs only (ignore Level-2 action urls like /masters/customer#Add)
+    // Exact URL match only so sibling routes (e.g. /quality vs /quality/ncr-codes) stay independent
     return perms.some((p) => {
-      if (!p.url || p.url.includes("#")) return false;
-      const url = AuthService.normalizePageUrl(p.url);
+      if (!p.url) return false;
+      const url = p.url.replace(/\/$/, "") || "/";
       return url === normalized;
     });
   }
 
+  /** User Management (and its action URLs) cannot be granted to non-admin roles. */
+  public static isAdminOnlyPath(url?: string): boolean {
+    return AuthService.normalizePageUrl(url) === "/user-management";
+  }
+
   /**
-   * Level-2 action check. Requires Level-1 page access.
-   * - If the role has any Level-2 grants for the page → only those actions are allowed.
-   * - If the page has a Level-2 catalog but the role has none → View only.
-   * - Unknown pages with no Level-2 grants → allow (legacy).
+   * Level-2 check for a page path. Admins always pass.
+   * If the role has any action grants on the page, only those actions pass.
+   * If the page has a known action catalog and none are granted, only View passes.
    */
   public static hasActionPermission(pagePath: string, action: string): boolean {
     if (AuthService.isAdminSession()) return true;
-    if (!AuthService.hasPermissionForPath(pagePath)) return false;
 
     const page = AuthService.normalizePageUrl(pagePath);
-    const actionKey = (action || "").trim().toLowerCase();
-    if (!actionKey || actionKey === "view") return true;
+    const urls = AuthService.getPermissions().map((p) =>
+      AuthService.normalizePermissionUrl(p.url)
+    );
+    if (urls.indexOf(page) < 0) return false;
 
-    const perms = AuthService.getPermissions();
+    const normalizedAction = (action || "").trim().toLowerCase();
+    if (!normalizedAction || normalizedAction === "view") return true;
+
     const prefix = `${page}#`;
-    const actionUrls = perms
-      .map((p) => (p.url || "").replace(/\/$/, "").toLowerCase())
-      .filter((u) => u.startsWith(prefix));
-
-    if (actionUrls.length === 0) {
-      // Page supports Level-2 in catalog but none assigned → View-only
-      if (PAGES_WITH_LEVEL2_ACTIONS.has(page)) return false;
-      return true;
+    const wanted = `${prefix}${normalizedAction}`;
+    let hasAnyAction = false;
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      if (url.indexOf(prefix) !== 0) continue;
+      hasAnyAction = true;
+      if (url === wanted) return true;
     }
-    return actionUrls.includes(`${page}#${actionKey}`);
+    if (hasAnyAction) return false;
+
+    const catalog = AuthService.PAGE_ACTION_CATALOG[page];
+    if (catalog && catalog.length > 0) return false;
+    return true;
+  }
+
+  private static normalizePageUrl(url?: string): string {
+    let u = (url ?? "").trim();
+    const hash = u.indexOf("#");
+    if (hash >= 0) u = u.slice(0, hash);
+    if (u.length === 0) return "/";
+    if (!u.startsWith("/")) u = "/" + u;
+    u = u.replace(/\/+$/, "");
+    return (u.length === 0 ? "/" : u).toLowerCase();
+  }
+
+  private static normalizePermissionUrl(url?: string): string {
+    const raw = (url ?? "").trim();
+    if (raw.length === 0) return "/";
+    const hash = raw.indexOf("#");
+    if (hash < 0) return AuthService.normalizePageUrl(raw);
+    const page = AuthService.normalizePageUrl(raw.slice(0, hash));
+    const action = raw.slice(hash + 1).trim();
+    if (action.length === 0) return page;
+    return `${page}#${action.toLowerCase()}`;
   }
 
   /** First permitted app path from candidates (used after login / denied-route redirect). */
@@ -362,10 +428,8 @@ export class AuthService {
     if (!AuthService.getPermissions().length) {
       return "/home";
     }
-    // Prefer Level-1 page URLs (skip action fragments)
-    const firstPermUrl = AuthService.getPermissions().find(
-      (p) => !!p.url && !p.url.includes("#")
-    )?.url;
+    // Role has permissions, but none match known routes — use first permission URL if any
+    const firstPermUrl = AuthService.getPermissions().find((p) => !!p.url)?.url;
     return firstPermUrl || candidatePaths[0] || "/home";
   }
 

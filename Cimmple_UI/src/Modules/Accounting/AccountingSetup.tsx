@@ -296,9 +296,10 @@ const AccountingSetup: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="page-loading">
-        <div className="loading-spinner"></div>
-        <p>Loading accounting settings...</p>
+      <div style={{ padding: '1.5rem', width: '100%' }}>
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <div>Loading accounting settings...</div>
+        </div>
       </div>
     );
   }

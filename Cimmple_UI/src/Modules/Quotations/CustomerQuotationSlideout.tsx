@@ -40,11 +40,8 @@ import {
   fromHtmlDateInputValue,
 } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./CustomerQuotationSlideout.scss";
-
-const PAGE_PATH = "/quotations/customer";
 
 interface CustomerQuotationSlideoutProps {
   quotationId: number;
@@ -58,18 +55,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   onSaved,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
-  const {
-    canEdit,
-    canDelete,
-    canPrint,
-    canSend,
-    canConvert,
-    canDuplicate,
-    canAdd,
-    ensure,
-  } = usePagePermissions(PAGE_PATH);
-  const isNew = quotationId <= 0;
-  const canSave = isNew ? canAdd : canEdit;
 
   const [formData, setFormData] = useState<QuotationMasterReq>({
     OrderID: 0,
@@ -726,7 +711,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ensure(isNew ? "Add" : "Edit")) return;
 
     if (!validateForm()) {
       // Count line item errors
@@ -1075,7 +1059,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handlePrint = async () => {
-    if (!ensure("Print")) return;
     if (!formData.CustomerID || formData.Details.length === 0) {
       toast.error("Please ensure the quotation has a customer and at least one line item before printing");
       return;
@@ -1261,7 +1244,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleDelete = async () => {
-    if (!ensure("Delete")) return;
     setLoading(true);
     try {
       const response = await QuotationService.CheckQuotationDeletionImpact(quotationId);
@@ -1292,7 +1274,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleDuplicate = async () => {
-    if (!ensure("Duplicate")) return;
     const id = formData.OrderID > 0 ? formData.OrderID : quotationId;
     if (id <= 0) return;
     const confirmText =
@@ -1326,7 +1307,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleConvertToOrder = async () => {
-    if (!ensure("Convert")) return;
     // Validation
     if (!formData.CustomerID || formData.CustomerID <= 0) {
       toast.error("Customer is required to convert quotation to order");
@@ -1607,7 +1587,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {effectiveQuotationId > 0 && (
               <>
-                {canPrint && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1622,8 +1601,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <rect x="6" y="14" width="12" height="8"></rect>
                   </svg>
                 </button>
-                )}
-                {canSend && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1636,8 +1613,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
-                )}
-                {canDuplicate && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1650,8 +1625,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                   </svg>
                 </button>
-                )}
-                {canConvert && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1669,8 +1642,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
                   </svg>
                 </button>
-                )}
-                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -1682,7 +1653,6 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
-                )}
               </>
             )}
             <div className="status-field-inline">
@@ -2399,9 +2369,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
                               </button>
                             </td>
                             <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                              {canEdit && (
                               <DeleteIconButton label="Delete line" onClick={() => handleDeleteDetail(index)} />
-                              )}
                             </td>
                           </tr>
                           {historyHint ? (
@@ -2513,19 +2481,12 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
-            {!canSave && (
-              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
-                View only — you don&apos;t have permission to save changes.
-              </span>
-            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? "Saving..." : "Save"}
             </button>
-            )}
           </div>
         </form>
       </div>

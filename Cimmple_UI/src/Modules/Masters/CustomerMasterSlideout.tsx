@@ -10,10 +10,7 @@ import { validateEmail, validatePhone, validateZipCode } from "../../Common/Util
 import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
-
-const PAGE_PATH = "/masters/customer";
 
 interface CustomerMasterSlideoutProps {
   customerId: number;
@@ -27,8 +24,6 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   customerId,
   onClose,
 }) => {
-  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
-  const canSave = customerId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<CustomerMasterReq>({
     customer_id: 0,
     company_name: "",
@@ -1155,7 +1150,7 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
 
           {/* Form Actions */}
           <div className="form-actions">
-            {canDelete && customerId > 0 && (
+            {customerId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1190,11 +1185,9 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
             >
               Cancel
             </button>
-            {canSave && (
-              <button type="submit" className="btn-submit" disabled={loading}>
-                {loading ? 'Saving...' : customerId > 0 ? 'Update Customer' : 'Add Customer'}
-              </button>
-            )}
+            <button type="submit" className="btn-submit" disabled={loading}>
+              {loading ? 'Saving...' : customerId > 0 ? 'Update Customer' : 'Add Customer'}
+            </button>
           </div>
         </form>
 
