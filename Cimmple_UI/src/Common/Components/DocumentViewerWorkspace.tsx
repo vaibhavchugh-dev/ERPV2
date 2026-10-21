@@ -442,7 +442,7 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             onClick={() => setThumbnailsOpen((v) => !v)}
             active={thumbnailsOpen}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="7" height="7" rx="1" />
               <rect x="14" y="3" width="7" height="7" rx="1" />
               <rect x="3" y="14" width="7" height="7" rx="1" />
@@ -466,8 +466,8 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             disabled={safeIndex <= 0}
             onClick={() => onActiveIndexChange(safeIndex - 1)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="15 18 9 12 15 6" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 19 8 12 15 5" />
             </svg>
           </IconButton>
           <IconButton
@@ -475,8 +475,8 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             disabled={safeIndex >= documents.length - 1}
             onClick={() => onActiveIndexChange(safeIndex + 1)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="9 18 15 12 9 6" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 19 16 12 9 5" />
             </svg>
           </IconButton>
 
@@ -487,8 +487,8 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             disabled={kind !== "pdf" || pageNumber <= 1}
             onClick={() => goToPage(pageNumber - 1)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="18 15 12 9 6 15" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="19 15 12 8 5 15" />
             </svg>
           </IconButton>
           <div className="doc-viewer__page-indicator">
@@ -516,15 +516,15 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             disabled={kind !== "pdf" || pageNumber >= numPages}
             onClick={() => goToPage(pageNumber + 1)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="6 9 12 15 18 9" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="5 9 12 16 19 9" />
             </svg>
           </IconButton>
 
           <div className="doc-viewer__divider" />
 
           <IconButton title="Zoom out" onClick={handleZoomOut} disabled={fitMode === "custom" && scale <= MIN_ZOOM}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
               <line x1="8" y1="11" x2="14" y2="11" />
@@ -532,7 +532,7 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
           </IconButton>
           <span className="doc-viewer__zoom-label">{zoomLabel}</span>
           <IconButton title="Zoom in" onClick={handleZoomIn} disabled={fitMode === "custom" && scale >= MAX_ZOOM}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
               <line x1="11" y1="8" x2="11" y2="14" />
@@ -540,17 +540,17 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             </svg>
           </IconButton>
           <IconButton title="Fit width" onClick={handleFitWidth} active={fitMode === "width"}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4" />
             </svg>
           </IconButton>
           <IconButton title="Fit page" onClick={handleFitPage} active={fitMode === "page"}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="5" y="3" width="14" height="18" rx="2" />
             </svg>
           </IconButton>
           <IconButton title="Rotate" onClick={handleRotate}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M23 4v6h-6" />
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
@@ -560,7 +560,7 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
         <div className="doc-viewer__toolbar-right">
           {onDownload && (
             <IconButton title="Download" onClick={() => onDownload(current, safeIndex)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
@@ -568,7 +568,7 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             </IconButton>
           )}
           <IconButton title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {isFullscreen ? (
                 <>
                   <path d="M8 3v3a2 2 0 0 1-2 2H3" />
@@ -587,9 +587,9 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             </svg>
           </IconButton>
           <IconButton title="Close viewer" onClick={onClose}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="19" y1="5" x2="5" y2="19" />
+              <line x1="5" y1="5" x2="19" y2="19" />
             </svg>
           </IconButton>
         </div>

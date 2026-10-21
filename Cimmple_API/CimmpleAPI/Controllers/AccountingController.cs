@@ -692,11 +692,56 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                var debitByJournal = new Dictionary<int, string>();
+                var creditByJournal = new Dictionary<int, string>();
+                var journalIds = jeByRef.Values.Distinct().ToList();
+                if (journalIds.Count > 0)
+                {
+                    var debitLines = _context.JournalEntryFrom.AsNoTracking()
+                        .Where(l => journalIds.Contains(l.JournalEntryId))
+                        .Select(l => new { l.JournalEntryId, l.AccountId })
+                        .ToList();
+                    var creditLines = _context.JournalEntryTo.AsNoTracking()
+                        .Where(l => journalIds.Contains(l.JournalEntryId))
+                        .Select(l => new { l.JournalEntryId, l.AccountId })
+                        .ToList();
+                    var accountIds = debitLines.Select(l => l.AccountId)
+                        .Concat(creditLines.Select(l => l.AccountId))
+                        .Distinct()
+                        .ToList();
+                    var accountLabels = accountIds.Count == 0
+                        ? new Dictionary<int, string>()
+                        : _context.ChartofAccounts.AsNoTracking()
+                            .Where(a => a.Tenantid == tenantId && accountIds.Contains(a.AccountID))
+                            .Select(a => new { a.AccountID, a.AccountCode, a.AccountName })
+                            .ToDictionary(
+                                a => a.AccountID,
+                                a => string.IsNullOrWhiteSpace(a.AccountCode)
+                                    ? (a.AccountName ?? "")
+                                    : $"{a.AccountCode} — {a.AccountName}");
+
+                    string Label(int accountId) =>
+                        accountLabels.TryGetValue(accountId, out var label) ? label : "";
+
+                    foreach (var line in debitLines)
+                    {
+                        if (!debitByJournal.ContainsKey(line.JournalEntryId))
+                            debitByJournal[line.JournalEntryId] = Label(line.AccountId);
+                    }
+                    foreach (var line in creditLines)
+                    {
+                        if (!creditByJournal.ContainsKey(line.JournalEntryId))
+                            creditByJournal[line.JournalEntryId] = Label(line.AccountId);
+                    }
+                }
+
                 var rows = raw.Select(t =>
                 {
                     var type = t.TransactionType ?? "";
                     var amount = t.Amount ?? 0m;
                     jeByRef.TryGetValue(t.invoiceNo ?? "", out var journalEntryId);
+                    debitByJournal.TryGetValue(journalEntryId, out var debitAccount);
+                    creditByJournal.TryGetValue(journalEntryId, out var creditAccount);
                     return new
                     {
                         id = t.TransactionID,
@@ -706,6 +751,8 @@ namespace CimmpleAPI.Controllers
                         description = t.Description ?? "",
                         reference = t.invoiceNo ?? t.CheckNo ?? "",
                         checkNo = t.CheckNo ?? "",
+                        debitAccount = debitAccount ?? "",
+                        creditAccount = creditAccount ?? "",
                         bankId = t.BankId,
                         bankName = t.BankId.HasValue && bankNames.ContainsKey(t.BankId.Value)
                             ? bankNames[t.BankId.Value]

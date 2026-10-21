@@ -102,6 +102,88 @@ namespace CimmpleAPI.Utilities
         }
 
         /// <summary>
+        /// Copy only progress fields onto the stored steps. Process, workstation, notes, and
+        /// new/removed steps stay as stored so a Complete-only caller cannot rewrite the router.
+        /// </summary>
+        public static List<JobOrderRoutingStepDto> MergeCompletionProgress(
+            IList<JobOrderRoutingStepDto>? existing,
+            IList<JobOrderRoutingStepDto>? incoming)
+        {
+            var stored = existing?.Select(CloneStep).ToList() ?? new List<JobOrderRoutingStepDto>();
+            if (incoming == null || incoming.Count == 0) return stored;
+
+            var incomingById = incoming
+                .GroupBy(s => s.id)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            foreach (var step in stored)
+            {
+                if (!incomingById.TryGetValue(step.id, out var next)) continue;
+                step.status = next.status;
+                step.progressState = next.progressState;
+                step.qtyProduced = next.qtyProduced;
+                step.elapsedTime = next.elapsedTime;
+                step.elapsedSeconds = next.elapsedSeconds;
+                step.startTime = next.startTime;
+                step.pauseReason = next.pauseReason;
+            }
+
+            return stored;
+        }
+
+        public static bool NewlyCompletes(
+            string? previousStatus,
+            IList<JobOrderRoutingStepDto>? existingSteps,
+            IList<JobOrderRoutingStepDto>? incomingSteps)
+        {
+            var existing = existingSteps ?? new List<JobOrderRoutingStepDto>();
+            var incoming = incomingSteps ?? new List<JobOrderRoutingStepDto>();
+            var existingById = existing.GroupBy(s => s.id).ToDictionary(g => g.Key, g => g.First());
+
+            foreach (var step in incoming)
+            {
+                if (!IsCompleted(step)) continue;
+                if (!existingById.TryGetValue(step.id, out var prev) || !IsCompleted(prev))
+                    return true;
+            }
+
+            var merged = MergeCompletionProgress(existing, incoming);
+            var nextStatus = DeriveJobStatus(previousStatus ?? "Draft", merged);
+            return IsCompletedStatus(nextStatus) && !IsCompletedStatus(previousStatus);
+        }
+
+        private static bool IsCompleted(JobOrderRoutingStepDto step) =>
+            string.Equals(step.status, "Completed", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsCompletedStatus(string? status) =>
+            string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase);
+
+        private static JobOrderRoutingStepDto CloneStep(JobOrderRoutingStepDto step) =>
+            new()
+            {
+                id = step.id,
+                sequence = step.sequence,
+                processName = step.processName,
+                processId = step.processId,
+                workstationName = step.workstationName,
+                workstationId = step.workstationId,
+                estimatedTime = step.estimatedTime,
+                description = step.description,
+                status = step.status,
+                qtyProduced = step.qtyProduced,
+                technicianName = step.technicianName,
+                technicianId = step.technicianId,
+                progressState = step.progressState,
+                startTime = step.startTime,
+                elapsedTime = step.elapsedTime,
+                elapsedSeconds = step.elapsedSeconds,
+                pauseReason = step.pauseReason,
+                notes = step.notes,
+                ncrFlags = step.ncrFlags,
+                scanCode = step.scanCode,
+            };
+
+        /// <summary>
         /// For running steps, fold wall-clock time since startTime into elapsedSeconds
         /// (and legacy elapsedTime minutes) and reset startTime to now.
         /// </summary>

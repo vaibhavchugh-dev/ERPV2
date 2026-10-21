@@ -194,6 +194,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [vendorEmail, setVendorEmail] = useState("");
   const [showConvertToOrderDialog, setShowConvertToOrderDialog] = useState(false);
+  const [convertingToOrder, setConvertingToOrder] = useState(false);
   const [selectedLineItems, setSelectedLineItems] = useState<Set<number>>(new Set());
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set());
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
@@ -1025,13 +1026,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const performConvertToOrder = async () => {
+    if (convertingToOrder) return;
     if (selectedLineItems.size === 0) {
       toast.error("Please select at least one line item to convert");
       return;
     }
 
-    setShowConvertToOrderDialog(false);
-    setLoading(true);
+    setConvertingToOrder(true);
     try {
       const convertDateToISO = (dateStr: string): string => toDateOnlyApiString(dateStr);
       const selectedDetails = formData.Details.filter(
@@ -1039,7 +1040,6 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       );
       if (selectedDetails.length === 0) {
         toast.error("Select at least one unconverted line item");
-        setLoading(false);
         return;
       }
 
@@ -1175,6 +1175,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
         const poNumber = result.poNumber ?? result.id;
         const orderNumber = poNumber < 1000 ? `VO#${poNumber + 999}` : `VO#${poNumber}`;
+        setShowConvertToOrderDialog(false);
         toast.success(`Quotation converted to vendor order successfully! Order Number: ${orderNumber}`, {
           autoClose: 5000,
         });
@@ -1185,7 +1186,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       console.error("Error converting quotation to vendor order:", error);
       toast.error(`Error converting quotation: ${error?.response?.data?.error || error?.message || "Unknown error"}`);
     } finally {
-      setLoading(false);
+      setConvertingToOrder(false);
     }
   };
 
@@ -3083,13 +3084,13 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             className="text-editor-popup-overlay multi-vendor-dialog-overlay"
             onClick={(e) => {
               e.stopPropagation();
-              setShowConvertToOrderDialog(false);
+              if (!convertingToOrder) setShowConvertToOrderDialog(false);
             }}
           >
             <div className="text-editor-popup" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "800px" }}>
               <div className="text-editor-popup-header">
                 <h3>Convert Quotation to Order - Select Items & Attachments</h3>
-                <button type="button" className="btn-close" onClick={() => setShowConvertToOrderDialog(false)}>
+                <button type="button" className="btn-close" disabled={convertingToOrder} onClick={() => setShowConvertToOrderDialog(false)}>
                   ×
                 </button>
               </div>
@@ -3322,16 +3323,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                 )}
               </div>
               <div className="text-editor-popup-footer">
-                <button type="button" className="btn-cancel" onClick={() => setShowConvertToOrderDialog(false)}>
+                <button type="button" className="btn-cancel" disabled={convertingToOrder} onClick={() => setShowConvertToOrderDialog(false)}>
                   Cancel
                 </button>
                 <button
                   type="button"
                   className="btn-submit"
                   onClick={performConvertToOrder}
-                  disabled={selectedLineItems.size === 0 || loading}
+                  disabled={selectedLineItems.size === 0 || convertingToOrder}
                 >
-                  Convert to Order ({selectedLineItems.size} items)
+                  {convertingToOrder
+                    ? "Converting…"
+                    : `Convert to Order (${selectedLineItems.size} items)`}
                 </button>
               </div>
             </div>

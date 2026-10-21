@@ -9,30 +9,54 @@ import {
 } from "../../Common/Services/AccountingService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import BankCashEntrySlideout from "./BankCashEntrySlideout";
+import "./BankCashEntries.scss";
+
+const PAGE_PATH = "/accounts/banks";
+
+const currentMonthRange = () => {
+  const now = new Date();
+  const ymd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  return {
+    start: ymd(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+};
 
 const BankCashEntries: React.FC = () => {
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { canAdd } = usePagePermissions(PAGE_PATH);
 
   const [entries, setEntries] = useState<BankCashEntrySummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [entryTypeFilter, setEntryTypeFilter] = useState("All");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [startDate, setStartDate] = useState(() => currentMonthRange().start);
+  const [endDate, setEndDate] = useState(() => currentMonthRange().end);
   const [showSlideout, setShowSlideout] = useState(false);
+  const [detailEntry, setDetailEntry] = useState<BankCashEntrySummary | null>(null);
   const [slideoutType, setSlideoutType] = useState<"Deposit" | "Withdrawal">(
     "Deposit"
   );
+
+  const hasCompleteDateRange = Boolean(startDate && endDate);
+  const appliedStartDate = hasCompleteDateRange ? startDate : "";
+  const appliedEndDate = hasCompleteDateRange ? endDate : "";
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
     try {
       const result = await AccountingService.ListBankCashEntries({
         entryType: entryTypeFilter,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
+        startDate: appliedStartDate || undefined,
+        endDate: appliedEndDate || undefined,
         locationId: locationIdParam,
       });
       setEntries(result || []);
@@ -43,7 +67,7 @@ const BankCashEntries: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [entryTypeFilter, startDate, endDate, locationIdParam]);
+  }, [entryTypeFilter, appliedStartDate, appliedEndDate, locationIdParam]);
 
   useEffect(() => {
     void loadEntries();
@@ -147,7 +171,7 @@ const BankCashEntries: React.FC = () => {
   );
 
   return (
-    <div style={{ padding: "1rem" }}>
+    <div className="bank-cash-entries-page" style={{ padding: "1rem" }}>
       <MasterListPage
         title="Deposits & Withdrawals"
         subtitle="Record bank cash in or out with no customer or vendor invoice. Posts to GL and Bank Reconciliation."
@@ -155,10 +179,9 @@ const BankCashEntries: React.FC = () => {
         columns={columns}
         loading={loading}
         enablePagination
-        onAdd={() => openNew("Deposit")}
-        addButtonLabel="New Deposit"
-        searchPlaceholder="Search description, bank, reference…"
-        searchFields={["description", "bankName", "reference", "entryType", "checkNo"]}
+        permissionPath={PAGE_PATH}
+        searchPlaceholder="Search description, bank, reference, amount, date…"
+        searchFields={["description", "bankName", "reference", "entryType", "checkNo", "amount", "entryDate"]}
         getRowId={(row) => row.id}
         columnPreferenceKey="bankCashEntries.hiddenColumns"
         filters={[
@@ -176,11 +199,6 @@ const BankCashEntries: React.FC = () => {
         ]}
         customActionButtons={[
           {
-            label: "New Withdrawal",
-            onClick: () => openNew("Withdrawal"),
-            className: "btn-secondary",
-          },
-          {
             label: loading ? "Loading…" : "Refresh",
             onClick: () => void loadEntries(),
             disabled: loading,
@@ -192,6 +210,22 @@ const BankCashEntries: React.FC = () => {
             className: "btn-secondary",
           },
         ]}
+        trailingActionButtons={
+          canAdd
+            ? [
+                {
+                  label: "+ New Withdrawal",
+                  onClick: () => openNew("Withdrawal"),
+                  className: "btn-secondary btn-cash-withdrawal",
+                },
+                {
+                  label: "+ New Deposit",
+                  onClick: () => openNew("Deposit"),
+                  className: "btn-secondary btn-cash-deposit",
+                },
+              ]
+            : []
+        }
         extraFilters={
           <div
             style={{
@@ -247,12 +281,94 @@ const BankCashEntries: React.FC = () => {
           </div>
         }
         emptyMessage="No deposits or withdrawals yet. Use New Deposit or New Withdrawal to record bank cash."
-        onRowClick={(row) => {
-          if (row.journalEntryId) {
-            history.push(`/accounts/journal-entries?id=${row.journalEntryId}`);
-          }
-        }}
+        onRowClick={(row) => setDetailEntry(row)}
       />
+
+      {detailEntry && (
+        <div
+          className="bank-cash-detail-overlay"
+          role="presentation"
+          onClick={() => setDetailEntry(null)}
+        >
+          <div
+            className="bank-cash-detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bank-cash-detail-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bank-cash-detail__head">
+              <h2 id="bank-cash-detail-title">
+                {detailEntry.entryType || "Entry"} detail
+              </h2>
+              <button type="button" onClick={() => setDetailEntry(null)} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <dl className="bank-cash-detail__grid">
+              <div>
+                <dt>Type</dt>
+                <dd>{detailEntry.entryType || "—"}</dd>
+              </div>
+              <div>
+                <dt>Date</dt>
+                <dd>{formatDate(detailEntry.entryDate) || "—"}</dd>
+              </div>
+              <div>
+                <dt>Bank</dt>
+                <dd>{detailEntry.bankName || "—"}</dd>
+              </div>
+              <div>
+                <dt>Amount</dt>
+                <dd>
+                  {(detailEntry.entryType || "").toLowerCase() === "deposit" ? "+" : "−"}
+                  {formatCurrency(Math.abs(Number(detailEntry.amount) || 0))}
+                </dd>
+              </div>
+              <div>
+                <dt>Debit account</dt>
+                <dd>{detailEntry.debitAccount || "—"}</dd>
+              </div>
+              <div>
+                <dt>Credit account</dt>
+                <dd>{detailEntry.creditAccount || "—"}</dd>
+              </div>
+              <div>
+                <dt>Description</dt>
+                <dd>{detailEntry.description || "—"}</dd>
+              </div>
+              <div>
+                <dt>Reference</dt>
+                <dd>
+                  {detailEntry.journalEntryId ? (
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() =>
+                        history.push(
+                          `/accounts/journal-entries?id=${detailEntry.journalEntryId}`
+                        )
+                      }
+                    >
+                      {detailEntry.reference || `JE#${detailEntry.journalEntryId}`}
+                    </button>
+                  ) : (
+                    detailEntry.reference || "—"
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Check no.</dt>
+                <dd>{detailEntry.checkNo || "—"}</dd>
+              </div>
+              <div>
+                <dt>Reconciled</dt>
+                <dd>{detailEntry.isReconciled ? "Yes" : "No"}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      )}
 
       {showSlideout && (
         <BankCashEntrySlideout

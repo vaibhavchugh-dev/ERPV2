@@ -108,7 +108,11 @@ namespace CimmpleAPI.Controllers
 
                 // Delete existing ones that are not in the request
                 var requestIds = request.Where(r => r.Id > 0).Select(r => r.Id).ToList();
-                var toDelete = existingPriceBreakdowns.Where(e => !requestIds.Contains(e.Id)).ToList();
+                var mayDelete = !HttpContext.Items.ContainsKey("ErpPerm.PriceBreakdown.Checked")
+                    || HttpContext.Items["ErpPerm.PriceBreakdown.Delete"] as bool? == true;
+                var toDelete = mayDelete
+                    ? existingPriceBreakdowns.Where(e => !requestIds.Contains(e.Id)).ToList()
+                    : new List<PriceBreakdownMaster>();
                 foreach (var item in toDelete)
                 {
                     var usageCount = CountQuotationLinesUsingPriceBreakdown(tenantId, item.Id);

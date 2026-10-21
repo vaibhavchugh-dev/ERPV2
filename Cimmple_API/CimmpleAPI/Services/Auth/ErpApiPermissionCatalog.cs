@@ -18,8 +18,6 @@ namespace CimmpleAPI.Services.Auth
             "Notifications",
             "GlobalSearch",
             "EntityComments",
-            "Pdf",
-            "DocumentEmail",
         };
 
         private static readonly Dictionary<string, string> ControllerToPermissionUrl =
@@ -82,6 +80,12 @@ namespace CimmpleAPI.Services.Auth
             var path = httpContext.Request.Path.Value ?? "";
             var method = httpContext.Request.Method ?? "GET";
 
+            if (string.Equals(controller, "Pdf", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(controller, "DocumentEmail", StringComparison.OrdinalIgnoreCase))
+            {
+                return ResolveDocumentPermissionUrls(path);
+            }
+
             if (string.Equals(controller, "Quotation", StringComparison.OrdinalIgnoreCase))
             {
                 if (path.Contains("Vendor", StringComparison.OrdinalIgnoreCase))
@@ -91,6 +95,10 @@ namespace CimmpleAPI.Services.Auth
 
             if (string.Equals(controller, "Order", StringComparison.OrdinalIgnoreCase))
             {
+                // Vendor receiving list/detail/post live on OrderController, not a Receiving controller.
+                if (path.Contains("Receiving", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("ReceiveLineItem", StringComparison.OrdinalIgnoreCase))
+                    return One("/purchasing/vendor-receiving");
                 if (path.Contains("Vendor", StringComparison.OrdinalIgnoreCase))
                     return One("/purchasing/vendor-orders");
                 if (path.Contains("Shipment", StringComparison.OrdinalIgnoreCase))
@@ -151,13 +159,35 @@ namespace CimmpleAPI.Services.Auth
 
             if (string.Equals(controller, "Invoice", StringComparison.OrdinalIgnoreCase))
             {
-                // Customer Invoices page and Accounts Receivable share these APIs.
+                // Creating an invoice is the Customer Order "Invoice" action.
+                // Order-scoped reads are used while that slideout is open.
+                // GetAllInvoices stays on the invoice / AR pages.
+                var orderScoped = path.Contains("CreateInvoice", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetInvoiceableItems", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetInvoiceDetails", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetInvoices/", StringComparison.OrdinalIgnoreCase);
+                if (orderScoped)
+                {
+                    return new[]
+                    {
+                        "/orders/customer",
+                        "/orders/customer-invoices",
+                        "/accounts/receivable",
+                    };
+                }
+
                 return new[] { "/orders/customer-invoices", "/accounts/receivable" };
             }
 
             if (string.Equals(controller, "Shipping", StringComparison.OrdinalIgnoreCase))
             {
-                return One("/orders/customer-shipments");
+                // Creating a shipment is the Customer Order "Ship" action.
+                if (path.Contains("CreateShipment", StringComparison.OrdinalIgnoreCase))
+                    return One("/orders/customer");
+                if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("GetAllShipments", StringComparison.OrdinalIgnoreCase))
+                    return One("/orders/customer-shipments");
+                return new[] { "/orders/customer-shipments", "/orders/customer" };
             }
 
             if (string.Equals(controller, "VendorInvoice", StringComparison.OrdinalIgnoreCase))
@@ -275,6 +305,32 @@ namespace CimmpleAPI.Services.Auth
             }
 
             // Unknown controller: require admin (handled by filter as deny non-admin).
+            return new[] { "__deny_non_admin__" };
+        }
+
+        /// <summary>
+        /// Print and email endpoints. Checked before generic page maps so "Ship" does not steal Send.
+        /// </summary>
+        private static string[] ResolveDocumentPermissionUrls(string path)
+        {
+            if (path.Contains("VendorQuotation", StringComparison.OrdinalIgnoreCase))
+                return One("/quotations/vendor");
+            if (path.Contains("VendorInvoice", StringComparison.OrdinalIgnoreCase))
+                return new[] { "/purchasing/vendor-invoices", "/accounts/payable" };
+            if (path.Contains("VendorOrder", StringComparison.OrdinalIgnoreCase))
+                return One("/purchasing/vendor-orders");
+            if (path.Contains("Shipment", StringComparison.OrdinalIgnoreCase))
+                return One("/orders/customer-shipments");
+            if (path.Contains("JobOrder", StringComparison.OrdinalIgnoreCase))
+                return One("/job-orders");
+            if (path.Contains("Ncr", StringComparison.OrdinalIgnoreCase) || path.Contains("NCR", StringComparison.OrdinalIgnoreCase))
+                return One("/quality");
+            if (path.Contains("Invoice", StringComparison.OrdinalIgnoreCase))
+                return new[] { "/orders/customer-invoices", "/accounts/receivable" };
+            if (path.Contains("Quotation", StringComparison.OrdinalIgnoreCase))
+                return One("/quotations/customer");
+            if (path.Contains("Order", StringComparison.OrdinalIgnoreCase))
+                return One("/orders/customer");
             return new[] { "__deny_non_admin__" };
         }
 

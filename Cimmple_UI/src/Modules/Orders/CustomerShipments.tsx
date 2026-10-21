@@ -12,6 +12,9 @@ import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Compone
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+
+const PAGE_PATH = "/orders/customer-shipments";
 
 interface FilterOptions {
   dateRange: string;
@@ -22,6 +25,7 @@ interface FilterOptions {
 const CustomerShipments: React.FC = () => {
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { canPrint, canSend, canDelete, ensure } = usePagePermissions(PAGE_PATH);
   const location = useLocation();
   const history = useHistory();
   const returnToRef = useRef<string | null>(null);
@@ -108,6 +112,7 @@ const CustomerShipments: React.FC = () => {
   };
 
   const handlePrintShipment = async (shipment: CustomerShipmentSummary) => {
+    if (!ensure("Print")) return;
     if (!shipment?.id) {
       toast.error("Shipment not loaded");
       return;
@@ -154,6 +159,7 @@ const CustomerShipments: React.FC = () => {
   };
 
   const handleDeleteShipment = async (shipment: CustomerShipmentSummary) => {
+    if (!ensure("Delete")) return;
     setShipmentToDelete(shipment);
     try {
       const response = await ShippingService.CheckShipmentDeletionImpact(shipment.id);
@@ -271,6 +277,7 @@ const CustomerShipments: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
+          {canPrint && (
           <button
             type="button"
             onClick={() => handlePrintShipment(row)}
@@ -287,9 +294,14 @@ const CustomerShipments: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
+          )}
+          {canSend && (
           <button
             type="button"
-            onClick={() => setEmailShipmentId(row.id)}
+            onClick={() => {
+              if (!ensure("Send")) return;
+              setEmailShipmentId(row.id);
+            }}
             title="Email Shipment"
             style={{
               padding: "0.25rem 0.5rem",
@@ -303,6 +315,8 @@ const CustomerShipments: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} />
           </button>
+          )}
+          {canDelete && (
           <button
             type="button"
             onClick={() => handleDeleteShipment(row)}
@@ -319,6 +333,7 @@ const CustomerShipments: React.FC = () => {
           >
             <FontAwesomeIcon icon={faTrash} />
           </button>
+          )}
         </div>
       ),
     },
@@ -337,6 +352,7 @@ const CustomerShipments: React.FC = () => {
   return (
     <div style={{ padding: "1rem" }}>
       <MasterListPage
+        permissionPath={PAGE_PATH}
         title="Customer Shipments"
         subtitle="Manage all customer shipments across orders"
         data={shipments}
