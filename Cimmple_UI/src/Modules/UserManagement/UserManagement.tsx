@@ -234,18 +234,6 @@ const UserManagementComponent: React.FC = () => {
     return <span className={`status-badge ${statusClass}`}>{status || 'Unknown'}</span>;
   };
 
-  // Strict: non-admins must not use User Management at all.
-  if (!isAdminSession) {
-    return (
-      <div className="page-container" style={{ padding: "2rem", textAlign: "center" }}>
-        <h2 style={{ color: "#111827" }}>No access</h2>
-        <p style={{ color: "#6b7280" }}>
-          User Management is available to administrators only.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="page-container">
       <div className="page-header">

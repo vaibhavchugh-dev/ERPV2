@@ -9,6 +9,7 @@ import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Compone
 import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDialog';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
 import { onBackdropClick } from '../../Common/Utils/dismissGuard';
+import { getShipmentTrackingUrl } from '../../Common/Utils/shipmentTracking';
 
 interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
@@ -94,30 +95,13 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
 
   const handleTrackShipment = () => {
     if (shipment?.trackingNumber) {
-      // Open tracking URL in new tab
-      const trackingUrl = getTrackingUrl(shipment.courier, shipment.trackingNumber);
+      const trackingUrl = getShipmentTrackingUrl(shipment.courier, shipment.trackingNumber);
       if (trackingUrl) {
-        window.open(trackingUrl, '_blank');
+        window.open(trackingUrl, '_blank', 'noopener,noreferrer');
       } else {
         toast.info(`Tracking number: ${shipment.trackingNumber}`);
       }
     }
-  };
-
-  const getTrackingUrl = (courier: string, trackingNumber: string): string | null => {
-    const courierLower = courier?.toLowerCase() || '';
-
-    if (courierLower.includes('fedex')) {
-      return `https://www.fedex.com/en-us/tracking.html?tracknumbers=${trackingNumber}`;
-    } else if (courierLower.includes('ups')) {
-      return `https://www.ups.com/track?tracknum=${trackingNumber}`;
-    } else if (courierLower.includes('usps')) {
-      return `https://tools.usps.com/go/TrackConfirmAction?tRef=fullpage&tLc=2&text28777=&tLabels=${trackingNumber}`;
-    } else if (courierLower.includes('dhl')) {
-      return `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
-    }
-
-    return null;
   };
 
   const refreshDeletionImpact = async () => {

@@ -8,10 +8,7 @@ import {
 } from "../../Common/Services/WorkstationService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
-
-const PAGE_PATH = "/masters/workstation";
 
 interface WorkstationMasterSlideoutProps {
   workstationId: number;
@@ -22,8 +19,6 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
   workstationId,
   onClose,
 }) => {
-  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
-  const canSave = workstationId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<WorkstationMasterReq>({
     Id: 0,
     WorkstationName: "",
@@ -416,7 +411,7 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
 
           {/* Form Actions */}
           <div className="form-actions">
-            {canDelete && workstationId > 0 && (
+            {workstationId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -451,15 +446,13 @@ const WorkstationMasterSlideout: React.FC<WorkstationMasterSlideoutProps> = ({
             >
               Cancel
             </button>
-            {canSave && (
-              <button
-                type="submit"
-                className="btn-submit"
-                disabled={loading}
-              >
-                {loading ? "Saving..." : workstationId > 0 ? "Update Workstation" : "Add Workstation"}
-              </button>
-            )}
+            <button
+              type="submit"
+              className="btn-submit"
+              disabled={loading}
+            >
+              {loading ? "Saving..." : workstationId > 0 ? "Update Workstation" : "Add Workstation"}
+            </button>
           </div>
         </form>
 

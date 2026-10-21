@@ -10,18 +10,14 @@ import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
+import OrderCategoryBadge from "../../Common/Components/OrderCategoryBadge";
 import "./VendorQuotations.scss";
-
-const PAGE_PATH = "/quotations/vendor";
 
 const VendorQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const { ensure, can } = usePagePermissions(PAGE_PATH);
-  const canCompare = can("Compare");
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
@@ -93,7 +89,6 @@ const VendorQuotations: React.FC = () => {
   };
 
   const handleAddQuotation = () => {
-    if (!ensure("Add")) return;
     setSelectedQuotationId(0);
     setShowSlideout(true);
   };
@@ -112,14 +107,8 @@ const VendorQuotations: React.FC = () => {
     }
     const statusLower = status.toLowerCase().trim();
 
-    if (statusLower === "partially converted") {
-      return <span className="badge badge-info">Partially Converted</span>;
-    }
-    if (statusLower === "converted" || statusLower === "convrted") {
+    if (statusLower === "converted" || statusLower === "convrted" || statusLower.includes("convert")) {
       return <span className="badge badge-primary">Converted</span>;
-    }
-    if (statusLower.includes("convert")) {
-      return <span className="badge badge-primary">{status}</span>;
     }
 
     if (statusLower === "draft") {
@@ -142,38 +131,6 @@ const VendorQuotations: React.FC = () => {
     return `VQ#${displayNumber}`;
   };
 
-  const getQuotationTypeBadge = (type: string) => {
-    if (!type || type.trim() === "") {
-      return <span style={{ color: "#9ca3af" }}>-</span>;
-    }
-    const typeLower = type.toLowerCase().trim();
-    
-    if (typeLower === "material") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ“¦</span>
-          <span>Material</span>
-        </span>
-      );
-    } else if (typeLower === "service") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ”§</span>
-          <span>Service</span>
-        </span>
-      );
-    } else if (typeLower === "mixed") {
-      return (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
-          <span>ðŸ“¦</span>
-          <span>Mixed</span>
-        </span>
-      );
-    }
-    
-    return <span>{type}</span>;
-  };
-
   const columns = [
     {
       key: "quotationNumber",
@@ -193,7 +150,7 @@ const VendorQuotations: React.FC = () => {
       label: "Category",
       sortable: true,
       align: "center" as const,
-      render: (value: any) => getQuotationTypeBadge(value),
+      render: (value: any) => <OrderCategoryBadge type={value} />,
     },
     {
       key: "orderDate",
@@ -221,58 +178,33 @@ const VendorQuotations: React.FC = () => {
       label: "Order #",
       sortable: false,
       align: "left" as const,
-      render: (_value: any, row: any) => {
-        const quotation = row as VendorQuotationMaster;
-        const orders =
-          quotation.convertedOrders && quotation.convertedOrders.length > 0
-            ? quotation.convertedOrders
-            : quotation.convertedOrderNumber || quotation.convertedOrderId
-              ? [
-                  {
-                    orderId: quotation.convertedOrderOrderId || 0,
-                    poNumber: Number(
-                      quotation.convertedOrderNumber ?? quotation.convertedOrderId
-                    ),
-                    displayNumber: (() => {
-                      const n = Number(
-                        quotation.convertedOrderNumber ?? quotation.convertedOrderId
-                      );
-                      return n < 1000 ? n + 999 : n;
-                    })(),
-                  },
-                ]
-              : [];
-
-        if (orders.length === 0) {
-          return <span style={{ color: "#9ca3af" }}>-</span>;
+      render: (value: any, row: any) => {
+        const displayPo = row.convertedOrderNumber ?? value;
+        const orderIdForSlideout = row.convertedOrderOrderId;
+        if (displayPo) {
+          const orderNum = displayPo < 1000 ? displayPo + 999 : displayPo;
+          return (
+            <span
+              style={{
+                color: "#10b981",
+                textDecoration: "underline",
+                cursor: orderIdForSlideout ? "pointer" : "default",
+                fontWeight: 500,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (orderIdForSlideout) {
+                  setSelectedOrderId(orderIdForSlideout);
+                  setShowOrderSlideout(true);
+                }
+              }}
+              title={orderIdForSlideout ? "Click to view order" : undefined}
+            >
+              VO#{orderNum}
+            </span>
+          );
         }
-
-        return (
-          <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "0.35rem" }}>
-            {orders.map((o) => (
-              <span
-                key={`${o.orderId}-${o.poNumber}`}
-                style={{
-                  color: "#10b981",
-                  textDecoration: o.orderId ? "underline" : "none",
-                  cursor: o.orderId ? "pointer" : "default",
-                  fontWeight: 500,
-                  whiteSpace: "nowrap",
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (o.orderId) {
-                    setSelectedOrderId(o.orderId);
-                    setShowOrderSlideout(true);
-                  }
-                }}
-                title={o.orderId ? "Click to view order" : undefined}
-              >
-                VO#{o.displayNumber || o.poNumber}
-              </span>
-            ))}
-          </span>
-        );
+        return <span style={{ color: "#9ca3af" }}>-</span>;
       },
     },
     {
@@ -280,20 +212,31 @@ const VendorQuotations: React.FC = () => {
       label: "Actions",
       sortable: false,
       align: "center" as const,
-      render: (_value: any, row: any) => {
+      render: (value: any, row: any) => {
         const quotation = row as VendorQuotationMaster;
 
-        // Hide Compare when all master RFQ lines are on VOs (any vendor mix).
-        if (
-          quotation.anyVendorFullyConverted === true ||
-          quotation.allLinesConverted === true ||
-          quotation.allMasterLinesCovered === true ||
-          quotation.isConverted > 0
-        ) {
+        // Helper function to check if a quotation is converted
+        const isQuotationConverted = (q: VendorQuotationMaster): boolean => {
+          const statusLower = q.status?.toLowerCase().trim() || "";
+          return (
+            statusLower.includes("convert") ||
+            q.isConverted > 0 ||
+            (q.convertedOrderId !== null && q.convertedOrderId !== undefined && q.convertedOrderId > 0)
+          );
+        };
+
+        // Don't show compare button if this quotation is converted
+        if (isQuotationConverted(quotation)) {
           return <span style={{ color: "#9ca3af" }}>-</span>;
         }
 
+        // Listing only shows masters; open Compare with this row's orderID.
+        // Children are IsResponseOnly and hidden from the list.
         const parentId = quotation.orderID;
+
+        // Show Compare when this master has multi-vendor children.
+        // Prefer API hasChildQuotations (ParentQuotationID on children → master).
+        // Keep legacy self-link ParentQuotationID === orderID for older data.
         const isMultiVendorMaster =
           quotation.hasChildQuotations === true ||
           quotation.parentQuotationID === quotation.orderID;
@@ -302,16 +245,11 @@ const VendorQuotations: React.FC = () => {
           return <span style={{ color: "#9ca3af" }}>-</span>;
         }
 
-        if (!canCompare) {
-          return <span style={{ color: "#9ca3af" }}>-</span>;
-        }
-
         return (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (!ensure("Compare")) return;
               setComparisonParentId(parentId);
               setShowComparison(true);
             }}
@@ -350,7 +288,6 @@ const VendorQuotations: React.FC = () => {
   return (
     <div className="vendor-quotations">
       <MasterListPage
-        permissionPath="/quotations/vendor"
         title="Vendor Quotations"
         columns={columns}
         data={filteredQuotations}
@@ -363,13 +300,12 @@ const VendorQuotations: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All Statuses" },
+              { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
               { value: "Responded", label: "Responded" },
               { value: "Accepted", label: "Accepted" },
               { value: "Rejected", label: "Rejected" },
-              { value: "Partially Converted", label: "Partially Converted" },
               { value: "Converted", label: "Converted" },
             ],
             value: statusFilter,

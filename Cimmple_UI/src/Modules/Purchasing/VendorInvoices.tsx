@@ -16,11 +16,8 @@ import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useCompanyCreditCards } from "../../Common/Hooks/useCompanyCreditCards";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
-
-const PAGE_PATH = "/purchasing/vendor-invoices";
 
 // Payment Modal Component
 interface PaymentModalProps {
@@ -179,7 +176,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ invoice, onClose, onPayment
               color: '#6b7280'
             }}
           >
-            Ã—
+            ×
           </button>
         </div>
 
@@ -453,19 +450,11 @@ const VendorInvoices: React.FC = () => {
   const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const {
-    canPrint,
-    canSend,
-    can,
-    ensure,
-  } = usePagePermissions(PAGE_PATH);
-  const canPay = can("Pay");
-  const canVoid = can("Void");
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
     status: 'All',
-    dateRange: 'Last 30 Days',
+    dateRange: 'All',
     startDate: '',
     endDate: '',
     searchTerm: ''
@@ -577,9 +566,6 @@ const VendorInvoices: React.FC = () => {
       const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       return d.getFullYear() === last.getFullYear() && d.getMonth() === last.getMonth();
     }
-    if (range === "This Year") {
-      return d.getFullYear() === now.getFullYear();
-    }
     return true;
   };
 
@@ -618,7 +604,7 @@ const VendorInvoices: React.FC = () => {
     } else if (statusLower === 'partially paid') {
       return (
         <span className="badge badge-info">
-          Partially Paid{daysOverdue && daysOverdue > 0 ? ` Â· ${daysOverdue}d overdue` : ''}
+          Partially Paid{daysOverdue && daysOverdue > 0 ? ` · ${daysOverdue}d overdue` : ''}
         </span>
       );
     } else if (statusLower === 'overdue' || (daysOverdue && daysOverdue > 0)) {
@@ -663,7 +649,6 @@ const VendorInvoices: React.FC = () => {
   const [emailInvoiceId, setEmailInvoiceId] = useState<number | null>(null);
 
   const handlePayInvoice = (invoice: VendorInvoiceSummary) => {
-    if (!ensure("Pay")) return;
     if (!invoice.isApproved && invoice.status !== 'Partially Paid') {
       toast.info('Approve this invoice before recording payment');
       return;
@@ -673,7 +658,6 @@ const VendorInvoices: React.FC = () => {
   };
 
   const handlePrintInvoice = async (invoice: VendorInvoiceSummary) => {
-    if (!ensure("Print")) return;
     const toastId = toast.info("Generating vendor invoice PDF… this may take a moment.", {
       autoClose: false,
     });
@@ -703,7 +687,6 @@ const VendorInvoices: React.FC = () => {
   };
 
   const handleVoidInvoice = async (invoice: VendorInvoiceSummary) => {
-    if (!ensure("Void")) return;
     if (!window.confirm(`Void invoice ${invoice.invoiceNo}? This cannot be undone.`)) {
       return;
     }
@@ -837,7 +820,7 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
-          {canPay && row.status !== 'Paid' && row.status !== 'Void' && (row.isApproved || row.status === 'Partially Paid') && (
+          {row.status !== 'Paid' && row.status !== 'Void' && (row.isApproved || row.status === 'Partially Paid') && (
             <button
               type="button"
               onClick={() => handlePayInvoice(row)}
@@ -855,7 +838,7 @@ const VendorInvoices: React.FC = () => {
               <FontAwesomeIcon icon={faCreditCard} />
             </button>
           )}
-          {canPay && row.status !== 'Paid' && row.status !== 'Void' && !row.isApproved && row.status !== 'Partially Paid' && (
+          {row.status !== 'Paid' && row.status !== 'Void' && !row.isApproved && row.status !== 'Partially Paid' && (
             <button
               type="button"
               disabled
@@ -873,7 +856,6 @@ const VendorInvoices: React.FC = () => {
               <FontAwesomeIcon icon={faCreditCard} />
             </button>
           )}
-          {canPrint && (
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -890,8 +872,6 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
-          )}
-          {canSend && (
           <button
             type="button"
             onClick={() => setEmailInvoiceId(row.id)}
@@ -908,8 +888,7 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} />
           </button>
-          )}
-          {canVoid && row.status === 'Unpaid' && (
+          {row.status === 'Unpaid' && (
             <button
               type="button"
               onClick={() => handleVoidInvoice(row)}
@@ -948,15 +927,12 @@ const VendorInvoices: React.FC = () => {
     { value: 'Last 30 Days', label: 'Last 30 Days' },
     { value: 'Last 90 Days', label: 'Last 90 Days' },
     { value: 'This Month', label: 'This Month' },
-    { value: 'Last Month', label: 'Last Month' },
-    { value: 'This Year', label: 'This Year' },
-    { value: 'Custom', label: 'Custom' },
+    { value: 'Last Month', label: 'Last Month' }
   ];
 
   return (
     <div style={{ padding: "1rem" }}>
       <MasterListPage
-        permissionPath="/purchasing/vendor-invoices"
         title="Vendor Invoices"
         subtitle="Direct bills and invoices from vendor orders"
         data={filteredInvoices}
@@ -985,16 +961,7 @@ const VendorInvoices: React.FC = () => {
         ]}
         extraFilters={
           filters.dateRange === 'Custom' ? (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                flexWrap: 'wrap',
-                flex: '1 1 100%',
-                width: '100%',
-              }}
-            >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                 <label style={{ fontSize: '0.8125rem', color: '#4b5563', fontWeight: 500 }}>From:</label>
                 <DateFilterInput

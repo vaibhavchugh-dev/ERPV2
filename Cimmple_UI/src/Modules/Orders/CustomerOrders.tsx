@@ -10,10 +10,7 @@ import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerOrders.scss";
-
-const PAGE_PATH = "/orders/customer";
 
 const CustomerOrders: React.FC = () => {
   const location = useLocation();
@@ -21,7 +18,6 @@ const CustomerOrders: React.FC = () => {
   const returnToRef = useRef<string | null>(null);
   const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const { ensure } = usePagePermissions(PAGE_PATH);
   const [orders, setOrders] = useState<OrderMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
@@ -109,7 +105,6 @@ const CustomerOrders: React.FC = () => {
   };
 
   const handleAddOrder = () => {
-    if (!ensure("Add")) return;
     setSelectedOrderId(0);
     setShowSlideout(true);
   };
@@ -232,7 +227,6 @@ const CustomerOrders: React.FC = () => {
   return (
     <div className="customer-orders">
       <MasterListPage
-        permissionPath="/orders/customer"
         title="Customer Orders"
         columns={columns}
         data={filteredOrders}
@@ -245,7 +239,7 @@ const CustomerOrders: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All Statuses" },
+              { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "In Progress", label: "In Progress" },
               { value: "Partially Shipped", label: "Partially Shipped" },

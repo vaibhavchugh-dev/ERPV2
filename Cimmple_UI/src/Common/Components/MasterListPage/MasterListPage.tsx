@@ -77,15 +77,12 @@ export interface MasterListPageProps<T = any> {
   customActionButtons?: CustomActionButton[]; // Custom action buttons
   enablePagination?: boolean; // Enable pagination (default: true — uses System Settings defaultPageSize)
   pageSize?: number; // Override default page size from settings
+  /** Page path (e.g. `/masters/bank`). Hides Add when the user lacks the Add action. */
+  permissionPath?: string;
   /** Unique localStorage key for hidden columns. Defaults from title. */
   columnPreferenceKey?: string;
   /** Column keys hidden until the user enables them. */
   defaultHiddenColumns?: string[];
-  /**
-   * When set, Level-2 Add permission for this page path gates the Add button
-   * (e.g. `/masters/customer`). Edit/Delete are still controlled by each page.
-   */
-  permissionPath?: string;
 }
 
 const slugPreferenceKey = (title: string) =>
@@ -114,15 +111,11 @@ const MasterListPage = <T extends Record<string, any>>({
   customActionButtons = [],
   enablePagination = true,
   pageSize,
+  permissionPath,
   columnPreferenceKey,
   defaultHiddenColumns = [],
-  permissionPath,
 }: MasterListPageProps<T>) => {
   const settings = useSettingsSafe();
-  const canAdd =
-    !permissionPath ||
-    AuthService.hasActionPermission(permissionPath, "Add");
-  const effectiveOnAdd = canAdd ? onAdd : undefined;
   const [searchTerm, setSearchTerm] = useState(() =>
     (initialSearchTerm || "").trim()
   );
@@ -322,8 +315,10 @@ const MasterListPage = <T extends Record<string, any>>({
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          {effectiveOnAdd && (
-            <button className="btn-primary" onClick={effectiveOnAdd}>
+          {onAdd &&
+            (!permissionPath ||
+              AuthService.hasActionPermission(permissionPath, "Add")) && (
+            <button className="btn-primary" onClick={onAdd}>
               <span>+</span>
               <span>{addButtonLabel}</span>
             </button>

@@ -786,7 +786,8 @@ namespace CimmpleAPI.Controllers
                     direction,
                     punchTimeUtc,
                     faceAttendanceLogId,
-                    locationName);
+                    locationName,
+                    GetTenantTimeZoneId(tenantId));
             }
             catch (Exception ex)
             {

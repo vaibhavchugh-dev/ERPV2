@@ -17,12 +17,8 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { AuthService } from "../../Common/Services/AuthService";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
-import { getApiErrorMessage, isApiForbidden } from "../../Common/Services/FileUploadHelper";
 import ReportDrillDrawer, { DrillTarget } from "./ReportDrillDrawer";
 import "./FinancialReports.scss";
-
-const PAGE_PATH = "/accounts/reports";
 
 interface ReportType {
   id: string;
@@ -174,9 +170,6 @@ const FinancialReports: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [drillTarget, setDrillTarget] = useState<DrillTarget | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const { can, ensure } = usePagePermissions(PAGE_PATH);
-  const canExport = can("Export");
-  const canSchedule = can("Schedule");
   const canManageScheduledEmails = AuthService.hasPermissionForPath("/reports/schedules");
 
   const categories = useMemo(
@@ -311,7 +304,6 @@ const FinancialReports: React.FC = () => {
   };
 
   const exportReport = async (format: "pdf" | "excel" | "csv") => {
-    if (!ensure("Export")) return;
     if (!selectedReport || isLink) return;
     if (!validateCustomRange()) return;
     setExporting(true);
@@ -324,10 +316,7 @@ const FinancialReports: React.FC = () => {
         const text = await blob.text();
         try {
           const err = JSON.parse(text);
-          const msg = err.error || err.message || "";
-          if (!/access denied/i.test(msg)) {
-            toast.error(msg || "Failed to export report");
-          }
+          toast.error(err.error || "Failed to export report");
         } catch {
           toast.error("Failed to export report");
         }
@@ -350,9 +339,6 @@ const FinancialReports: React.FC = () => {
       );
     } catch (error: any) {
       console.error("Export failed:", error);
-      if (isApiForbidden(error)) {
-        return;
-      }
       if (reportData && format !== "pdf") {
         const name = selectedMeta?.name || "Report";
         const fileName = `${name}_${dateRange.replace(/\s+/g, "_")}_${ymdLocal(new Date())}.csv`;
@@ -373,7 +359,9 @@ const FinancialReports: React.FC = () => {
         );
         return;
       }
-      toast.error(getApiErrorMessage(error, "Failed to export report"));
+      toast.error(
+        error?.response?.data?.error || error?.message || "Failed to export report"
+      );
     } finally {
       setExporting(false);
     }
@@ -461,9 +449,7 @@ const FinancialReports: React.FC = () => {
                     <FontAwesomeIcon icon={faPlay} />
                     {loading ? "Running…" : "Run report"}
                   </button>
-                  {(canExport || (canSchedule && canManageScheduledEmails)) && (
                   <div className="fr-export-group" role="group" aria-label="Export">
-                    {canExport && (
                     <button
                       type="button"
                       className="fr-btn fr-btn-secondary"
@@ -474,8 +460,6 @@ const FinancialReports: React.FC = () => {
                       <FontAwesomeIcon icon={faDownload} />
                       PDF
                     </button>
-                    )}
-                    {canExport && (
                     <button
                       type="button"
                       className="fr-btn fr-btn-secondary"
@@ -485,14 +469,12 @@ const FinancialReports: React.FC = () => {
                     >
                       CSV
                     </button>
-                    )}
-                    {canSchedule && canManageScheduledEmails && (
+                    {canManageScheduledEmails && (
                       <button
                         type="button"
                         className="fr-btn fr-btn-secondary"
                         disabled={loading || !selectedReport}
                         onClick={() => {
-                          if (!ensure("Schedule")) return;
                           if (!validateCustomRange()) return;
                           setScheduleOpen(true);
                         }}
@@ -503,7 +485,6 @@ const FinancialReports: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  )}
                 </div>
               )}
 

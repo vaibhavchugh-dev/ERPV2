@@ -10,17 +10,13 @@ import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerQuotations.scss";
-
-const PAGE_PATH = "/quotations/customer";
 
 const CustomerQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
-  const { canAdd, ensure } = usePagePermissions(PAGE_PATH);
   const [quotations, setQuotations] = useState<QuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedQuotationId, setSelectedQuotationId] = useState<number>(0);
@@ -100,7 +96,6 @@ const CustomerQuotations: React.FC = () => {
   };
 
   const handleAddQuotation = () => {
-    if (!ensure("Add")) return;
     setSelectedQuotationId(0);
     setShowSlideout(true);
   };
@@ -235,7 +230,6 @@ const CustomerQuotations: React.FC = () => {
   return (
     <div className="customer-quotations">
       <MasterListPage
-        permissionPath="/quotations/customer"
         title="Customer Quotations"
         columns={columns}
         data={filteredQuotations}
@@ -248,7 +242,7 @@ const CustomerQuotations: React.FC = () => {
           {
             label: "Status",
             options: [
-              { value: "all", label: "All Statuses" },
+              { value: "all", label: "All" },
               { value: "Draft", label: "Draft" },
               { value: "Sent", label: "Sent" },
               { value: "Accepted", label: "Accepted" },

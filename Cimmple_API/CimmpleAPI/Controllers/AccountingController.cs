@@ -41,8 +41,6 @@ namespace CimmpleAPI.Controllers
         [HttpGet("GetPaymentDashboardMetrics")]
         public IActionResult GetPaymentDashboardMetrics(
             [FromQuery] string dateRange = "All",
-            [FromQuery] string startDate = null,
-            [FromQuery] string endDate = null,
             [FromQuery] int? locationId = null)
         {
             try
@@ -53,7 +51,7 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"GetPaymentDashboardMetrics called - TenantId: {tenantId}, DateRange: {dateRange}, LocationId: {filterLocationId}");
 
-                var dateFilter = GetDateRangeFilter(dateRange, null, startDate, endDate);
+                var dateFilter = GetDateRangeFilter(dateRange);
 
                 // Calculate Accounts Receivable metrics
                 var arMetrics = CalculateAccountsReceivableMetrics(tenantId, dateFilter, filterLocationId, restrictToLocationIds);
@@ -95,8 +93,6 @@ namespace CimmpleAPI.Controllers
         public IActionResult GetRecentTransactions(
             [FromQuery] int limit = 10,
             [FromQuery] string dateRange = "All",
-            [FromQuery] string startDate = null,
-            [FromQuery] string endDate = null,
             [FromQuery] int? locationId = null)
         {
             try
@@ -107,7 +103,7 @@ namespace CimmpleAPI.Controllers
 
                 Console.WriteLine($"GetRecentTransactions called - TenantId: {tenantId}, Limit: {limit}, DateRange: {dateRange}, LocationId: {filterLocationId}");
                 var safeLimit = Math.Clamp(limit, 1, 200);
-                var dateFilter = GetDateRangeFilter(dateRange, null, startDate, endDate);
+                var dateFilter = GetDateRangeFilter(dateRange);
                 var rangeStart = dateFilter.startDate.Date;
                 var rangeEnd = dateFilter.endDate.Date.AddDays(1).AddTicks(-1);
 
@@ -1972,43 +1968,21 @@ namespace CimmpleAPI.Controllers
             return result;
         }
 
-        private (DateTime startDate, DateTime endDate) GetDateRangeFilter(
-            string dateRange,
-            ReportRequest? reportRequest = null,
-            string? customStartDate = null,
-            string? customEndDate = null)
+        private (DateTime startDate, DateTime endDate) GetDateRangeFilter(string dateRange, ReportRequest? reportRequest = null)
         {
             var now = DateTime.Now;
             var startDate = now;
             var endDate = now;
 
-            string? customStart = customStartDate;
-            string? customEnd = customEndDate;
-            if (reportRequest != null)
-            {
-                if (string.IsNullOrWhiteSpace(customStart))
-                    customStart = reportRequest.CustomStartDate;
-                if (string.IsNullOrWhiteSpace(customEnd))
-                    customEnd = reportRequest.CustomEndDate;
-            }
-
             if (!string.IsNullOrWhiteSpace(dateRange) &&
-                dateRange.Equals("Custom", StringComparison.OrdinalIgnoreCase))
+                dateRange.Equals("Custom", StringComparison.OrdinalIgnoreCase) &&
+                reportRequest != null &&
+                DateTime.TryParse(reportRequest.CustomStartDate, out var custStart) &&
+                DateTime.TryParse(reportRequest.CustomEndDate, out var custEnd))
             {
-                var hasStart = DateTime.TryParse(customStart, out var custStart);
-                var hasEnd = DateTime.TryParse(customEnd, out var custEnd);
-                if (hasStart && hasEnd)
-                {
-                    if (custEnd.Date < custStart.Date)
-                        return (custEnd.Date, custStart.Date);
-                    return (custStart.Date, custEnd.Date);
-                }
-                if (hasStart)
-                    return (custStart.Date, now.Date.AddYears(1));
-                if (hasEnd)
-                    return (new DateTime(2000, 1, 1), custEnd.Date);
-                // Custom with no bounds → all dates
-                return (new DateTime(2000, 1, 1), now.Date.AddYears(1));
+                if (custEnd.Date < custStart.Date)
+                    return (custEnd.Date, custStart.Date);
+                return (custStart.Date, custEnd.Date);
             }
 
             switch ((dateRange ?? "").ToLower())
@@ -2019,12 +1993,8 @@ namespace CimmpleAPI.Controllers
                     endDate = now.Date.AddYears(1);
                     break;
                 case "this week":
-                    startDate = now.Date.AddDays(-(int)now.DayOfWeek);
+                    startDate = now.AddDays(-(int)now.DayOfWeek);
                     endDate = startDate.AddDays(6);
-                    break;
-                case "last 7 days":
-                    startDate = now.Date.AddDays(-7);
-                    endDate = now.Date;
                     break;
                 case "this month":
                     startDate = new DateTime(now.Year, now.Month, 1);

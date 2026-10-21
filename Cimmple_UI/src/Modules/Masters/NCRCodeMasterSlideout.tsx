@@ -2,10 +2,7 @@ import React, { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { NCRCodeService, NCRCodeMasterReq } from "../../Common/Services/NCRCodeService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
-
-const PAGE_PATH = "/quality/ncr-codes";
 
 interface NCRCodeMasterSlideoutProps {
   ncrCodeId: number;
@@ -21,8 +18,6 @@ const emptyForm = (): NCRCodeMasterReq => ({
 });
 
 const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId, onClose }) => {
-  const { canAdd, canEdit, canDelete } = usePagePermissions(PAGE_PATH);
-  const canSave = ncrCodeId === 0 ? canAdd : canEdit;
   const [formData, setFormData] = useState<NCRCodeMasterReq>(emptyForm());
   const [loading, setLoading] = useState(false);
   const [isStateChanged, setIsStateChanged] = useState(false);
@@ -210,7 +205,7 @@ const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId
           </div>
 
           <div className="form-actions">
-            {canDelete && ncrCodeId > 0 && (
+            {ncrCodeId > 0 && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -233,11 +228,9 @@ const NCRCodeMasterSlideout: React.FC<NCRCodeMasterSlideoutProps> = ({ ncrCodeId
             <button type="button" className="btn-cancel" onClick={handleCancel} disabled={loading}>
               Cancel
             </button>
-            {canSave && (
-              <button type="submit" className="btn-submit" disabled={loading}>
-                {loading ? "Saving..." : ncrCodeId > 0 ? "Update" : "Save"}
-              </button>
-            )}
+            <button type="submit" className="btn-submit" disabled={loading}>
+              {loading ? "Saving..." : ncrCodeId > 0 ? "Update" : "Save"}
+            </button>
           </div>
         </form>
 

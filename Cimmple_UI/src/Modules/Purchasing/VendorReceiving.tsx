@@ -158,7 +158,6 @@ const VendorReceiving: React.FC = () => {
   return (
     <>
       <MasterListPage
-        permissionPath="/purchasing/vendor-receiving"
         title="Vendor Receiving"
         data={orders}
         columns={columns}

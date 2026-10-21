@@ -10,10 +10,7 @@ import CustomerMasterSlideout from "./CustomerMasterSlideout";
 import CustomerMasterImportModal from "./CustomerMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
-
-const PAGE_PATH = "/masters/customer";
 
 const COLUMNS: ColumnDefinition[] = [
   { key: "customercode", label: "Customer Code", sortKey: "customercode", locked: true },
@@ -29,8 +26,6 @@ const COLUMN_PREFERENCE_KEY = "customerMaster.hiddenColumns";
 const CustomerMasterComponent: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
-  const { canAdd, can } = usePagePermissions(PAGE_PATH);
-  const canImport = can("Import");
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -256,15 +251,13 @@ const CustomerMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your customer database</p>
         </div>
         <div className="page-actions">
-          {canImport && (
-            <button
-              className="btn-secondary"
-              onClick={() => setShowImport(true)}
-              type="button"
-            >
-              <span>Import</span>
-            </button>
-          )}
+          <button
+            className="btn-secondary"
+            onClick={() => setShowImport(true)}
+            type="button"
+          >
+            <span>Import</span>
+          </button>
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -273,12 +266,10 @@ const CustomerMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
-          {canAdd && (
-            <button className="btn-primary" onClick={handleAddCustomer}>
-              <span>+</span>
-              <span>Add Customer</span>
-            </button>
-          )}
+          <button className="btn-primary" onClick={handleAddCustomer}>
+            <span>+</span>
+            <span>Add Customer</span>
+          </button>
         </div>
       </div>
 

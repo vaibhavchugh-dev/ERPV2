@@ -29,14 +29,10 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { ReportsService } from "../../Common/Services/ReportsService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { AuthService } from "../../Common/Services/AuthService";
-import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
-import { getApiErrorMessage, isApiForbidden } from "../../Common/Services/FileUploadHelper";
 import OperationalReportDrillDrawer, {
   OperationalDrillMeta,
 } from "./OperationalReportDrillDrawer";
 import "./BusinessIntelligence.scss";
-
-const PAGE_PATH = "/reports";
 
 interface ReportType {
   id: string;
@@ -533,9 +529,6 @@ const Reports: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [drillMeta, setDrillMeta] = useState<OperationalDrillMeta | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const { can, ensure } = usePagePermissions(PAGE_PATH);
-  const canExport = can("Export");
-  const canSchedule = can("Schedule");
   const canManageScheduledEmails = AuthService.hasPermissionForPath("/reports/schedules");
 
   const categories = useMemo(
@@ -642,7 +635,6 @@ const Reports: React.FC = () => {
   };
 
   const exportReport = async (format: "pdf" | "csv") => {
-    if (!ensure("Export")) return;
     if (!selectedMeta || isLink) {
       toast.error("Please select a report");
       return;
@@ -659,10 +651,7 @@ const Reports: React.FC = () => {
         const text = await blob.text();
         try {
           const err = JSON.parse(text);
-          const msg = err.error || err.message || "";
-          if (!/access denied/i.test(msg)) {
-            toast.error(msg || "Failed to export report");
-          }
+          toast.error(err.error || "Failed to export report");
         } catch {
           toast.error("Failed to export report");
         }
@@ -679,9 +668,6 @@ const Reports: React.FC = () => {
       toast.success(format === "pdf" ? "Downloaded as PDF" : "Downloaded as CSV");
     } catch (error: any) {
       console.error("Export failed:", error);
-      if (isApiForbidden(error)) {
-        return;
-      }
       if (reportData && format === "csv" && loadedReportId === selectedReport) {
         const name = selectedMeta?.name || "Report";
         const fileName = `${name}_${dateRange.replace(/\s+/g, "_")}_${ymdLocal(new Date())}.csv`;
@@ -698,7 +684,9 @@ const Reports: React.FC = () => {
         toast.success("Downloaded as CSV");
         return;
       }
-      toast.error(getApiErrorMessage(error, "Failed to export report"));
+      toast.error(
+        error?.response?.data?.error || error?.message || "Failed to export report"
+      );
     } finally {
       setExporting(false);
     }
@@ -782,9 +770,7 @@ const Reports: React.FC = () => {
                     <FontAwesomeIcon icon={faPlay} />
                     {loading ? "Running…" : "Run report"}
                   </button>
-                  {(canExport || (canSchedule && canManageScheduledEmails)) && (
                   <div className="rpt-export-group" role="group" aria-label="Export">
-                    {canExport && (
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
@@ -795,8 +781,6 @@ const Reports: React.FC = () => {
                       <FontAwesomeIcon icon={faDownload} />
                       PDF
                     </button>
-                    )}
-                    {canExport && (
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
@@ -806,14 +790,12 @@ const Reports: React.FC = () => {
                     >
                       CSV
                     </button>
-                    )}
-                    {canSchedule && canManageScheduledEmails && (
+                    {canManageScheduledEmails && (
                       <button
                         type="button"
                         className="rpt-btn rpt-btn-secondary"
                         disabled={loading || !selectedReport}
                         onClick={() => {
-                          if (!ensure("Schedule")) return;
                           if (!validateCustomRange()) return;
                           setScheduleOpen(true);
                         }}
@@ -824,7 +806,6 @@ const Reports: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  )}
                 </div>
               )}
 
