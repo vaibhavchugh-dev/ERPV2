@@ -8,7 +8,10 @@ import { PdfService } from '../../Common/Services/PdfService';
 import DeletionImpactDialog, { DeletionImpactResult } from '../../Common/Components/DeletionImpactDialog';
 import SendDocumentEmailDialog from '../../Common/Components/SendDocumentEmailDialog';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
+import { usePagePermissions } from '../../Common/Hooks/usePagePermissions';
 import { onBackdropClick } from '../../Common/Utils/dismissGuard';
+
+const PAGE_PATH = "/orders/customer-shipments";
 
 interface CustomerShipmentDetailModalProps {
   isOpen: boolean;
@@ -24,6 +27,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
   onShipmentDeleted
 }) => {
   const { formatCurrency, formatDate } = useFormatting();
+  const { canPrint, canSend, canDelete, ensure } = usePagePermissions(PAGE_PATH);
   const [shipment, setShipment] = useState<CustomerShipmentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
@@ -59,6 +63,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
   };
 
   const handlePrintShipment = async () => {
+    if (!ensure("Print")) return;
     if (!shipment?.id) {
       toast.error('Shipment not loaded');
       return;
@@ -133,6 +138,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
   };
 
   const handleDeleteShipment = async () => {
+    if (!ensure("Delete")) return;
     if (!shipment?.id) return;
     try {
       const response = await ShippingService.CheckShipmentDeletionImpact(shipment.id);
@@ -476,6 +482,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                   Track Shipment
                 </button>
               )}
+              {canPrint && (
               <button
                 onClick={handlePrintShipment}
                 style={{
@@ -495,8 +502,13 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                 <FontAwesomeIcon icon={faPrint} />
                 Print
               </button>
+              )}
+              {canSend && (
               <button
-                onClick={() => setShowEmailDialog(true)}
+                onClick={() => {
+                  if (!ensure("Send")) return;
+                  setShowEmailDialog(true);
+                }}
                 style={{
                   padding: '0.5rem 1rem',
                   backgroundColor: '#2563eb',
@@ -514,6 +526,8 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                 <FontAwesomeIcon icon={faEnvelope} />
                 Email
               </button>
+              )}
+              {canDelete && (
               <button
                 onClick={handleDeleteShipment}
                 style={{
@@ -533,6 +547,7 @@ const CustomerShipmentDetailModal: React.FC<CustomerShipmentDetailModalProps> = 
                 <FontAwesomeIcon icon={faTrash} />
                 Delete
               </button>
+              )}
             </div>
           </div>
         )}

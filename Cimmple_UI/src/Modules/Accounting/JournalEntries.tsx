@@ -13,6 +13,7 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./JournalEntries.scss";
 
 type LineDraft = {
@@ -81,6 +82,9 @@ const statusLabelFor = (row: {
 };
 
 const JournalEntries: React.FC = () => {
+  const { canAdd, can, ensure } = usePagePermissions("/accounts/journal-entries");
+  const canPostEntry = canAdd || can("Post");
+  const canReverse = can("Reverse");
   const location = useLocation();
   const history = useHistory();
   const formRef = useRef<HTMLDivElement>(null);
@@ -221,7 +225,7 @@ const JournalEntries: React.FC = () => {
   }, [location.search, location.pathname, history, openDetail]);
 
   const postReversal = async () => {
-    if (!detail?.id) return;
+    if (!detail?.id || !ensure("Reverse")) return;
     if (
       !window.confirm(
         "Post a reversing journal entry (swap debits and credits) dated today?"
@@ -247,6 +251,7 @@ const JournalEntries: React.FC = () => {
   };
 
   const submitEntry = async () => {
+    if (!canPostEntry) return;
     if (!balanced || totalDebit < 0.01) {
       toast.error("Debits must equal credits and be non-zero.");
       return;
@@ -377,14 +382,14 @@ const JournalEntries: React.FC = () => {
   return (
     <div className="journal-entries-page">
       <MasterListPage
-        permissionPath="/accounts/journal-entries"
+        permissionPath={canAdd ? "/accounts/journal-entries" : undefined}
         title="Journal entries"
         subtitle="Post balanced debits and credits to the general ledger. Closed periods block new posts â€” manage under Period close & audit."
         columns={columns}
         data={items}
         loading={listLoading && items.length === 0}
         enablePagination
-        onAdd={openNewEntry}
+        onAdd={canPostEntry ? openNewEntry : undefined}
         addButtonLabel="New entry"
         onRowClick={(row) => void openDetail(row.id)}
         searchPlaceholder="Search JE #, reference, descriptionâ€¦"
@@ -582,14 +587,16 @@ const JournalEntries: React.FC = () => {
           >
             Add line
           </button>
-          <button
-            type="button"
-            className="je-submit"
-            disabled={posting || !balanced || totalDebit < 0.01}
-            onClick={submitEntry}
-          >
-            {posting ? "Postingâ€¦" : "Post entry"}
-          </button>
+          {canPostEntry && (
+            <button
+              type="button"
+              className="je-submit"
+              disabled={posting || !balanced || totalDebit < 0.01}
+              onClick={submitEntry}
+            >
+              {posting ? "Posting…" : "Post entry"}
+            </button>
+          )}
         </div>
       </div>
       )}
@@ -681,20 +688,22 @@ const JournalEntries: React.FC = () => {
                     <strong>{Number(detail.totalCredit).toFixed(2)}</strong>
                   </p>
                   <div style={{ marginTop: "1rem" }}>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      style={{ marginRight: "0.75rem" }}
-                      disabled={
-                        reversing || !!detail.reversedByJournalEntryId
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        postReversal();
-                      }}
-                    >
-                      {reversing ? "Postingâ€¦" : "Post reversal"}
-                    </button>
+                    {canReverse && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ marginRight: "0.75rem" }}
+                        disabled={
+                          reversing || !!detail.reversedByJournalEntryId
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          postReversal();
+                        }}
+                      >
+                        {reversing ? "Posting…" : "Post reversal"}
+                      </button>
+                    )}
                     {detail.reversedByJournalEntryId ? (
                       <span
                         style={{

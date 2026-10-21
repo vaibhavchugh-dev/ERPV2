@@ -6,6 +6,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import { ChartofAccountsService, ChartofAccountMaster } from "../../Common/Services/ChartofAccountsService";
 import { BankService, BankMaster } from "../../Common/Services/BankService";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 
 interface AccountingSettings {
   companyName: string;
@@ -58,6 +59,7 @@ interface ApprovalLimit {
 }
 
 const AccountingSetup: React.FC = () => {
+  const { canEdit, ensure } = usePagePermissions("/accounts/setup");
   const [settings, setSettings] = useState<AccountingSettings>({
     companyName: 'Cimmple Corp',
     fiscalYearStart: '01-01',
@@ -156,6 +158,7 @@ const AccountingSetup: React.FC = () => {
   };
 
   const handleSaveSettings = async () => {
+    if (!ensure("Edit")) return;
     setSaving(true);
     try {
       const settingsToSave = {
@@ -313,26 +316,32 @@ const AccountingSetup: React.FC = () => {
               Configure default GL accounts, payment terms, and approval workflows
             </p>
           </div>
-          <button
-            onClick={handleSaveSettings}
-            disabled={saving}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: saving ? '#9ca3af' : '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.375rem',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              fontSize: '0.875rem',
-              fontWeight: '500',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}
-          >
-            <FontAwesomeIcon icon={faSave} />
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+          {canEdit ? (
+            <button
+              onClick={handleSaveSettings}
+              disabled={saving}
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: saving ? '#9ca3af' : '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.375rem',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <FontAwesomeIcon icon={faSave} />
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          ) : (
+            <p style={{ margin: 0, color: '#6b7280', fontSize: '0.875rem' }}>
+              You do not have permission to change accounting settings.
+            </p>
+          )}
         </div>
       </div>
 
@@ -624,6 +633,7 @@ const AccountingSetup: React.FC = () => {
                 <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
                   Payment Terms
                 </h3>
+                {canEdit && (
                 <button
                   onClick={addPaymentTerm}
                   style={{
@@ -639,6 +649,7 @@ const AccountingSetup: React.FC = () => {
                 >
                   Add Payment Term
                 </button>
+                )}
               </div>
 
               <div style={{ display: 'grid', gap: '1rem' }}>
@@ -688,6 +699,7 @@ const AccountingSetup: React.FC = () => {
                         fontSize: '0.875rem'
                       }}
                     />
+                    {canEdit && (
                     <DeleteIconButton
                       label="Remove payment term"
                       onClick={() => {
@@ -697,6 +709,7 @@ const AccountingSetup: React.FC = () => {
                         }));
                       }}
                     />
+                    )}
                   </div>
                 ))}
               </div>
@@ -766,6 +779,7 @@ const AccountingSetup: React.FC = () => {
                         style={{ width: '1rem', height: '1rem' }}
                       />
                     </div>
+                    {canEdit && (
                     <DeleteIconButton
                       label="Remove approval limit"
                       onClick={() => {
@@ -775,6 +789,7 @@ const AccountingSetup: React.FC = () => {
                         }));
                       }}
                     />
+                    )}
                   </div>
                 ))}
               </div>

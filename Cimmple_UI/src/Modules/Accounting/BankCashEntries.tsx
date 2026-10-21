@@ -9,12 +9,16 @@ import {
 } from "../../Common/Services/AccountingService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import BankCashEntrySlideout from "./BankCashEntrySlideout";
+
+const PAGE_PATH = "/accounts/banks";
 
 const BankCashEntries: React.FC = () => {
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { canAdd } = usePagePermissions(PAGE_PATH);
 
   const [entries, setEntries] = useState<BankCashEntrySummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -155,7 +159,8 @@ const BankCashEntries: React.FC = () => {
         columns={columns}
         loading={loading}
         enablePagination
-        onAdd={() => openNew("Deposit")}
+        permissionPath={PAGE_PATH}
+        onAdd={canAdd ? () => openNew("Deposit") : undefined}
         addButtonLabel="New Deposit"
         searchPlaceholder="Search description, bank, reference…"
         searchFields={["description", "bankName", "reference", "entryType", "checkNo"]}
@@ -175,11 +180,13 @@ const BankCashEntries: React.FC = () => {
           },
         ]}
         customActionButtons={[
-          {
-            label: "New Withdrawal",
-            onClick: () => openNew("Withdrawal"),
-            className: "btn-secondary",
-          },
+          ...(canAdd
+            ? [{
+                label: "New Withdrawal",
+                onClick: () => openNew("Withdrawal"),
+                className: "btn-secondary",
+              }]
+            : []),
           {
             label: loading ? "Loading…" : "Refresh",
             onClick: () => void loadEntries(),

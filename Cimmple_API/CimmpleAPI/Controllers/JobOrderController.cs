@@ -7,6 +7,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Auth;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -361,10 +362,51 @@ namespace CimmpleAPI.Controllers
                     _context.JobOrderMaster.Add(jobOrder);
                 }
 
+                var completionOnly = false;
+                if (request.JobOrderID > 0)
+                {
+                    var gate = EvaluateJobSavePermission(jobOrder, request);
+                    if (gate == JobSavePermission.Deny)
+                    {
+                        await transaction.RollbackAsync();
+                        return StatusCode(StatusCodes.Status403Forbidden, new { message = "Access denied" });
+                    }
+
+                    completionOnly = gate == JobSavePermission.CompletionOnly;
+                    if (completionOnly)
+                    {
+                        List<JobOrderRoutingStepDto>? storedSteps = null;
+                        if (!string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
+                        {
+                            try
+                            {
+                                storedSteps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                                    jobOrder.RoutingStepsJson,
+                                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            }
+                            catch
+                            {
+                                storedSteps = null;
+                            }
+                        }
+
+                        request.RoutingSteps = JobOrderTrackingHelper.MergeCompletionProgress(
+                            storedSteps, request.RoutingSteps);
+                        request.Status = previousStatus;
+                        request.Attachments = null;
+                        request.Comments = null;
+                        request.DeletedAttachmentIds = null;
+                        request.MaterialRequirements = null;
+                    }
+                }
+
                 // Parse dates from string format (MM/DD/YY or MM/DD/YYYY)
                 DateTime? parsedDueDate = ParseDate(request.DueDate);
                 DateTime? parsedOrderDate = ParseDate(request.OrderDate);
 
+                List<CommentMentionSource>? joMentions = null;
+                if (!completionOnly)
+                {
                 // Update fields
                 jobOrder.CustomerOrderID = request.CustomerOrderID;
                 jobOrder.CustomerOrderDetailID = request.CustomerOrderDetailID;
@@ -447,7 +489,6 @@ namespace CimmpleAPI.Controllers
                 }
 
                 // Save comments as JSON
-                List<CommentMentionSource>? joMentions = null;
                 if (request.Comments != null && request.Comments.Count > 0)
                 {
                     joMentions = CommentMentionHelper.FromDtos(request.Comments);
@@ -456,6 +497,8 @@ namespace CimmpleAPI.Controllers
                 else
                 {
                     jobOrder.CommentsJson = null;
+                }
+
                 }
 
                 // Save routing steps as JSON; commit live wall-clock elapsed for running steps.
@@ -1723,6 +1766,45 @@ namespace CimmpleAPI.Controllers
 
             await _context.SaveChangesAsync();
             return null;
+        }
+
+        private enum JobSavePermission { Allow, CompletionOnly, Deny }
+
+        /// <summary>
+        /// Edit may change the job. Complete may only mark stored steps complete.
+        /// A save that newly completes also requires Complete, even when the caller has Edit.
+        /// Admins (filter skipped) are not tagged and keep full save.
+        /// </summary>
+        private JobSavePermission EvaluateJobSavePermission(JobOrderMaster jobOrder, JobOrderReq request)
+        {
+            if (CanAccessAllLocations()) return JobSavePermission.Allow;
+            if (!HttpContext.Items.ContainsKey(ErpPermissionActions.JobOrderPermCheckedKey))
+                return JobSavePermission.Allow;
+
+            var hasEdit = HttpContext.Items[ErpPermissionActions.JobOrderPermEditKey] as bool? ?? false;
+            var hasComplete = HttpContext.Items[ErpPermissionActions.JobOrderPermCompleteKey] as bool? ?? false;
+
+            List<JobOrderRoutingStepDto>? storedSteps = null;
+            if (!string.IsNullOrWhiteSpace(jobOrder.RoutingStepsJson))
+            {
+                try
+                {
+                    storedSteps = JsonSerializer.Deserialize<List<JobOrderRoutingStepDto>>(
+                        jobOrder.RoutingStepsJson,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch
+                {
+                    storedSteps = null;
+                }
+            }
+
+            var newlyCompletes = JobOrderTrackingHelper.NewlyCompletes(
+                jobOrder.Status, storedSteps, request.RoutingSteps);
+            if (newlyCompletes && !hasComplete) return JobSavePermission.Deny;
+            if (hasEdit) return JobSavePermission.Allow;
+            if (hasComplete && newlyCompletes) return JobSavePermission.CompletionOnly;
+            return JobSavePermission.Deny;
         }
     }
 
