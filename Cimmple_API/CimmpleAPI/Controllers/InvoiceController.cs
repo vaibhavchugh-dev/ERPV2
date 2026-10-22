@@ -5,6 +5,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,10 +17,12 @@ namespace CimmpleAPI.Controllers
     public class InvoiceController : ApiBaseController
     {
         private readonly CimmpleDbContext _context;
+        private readonly WorkflowSyncService _workflowSync;
 
-        public InvoiceController(CimmpleDbContext context)
+        public InvoiceController(CimmpleDbContext context, WorkflowSyncService workflowSync)
         {
             _context = context;
+            _workflowSync = workflowSync;
         }
 
         [HttpGet("GetInvoiceableItems/{orderId}")]
@@ -405,6 +408,7 @@ namespace CimmpleAPI.Controllers
                     GlWorkflowService.AddAudit(_context, tenantId, "CustomerInvoiceAutoPost", GetUserId(), invoiceHeader.Id, null, invoicePeriodKey, postingRef);
                     _context.SaveChanges();
                     transaction.Commit();
+                    _workflowSync.TryRefreshCustomerOrderAsync(tenantId, request.OrderId, GetUserId()).GetAwaiter().GetResult();
 
                     return Ok(new { result = new { invoiceId = invoice.Id, invoiceNumber = invoice.PrefixInvoiceNo, message = "Invoice created successfully" } });
                 }
@@ -910,6 +914,8 @@ namespace CimmpleAPI.Controllers
 
                     _context.SaveChanges();
                     transaction.Commit();
+                    if (orderId > 0)
+                        _workflowSync.TryRefreshCustomerOrderAsync(tenantId, orderId, GetUserId()).GetAwaiter().GetResult();
 
                     return Ok(new { result = new { message = "Invoice voided successfully" }, success = true });
                 }
@@ -993,6 +999,8 @@ namespace CimmpleAPI.Controllers
 
                     _context.SaveChanges();
                     transaction.Commit();
+                    if (orderId > 0)
+                        _workflowSync.TryRefreshCustomerOrderAsync(tenantId, orderId, GetUserId()).GetAwaiter().GetResult();
 
                     return Ok(new { result = new { message = "Invoice deleted successfully" } });
                 }
@@ -1247,6 +1255,9 @@ namespace CimmpleAPI.Controllers
                     GlWorkflowService.AddAudit(_context, tenantId, "CustomerPaymentAutoPost", GetUserId(), journalHeader.Id, null, periodKey, referenceNo);
                     _context.SaveChanges();
                     transaction.Commit();
+                    var paidOrderId = _context.InvoiceDetail.Where(d => d.InvoiceId == invoiceId).Select(d => d.OrderId).FirstOrDefault();
+                    if (paidOrderId > 0)
+                        _workflowSync.TryRefreshCustomerOrderAsync(tenantId, paidOrderId, GetUserId()).GetAwaiter().GetResult();
 
                     var remaining = Math.Round(invoice.TotalAmount - invoice.PaidAmount, 2);
                     return Ok(new

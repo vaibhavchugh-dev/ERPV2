@@ -7,6 +7,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -24,15 +25,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly IConfiguration _configuration;
         private readonly NotificationService _notificationService;
+        private readonly WorkflowSyncService _workflowSync;
 
         public QuotationController(
             CimmpleDbContext context,
             IConfiguration configuration,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            WorkflowSyncService workflowSync)
         {
             _context = context;
             _configuration = configuration;
             _notificationService = notificationService;
+            _workflowSync = workflowSync;
         }
 
         [HttpGet("GetQuotations")]
@@ -529,6 +533,7 @@ namespace CimmpleAPI.Controllers
 
                 SyncQuotationAttachmentsJson(quotation);
                 _context.SaveChanges();
+                await _workflowSync.TryRefreshQuotationAsync(quotation.Tenantid, quotation.OrderID, GetUserId());
 
                 var attachments = GetQuotationAttachmentDtos(
                     quotation.OrderID,

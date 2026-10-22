@@ -100,6 +100,7 @@ namespace CimmpleAPI.Services.Auth
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
                 ["/home"] = Array.Empty<string>(),
+                ["/workflow"] = Array.Empty<string>(),
                 ["/quotations/customer"] = new[] { Add, Edit, Delete, Convert, Send, Print, Duplicate },
                 ["/orders/customer"] = new[] { Add, Edit, Delete, Ship, Invoice, Send, Print, Duplicate, CreateJob },
                 ["/orders/customer-shipments"] = new[] { Print, Send, Delete },

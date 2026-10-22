@@ -5,6 +5,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,15 +20,18 @@ namespace CimmpleAPI.Controllers
         private readonly CimmpleDbContext _context;
         private readonly InventoryService _inventoryService;
         private readonly NotificationService _notificationService;
+        private readonly WorkflowSyncService _workflowSync;
 
         public ShippingController(
             CimmpleDbContext context,
             InventoryService inventoryService,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            WorkflowSyncService workflowSync)
         {
             _context = context;
             _inventoryService = inventoryService;
             _notificationService = notificationService;
+            _workflowSync = workflowSync;
         }
 
         [HttpGet("GetShippableItems/{orderId}")]
@@ -239,6 +243,7 @@ namespace CimmpleAPI.Controllers
 
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
+                    await _workflowSync.TryRefreshCustomerOrderAsync(tenantId, request.OrderId, GetUserId());
 
                     if (previousShipStatus != null
                         && DomainNotificationHelper.StatusBecame(previousShipStatus.Previous, previousShipStatus.Current, "Shipped"))
@@ -748,6 +753,7 @@ namespace CimmpleAPI.Controllers
 
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
+                    await _workflowSync.TryRefreshCustomerOrderAsync(tenantId, shipment.OrderId, GetUserId());
 
                     return Ok(new { result = new { message = "Shipment deleted successfully" } });
                 }

@@ -6,6 +6,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -24,17 +25,20 @@ namespace CimmpleAPI.Controllers
         private readonly InventoryService _inventoryService;
         private readonly IConfiguration _configuration;
         private readonly NotificationService _notificationService;
+        private readonly WorkflowSyncService _workflowSync;
 
         public OrderController(
             CimmpleDbContext context,
             InventoryService inventoryService,
             IConfiguration configuration,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            WorkflowSyncService workflowSync)
         {
             _context = context;
             _inventoryService = inventoryService;
             _configuration = configuration;
             _notificationService = notificationService;
+            _workflowSync = workflowSync;
         }
 
         [HttpGet("GetOrders")]
@@ -1111,6 +1115,7 @@ namespace CimmpleAPI.Controllers
 
                 SyncOrderAttachmentsJson(order);
                 _context.SaveChanges();
+                await _workflowSync.TryRefreshCustomerOrderAsync(order.Tenantid, order.OrderID, GetUserId());
 
                 var savedAttachments = GetOrderAttachmentDtos(order.OrderID, order.Tenantid, order.AttachmentsJson);
                 return Ok(new
@@ -1953,6 +1958,7 @@ namespace CimmpleAPI.Controllers
                 // Delete the order
                 _context.CustomerOrder.Remove(order);
                 _context.SaveChanges();
+                _workflowSync.TryCloseCustomerOrderAsync(tenantId, orderId, GetUserId()).GetAwaiter().GetResult();
 
                 return Ok(new { result = new { message = "Order deleted successfully" } });
             }
@@ -4622,6 +4628,8 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await transaction.CommitAsync();
+                if (orderDetail.JobId > 0)
+                    await _workflowSync.TryRefreshJobAsync(tenantId, orderDetail.JobId, GetUserId());
 
                 return Ok(new { 
                     result = new { 

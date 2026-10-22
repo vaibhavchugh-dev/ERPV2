@@ -159,6 +159,10 @@ namespace CimmpleAPI.Data
         public DbSet<ReportSchedule> ReportSchedules { get; set; }
         public DbSet<Notification> Notifications { get; set; }
         public DbSet<EmailOutbox> EmailOutbox { get; set; }
+        public DbSet<WorkflowInstance> WorkflowInstances { get; set; }
+        public DbSet<WorkflowTask> WorkflowTasks { get; set; }
+        public DbSet<WorkflowHandoff> WorkflowHandoffs { get; set; }
+        public DbSet<WorkflowEvent> WorkflowEvents { get; set; }
         public DbSet<Conversation> Conversations { get; set; }
         public DbSet<ConversationParticipant> ConversationParticipants { get; set; }
         public DbSet<ConversationMessage> ConversationMessages { get; set; }
@@ -171,6 +175,49 @@ namespace CimmpleAPI.Data
 
             // ERP tables live in CimmpleFlow (CimmpleERPDB also has CimmplePay / CimmplePunch).
             modelBuilder.HasDefaultSchema(DbSchema.Flow);
+
+            modelBuilder.Entity<WorkflowInstance>(entity =>
+            {
+                entity.ToTable("WorkflowInstance");
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.PrincipalStageCode).HasMaxLength(32);
+                entity.HasIndex(e => new { e.TenantId, e.CustomerOrderId })
+                    .IsUnique()
+                    .HasFilter("[CustomerOrderId] IS NOT NULL");
+                entity.HasIndex(e => new { e.TenantId, e.QuotationId })
+                    .IsUnique()
+                    .HasFilter("[CustomerOrderId] IS NULL AND [QuotationId] IS NOT NULL");
+            });
+
+            modelBuilder.Entity<WorkflowTask>(entity =>
+            {
+                entity.ToTable("WorkflowTask");
+                entity.Property(e => e.StageCode).HasMaxLength(32);
+                entity.Property(e => e.TaskType).HasMaxLength(64);
+                entity.Property(e => e.SourceType).HasMaxLength(64);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.Priority).HasMaxLength(32);
+                entity.Property(e => e.Blocker).HasMaxLength(500);
+                entity.Property(e => e.NextAction).HasMaxLength(500);
+                entity.HasIndex(e => new { e.TenantId, e.SourceType, e.SourceId, e.TaskType }).IsUnique();
+                entity.HasIndex(e => e.WorkflowInstanceId);
+            });
+
+            modelBuilder.Entity<WorkflowHandoff>(entity =>
+            {
+                entity.ToTable("WorkflowHandoff");
+                entity.Property(e => e.Instruction).HasMaxLength(1000);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.HasIndex(e => e.WorkflowTaskId);
+            });
+
+            modelBuilder.Entity<WorkflowEvent>(entity =>
+            {
+                entity.ToTable("WorkflowEvent");
+                entity.Property(e => e.EventType).HasMaxLength(64);
+                entity.Property(e => e.Summary).HasMaxLength(500);
+                entity.HasIndex(e => new { e.WorkflowInstanceId, e.CreatedAt });
+            });
             
             // Configure PriceBreakdownMaster table name
             modelBuilder.Entity<PriceBreakdownMaster>()

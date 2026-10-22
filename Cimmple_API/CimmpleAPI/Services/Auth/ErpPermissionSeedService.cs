@@ -19,6 +19,7 @@ namespace CimmpleAPI.Services.Auth
             new List<PermissionMaster>
             {
                 new PermissionMaster { PermissionName = "Dashboard", DisplayPermissionName = "Dashboard", LevelInfo = 1, OrderNo = 1, Url = "/home", ReportGroup = "Dashboard", ReportDescription = "Access main dashboard" },
+                new PermissionMaster { PermissionName = "Workflow Center", DisplayPermissionName = "Workflow Center", LevelInfo = 1, OrderNo = 2, Url = "/workflow", ReportGroup = "Workflow", ReportDescription = "View the manufacturing workflow across orders, jobs, purchasing, quality, shipping, and invoices" },
                 new PermissionMaster { PermissionName = "Customer Quotations", DisplayPermissionName = "Customer Quotations", LevelInfo = 1, OrderNo = 10, Url = "/quotations/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer quotations" },
                 new PermissionMaster { PermissionName = "Customer Orders", DisplayPermissionName = "Customer Orders", LevelInfo = 1, OrderNo = 11, Url = "/orders/customer", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer orders" },
                 new PermissionMaster { PermissionName = "Customer Shipments", DisplayPermissionName = "Customer Shipments", LevelInfo = 1, OrderNo = 12, Url = "/orders/customer-shipments", ReportGroup = "Sales & Orders", ReportDescription = "View and manage customer shipments" },

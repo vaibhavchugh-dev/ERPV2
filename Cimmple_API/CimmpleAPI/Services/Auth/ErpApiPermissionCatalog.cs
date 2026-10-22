@@ -26,6 +26,7 @@ namespace CimmpleAPI.Services.Auth
             new(StringComparer.OrdinalIgnoreCase)
             {
                 ["Dashboard"] = "/home",
+                ["Workflow"] = "/workflow",
                 ["Employee"] = "/masters/employee",
                 ["Workstation"] = "/masters/workstation",
                 ["Process"] = "/masters/process",

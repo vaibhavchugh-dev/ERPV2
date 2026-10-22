@@ -33,6 +33,7 @@ import {
   faTimes,
   faChevronRight,
   faClock,
+  faSitemap,
 } from "@fortawesome/free-solid-svg-icons";
 import { AuthService } from "../Services/AuthService";
 import "./Sidebar.scss";
@@ -69,6 +70,7 @@ const Sidebar: React.FC = () => {
 
   const menuItems: NavItem[] = [
     { icon: faHome, title: "Dashboard", path: "/home" },
+    { icon: faSitemap, title: "Workflow Center", path: "/workflow" },
   ];
 
   const salesItems: NavItem[] = [

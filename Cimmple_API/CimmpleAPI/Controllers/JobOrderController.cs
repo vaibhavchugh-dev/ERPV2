@@ -7,6 +7,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 using CimmpleAPI.Utilities;
 using System;
 using System.Collections.Generic;
@@ -26,17 +27,20 @@ namespace CimmpleAPI.Controllers
         private readonly InventoryService _inventoryService;
         private readonly IConfiguration _configuration;
         private readonly NotificationService _notificationService;
+        private readonly WorkflowSyncService _workflowSync;
 
         public JobOrderController(
             CimmpleDbContext context,
             InventoryService inventoryService,
             IConfiguration configuration,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            WorkflowSyncService workflowSync)
         {
             _context = context;
             _inventoryService = inventoryService;
             _configuration = configuration;
             _notificationService = notificationService;
+            _workflowSync = workflowSync;
         }
 
         [HttpGet("GetJobOrders")]
@@ -525,6 +529,7 @@ namespace CimmpleAPI.Controllers
                 }
 
                 await transaction.CommitAsync();
+                await _workflowSync.TryRefreshCustomerOrderAsync(jobOrder.Tenantid, jobOrder.CustomerOrderID, GetUserId());
 
                 if (DomainNotificationHelper.StatusBecame(previousStatus, jobOrder.Status, "Completed")
                     && jobOrder.JobOrderID > 0)
@@ -631,6 +636,7 @@ namespace CimmpleAPI.Controllers
 
                 _context.JobOrderMaster.Add(jobOrder);
                 _context.SaveChanges();
+                _workflowSync.TryRefreshCustomerOrderAsync(request.Tenantid, order.OrderID, GetUserId()).GetAwaiter().GetResult();
 
                 return Ok(new { result = new { id = jobOrder.JobOrderID, message = "Job order created successfully" } });
             }

@@ -13,6 +13,7 @@ using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Utilities;
 using CimmpleAPI.Services;
+using CimmpleAPI.Services.Workflow;
 
 namespace CimmpleAPI.Controllers
 {
@@ -42,19 +43,22 @@ namespace CimmpleAPI.Controllers
         private readonly IConfiguration _configuration;
         private readonly NotificationService _notificationService;
         private readonly EmailOutboxService _emailOutbox;
+        private readonly WorkflowSyncService _workflowSync;
 
         public QualityController(
             CimmpleDbContext context,
             IWebHostEnvironment environment,
             IConfiguration configuration,
             NotificationService notificationService,
-            EmailOutboxService emailOutbox)
+            EmailOutboxService emailOutbox,
+            WorkflowSyncService workflowSync)
         {
             _context = context;
             _environment = environment;
             _configuration = configuration;
             _notificationService = notificationService;
             _emailOutbox = emailOutbox;
+            _workflowSync = workflowSync;
         }
 
         private static int _ncrExternalColumnsReady;
@@ -1283,6 +1287,7 @@ END");
                     newApprovedBy: ncr.ApprovedBy,
                     approvedByName: ncr.ApprovedByName);
 
+                await _workflowSync.TryRefreshNcrAsync(ncr.TenantId, ncr.NcrId, GetUserId());
                 return Ok(new { result, assignmentEmails });
             }
             catch (Exception ex)
@@ -1518,6 +1523,7 @@ END");
                             linkPath);
                     }
 
+                    await _workflowSync.TryRefreshNcrAsync(existingTenantId, id, actorId);
                     return Ok(new { success = true, assignmentEmails });
                 }
             }

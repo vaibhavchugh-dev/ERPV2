@@ -1,6 +1,7 @@
 import React from "react";
 
 const Dashboard = React.lazy(() => import("../Modules/Dashboard/Dashboard"));
+const WorkflowCenter = React.lazy(() => import("../Modules/Workflow/WorkflowCenter"));
 const CustomerMaster = React.lazy(() => import("../Modules/Masters/CustomerMaster"));
 const VendorMaster = React.lazy(() => import("../Modules/Masters/VendorMaster"));
 const BankMaster = React.lazy(() => import("../Modules/Masters/BankMaster"));
@@ -52,6 +53,11 @@ export const protectedRoutes: any[] = [
     path: "/home",
     name: "Dashboard",
     Component: Dashboard,
+  },
+  {
+    path: "/workflow",
+    name: "Workflow Center",
+    Component: WorkflowCenter,
   },
   {
     path: "/masters/customer",
