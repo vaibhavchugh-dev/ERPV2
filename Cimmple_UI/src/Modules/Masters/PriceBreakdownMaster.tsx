@@ -4,6 +4,7 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import { PriceBreakdownService, PriceBreakdownMaster, PriceBreakdownMasterReq } from "../../Common/Services/PriceBreakdownService";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import "./CustomerMaster.scss";
@@ -23,11 +24,33 @@ const DEFAULT_HIDDEN_COLUMNS: string[] = [];
 const COLUMN_PREFERENCE_KEY = "priceBreakdownMaster.hiddenColumns";
 
 const apiError = (error: unknown): string => {
-  const err = error as { response?: { data?: { error?: string } }; message?: string };
-  return err?.response?.data?.error || err?.message || "Unknown error";
+  const err = error as { response?: { data?: { error?: string; message?: string } }; message?: string };
+  return err?.response?.data?.error || err?.response?.data?.message || err?.message || "Unknown error";
+};
+
+const breakdownChanges = (
+  current: EditablePriceBreakdown[],
+  original: EditablePriceBreakdown[]
+) => {
+  const existing = current.filter((row) => row.id > 0);
+  const added = current.filter((row) => !(row.id > 0));
+  const removed = original.filter(
+    (row) => row.id > 0 && !existing.some((item) => item.id === row.id)
+  );
+  const edited = existing.some((row) => {
+    const orig = original.find((item) => item.id === row.id);
+    if (!orig) return true;
+    return (
+      (orig.itemName || "") !== (row.itemName || "") ||
+      orig.status !== row.status ||
+      orig.srno !== row.srno
+    );
+  });
+  return { existing, added, removed, edited };
 };
 
 const PriceBreakdownMasterComponent: React.FC = () => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/pricebreakdown");
   const [priceBreakdowns, setPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [originalPriceBreakdowns, setOriginalPriceBreakdowns] = useState<EditablePriceBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
@@ -114,8 +137,18 @@ const PriceBreakdownMasterComponent: React.FC = () => {
   };
 
   const handleSave = async () => {
+    const change = breakdownChanges(priceBreakdowns, originalPriceBreakdowns);
+    if (change.added.length > 0 && !canAdd) return;
+    if (change.edited && !canEdit) return;
+    if (change.removed.length > 0 && !canDelete) return;
+    if (change.added.length === 0 && !change.edited && change.removed.length === 0) return;
+
+    const rowsToSave = priceBreakdowns.filter((row) =>
+      row.id > 0 ? canEdit || canDelete : canAdd
+    );
+
     // Validate all rows
-    const emptyRows = priceBreakdowns.filter(p => !p.itemName || p.itemName.trim() === "");
+    const emptyRows = rowsToSave.filter(p => !p.itemName || p.itemName.trim() === "");
     if (emptyRows.length > 0) {
       toast.error("Please fill in all item names");
       return;
@@ -134,7 +167,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
 
-      const requestData: PriceBreakdownMasterReq[] = priceBreakdowns.map(p => ({
+      const requestData: PriceBreakdownMasterReq[] = rowsToSave.map(p => ({
         Id: p.id,
         ItemName: p.itemName || "",
         Srno: p.srno,
@@ -192,6 +225,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             placeholder="Enter item name"
             maxLength={500}
             data-pb-item-index={index}
+            disabled={priceBreakdown.id > 0 && !canEdit}
           />
         );
       case "status":
@@ -210,6 +244,7 @@ const PriceBreakdownMasterComponent: React.FC = () => {
               type="checkbox"
               checked={priceBreakdown.status === 1}
               onChange={() => handleStatusToggle(index)}
+              disabled={priceBreakdown.id > 0 && !canEdit}
               style={{
                 width: "18px",
                 height: "18px",
@@ -220,14 +255,14 @@ const PriceBreakdownMasterComponent: React.FC = () => {
           </label>
         );
       case "actions":
-        return (
+        return canDelete ? (
           <DeleteIconButton
             onClick={(e) => {
               e.stopPropagation();
               handleDeleteRow(index);
             }}
           />
-        );
+        ) : null;
       default:
         return null;
     }
@@ -312,10 +347,12 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddRow}>
             <span>+</span>
             <span>Add Item</span>
           </button>
+          )}
         </div>
       </div>
 
@@ -399,6 +436,15 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             >
               Discard
             </button>
+            {(() => {
+              const change = breakdownChanges(priceBreakdowns, originalPriceBreakdowns);
+              const canPersist =
+                (!change.added.length || canAdd) &&
+                (!change.edited || canEdit) &&
+                (!change.removed.length || canDelete) &&
+                (change.added.length > 0 || change.edited || change.removed.length > 0);
+              if (!canPersist) return null;
+              return (
             <button
               type="button"
               onClick={handleSave}
@@ -407,6 +453,8 @@ const PriceBreakdownMasterComponent: React.FC = () => {
             >
               {saving ? "Saving..." : "Save Changes"}
             </button>
+              );
+            })()}
           </div>
         </div>
       )}

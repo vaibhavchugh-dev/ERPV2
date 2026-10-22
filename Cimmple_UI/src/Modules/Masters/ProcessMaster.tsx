@@ -9,6 +9,7 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import ProcessMasterSlideout from "./ProcessMasterSlideout";
 import ProcessMasterImportModal from "./ProcessMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -27,6 +28,8 @@ const DEFAULT_HIDDEN_COLUMNS = ["srno"];
 const COLUMN_PREFERENCE_KEY = "processMaster.hiddenColumns";
 
 const ProcessMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/process");
+  const canImport = can("Import");
   const location = useLocation();
   const history = useHistory();
   const [processes, setProcesses] = useState<ProcessMaster[]>([]);
@@ -233,6 +236,7 @@ const ProcessMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage manufacturing processes and routing defaults</p>
         </div>
         <div className="page-actions">
+          {canImport && (
           <button
             className="btn-secondary"
             onClick={() => setShowImport(true)}
@@ -240,6 +244,7 @@ const ProcessMasterComponent: React.FC = () => {
           >
             <span>Import</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -248,10 +253,12 @@ const ProcessMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddProcess} type="button">
             <span>+</span>
             <span>Add Process</span>
           </button>
+          )}
         </div>
       </div>
 

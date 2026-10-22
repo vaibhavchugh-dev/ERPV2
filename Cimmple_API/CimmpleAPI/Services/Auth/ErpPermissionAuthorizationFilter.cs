@@ -75,21 +75,22 @@ namespace CimmpleAPI.Services.Auth
 
             if (ErpPermissionActions.IsPriceBreakdownSave(path))
             {
-                var (hasNew, hasExisting) = ErpPermissionActions.ClassifyPriceBreakdownSave(payload);
+                var (parsed, hasNew, hasExisting) = ErpPermissionActions.ClassifyPriceBreakdownSave(payload);
                 var page = "/masters/pricebreakdown";
-                var allowed = urls.Contains(page)
-                    && (!hasNew || ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Add))
-                    && (!hasExisting || ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Edit))
-                    && (hasNew || hasExisting);
-                if (!allowed)
+                if (!parsed || !ErpPermissionActions.PriceBreakdownSaveAllowed(urls, hasNew, hasExisting))
                 {
                     Forbid(context);
                     return;
                 }
 
-                context.HttpContext.Items["ErpPerm.PriceBreakdown.Delete"] =
+                var items = context.HttpContext.Items;
+                items["ErpPerm.PriceBreakdown.Add"] =
+                    ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Add);
+                items["ErpPerm.PriceBreakdown.Edit"] =
+                    ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Edit);
+                items["ErpPerm.PriceBreakdown.Delete"] =
                     ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Delete);
-                context.HttpContext.Items["ErpPerm.PriceBreakdown.Checked"] = true;
+                items["ErpPerm.PriceBreakdown.Checked"] = true;
                 return;
             }
 

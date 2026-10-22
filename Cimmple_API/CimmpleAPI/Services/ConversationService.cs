@@ -36,6 +36,15 @@ namespace CimmpleAPI.Services
         public bool IsMine { get; set; }
     }
 
+    public class ConversationDirectoryUser
+    {
+        public int UserUniqueID { get; set; }
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public string? Email { get; set; }
+        public string? UserName { get; set; }
+    }
+
     public class ConversationService
     {
         private readonly CimmpleDbContext _context;
@@ -638,6 +647,54 @@ namespace CimmpleAPI.Services
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Active tenant users for message and comment mentions. Names and email only.
+        /// Location scope matches other lists: unrestricted users see the tenant, restricted users see their sites.
+        /// </summary>
+        public async Task<List<ConversationDirectoryUser>> ListDirectoryAsync(
+            int tenantId,
+            IReadOnlyList<int>? restrictToLocationIds)
+        {
+            var query = _context.UserDetails.AsNoTracking()
+                .Where(u => u.TenantID == tenantId
+                    && (u.VendorId == null || u.VendorId == 0)
+                    && u.Status != null
+                    && u.Status.ToLower() == "active");
+
+            if (restrictToLocationIds != null)
+            {
+                var allowed = restrictToLocationIds.ToList();
+                if (allowed.Count == 0)
+                {
+                    query = query.Where(u => false);
+                }
+                else
+                {
+                    var mappedUserIds = _context.UserMapping
+                        .Where(m => allowed.Contains(m.locationId))
+                        .Select(m => m.userId);
+                    query = query.Where(u =>
+                        (u.DefaultLocationId.HasValue && allowed.Contains(u.DefaultLocationId.Value))
+                        || u.CanAccessAllLocations
+                        || mappedUserIds.Contains(u.User_UniqueID));
+                }
+            }
+
+            return await query
+                .OrderBy(u => u.FirstName)
+                .ThenBy(u => u.LastName)
+                .Take(500)
+                .Select(u => new ConversationDirectoryUser
+                {
+                    UserUniqueID = u.User_UniqueID,
+                    FirstName = u.FirstName,
+                    LastName = u.LastName,
+                    Email = u.Email,
+                    UserName = u.UserName
+                })
+                .ToListAsync();
         }
 
         private static List<int> ExtractMentionedUserIds(string body)

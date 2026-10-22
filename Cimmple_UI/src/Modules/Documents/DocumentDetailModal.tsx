@@ -10,6 +10,7 @@ import {
   validateSelectedFiles,
 } from "../../Common/Services/FileUploadHelper";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { formatDateTime } from "../../Common/Utils/Formatting";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -39,6 +40,10 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   onChanged,
   onPreview,
 }) => {
+  const { canDelete, can } = usePagePermissions("/documents");
+  const canUpload = can("Upload");
+  const canDownload = can("Download");
+  const canManage = can("Manage");
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [showVersionUpload, setShowVersionUpload] = useState(false);
@@ -113,6 +118,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   const handleDownload = async (versionId?: number) => {
+    if (!canDownload) return;
     const toastId = toast.info("Downloading document...", { autoClose: false });
     try {
       const blob = await DocumentService.DownloadDocument(document.id, versionId);
@@ -152,7 +158,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   const handleVersionUpload = async () => {
-    if (!selectedFile) {
+    if (!canUpload || !selectedFile) {
       toast.error("Please select a file");
       return;
     }
@@ -180,6 +186,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   const handleSave = async () => {
+    if (!canManage) return;
     setSaving(true);
     try {
       await DocumentService.UpdateDocument(
@@ -203,6 +210,7 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
   };
 
   const handleDelete = async () => {
+    if (!canDelete) return;
     if (!window.confirm("Are you sure you want to delete this document?")) {
       return;
     }
@@ -291,10 +299,12 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                   <FontAwesomeIcon icon={faEye} /> Preview
                 </button>
               )}
-              <button className="btn btn-primary" onClick={() => handleDownload()}>
-                <FontAwesomeIcon icon={faDownload} /> Download
-              </button>
-              {document.requiresVersionControl && (
+              {canDownload && (
+                <button className="btn btn-primary" onClick={() => handleDownload()}>
+                  <FontAwesomeIcon icon={faDownload} /> Download
+                </button>
+              )}
+              {canUpload && document.requiresVersionControl && (
                 <button
                   className="btn btn-secondary"
                   onClick={() => setShowVersionUpload(true)}
@@ -302,12 +312,16 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                   <FontAwesomeIcon icon={faUpload} /> Upload New Version
                 </button>
               )}
-              <button className="btn btn-secondary" onClick={() => setEditing(!editing)}>
-                <FontAwesomeIcon icon={faEdit} /> Edit
-              </button>
-              <button className="btn btn-danger" onClick={handleDelete}>
-                <FontAwesomeIcon icon={faTrash} /> Delete
-              </button>
+              {canManage && (
+                <button className="btn btn-secondary" onClick={() => setEditing(!editing)}>
+                  <FontAwesomeIcon icon={faEdit} /> Edit
+                </button>
+              )}
+              {canDelete && (
+                <button className="btn btn-danger" onClick={handleDelete}>
+                  <FontAwesomeIcon icon={faTrash} /> Delete
+                </button>
+              )}
             </div>
 
             {editing && (
@@ -403,13 +417,15 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({
                         >
                           <FontAwesomeIcon icon={faEye} /> Preview
                         </button>
-                        <button
-                          className="btn-download-version"
-                          onClick={() => handleDownload(version.id)}
-                          type="button"
-                        >
-                          <FontAwesomeIcon icon={faDownload} /> Download
-                        </button>
+                        {canDownload && (
+                          <button
+                            className="btn-download-version"
+                            onClick={() => handleDownload(version.id)}
+                            type="button"
+                          >
+                            <FontAwesomeIcon icon={faDownload} /> Download
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}

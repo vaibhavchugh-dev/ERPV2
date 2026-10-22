@@ -16,6 +16,7 @@ import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useCompanyCreditCards } from "../../Common/Hooks/useCompanyCreditCards";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { parseDateOnlyLocal } from "../../Common/Utils/Formatting";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
@@ -449,6 +450,9 @@ const VendorInvoices: React.FC = () => {
   const history = useHistory();
   const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
+  const { canPrint, canSend, can } = usePagePermissions("/purchasing/vendor-invoices");
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<VendorInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -820,7 +824,7 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
-          {row.status !== 'Paid' && row.status !== 'Void' && (row.isApproved || row.status === 'Partially Paid') && (
+          {canPay && row.status !== 'Paid' && row.status !== 'Void' && (row.isApproved || row.status === 'Partially Paid') && (
             <button
               type="button"
               onClick={() => handlePayInvoice(row)}
@@ -838,7 +842,7 @@ const VendorInvoices: React.FC = () => {
               <FontAwesomeIcon icon={faCreditCard} />
             </button>
           )}
-          {row.status !== 'Paid' && row.status !== 'Void' && !row.isApproved && row.status !== 'Partially Paid' && (
+          {canPay && row.status !== 'Paid' && row.status !== 'Void' && !row.isApproved && row.status !== 'Partially Paid' && (
             <button
               type="button"
               disabled
@@ -856,6 +860,7 @@ const VendorInvoices: React.FC = () => {
               <FontAwesomeIcon icon={faCreditCard} />
             </button>
           )}
+          {canPrint && (
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -872,6 +877,8 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
+          )}
+          {canSend && (
           <button
             type="button"
             onClick={() => setEmailInvoiceId(row.id)}
@@ -888,7 +895,8 @@ const VendorInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} />
           </button>
-          {row.status === 'Unpaid' && (
+          )}
+          {canVoid && row.status === 'Unpaid' && (
             <button
               type="button"
               onClick={() => handleVoidInvoice(row)}
@@ -933,6 +941,7 @@ const VendorInvoices: React.FC = () => {
   return (
     <div style={{ padding: "1rem" }}>
       <MasterListPage
+        permissionPath="/purchasing/vendor-invoices"
         title="Vendor Invoices"
         subtitle="Direct bills and invoices from vendor orders"
         data={filteredInvoices}

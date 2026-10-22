@@ -9,6 +9,7 @@ import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths"
 import SortIndicator from "../../Common/Components/SortIndicator";
 import LocationMasterSlideout from "./LocationMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -31,6 +32,7 @@ const DEFAULT_HIDDEN_COLUMNS = ["address", "city", "state", "country", "email", 
 const COLUMN_PREFERENCE_KEY = "locationMaster.hiddenColumns";
 
 const LocationMasterComponent: React.FC = () => {
+  const { canAdd } = usePagePermissions("/masters/location");
   const location = useLocation();
   const history = useHistory();
   const [locations, setLocations] = useState<LocationMaster[]>([]);
@@ -266,10 +268,12 @@ const LocationMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddLocation}>
             <span>+</span>
             <span>Add Location</span>
           </button>
+          )}
         </div>
       </div>
 

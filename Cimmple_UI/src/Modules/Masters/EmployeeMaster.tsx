@@ -10,6 +10,7 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import EmployeeMasterSlideout from "./EmployeeMasterSlideout";
 import EmployeeMasterImportModal from "./EmployeeMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -31,6 +32,8 @@ const DEFAULT_HIDDEN_COLUMNS = ["userName"];
 const COLUMN_PREFERENCE_KEY = "employeeMaster.hiddenColumns";
 
 const EmployeeMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/employee");
+  const canImport = can("Import");
   const history = useHistory();
   const location = useLocation();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
@@ -303,6 +306,7 @@ const EmployeeMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your employee database</p>
         </div>
         <div className="page-actions">
+          {canImport && (
           <button
             className="btn-secondary"
             onClick={() => setShowImport(true)}
@@ -310,6 +314,7 @@ const EmployeeMasterComponent: React.FC = () => {
           >
             <span>Import</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -318,10 +323,12 @@ const EmployeeMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddEmployee}>
             <span>+</span>
             <span>Add Employee</span>
           </button>
+          )}
         </div>
       </div>
 

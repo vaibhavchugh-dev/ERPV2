@@ -9,6 +9,7 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import VendorMasterSlideout from "./VendorMasterSlideout";
 import VendorMasterImportModal from "./VendorMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -24,6 +25,8 @@ const DEFAULT_HIDDEN_COLUMNS: string[] = [];
 const COLUMN_PREFERENCE_KEY = "vendorMaster.hiddenColumns";
 
 const VendorMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/vendor");
+  const canImport = can("Import");
   const location = useLocation();
   const history = useHistory();
   const [vendors, setVendors] = useState<VendorMaster[]>([]);
@@ -237,6 +240,7 @@ const VendorMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your vendor database</p>
         </div>
         <div className="page-actions">
+          {canImport && (
           <button
             className="btn-secondary"
             onClick={() => setShowImport(true)}
@@ -244,6 +248,7 @@ const VendorMasterComponent: React.FC = () => {
           >
             <span>Import</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -252,10 +257,12 @@ const VendorMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddVendor}>
             <span>+</span>
             <span>Add Vendor</span>
           </button>
+          )}
         </div>
       </div>
 

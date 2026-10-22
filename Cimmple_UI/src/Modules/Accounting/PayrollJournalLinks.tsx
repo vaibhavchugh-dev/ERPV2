@@ -6,6 +6,7 @@ import MasterListPage, {
   ColumnConfig,
 } from "../../Common/Components/MasterListPage/MasterListPage";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import PayrollJournalsHelp from "./PayrollJournalsHelp";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { matchJeNumber, matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
@@ -69,6 +70,10 @@ const fmtMoney = (n?: number | null) =>
     : "—";
 
 const PayrollJournalLinks: React.FC = () => {
+  const { can } = usePagePermissions("/accounts/payroll");
+  const canImport = can("Import");
+  const canPost = can("Post");
+  const canPay = can("Pay");
   const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [loading, setLoading] = useState(true);
@@ -164,7 +169,7 @@ const PayrollJournalLinks: React.FC = () => {
   };
 
   const submitPayment = async () => {
-    if (!cashLink) return;
+    if (!cashLink || !canPay) return;
     const amount = Number(paymentAmount);
     if (!(amount > 0)) {
       toast.error("Enter a payment amount greater than zero.");
@@ -201,7 +206,7 @@ const PayrollJournalLinks: React.FC = () => {
   };
 
   const submitTaxRemittance = async () => {
-    if (!cashLink) return;
+    if (!cashLink || !canPost) return;
     const lines = taxLines
       .filter((l) => l.selected && l.amount > 0)
       .map((l) => ({
@@ -359,9 +364,10 @@ const PayrollJournalLinks: React.FC = () => {
       align: "center",
       render: (_value, row) => {
         const remaining = Number(row.remainingNetPay ?? 0);
-        const showPay = row.status === "Posted" && remaining > 0.009;
+        const isPosted = String(row.status || "").trim().toLowerCase() === "posted";
+        const showPay = canPay && isPosted && remaining > 0.009;
         const showTax =
-          !row.taxRemittanceJournalEntryId && row.status === "Posted";
+          canPost && !row.taxRemittanceJournalEntryId && isPosted;
         if (!showPay && !showTax) {
           return <span className="je-muted">—</span>;
         }
@@ -399,6 +405,7 @@ const PayrollJournalLinks: React.FC = () => {
   return (
     <div className="journal-entries-page payroll-journals-page">
       <MasterListPage
+        permissionPath="/accounts/payroll"
         title="Payroll Journals"
         subtitle="Accrual journals from CimmplePay, manual entry, or import. After accrual, post net pay and tax remittance when cash leaves the bank."
         columns={columns}
@@ -455,11 +462,13 @@ const PayrollJournalLinks: React.FC = () => {
             onClick: () => history.push("/accounts/journal-entries"),
             className: "btn-secondary",
           },
-          {
+          ...(canImport
+            ? [{
             label: "Import CSV",
             onClick: () => history.push("/accounts/payroll/import"),
             className: "btn-secondary",
-          },
+          }]
+            : []),
           {
             label: "Help",
             onClick: () => setHelpOpen(true),
@@ -619,6 +628,7 @@ const PayrollJournalLinks: React.FC = () => {
                       }}
                     />
                   </label>
+                  {canPay && (
                   <div className="je-line-actions">
                     <button
                       type="button"
@@ -629,6 +639,7 @@ const PayrollJournalLinks: React.FC = () => {
                       {cashPosting ? "Posting…" : "Post payment journal"}
                     </button>
                   </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -728,6 +739,7 @@ const PayrollJournalLinks: React.FC = () => {
                       </tbody>
                     </table>
                   )}
+                  {canPost && (
                   <div className="je-line-actions">
                     <button
                       type="button"
@@ -738,6 +750,7 @@ const PayrollJournalLinks: React.FC = () => {
                       {cashPosting ? "Posting…" : "Post remittance journal"}
                     </button>
                   </div>
+                  )}
                 </>
               )}
             </div>

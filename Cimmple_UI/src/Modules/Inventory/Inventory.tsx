@@ -13,6 +13,7 @@ import {
 import { LocationService } from "../../Common/Services/LocationService";
 import { AuthService } from "../../Common/Services/AuthService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import SortIndicator from "../../Common/Components/SortIndicator";
 import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
@@ -32,8 +33,9 @@ const ROW_ACTIONS: { key: RowActionKey; label: string }[] = [
 ];
 
 const InventoryRowActions: React.FC<{
+  actions: { key: RowActionKey; label: string }[];
   onAction: (key: RowActionKey) => void;
-}> = ({ onAction }) => {
+}> = ({ actions, onAction }) => {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -102,7 +104,7 @@ const InventoryRowActions: React.FC<{
               zIndex: 10050,
             }}
           >
-            {ROW_ACTIONS.map((action) => (
+            {actions.map((action) => (
               <button
                 key={action.key}
                 type="button"
@@ -125,6 +127,12 @@ const InventoryRowActions: React.FC<{
 
 const Inventory: React.FC = () => {
   const history = useHistory();
+  const { can } = usePagePermissions("/inventory");
+  const canReceive = can("Receive");
+  const canIssue = can("Issue");
+  const canReserve = can("Reserve");
+  const canTransfer = can("Transfer");
+  const canAdjust = can("Adjust");
   const location = useLocation();
   const { locationId: activeLocationId } = useActiveLocation();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
@@ -398,6 +406,7 @@ const Inventory: React.FC = () => {
             <span>RM</span>
             <span>Raw Material Master</span>
           </button>
+          {canReceive && (
           <button
             className="btn-primary"
             onClick={() => handleOpenMovement("receive")}
@@ -405,6 +414,8 @@ const Inventory: React.FC = () => {
             <span>+</span>
             <span>Receive</span>
           </button>
+          )}
+          {canIssue && (
           <button
             className="btn-secondary"
             onClick={() => handleOpenMovement("issue")}
@@ -412,6 +423,8 @@ const Inventory: React.FC = () => {
             <span>−</span>
             <span>Issue</span>
           </button>
+          )}
+          {canReserve && (
           <button
             className="btn-secondary"
             onClick={() => handleOpenMovement("reserve")}
@@ -419,6 +432,8 @@ const Inventory: React.FC = () => {
             <span>◎</span>
             <span>Reserve</span>
           </button>
+          )}
+          {canTransfer && (
           <button
             className="btn-secondary"
             onClick={() => handleOpenMovement("transfer")}
@@ -426,6 +441,8 @@ const Inventory: React.FC = () => {
             <span>↔</span>
             <span>Transfer</span>
           </button>
+          )}
+          {canAdjust && (
           <button
             className="btn-secondary"
             onClick={() => handleOpenMovement("adjust")}
@@ -433,6 +450,7 @@ const Inventory: React.FC = () => {
             <span>±</span>
             <span>Adjust</span>
           </button>
+          )}
         </div>
       </div>
 
@@ -574,6 +592,14 @@ const Inventory: React.FC = () => {
                     </td>
                     <td className="actions-col">
                       <InventoryRowActions
+                        actions={ROW_ACTIONS.filter((action) => {
+                          if (action.key === "history") return true;
+                          if (action.key === "receive") return canReceive;
+                          if (action.key === "issue") return canIssue;
+                          if (action.key === "reserve") return canReserve;
+                          if (action.key === "transfer") return canTransfer;
+                          return canAdjust;
+                        })}
                         onAction={(key) => {
                           if (key === "history") {
                             handleOpenHistory(b);

@@ -16,6 +16,7 @@ import {
 } from "../../Common/Services/AccountingService";
 import { BankService } from "../../Common/Services/BankService";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import SortIndicator from "../../Common/Components/SortIndicator";
 import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
@@ -25,6 +26,11 @@ import type { BankStatementImportResult } from "./BankStatementImportModal";
 type ReconSortColumn = "date" | "description" | "amount" | "type" | "status";
 
 const BankReconciliation: React.FC = () => {
+  const { can } = usePagePermissions("/accounts/banks");
+  const canReconcile = can("Reconcile");
+  const canImport = can("Import");
+  const canExport = can("Export");
+  const canClose = can("Close");
   const { formatCurrency: formatCurrencyRaw, formatDate } = useFormatting();
   const formatCurrency = (amount: number) => formatCurrencyRaw(amount);
   const { locationIdParam, masterListFilter } = useSiteListFilter();
@@ -688,6 +694,7 @@ const BankReconciliation: React.FC = () => {
             Bank Reconciliation
           </h1>
           <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
+            {canImport && (
             <button
               onClick={handleImportStatement}
               style={{
@@ -709,6 +716,8 @@ const BankReconciliation: React.FC = () => {
               <FontAwesomeIcon icon={faUpload} />
               Import Statement
             </button>
+            )}
+            {canExport && (
             <button
               onClick={handleExportReport}
               style={{
@@ -729,6 +738,7 @@ const BankReconciliation: React.FC = () => {
               <FontAwesomeIcon icon={faDownload} />
               Export Report
             </button>
+            )}
           </div>
         </div>
         <p style={{ margin: 0, color: "#6b7280", fontSize: "0.875rem" }}>
@@ -918,6 +928,7 @@ const BankReconciliation: React.FC = () => {
                   style={inputStyle}
                 />
               </div>
+              {canClose && (
               <button
                 type="button"
                 onClick={handleStartPeriod}
@@ -936,6 +947,7 @@ const BankReconciliation: React.FC = () => {
               >
                 {starting ? "Starting…" : "Start reconciliation"}
               </button>
+              )}
             </div>
           ) : (
             <>
@@ -1121,6 +1133,7 @@ const BankReconciliation: React.FC = () => {
                     {formatCurrency(differenceAmount)}
                   </span>
                 </div>
+                {canClose && (
                 <button
                   type="button"
                   onClick={handleCompletePeriod}
@@ -1143,6 +1156,7 @@ const BankReconciliation: React.FC = () => {
                       ? "Complete reconciliation"
                       : "Balance to zero to complete"}
                 </button>
+                )}
               </div>
             </>
           )}
@@ -1206,6 +1220,7 @@ const BankReconciliation: React.FC = () => {
             <option value="All Dates">All Dates</option>
           </select>
 
+          {canReconcile && (
           <button
             onClick={handleBulkReconcile}
             disabled={isBusyReconciling || loading || !hasOpenPeriod}
@@ -1227,6 +1242,7 @@ const BankReconciliation: React.FC = () => {
             <FontAwesomeIcon icon={faCheckCircle} />
             {bulkReconciling ? "Reconciling…" : "Reconcile All"}
           </button>
+          )}
         </div>
       </div>
 
@@ -1372,6 +1388,7 @@ const BankReconciliation: React.FC = () => {
                       )}
                     </td>
                     <td style={{ padding: "1rem 1.5rem", textAlign: "center" }}>
+                      {canReconcile && (
                       <button
                         onClick={() => handleReconcile(transaction.id)}
                         disabled={isBusyReconciling || !hasOpenPeriod}
@@ -1403,6 +1420,7 @@ const BankReconciliation: React.FC = () => {
                             ? "Unreconcile"
                             : "Reconcile"}
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}

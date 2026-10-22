@@ -19,6 +19,7 @@ import DocumentViewerWorkspace, {
 import AttachmentDocumentCache from "../../Common/Services/AttachmentDocumentCache";
 import { triggerBrowserDownload } from "../../Common/Services/FileUploadHelper";
 import { ProcessService, ProcessMaster } from "../../Common/Services/ProcessService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import {
   WorkstationService,
   WorkstationMaster,
@@ -134,8 +135,10 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
   jobTemplateId: initialTemplateId,
   onClose: closeSlideout,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/jobtemplate");
   // A newly created template stays open (to add attachments), so the id can change after mount.
   const [jobTemplateId, setJobTemplateId] = useState(initialTemplateId);
+  const canSave = jobTemplateId > 0 ? canEdit : canAdd;
   const [listChanged, setListChanged] = useState(false);
   const onClose = (refreshList?: boolean) => closeSlideout(refreshList || listChanged);
   const [formData, setFormData] = useState<JobTemplateReq>(emptyForm());
@@ -2088,7 +2091,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
           </div>
 
           <div className="form-actions" style={{ flexShrink: 0 }}>
-            {jobTemplateId > 0 && (
+            {jobTemplateId > 0 && canAdd && (
               <button
                 type="button"
                 className="btn-cancel"
@@ -2098,7 +2101,7 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
                 Clone
               </button>
             )}
-            {jobTemplateId > 0 && !formData.IsSystem && (
+            {jobTemplateId > 0 && canDelete && !formData.IsSystem && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -2135,9 +2138,11 @@ const JobTemplateMasterSlideout: React.FC<JobTemplateMasterSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={saving}>
               {saving ? "Saving..." : jobTemplateId > 0 ? "Update" : "Save"}
             </button>
+            )}
           </div>
         </form>
 

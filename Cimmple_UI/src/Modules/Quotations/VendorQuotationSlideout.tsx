@@ -2802,11 +2802,6 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
-            {!canSave && (
-              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
-                View only — you don&apos;t have permission to save changes.
-              </span>
-            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>

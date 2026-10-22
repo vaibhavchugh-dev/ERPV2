@@ -211,6 +211,7 @@ namespace CimmpleAPI.Services.Auth
                         "/accounts/banks",
                         "/accounts/payable",
                         "/accounts/receivable",
+                        "/accounts/setup",
                         "/purchasing/vendor-invoices",
                         "/orders/customer-invoices",
                     };
@@ -235,11 +236,196 @@ namespace CimmpleAPI.Services.Auth
             }
 
             // Raw Material Master lives under InventoryController endpoints.
+            // Dropdown reads are shared with the documents that pick a part or material.
             if (string.Equals(controller, "Inventory", StringComparison.OrdinalIgnoreCase))
             {
-                if (path.Contains("RawMaterial", StringComparison.OrdinalIgnoreCase))
-                    return new[] { "/masters/raw-material", "/inventory" };
+                if (path.Contains("SaveRawMaterial", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("EnsureRawMaterial", StringComparison.OrdinalIgnoreCase)
+                    || path.Contains("SetRawMaterialStatus", StringComparison.OrdinalIgnoreCase))
+                    return One("/masters/raw-material");
+
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && (path.Contains("GetProducts", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetRawMaterials", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return new[]
+                    {
+                        "/inventory",
+                        "/masters/raw-material",
+                        "/job-orders",
+                        "/masters/jobtemplate",
+                        "/quotations/vendor",
+                        "/purchasing/vendor-orders",
+                    };
+                }
+
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && (path.Contains("GetJobMaterialUsage", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetReservations", StringComparison.OrdinalIgnoreCase)))
+                    return new[] { "/inventory", "/job-orders" };
+
                 return One("/inventory");
+            }
+
+            if (string.Equals(controller, "ProductMaster", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetPartsByCustomer", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/product",
+                        "/quotations/customer",
+                        "/orders/customer",
+                    };
+                }
+
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetPartsByVendor", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/product",
+                        "/quotations/vendor",
+                        "/purchasing/vendor-orders",
+                    };
+                }
+
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetProductMasterList", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/product",
+                        "/inventory",
+                        "/quotations/vendor",
+                        "/purchasing/vendor-orders",
+                    };
+                }
+
+                return One("/masters/product");
+            }
+
+            if (string.Equals(controller, "PriceBreakdown", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetPriceBreakdowns", StringComparison.OrdinalIgnoreCase)
+                    && !path.Contains("GetPriceBreakdownById", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/pricebreakdown",
+                        "/quotations/customer",
+                        "/orders/customer",
+                    };
+                }
+
+                return One("/masters/pricebreakdown");
+            }
+
+            if (string.Equals(controller, "ChartofAccounts", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetChartofAccounts", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/chartofaccounts",
+                        "/accounts/setup",
+                        "/accounts/journal-entries",
+                        "/accounts/general-ledger",
+                        "/accounts/banks",
+                        "/accounts/payable",
+                        "/masters/bank",
+                        "/masters/creditcard",
+                        "/masters/vendor",
+                        "/quotations/vendor",
+                        "/purchasing/vendor-orders",
+                        "/purchasing/vendor-invoices",
+                    };
+                }
+
+                return One("/masters/chartofaccounts");
+            }
+
+            if (string.Equals(controller, "Employee", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetProfilePic", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetEmployees", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/employee",
+                        "/job-orders",
+                        "/quality",
+                        "/attendance",
+                    };
+                }
+
+                return One("/masters/employee");
+            }
+
+            if (string.Equals(controller, "Process", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && (path.Contains("GetProcesses", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetProcessCategories", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return new[] { "/masters/process", "/job-orders", "/masters/jobtemplate" };
+                }
+
+                return One("/masters/process");
+            }
+
+            if (string.Equals(controller, "Workstation", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetWorkstations", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        "/masters/workstation",
+                        "/masters/process",
+                        "/job-orders",
+                        "/masters/jobtemplate",
+                    };
+                }
+
+                return One("/masters/workstation");
+            }
+
+            if (string.Equals(controller, "JobTemplate", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && (path.Contains("GetJobTemplates", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetJobTemplateById", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetAttachmentTypes", StringComparison.OrdinalIgnoreCase)
+                        || path.Contains("GetInspectionTypes", StringComparison.OrdinalIgnoreCase)))
+                    return new[] { "/masters/jobtemplate", "/job-orders" };
+
+                return One("/masters/jobtemplate");
+            }
+
+            if (string.Equals(controller, "Category", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetCategoryTypes", StringComparison.OrdinalIgnoreCase))
+                    return new[] { "/masters/category", "/masters/jobtemplate", "/job-orders" };
+
+                return One("/masters/category");
+            }
+
+            if (string.Equals(controller, "NCRCode", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("GetNCRCodes", StringComparison.OrdinalIgnoreCase))
+                    return new[] { "/quality/ncr-codes", "/quality" };
+
+                return One("/quality/ncr-codes");
             }
 
             // Location / Vendor lists are used as lookups from Settings and other masters.
@@ -256,6 +442,7 @@ namespace CimmpleAPI.Services.Auth
                         "/masters/employee",
                         "/masters/bank",
                         "/inventory",
+                        "/purchasing/vendor-receiving",
                     };
                 }
 
@@ -275,6 +462,7 @@ namespace CimmpleAPI.Services.Auth
                         "/purchasing/vendor-invoices",
                         "/quotations/vendor",
                         "/inventory",
+                        "/quality",
                     };
                 }
 
@@ -293,6 +481,7 @@ namespace CimmpleAPI.Services.Auth
                         "/orders/customer",
                         "/quotations/customer",
                         "/orders/customer-invoices",
+                        "/quality",
                     };
                 }
 

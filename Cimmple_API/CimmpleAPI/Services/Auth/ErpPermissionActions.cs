@@ -196,6 +196,11 @@ namespace CimmpleAPI.Services.Auth
             // DeleteShipment / DeleteInvoice contain Ship/Invoice; the verb is Delete.
             if (method == "DELETE") return Delete;
 
+            // Payroll cash posts. "Pay" is a prefix of "Payroll", and these names
+            // must not be classified as Receive/Post by a later keyword.
+            if (Contains(p, "PostTaxRemittance")) return Post;
+            if (Contains(p, "PostPayment")) return Pay;
+
             if (Contains(p, "CreateJobOrderFromOrderDetail")) return CreateJob;
             if (Contains(p, "CopyAttachments")) return Convert;
             if (Contains(p, "Convert")) return Convert;
@@ -249,6 +254,10 @@ namespace CimmpleAPI.Services.Auth
             // Scheduled report emails: run-now emails recipients; enable/disable is Manage.
             if (Contains(p, "ReportSchedules") && Contains(p, "/run")) return Send;
             if (Contains(p, "ReportSchedules") && Contains(p, "enabled")) return Manage;
+
+            // Documents has Manage, not Edit. Metadata updates and categories use Manage.
+            if ((method is "PUT" or "PATCH") && Contains(p, "/Documents/")) return Manage;
+            if (method == "POST" && Contains(p, "/Documents/") && Contains(p, "categories")) return Manage;
 
             if (method is "PUT" or "PATCH") return Edit;
             if (method == "POST")
@@ -327,35 +336,62 @@ namespace CimmpleAPI.Services.Auth
             if (Contains(p, "/JournalEntry/Create"))
                 list.Add(new PermissionAlternative("/accounts/journal-entries", Add));
 
+            // New chart groups are created while adding or editing an account.
+            if (Contains(p, "SaveMainGroup") || Contains(p, "SaveSubGroup"))
+                list.Add(new PermissionAlternative("/masters/chartofaccounts", Add));
+
             return list;
         }
 
         public static bool IsPriceBreakdownSave(string? path) =>
             Contains(path ?? "", "SavePriceBreakdowns");
 
-        /// <summary>True when the batch has new rows, existing rows, or both.</summary>
-        public static (bool hasNew, bool hasExisting) ClassifyPriceBreakdownSave(string? payloadJson)
+        /// <summary>
+        /// Reads the batch. <paramref name="parsed"/> is false when the body is missing or not a JSON array.
+        /// An empty array is a valid delete-all payload.
+        /// </summary>
+        public static (bool parsed, bool hasNew, bool hasExisting) ClassifyPriceBreakdownSave(string? payloadJson)
         {
-            var hasNew = false;
-            var hasExisting = false;
-            if (string.IsNullOrWhiteSpace(payloadJson)) return (false, false);
+            if (string.IsNullOrWhiteSpace(payloadJson)) return (false, false, false);
             try
             {
                 using var doc = JsonDocument.Parse(payloadJson);
-                if (doc.RootElement.ValueKind != JsonValueKind.Array) return (false, false);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return (false, false, false);
+                var hasNew = false;
+                var hasExisting = false;
                 foreach (var row in doc.RootElement.EnumerateArray())
                 {
                     var id = ReadInt(row, "Id", "id");
                     if (id > 0) hasExisting = true;
                     else hasNew = true;
                 }
+
+                return (true, hasNew, hasExisting);
             }
             catch
             {
-                return (false, false);
+                return (false, false, false);
             }
+        }
 
-            return (hasNew, hasExisting);
+        /// <summary>
+        /// Batch save sends the whole grid. New rows need Add, updates need Edit,
+        /// and a delete-only payload (including deleting every row) needs Delete.
+        /// </summary>
+        public static bool PriceBreakdownSaveAllowed(
+            ISet<string> normalizedPermissionUrls,
+            bool hasNew,
+            bool hasExisting)
+        {
+            const string page = "/masters/pricebreakdown";
+            if (!normalizedPermissionUrls.Contains(page)) return false;
+            var canAdd = HasAction(normalizedPermissionUrls, page, Add);
+            var canEdit = HasAction(normalizedPermissionUrls, page, Edit);
+            var canDelete = HasAction(normalizedPermissionUrls, page, Delete);
+            if (!hasNew && !hasExisting) return canDelete;
+            if (hasNew && !canAdd) return false;
+            if (hasExisting && !canEdit && !canDelete) return false;
+            return true;
         }
 
         public const string JobOrderPermCheckedKey = "ErpPerm.JobOrder.Checked";

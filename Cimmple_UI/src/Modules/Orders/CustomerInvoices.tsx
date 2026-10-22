@@ -14,6 +14,7 @@ import BankAccountSelect from "../../Common/Components/BankAccountSelect";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { useCompanyBanks } from "../../Common/Hooks/useCompanyBanks";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 
 // Customer Payment Modal Component
@@ -369,6 +370,9 @@ const CustomerInvoices: React.FC = () => {
   const history = useHistory();
   const returnToRef = useRef<string | null>(null);
   const { formatCurrency, formatDate } = useFormatting();
+  const { canPrint, canSend, can } = usePagePermissions("/orders/customer-invoices");
+  const canPay = can("Pay");
+  const canVoid = can("Void");
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [invoices, setInvoices] = useState<CustomerInvoiceSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -697,7 +701,7 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEye} />
           </button>
-          {(() => {
+          {canPay && (() => {
             const isVoided = !!(row.status && (row.status.toLowerCase().includes("void") || row.status.toLowerCase() === "cancelled"));
             const isPaid = row.status?.toLowerCase() === 'paid' || (row.balanceDue !== undefined && row.balanceDue <= 0);
 
@@ -722,6 +726,7 @@ const CustomerInvoices: React.FC = () => {
               </button>
             );
           })()}
+          {canPrint && (
           <button
             type="button"
             onClick={() => handlePrintInvoice(row)}
@@ -738,6 +743,8 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faPrint} />
           </button>
+          )}
+          {canSend && (
           <button
             type="button"
             onClick={() => setEmailInvoiceId(row.id)}
@@ -754,7 +761,8 @@ const CustomerInvoices: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} />
           </button>
-          {row.status === 'Unpaid' && (
+          )}
+          {canVoid && row.status === 'Unpaid' && (
             <button
               type="button"
               onClick={() => handleVoidInvoice(row)}

@@ -28,7 +28,22 @@ export interface ConversationThread {
   messages: ConversationMessage[];
 }
 
+export interface ConversationDirectoryUser {
+  userUniqueID: number;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  userName?: string | null;
+}
+
 export class ConversationService {
+  /** Active colleagues for mentions and new messages. Does not require User Management. */
+  public static async Directory(): Promise<ConversationDirectoryUser[]> {
+    const response = await Instense.get("/Conversations/Directory");
+    const raw = response.data?.result;
+    return Array.isArray(raw) ? raw : [];
+  }
+
   public static async ListMine(
     take = 50
   ): Promise<{ items: ConversationListItem[]; unreadCount: number }> {

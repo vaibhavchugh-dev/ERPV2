@@ -9,6 +9,7 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import WorkstationMasterSlideout from "./WorkstationMasterSlideout";
 import WorkstationMasterImportModal from "./WorkstationMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -21,6 +22,8 @@ const DEFAULT_HIDDEN_COLUMNS: string[] = [];
 const COLUMN_PREFERENCE_KEY = "workstationMaster.hiddenColumns";
 
 const WorkstationMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/workstation");
+  const canImport = can("Import");
   const location = useLocation();
   const history = useHistory();
   const [workstations, setWorkstations] = useState<WorkstationMaster[]>([]);
@@ -221,9 +224,11 @@ const WorkstationMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your workstations and user assignments</p>
         </div>
         <div className="page-actions">
+          {canImport && (
           <button className="btn-secondary" onClick={() => setShowImport(true)} type="button">
             <span>Import</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -232,10 +237,12 @@ const WorkstationMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddWorkstation}>
             <span>+</span>
             <span>Add Workstation</span>
           </button>
+          )}
         </div>
       </div>
 

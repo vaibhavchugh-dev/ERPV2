@@ -27,6 +27,10 @@ public class ErpPermissionActionTests
     [InlineData("POST", "/api/DocumentEmail/SendShipment", "Send")]
     [InlineData("POST", "/api/Payroll/PreviewManual", null)]
     [InlineData("POST", "/api/Payroll/PostPayment", "Pay")]
+    [InlineData("POST", "/api/Payroll/PostTaxRemittance", "Post")]
+    [InlineData("DELETE", "/api/Documents/4", "Delete")]
+    [InlineData("PUT", "/api/Documents/4", "Manage")]
+    [InlineData("POST", "/api/Documents/categories", "Manage")]
     [InlineData("POST", "/api/Invoice/RecordCustomerPayment/3", "Pay")]
     [InlineData("POST", "/api/Invoice/VoidInvoice/3", "Void")]
     [InlineData("POST", "/api/JournalEntry/Create", "Post")]
@@ -149,6 +153,35 @@ public class ErpPermissionActionTests
         Assert.Single(merged);
         Assert.Equal("Cut", merged[0].processName);
         Assert.Equal("Completed", merged[0].status);
+    }
+
+    [Fact]
+    public void SaveChartGroup_AcceptsAddOrEdit()
+    {
+        var alts = ErpPermissionActions.BuildAlternatives(
+            new[] { "/masters/chartofaccounts" },
+            ErpPermissionActions.Edit,
+            "/api/ChartofAccounts/SaveMainGroup",
+            """{"MainGroupName":"Assets"}""");
+
+        Assert.Contains(alts, a => a.PageUrl == "/masters/chartofaccounts" && a.Action == "Edit");
+        Assert.Contains(alts, a => a.PageUrl == "/masters/chartofaccounts" && a.Action == "Add");
+    }
+
+    [Fact]
+    public void PriceBreakdownSave_AllowsEachGrantedOperation()
+    {
+        var page = "/masters/pricebreakdown";
+        var addOnly = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { page, page + "#add" };
+        var editOnly = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { page, page + "#edit" };
+        var deleteOnly = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { page, page + "#delete" };
+
+        Assert.True(ErpPermissionActions.PriceBreakdownSaveAllowed(addOnly, hasNew: true, hasExisting: false));
+        Assert.False(ErpPermissionActions.PriceBreakdownSaveAllowed(addOnly, hasNew: true, hasExisting: true));
+        Assert.True(ErpPermissionActions.PriceBreakdownSaveAllowed(editOnly, hasNew: false, hasExisting: true));
+        Assert.True(ErpPermissionActions.PriceBreakdownSaveAllowed(deleteOnly, hasNew: false, hasExisting: false));
+        Assert.True(ErpPermissionActions.PriceBreakdownSaveAllowed(deleteOnly, hasNew: false, hasExisting: true));
+        Assert.False(ErpPermissionActions.PriceBreakdownSaveAllowed(editOnly, hasNew: false, hasExisting: false));
     }
 
     [Fact]
