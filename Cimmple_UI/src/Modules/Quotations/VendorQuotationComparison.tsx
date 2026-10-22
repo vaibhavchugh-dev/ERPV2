@@ -6,6 +6,7 @@ import { VendorOrderService } from "../../Common/Services/VendorOrderService";
 import type { VendorOrderMasterReq } from "../../Common/Services/VendorOrderService";
 import { toDateOnlyApiString } from "../../Common/Utils/Formatting";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import VendorQuotationSlideout from "./VendorQuotationSlideout";
 import "./VendorQuotationComparison.scss";
 
@@ -91,6 +92,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
   onQuotationSelected,
 }) => {
   const { formatCurrency } = useFormatting();
+  const { canConvert } = usePagePermissions("/quotations/vendor");
   const listNeedsRefreshRef = useRef(false);
   const [quotations, setQuotations] = useState<QuotationData[]>([]);
   const [details, setDetails] = useState<DetailData[]>([]);
@@ -1113,7 +1115,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
                             >
                               View
                             </button>
-                            {(() => {
+                            {canConvert && (() => {
                               const ownStatus = getVendorOwnStatus(quotation);
                               if (ownStatus === "Converted") return null;
                               return (
@@ -1666,7 +1668,7 @@ const VendorQuotationComparison: React.FC<VendorQuotationComparisonProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCloseComparison}>
               Close
             </button>
-            {lineItemSelections.size > 0 && (
+            {canConvert && lineItemSelections.size > 0 && (
               <button
                 type="button"
                 className="btn-submit"

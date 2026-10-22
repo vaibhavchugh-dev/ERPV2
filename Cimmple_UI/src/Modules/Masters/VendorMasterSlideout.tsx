@@ -12,6 +12,7 @@ import { US_STATES, COUNTRIES, Icons } from "../../Common/Components/MasterSlide
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
@@ -24,6 +25,8 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   vendorId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/vendor");
+  const canSave = vendorId > 0 ? canEdit : canAdd;
   const handleDismiss = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
@@ -1385,7 +1388,7 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
 
           {/* Form Actions */}
           <div className="form-actions">
-            {vendorId > 0 && (
+            {vendorId > 0 && canDelete && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1420,9 +1423,11 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
             >
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? 'Saving...' : vendorId > 0 ? 'Update Vendor' : 'Add Vendor'}
             </button>
+            )}
           </div>
         </form>
 

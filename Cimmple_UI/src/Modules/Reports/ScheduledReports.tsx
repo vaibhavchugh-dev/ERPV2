@@ -18,6 +18,7 @@ import {
 } from "../../Common/Services/ReportScheduleService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
 import { rowClickHandler } from "../../Common/Utils/rowClick";
@@ -49,6 +50,8 @@ const getScheduleSortValue = (s: ReportScheduleDto, key: string): unknown => {
 };
 
 const ScheduledReports: React.FC = () => {
+  const { canEdit, canDelete, canSend, can } = usePagePermissions("/reports/schedules");
+  const canManage = can("Manage");
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [items, setItems] = useState<ReportScheduleDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,7 +194,7 @@ const ScheduledReports: React.FC = () => {
                   <tr
                     key={item.id}
                     className={`clickable${!item.isEnabled ? " is-disabled" : ""}`}
-                    onClick={rowClickHandler(() => setEditing(item))}
+                    onClick={canEdit ? rowClickHandler(() => setEditing(item)) : undefined}
                   >
                     <td>
                       <div className="sr-name">{item.reportName}</div>
@@ -243,6 +246,7 @@ const ScheduledReports: React.FC = () => {
                     </td>
                     <td>{item.isEnabled ? "Enabled" : "Paused"}</td>
                     <td className="sr-actions">
+                      {canEdit && (
                       <button
                         type="button"
                         title="Edit"
@@ -251,6 +255,8 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faEdit} />
                       </button>
+                      )}
+                      {canManage && (
                       <button
                         type="button"
                         title={item.isEnabled ? "Pause" : "Enable"}
@@ -261,6 +267,8 @@ const ScheduledReports: React.FC = () => {
                           icon={item.isEnabled ? faToggleOn : faToggleOff}
                         />
                       </button>
+                      )}
+                      {canSend && (
                       <button
                         type="button"
                         title="Run now"
@@ -269,6 +277,8 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faPlay} />
                       </button>
+                      )}
+                      {canDelete && (
                       <button
                         type="button"
                         title="Delete"
@@ -277,6 +287,7 @@ const ScheduledReports: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faTrash} />
                       </button>
+                      )}
                     </td>
                   </tr>
                 );

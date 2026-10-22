@@ -6,6 +6,7 @@ import {
   validateSelectedFiles,
 } from "../../Common/Services/FileUploadHelper";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faTimes, faUpload, faFile, faPlus } from "@fortawesome/free-solid-svg-icons";
 import "./DocumentUploadModal.scss";
@@ -29,6 +30,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   relatedEntityType,
   relatedEntityId,
 }) => {
+  const canManage = usePagePermissions("/documents").can("Manage");
   const [file, setFile] = useState<File | null>(null);
   const [documentName, setDocumentName] = useState("");
   const [description, setDescription] = useState("");
@@ -105,6 +107,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   };
 
   const handleCreateCategory = async () => {
+    if (!canManage) return;
     if (!newCategoryName.trim()) {
       toast.error("Category name is required");
       return;
@@ -288,6 +291,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
                     </option>
                   ))}
                 </select>
+                {canManage && (
                 <button
                   type="button"
                   className="btn-add-category"
@@ -296,6 +300,7 @@ const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
                 >
                   <FontAwesomeIcon icon={faPlus} />
                 </button>
+                )}
               </div>
               {showNewCategory && (
                 <div className="new-category-form">

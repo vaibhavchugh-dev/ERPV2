@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPaperPlane, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { toast } from "react-toastify";
-import { UserManagementService, UserManagement } from "../Services/UserManagementService";
+import { ConversationService, ConversationDirectoryUser } from "../Services/ConversationService";
 import { NotificationService } from "../Services/NotificationService";
 import { isEmailNotificationsEnabled } from "../Utils/settingsRuntime";
 
@@ -13,7 +13,7 @@ interface NotifyUserDialogProps {
 }
 
 const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSent }) => {
-  const [users, setUsers] = useState<UserManagement[]>([]);
+  const [users, setUsers] = useState<ConversationDirectoryUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [recipientUserId, setRecipientUserId] = useState<number>(0);
   const [title, setTitle] = useState("");
@@ -33,29 +33,16 @@ const NotifyUserDialog: React.FC<NotifyUserDialogProps> = ({ open, onClose, onSe
     setSendEmail(emailEnabled);
     setLoadingUsers(true);
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
-    const tenantId = storage?.tenantID || 0;
     const currentUserId = Number(
       storage?.userId || storage?.user_UniqueID || storage?.userUniqueID || 0
     );
-    UserManagementService.GetUsers({
-      tenantid: tenantId,
-      pageNumber: 1,
-      pageSize: 200,
-      status: "Active",
-    })
-      .then((res: any) => {
-        const rawUsers = res?.users || res?.result?.users || [];
-        const mapped = (Array.isArray(rawUsers) ? rawUsers : [])
-          .map((u: any) => ({
-            ...u,
-            userUniqueID: Number(u.userUniqueID ?? u.UserUniqueID ?? u.user_UniqueID ?? 0),
-            firstName: u.firstName ?? u.FirstName,
-            lastName: u.lastName ?? u.LastName,
-            userName: u.userName ?? u.UserName,
-            email: u.email ?? u.Email,
-          }))
-          .filter((u: UserManagement) => u.userUniqueID > 0 && u.userUniqueID !== currentUserId);
-        setUsers(mapped);
+    ConversationService.Directory()
+      .then((raw) => {
+        setUsers(
+          raw.filter(
+            (u) => Number(u.userUniqueID) > 0 && Number(u.userUniqueID) !== currentUserId
+          )
+        );
       })
       .catch(() => {
         setUsers([]);

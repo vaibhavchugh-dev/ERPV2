@@ -29,6 +29,7 @@ import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { ReportsService } from "../../Common/Services/ReportsService";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { AuthService } from "../../Common/Services/AuthService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import OperationalReportDrillDrawer, {
   OperationalDrillMeta,
 } from "./OperationalReportDrillDrawer";
@@ -530,6 +531,9 @@ const Reports: React.FC = () => {
   const [drillMeta, setDrillMeta] = useState<OperationalDrillMeta | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const canManageScheduledEmails = AuthService.hasPermissionForPath("/reports/schedules");
+  const { can } = usePagePermissions("/reports");
+  const canExport = can("Export");
+  const canSchedule = can("Schedule");
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -771,6 +775,7 @@ const Reports: React.FC = () => {
                     {loading ? "Running…" : "Run report"}
                   </button>
                   <div className="rpt-export-group" role="group" aria-label="Export">
+                    {canExport && (
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
@@ -781,6 +786,8 @@ const Reports: React.FC = () => {
                       <FontAwesomeIcon icon={faDownload} />
                       PDF
                     </button>
+                    )}
+                    {canExport && (
                     <button
                       type="button"
                       className="rpt-btn rpt-btn-secondary"
@@ -790,7 +797,8 @@ const Reports: React.FC = () => {
                     >
                       CSV
                     </button>
-                    {canManageScheduledEmails && (
+                    )}
+                    {canSchedule && (
                       <button
                         type="button"
                         className="rpt-btn rpt-btn-secondary"

@@ -9,6 +9,7 @@ import {
 } from "../../Common/Services/VendorReceivingService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { confirmDiscardChanges } from "../../Common/Utils/dismissGuard";
 import { formatDateOnlyFromApi } from "../../Common/Utils/Formatting";
 import "./VendorReceivingDetail.scss";
@@ -63,6 +64,8 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   const listNeedsRefreshRef = useRef(false);
   const ignoreBackdropClickRef = useRef(true);
   const { locationId: activeLocationId } = useActiveLocation();
+  const { can } = usePagePermissions("/purchasing/vendor-receiving");
+  const canReceive = can("Receive");
   const [order, setOrder] = useState<OrderForReceivingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [receiving, setReceiving] = useState(false);
@@ -169,6 +172,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   };
 
   const handleReceiveItem = async (detail: OrderDetailForReceiving) => {
+    if (!canReceive) return;
     if (detail.pendingQty <= 0) {
       toast.warning("This item is already fully received");
       return;
@@ -233,6 +237,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   };
 
   const handleSubmitReceiving = async (detail: OrderDetailForReceiving) => {
+    if (!canReceive) return;
     const formData = receivingForms.get(detail.id);
     if (!formData) return;
 
@@ -283,6 +288,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   };
 
   const handleBatchReceive = async () => {
+    if (!canReceive) return;
     const formsToSubmit = Array.from(receivingForms.entries()).filter(([detailId, formData]) => {
       const detail = order?.details.find(d => d.id === detailId);
       return detail && formData.receivedQty > 0 && formData.receivedQty <= (detail.pendingQty || 0);
@@ -436,7 +442,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
             </div>
           </div>
 
-          {hasPendingReceiving && (
+          {canReceive && hasPendingReceiving && (
             <div className="batch-receive-bar">
               <span>{receivingForms.size} item(s) ready to receive</span>
               <button
@@ -481,7 +487,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                         </td>
                         <td>{getStatusBadge(detail.receivedStatus)}</td>
                         <td>
-                          {detail.pendingQty > 0 ? (
+                          {canReceive && detail.pendingQty > 0 ? (
                             <button
                               className="btn-receive"
                               onClick={() => handleReceiveItem(detail)}
@@ -625,6 +631,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                 >
                                   Cancel
                                 </button>
+                                {canReceive && (
                                 <button
                                   type="button"
                                   className="btn-submit"
@@ -633,6 +640,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                 >
                                   {receiving ? "Processing..." : "Confirm Receive"}
                                 </button>
+                                )}
                               </div>
                             </div>
                           </td>

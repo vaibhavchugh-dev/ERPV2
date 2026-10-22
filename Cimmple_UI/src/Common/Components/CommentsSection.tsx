@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { UserManagementService, UserManagement } from "../Services/UserManagementService";
+import { ConversationService } from "../Services/ConversationService";
 import { EntityCommentService } from "../Services/EntityCommentService";
 import { getApiErrorMessage } from "../Services/FileUploadHelper";
 import { formatDateTime } from "../Utils/Formatting";
@@ -98,24 +98,21 @@ const CommentsSection: React.FC<CommentsSectionProps> = ({
     );
     if (!tenantId) return;
 
-    UserManagementService.GetUsers({
-      tenantid: tenantId,
-      pageNumber: 1,
-      pageSize: 200,
-      status: "Active",
-    })
-      .then((res) => {
-        const opts = (res.users || [])
-          .filter((u: UserManagement) => u.userUniqueID !== currentUserId)
-          .map((u: UserManagement) => {
+    ConversationService.Directory()
+      .then((raw) => {
+        const opts = raw
+          .filter((u) => Number(u.userUniqueID) !== currentUserId)
+          .map((u) => {
+            const userId = Number(u.userUniqueID || 0);
             const name = `${u.firstName || ""} ${u.lastName || ""}`.trim();
-            const label = name || u.userName || u.email || `User ${u.userUniqueID}`;
+            const label = name || u.userName || u.email || `User ${userId}`;
             return {
-              userId: u.userUniqueID,
+              userId,
               label,
-              email: u.email,
+              email: u.email || undefined,
             };
-          });
+          })
+          .filter((u) => u.userId > 0);
         setUsers(opts);
       })
       .catch(() => setUsers([]));

@@ -260,6 +260,7 @@ const VendorOrders: React.FC = () => {
         data={filteredOrders}
         loading={loading}
         enablePagination
+        permissionPath="/purchasing/vendor-orders"
         onAdd={handleAddOrder}
         onRowClick={handleRowClick}
         filters={[

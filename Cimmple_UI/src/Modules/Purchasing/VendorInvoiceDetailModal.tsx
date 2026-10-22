@@ -483,6 +483,7 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
   } = usePagePermissions(permissionPath);
   const canPay = can("Pay");
   const canVoid = can("Void");
+  const canApprove = can("Approve");
   const [invoice, setInvoice] = useState<VendorInvoice | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -1084,6 +1085,34 @@ const VendorInvoiceDetailModal: React.FC<VendorInvoiceDetailModalProps> = ({
               Invoice {invoice.invoiceNo} • {invoice.items.length} item{invoice.items.length !== 1 ? 's' : ''} • {formatCurrency(invoice.totalAmount)}
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {canApprove && invoice && !invoice.isApproved && invoice.status !== 'Paid' && invoice.status !== 'Void' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!ensure("Approve")) return;
+                    try {
+                      await VendorInvoiceService.ApproveVendorInvoice(invoice.id);
+                      toast.success("Invoice approved");
+                      await loadInvoiceDetails();
+                    } catch (error: unknown) {
+                      if (isApiForbidden(error)) return;
+                      toast.error(getApiErrorMessage(error, "Failed to approve invoice"));
+                    }
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#f59e0b',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: '500',
+                  }}
+                >
+                  Approve
+                </button>
+              )}
               {(() => {
                 const isVoided = !!(invoice.status && (invoice.status.toLowerCase().includes("void") || invoice.status.toLowerCase() === "cancelled"));
                 const isPaid = invoice.status?.toLowerCase() === 'paid' || (invoice.balanceDue !== undefined && invoice.balanceDue <= 0);

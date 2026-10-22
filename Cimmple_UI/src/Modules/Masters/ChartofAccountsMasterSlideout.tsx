@@ -6,6 +6,7 @@ import {
 } from "../../Common/Services/ChartofAccountsService";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { AccountingService } from "../../Common/Services/AccountingService";
 import { VendorInvoiceService } from "../../Common/Services/VendorInvoiceService";
 import "./CustomerMasterSlideout.scss";
@@ -30,6 +31,9 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   accountId,
   onClose,
 }) => {
+  const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/chartofaccounts");
+  const canSaveAccount = accountId > 0 ? canEdit : canAdd;
+  const canMaintainGroups = canAdd || canEdit;
   const [formData, setFormData] = useState<ChartofAccountMasterReq>({
     AccountID: 0,
     AccountCode: "",
@@ -224,6 +228,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   };
 
   const handleSaveNewMainGroup = async () => {
+    if (!canMaintainGroups) return;
     if (!newGroupName.trim()) {
       toast.error("Please enter a main group name");
       return;
@@ -242,6 +247,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   };
 
   const handleSaveNewSubGroup = async () => {
+    if (!canMaintainGroups) return;
     if (!newGroupName.trim()) {
       toast.error("Please enter a sub group name");
       return;
@@ -265,6 +271,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   };
 
   const handleSaveNewSubGroup2 = async () => {
+    if (!canMaintainGroups) return;
     if (!newGroupName.trim()) {
       toast.error("Please enter a sub group 2 name");
       return;
@@ -288,6 +295,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   };
 
   const handleSaveNewSubGroup3 = async () => {
+    if (!canMaintainGroups) return;
     if (!newGroupName.trim()) {
       toast.error("Please enter a sub group 3 name");
       return;
@@ -328,6 +336,8 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
+    if (!canSaveAccount) return;
+
     if (!validateForm()) {
       toast.error("Please fix the errors in the form");
       return;
@@ -362,7 +372,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
   };
 
   const handleDelete = async () => {
-    if (accountId === 0) return;
+    if (accountId === 0 || !canDelete) return;
     
     setLoading(true);
     try {
@@ -546,7 +556,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                   onChange(val);
                 }
               }}
-              disabled={disabled}
+              disabled={disabled || !canSaveAccount}
             >
               <option value="">Select {label.toLowerCase()}</option>
               {options.map((option) => (
@@ -554,7 +564,9 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                   {option.name}
                 </option>
               ))}
-              <option value="__add_new__">+ Add New {label}</option>
+              {canMaintainGroups && (
+                <option value="__add_new__">+ Add New {label}</option>
+              )}
             </select>
           </div>
         )}
@@ -603,6 +615,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                   }`}
                   value={formData.Status}
                   onChange={(e) => handleInputChange("Status", e.target.value)}
+                  disabled={!canSaveAccount}
                 >
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>
@@ -635,6 +648,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                     placeholder="Enter account code"
                     value={formData.AccountCode}
                     onChange={(e) => handleInputChange("AccountCode", e.target.value)}
+                    disabled={!canSaveAccount}
                     required
                   />
                 </div>
@@ -658,6 +672,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                     placeholder="Enter account name"
                     value={formData.AccountName}
                     onChange={(e) => handleInputChange("AccountName", e.target.value)}
+                    disabled={!canSaveAccount}
                     required
                   />
                 </div>
@@ -680,6 +695,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
                     className="form-input"
                     value={formData.AccountType}
                     onChange={(e) => handleInputChange("AccountType", e.target.value)}
+                    disabled={!canSaveAccount}
                   >
                     <option value="">Select account type</option>
                     {accountTypes.map((type) => (
@@ -758,7 +774,7 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
           </div>
 
           <div className="form-actions">
-            {accountId > 0 && (
+            {accountId > 0 && canDelete && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -788,9 +804,11 @@ const ChartofAccountsMasterSlideout: React.FC<ChartofAccountsMasterSlideoutProps
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading ? "Saving..." : accountId > 0 ? "Update" : "Save"}
-            </button>
+            {canSaveAccount && (
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading ? "Saving..." : accountId > 0 ? "Update" : "Save"}
+              </button>
+            )}
           </div>
         </form>
 

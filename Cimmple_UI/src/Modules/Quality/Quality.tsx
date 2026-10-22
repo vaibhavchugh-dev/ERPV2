@@ -504,6 +504,7 @@ const Quality: React.FC = () => {
       )}
 
       <MasterListPage
+        permissionPath="/quality"
         title="Quality - Non Conformance Reports"
         subtitle="Track and resolve manufacturing quality issues"
         data={ncrs}

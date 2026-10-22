@@ -78,6 +78,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
   const isNew = orderId <= 0;
   const canSave = isNew ? canAdd : canEdit;
   const canShip = can("Ship");
+  const { canDelete: canDeleteShipment } = usePagePermissions("/orders/customer-shipments");
+  const { canDelete: canDeleteInvoice } = usePagePermissions("/orders/customer-invoices");
   const canInvoice = can("Invoice");
   const canCreateJob = can("CreateJob");
 
@@ -2847,10 +2849,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               </div>
                             )}
                           </div>
+                          {canDeleteShipment && (
                           <DeleteIconButton
                             label="Delete shipment"
                             onClick={() => handleDeleteShipment(shipment.id)}
                           />
+                          )}
                         </div>
                       </div>
 
@@ -2953,10 +2957,12 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
                               Amount: {formatCurrency(invoice.totalAmount)}
                             </div>
                           </div>
+                          {canDeleteInvoice && (
                           <DeleteIconButton
                             label="Delete invoice"
                             onClick={() => handleDeleteInvoice(invoice.id)}
                           />
+                          )}
                         </div>
                       </div>
 
@@ -3060,11 +3066,6 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
           </div>
 
           <div className="form-actions">
-            {!canSave && (
-              <span style={{ marginRight: "auto", fontSize: "0.875rem", color: "#6b7280" }}>
-                View only — you don&apos;t have permission to save changes.
-              </span>
-            )}
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>

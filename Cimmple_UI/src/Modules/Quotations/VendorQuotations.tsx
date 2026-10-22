@@ -7,6 +7,7 @@ import VendorQuotationComparison from "./VendorQuotationComparison";
 import VendorOrderSlideout from "../Purchasing/VendorOrderSlideout";
 import MasterListPage from "../../Common/Components/MasterListPage/MasterListPage";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { matchDisplayDocNumber } from "../../Common/Utils/displayDocNumberSearch";
 import { matchAmountValue, matchDateValue } from "../../Common/Utils/listSearchMatch";
@@ -17,6 +18,8 @@ const VendorQuotations: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
+  const { can } = usePagePermissions("/quotations/vendor");
+  const canCompare = can("Compare");
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [quotations, setQuotations] = useState<VendorQuotationMaster[]>([]);
   const [showSlideout, setShowSlideout] = useState(false);
@@ -225,8 +228,7 @@ const VendorQuotations: React.FC = () => {
           );
         };
 
-        // Don't show compare button if this quotation is converted
-        if (isQuotationConverted(quotation)) {
+        if (!canCompare || isQuotationConverted(quotation)) {
           return <span style={{ color: "#9ca3af" }}>-</span>;
         }
 
@@ -293,6 +295,7 @@ const VendorQuotations: React.FC = () => {
         data={filteredQuotations}
         loading={loading}
         enablePagination
+        permissionPath="/quotations/vendor"
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[

@@ -12,6 +12,7 @@ import {
 } from "../../Common/Services/AttendanceService";
 import { EmployeeMaster, EmployeeService } from "../../Common/Services/EmployeeService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import DateFilterInput from "../../Common/Components/DateFilterInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { formatTimeOnly, todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
@@ -75,6 +76,8 @@ const displayName = (row: { firstName?: string; lastName?: string }) =>
   `${row.firstName || ""} ${row.lastName || ""}`.trim() || "—";
 
 const AttendanceRegister: React.FC = () => {
+  const { can } = usePagePermissions("/attendance");
+  const canExport = can("Export");
   const { locationIdParam, masterListFilter } = useSiteListFilter();
   const [fromDate, setFromDate] = useState(todayIso);
   const [toDate, setToDate] = useState(todayIso);
@@ -280,9 +283,11 @@ const AttendanceRegister: React.FC = () => {
           <p className="page-subtitle">Daily Time Clock punches by employee</p>
         </div>
         <div className="page-actions">
+          {canExport && (
           <button className="btn-secondary" type="button" onClick={handleExport}>
             <span>Export</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}

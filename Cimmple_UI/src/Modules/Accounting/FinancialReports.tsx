@@ -17,6 +17,7 @@ import { AccountingService } from "../../Common/Services/AccountingService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import ScheduleReportDialog from "../../Common/Components/ScheduleReportDialog";
 import { AuthService } from "../../Common/Services/AuthService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ReportDrillDrawer, { DrillTarget } from "./ReportDrillDrawer";
 import "./FinancialReports.scss";
 
@@ -171,6 +172,9 @@ const FinancialReports: React.FC = () => {
   const [drillTarget, setDrillTarget] = useState<DrillTarget | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const canManageScheduledEmails = AuthService.hasPermissionForPath("/reports/schedules");
+  const { can } = usePagePermissions("/accounts/reports");
+  const canExport = can("Export");
+  const canSchedule = can("Schedule");
 
   const categories = useMemo(
     () => Array.from(new Set(REPORT_CATALOG.map((r) => r.category))),
@@ -450,6 +454,7 @@ const FinancialReports: React.FC = () => {
                     {loading ? "Running…" : "Run report"}
                   </button>
                   <div className="fr-export-group" role="group" aria-label="Export">
+                    {canExport && (
                     <button
                       type="button"
                       className="fr-btn fr-btn-secondary"
@@ -460,6 +465,8 @@ const FinancialReports: React.FC = () => {
                       <FontAwesomeIcon icon={faDownload} />
                       PDF
                     </button>
+                    )}
+                    {canExport && (
                     <button
                       type="button"
                       className="fr-btn fr-btn-secondary"
@@ -469,7 +476,8 @@ const FinancialReports: React.FC = () => {
                     >
                       CSV
                     </button>
-                    {canManageScheduledEmails && (
+                    )}
+                    {canSchedule && (
                       <button
                         type="button"
                         className="fr-btn fr-btn-secondary"

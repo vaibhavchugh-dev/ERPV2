@@ -235,6 +235,7 @@ const CustomerQuotations: React.FC = () => {
         data={filteredQuotations}
         loading={loading}
         enablePagination
+        permissionPath="/quotations/customer"
         onAdd={handleAddQuotation}
         onRowClick={handleRowClick}
         filters={[
