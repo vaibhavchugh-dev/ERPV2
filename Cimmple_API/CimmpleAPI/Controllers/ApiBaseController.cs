@@ -195,8 +195,27 @@ namespace CimmpleAPI.Controllers
         protected bool CanAccessLocation(int locationId)
         {
             if (locationId <= 0) return false;
+            if (!LocationBelongsToCallerTenant(locationId)) return false;
             if (CanAccessAllLocations()) return true;
             return GetAllowedLocationIds().Contains(locationId);
+        }
+
+        /// <summary>
+        /// Null when the caller may see every site in the tenant.
+        /// Otherwise the exact location ids the caller is assigned to.
+        /// </summary>
+        protected IReadOnlyList<int>? GetRestrictedLocationIds()
+        {
+            if (CanAccessAllLocations()) return null;
+            return GetAllowedLocationIds();
+        }
+
+        private bool LocationBelongsToCallerTenant(int locationId)
+        {
+            var tenantId = GetTenantId();
+            if (tenantId <= 0) return false;
+            var db = HttpContext.RequestServices.GetRequiredService<CimmpleDbContext>();
+            return db.Locations.AsNoTracking().Any(l => l.LocationId == locationId && l.TenantId == tenantId);
         }
 
         /// <summary>

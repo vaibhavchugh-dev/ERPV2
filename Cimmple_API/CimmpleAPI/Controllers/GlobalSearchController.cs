@@ -242,6 +242,12 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        private List<int>? AllowedSitesOrNull()
+        {
+            var restricted = GetRestrictedLocationIds();
+            return restricted?.ToList();
+        }
+
         private static bool IsBareDocPrefix(string searchTerm, params string[] prefixes)
         {
             var t = (searchTerm ?? "").Trim().ToLowerInvariant().TrimEnd('#', '-', ' ', '_');
@@ -329,6 +335,9 @@ namespace CimmpleAPI.Controllers
         {
             var ordersQuery = _context.CustomerOrder
                 .Where(o => o.Tenantid == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                ordersQuery = ordersQuery.Where(o => allowedSites.Contains(o.locationId));
 
             // "@CO" → recent customer orders
             if (!IsBareDocPrefix(searchTerm, "co"))
@@ -384,6 +393,12 @@ namespace CimmpleAPI.Controllers
                                 from order in orders.DefaultIfEmpty()
                                 where invoice.TenantId == tenantId
                                 select new { invoice, order };
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+            {
+                invoicesQuery = invoicesQuery.Where(x =>
+                    x.order != null && allowedSites.Contains(x.order.locationId));
+            }
 
             if (isNumeric)
             {
@@ -423,6 +438,15 @@ namespace CimmpleAPI.Controllers
         {
             var jobOrdersQuery = _context.JobOrderMaster
                 .Where(j => j.Tenantid == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+            {
+                jobOrdersQuery = jobOrdersQuery.Where(j =>
+                    _context.CustomerOrder.Any(o =>
+                        o.OrderID == j.CustomerOrderID &&
+                        o.Tenantid == tenantId &&
+                        allowedSites.Contains(o.locationId)));
+            }
 
             if (!IsBareDocPrefix(searchTerm, "jo"))
             {
@@ -473,6 +497,9 @@ namespace CimmpleAPI.Controllers
         {
             var quotationsQuery = _context.QuotationOrder
                 .Where(q => q.Tenantid == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                quotationsQuery = quotationsQuery.Where(q => q.Locationid.HasValue && allowedSites.Contains(q.Locationid.Value));
 
             if (!IsBareDocPrefix(searchTerm, "cq"))
             {
@@ -515,11 +542,16 @@ namespace CimmpleAPI.Controllers
         // Master Data Search Methods
         private async Task<List<object>> SearchBanks(string searchTerm, int tenantId, int limit)
         {
-            var banks = await _context.BankMaster
+            var banksQuery = _context.BankMaster
                 .Where(b => b.TenantId == tenantId &&
                     (b.BankName != null && b.BankName.ToLower().Contains(searchTerm) ||
                      b.Bankcode != null && b.Bankcode.ToLower().Contains(searchTerm) ||
-                     b.displayname != null && b.displayname.ToLower().Contains(searchTerm)))
+                     b.displayname != null && b.displayname.ToLower().Contains(searchTerm)));
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                banksQuery = banksQuery.Where(b => allowedSites.Contains(b.locationId));
+
+            var banks = await banksQuery
                 .Take(limit)
                 .Select(b => new
                 {
@@ -563,11 +595,16 @@ namespace CimmpleAPI.Controllers
 
         private async Task<List<object>> SearchLocations(string searchTerm, int tenantId, int limit)
         {
-            var locations = await _context.Locations
+            var locationsQuery = _context.Locations
                 .Where(l => l.TenantId == tenantId &&
                     (l.Name != null && l.Name.ToLower().Contains(searchTerm) ||
                      l.Code != null && l.Code.ToLower().Contains(searchTerm) ||
-                     l.city != null && l.city.ToLower().Contains(searchTerm)))
+                     l.city != null && l.city.ToLower().Contains(searchTerm)));
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                locationsQuery = locationsQuery.Where(l => allowedSites.Contains(l.LocationId));
+
+            var locations = await locationsQuery
                 .Take(limit)
                 .Select(l => new
                 {
@@ -749,6 +786,9 @@ namespace CimmpleAPI.Controllers
         {
             var vendorOrdersQuery = _context.VendorOrders
                 .Where(v => v.Tenantid == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                vendorOrdersQuery = vendorOrdersQuery.Where(v => v.LocationId.HasValue && allowedSites.Contains(v.LocationId.Value));
 
             if (!IsBareDocPrefix(searchTerm, "vo"))
             {
@@ -795,6 +835,9 @@ namespace CimmpleAPI.Controllers
         {
             var vendorInvoicesQuery = _context.VendorInvoiceMaster
                 .Where(v => v.TenantId == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                vendorInvoicesQuery = vendorInvoicesQuery.Where(v => allowedSites.Contains(v.locationId));
 
             vendorInvoicesQuery = vendorInvoicesQuery.Where(v =>
                 (v.VendorName != null && v.VendorName.ToLower().Contains(searchTerm)) ||
@@ -831,6 +874,13 @@ namespace CimmpleAPI.Controllers
                                 from order in orders.DefaultIfEmpty()
                                 where receivingRec.Tenantid == tenantId
                                 select new { receivingRec, order };
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+            {
+                receivingQuery = receivingQuery.Where(x =>
+                    (x.order != null && x.order.LocationId.HasValue && allowedSites.Contains(x.order.LocationId.Value))
+                    || (x.receivingRec.LocationId.HasValue && allowedSites.Contains(x.receivingRec.LocationId.Value)));
+            }
 
             if (isNumeric)
             {
@@ -868,6 +918,9 @@ namespace CimmpleAPI.Controllers
         {
             var vendorQuotationsQuery = _context.VendorQuotations
                 .Where(v => v.Tenantid == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                vendorQuotationsQuery = vendorQuotationsQuery.Where(v => v.locationid.HasValue && allowedSites.Contains(v.locationid.Value));
 
             if (!IsBareDocPrefix(searchTerm, "vq"))
             {
@@ -915,6 +968,9 @@ namespace CimmpleAPI.Controllers
                                 from order in orders.DefaultIfEmpty()
                                 where shipment.TenantId == tenantId
                                 select new { shipment, order };
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                shipmentsQuery = shipmentsQuery.Where(x => x.order != null && allowedSites.Contains(x.order.locationId));
 
             shipmentsQuery = shipmentsQuery.Where(x =>
                 (x.shipment.ShipmentNo != null && x.shipment.ShipmentNo.ToLower().Contains(searchTerm)) ||
@@ -945,6 +1001,19 @@ namespace CimmpleAPI.Controllers
         {
             var ncrQuery = _context.NonConformanceReports
                 .Where(n => n.TenantId == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+            {
+                ncrQuery = ncrQuery.Where(n =>
+                    n.JobOrderId != null && n.JobOrderId > 0 &&
+                    _context.JobOrderMaster.Any(j =>
+                        j.JobOrderID == n.JobOrderId &&
+                        j.Tenantid == tenantId &&
+                        _context.CustomerOrder.Any(o =>
+                            o.OrderID == j.CustomerOrderID &&
+                            o.Tenantid == tenantId &&
+                            allowedSites.Contains(o.locationId))));
+            }
 
             if (!IsBareDocPrefix(searchTerm, "ncr"))
             {
@@ -1063,6 +1132,9 @@ namespace CimmpleAPI.Controllers
             bool isNumeric = int.TryParse(stripped, out int jeId);
 
             var query = _context.JournalEntries.Where(j => j.TenantId == tenantId);
+            var allowedSites = AllowedSitesOrNull();
+            if (allowedSites != null)
+                query = query.Where(j => allowedSites.Contains(j.locationId));
 
             if (isNumeric)
             {
@@ -1103,13 +1175,21 @@ namespace CimmpleAPI.Controllers
             try
             {
                 // Use exact same pattern as DocumentsController.GetDocuments which works correctly
-                var documents = await _context.Documents
+                var documentsQuery = _context.Documents
                     .Include(d => d.Category)
                     .Where(d => d.TenantId == tenantId && !d.IsDeleted &&
                         (d.DocumentName.ToLower().Contains(searchTerm) ||
                          (d.DocumentNumber != null && d.DocumentNumber.ToLower().Contains(searchTerm)) ||
                          (d.Description != null && d.Description.ToLower().Contains(searchTerm)) ||
-                         (d.Tags != null && d.Tags.ToLower().Contains(searchTerm))))
+                         (d.Tags != null && d.Tags.ToLower().Contains(searchTerm))));
+                var allowedSites = AllowedSitesOrNull();
+                if (allowedSites != null)
+                {
+                    documentsQuery = documentsQuery.Where(d =>
+                        d.LocationId == null || d.LocationId <= 0 || allowedSites.Contains(d.LocationId.Value));
+                }
+
+                var documents = await documentsQuery
                     .Take(limit)
                     .Select(d => new
                     {

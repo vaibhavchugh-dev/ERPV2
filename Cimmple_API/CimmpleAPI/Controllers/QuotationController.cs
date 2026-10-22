@@ -372,6 +372,11 @@ namespace CimmpleAPI.Controllers
                     {
                         return NotFound(new { error = "Quotation not found" });
                     }
+
+                    if (quotation.Locationid is int existingCqLoc && existingCqLoc > 0 && !CanAccessLocation(existingCqLoc))
+                    {
+                        return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                    }
                 }
                 else
                 {
@@ -1082,6 +1087,11 @@ namespace CimmpleAPI.Controllers
                 if (quotation == null)
                 {
                     return NotFound(new { error = "Quotation not found" });
+                }
+
+                if (quotation.Locationid is int deleteCqLoc && deleteCqLoc > 0 && !CanAccessLocation(deleteCqLoc))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 // Enforce same rules as CheckQuotationDeletionImpact

@@ -298,9 +298,11 @@ namespace CimmpleAPI.Controllers
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, periodKey))
                     return BadRequest(new { error = $"Accounting period {periodKey} is closed. Open the period or pick another payment date." });
 
-                var locId = link.LocationId > 0 ? link.LocationId : 1;
-                if (!TryResolveLocationId(locId, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = link.LocationId > 0 ? (int?)link.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var seq = alreadyPaid > 0 || link.PaymentJournalEntryId.HasValue
                     ? (int)(DateTime.UtcNow.Ticks % 100000)
@@ -481,9 +483,11 @@ namespace CimmpleAPI.Controllers
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, periodKey))
                     return BadRequest(new { error = $"Accounting period {periodKey} is closed." });
 
-                var locId = link.LocationId > 0 ? link.LocationId : 1;
-                if (!TryResolveLocationId(locId, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = link.LocationId > 0 ? (int?)link.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var refNo = $"PAYTAX-{link.ReferenceNumber}";
                 var desc = string.IsNullOrWhiteSpace(request.Description)
@@ -596,9 +600,11 @@ namespace CimmpleAPI.Controllers
                 if (request == null)
                     return BadRequest(new { error = "Request body is required." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = request.LocationId > 0 ? (int?)request.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var defaults = _context.AccountingDefaults.AsNoTracking()
                     .FirstOrDefault(d => d.TenantId == tenantId);
@@ -639,9 +645,11 @@ namespace CimmpleAPI.Controllers
                 if (!request.PayDate.HasValue)
                     return BadRequest(new { error = "Pay date is required." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = request.LocationId > 0 ? (int?)request.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var defaults = _context.AccountingDefaults.AsNoTracking()
                     .FirstOrDefault(d => d.TenantId == tenantId);
@@ -722,9 +730,11 @@ namespace CimmpleAPI.Controllers
                 if (request == null)
                     return BadRequest(new { error = "Request body is required." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = request.LocationId > 0 ? (int?)request.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var defaults = _context.AccountingDefaults.AsNoTracking()
                     .FirstOrDefault(d => d.TenantId == tenantId);
@@ -770,9 +780,11 @@ namespace CimmpleAPI.Controllers
                 if (string.IsNullOrWhiteSpace(request.ExternalRunId))
                     return BadRequest(new { error = "ExternalRunId is required for imports (provider run id or file hash)." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = request.LocationId > 0 ? (int?)request.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 var defaults = _context.AccountingDefaults.AsNoTracking()
                     .FirstOrDefault(d => d.TenantId == tenantId);
@@ -1011,9 +1023,11 @@ namespace CimmpleAPI.Controllers
                 if (GlWorkflowService.IsPeriodLocked(_context, tenantId, lockPeriodKey))
                     return BadRequest(new { error = $"Accounting period {lockPeriodKey} is closed. Open the period or pick another date to post." });
 
-                var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                var requestedLoc = request.LocationId > 0 ? (int?)request.LocationId : null;
+                if (!TryResolveLocationId(requestedLoc, out var locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to post this payroll journal. Set the payroll location or select a working site." });
 
                 using var tx = _context.Database.BeginTransaction();
                 try

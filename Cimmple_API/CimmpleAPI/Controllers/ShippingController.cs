@@ -36,6 +36,9 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
+                var denied = DenyOrderLocation(orderId, tenantId);
+                if (denied != null)
+                    return denied;
 
                 var detailsList = _context.CustomerOrderDetails
                     .AsNoTracking()
@@ -125,6 +128,9 @@ namespace CimmpleAPI.Controllers
                 {
                     var tenantId = GetTenantId();
                     var userId = GetUserId();
+                    var denied = DenyOrderLocation(request.OrderId, tenantId);
+                    if (denied != null)
+                        return denied;
 
                     // Validate all line items are ready to ship
                     foreach (var item in request.LineItems)
@@ -272,6 +278,15 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
+                var shipmentOrderId = _context.Shipping.AsNoTracking()
+                    .Where(s => s.Id == shipmentId && s.TenantId == tenantId)
+                    .Select(s => (int?)s.OrderId)
+                    .FirstOrDefault();
+                if (!shipmentOrderId.HasValue)
+                    return NotFound(new { error = "Shipment not found" });
+                var denied = DenyOrderLocation(shipmentOrderId.Value, tenantId);
+                if (denied != null)
+                    return denied;
 
                 var shipmentHeader = _context.Shipping
                     .Where(s => s.Id == shipmentId && s.TenantId == tenantId)
@@ -377,6 +392,9 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
+                var denied = DenyOrderLocation(orderId, tenantId);
+                if (denied != null)
+                    return denied;
 
                 var shipments = _context.Shipping
                     .Where(s => s.OrderId == orderId && s.TenantId == tenantId)
@@ -576,6 +594,10 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Shipment not found" });
                 }
 
+                var denied = DenyOrderLocation(shipment.OrderId, tenantId);
+                if (denied != null)
+                    return denied;
+
                 var impact = new DeletionImpactResult
                 {
                     CanDelete = true,
@@ -664,6 +686,10 @@ namespace CimmpleAPI.Controllers
                     {
                         return NotFound(new { error = "Shipment not found" });
                     }
+
+                    var denied = DenyOrderLocation(shipment.OrderId, tenantId);
+                    if (denied != null)
+                        return denied;
 
                     var shippingDetails = _context.ShippingDetails
                         .Where(sd => sd.ShipmentId == shipmentId)
@@ -810,16 +836,6 @@ namespace CimmpleAPI.Controllers
                 locationId = orderLocationId;
 
             if (!locationId.HasValue || locationId.Value <= 0)
-            {
-                locationId = await _context.Locations
-                    .AsNoTracking()
-                    .Where(l => l.TenantId == tenantId)
-                    .OrderBy(l => l.LocationId)
-                    .Select(l => (int?)l.LocationId)
-                    .FirstOrDefaultAsync();
-            }
-
-            if (!locationId.HasValue || locationId.Value <= 0)
                 return "Location is required to ship from inventory. Set the customer order location.";
 
             var onHand = await _inventoryService.GetOnHandAsync(tenantId, productId.Value, locationId);
@@ -901,6 +917,19 @@ namespace CimmpleAPI.Controllers
         private void UpdateOrderShippingStatus(int orderId, int tenantId)
         {
             _ = UpdateOrderShippingStatusAsync(orderId, tenantId).GetAwaiter().GetResult();
+        }
+
+        private IActionResult? DenyOrderLocation(int orderId, int tenantId)
+        {
+            var locationId = _context.CustomerOrder.AsNoTracking()
+                .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                .Select(o => (int?)o.locationId)
+                .FirstOrDefault();
+            if (!locationId.HasValue)
+                return NotFound(new { error = "Order not found" });
+            if (locationId.Value > 0 && !CanAccessLocation(locationId.Value))
+                return StatusCode(403, new { error = "You do not have access to this order's site." });
+            return null;
         }
 
         private sealed class OrderShipStatusChange

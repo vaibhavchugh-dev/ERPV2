@@ -747,6 +747,11 @@ namespace CimmpleAPI.Controllers
                     {
                         return NotFound(new { error = "Order not found" });
                     }
+
+                    if (order.locationId > 0 && !CanAccessLocation(order.locationId))
+                    {
+                        return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
+                    }
                 }
                 else
                 {
@@ -1905,6 +1910,11 @@ namespace CimmpleAPI.Controllers
                 if (order == null)
                 {
                     return NotFound(new { error = "Order not found" });
+                }
+
+                if (order.locationId > 0 && !CanAccessLocation(order.locationId))
+                {
+                    return StatusCode(403, new { message = "You don't have access to this document. Your account is not assigned to its location." });
                 }
 
                 // Enforce same rules as CheckOrderDeletionImpact
