@@ -39,6 +39,7 @@ export interface WorkflowInvoiceLink {
 
 export interface WorkflowNcrLink {
   ncrId: number;
+  jobOrderId?: number | null;
   number: string;
   title?: string | null;
   status?: string | null;
@@ -48,6 +49,8 @@ export interface WorkflowNcrLink {
 
 export interface WorkflowPurchaseLink {
   vendorOrderId: number;
+  jobOrderId?: number | null;
+  detailKey?: string | null;
   number: string;
   vendorName?: string | null;
   status?: string | null;

@@ -122,6 +122,7 @@ namespace CimmpleAPI.Services.Workflow
     public sealed class WorkflowNcrLinkDto
     {
         public int NcrId { get; set; }
+        public int? JobOrderId { get; set; }
         public string Number { get; set; } = "";
         public string? Title { get; set; }
         public string? Status { get; set; }
@@ -135,6 +136,8 @@ namespace CimmpleAPI.Services.Workflow
         public string Number { get; set; } = "";
         public string? VendorName { get; set; }
         public string? Status { get; set; }
+        public int JobOrderId { get; set; }
+        public string DetailKey { get; set; } = "";
         public int QtyOrdered { get; set; }
         public int QtyReceived { get; set; }
         public string OrderPath { get; set; } = "";

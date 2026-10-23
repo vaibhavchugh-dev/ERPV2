@@ -57,6 +57,12 @@ const indicatorClass = (indicator: string) => {
   }
 };
 
+const ownerMatches = (row: WorkflowRow | undefined, ownerFilter: string) => {
+  if (!ownerFilter) return true;
+  if (ownerFilter === "unassigned") return !row?.ownerUserId;
+  return String(row?.ownerUserId || "") === ownerFilter;
+};
+
 const matchesStatus = (row: WorkflowRow, status: string) => {
   switch (status) {
     case "active": return row.isActive;
@@ -70,16 +76,59 @@ const matchesStatus = (row: WorkflowRow, status: string) => {
   }
 };
 
+const CHORE_STATUS_OPTIONS = [
+  { value: "", label: "All priorities" },
+  { value: "blocked", label: "Blocked" },
+  { value: "overdue", label: "Overdue" },
+  { value: "needsAction", label: "Needs action" },
+];
+
 const includesText = (haystack: string, query: string) =>
   haystack.toLowerCase().includes(query.trim().toLowerCase());
 
-const returnedWorkflowView = () => {
+const isChoreStatus = (status: string) => !status || status === "needsAction" || status === "blocked" || status === "overdue";
+
+const priorityLabel = (priority: string) => {
+  if (priority === "Blocked" || priority === "Overdue" || priority === "High") return priority;
+  return "Needs action";
+};
+
+const priorityClass = (priority: string) =>
+  priority === "Blocked" || priority === "Overdue" ? "badge-danger" : "badge-warning";
+
+const matchesChoreStatus = (action: WorkflowAction, status: string) => {
+  if (status === "blocked") return action.priorityLabel === "Blocked";
+  if (status === "overdue") return action.priorityLabel === "Overdue";
+  if (status === "needsAction") return action.priorityLabel !== "Blocked" && action.priorityLabel !== "Overdue";
+  return true;
+};
+
+const compareChores = (a: WorkflowAction, b: WorkflowAction) => {
+  const group = (priority: string) => (priority === "Blocked" ? 0 : priority === "Overdue" ? 1 : 2);
+  const byGroup = group(a.priorityLabel) - group(b.priorityLabel);
+  if (byGroup) return byGroup;
+  const aDue = a.dueDate || "9999-12-31";
+  const bDue = b.dueDate || "9999-12-31";
+  if (aDue !== bDue) return aDue < bDue ? -1 : 1;
+  return a.reference.localeCompare(b.reference) || a.title.localeCompare(b.title);
+};
+
+type WorkflowSnapshot = {
+  q: string;
+  stage: string;
+  status: string;
+  selected: string | null;
+  view: "orders" | "chores";
+};
+
+const returnedWorkflowView = (): WorkflowSnapshot => {
   const params = new URLSearchParams(window.location.search);
   return {
     q: params.get("q") ?? "",
     stage: params.get("stage") ?? "",
     status: params.get("status") ?? "",
     selected: params.get("selected"),
+    view: params.get("view") === "chores" ? "chores" : "orders",
   };
 };
 
@@ -99,18 +148,20 @@ const signedInUserId = () => {
 
 let overviewCache: { key: string; data: WorkflowOverview } | null = null;
 
-const readReturnSnapshot = () => {
+const readReturnSnapshot = (): WorkflowSnapshot => {
   const fromUrl = returnedWorkflowView();
-  if (fromUrl.selected || fromUrl.q || fromUrl.stage || fromUrl.status) return fromUrl;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("view") || fromUrl.selected || fromUrl.q || fromUrl.stage || fromUrl.status) return fromUrl;
   try {
     const raw = sessionStorage.getItem(RETURN_KEY);
     if (!raw) return fromUrl;
-    const saved = JSON.parse(raw) as { q?: string; stage?: string; status?: string; selected?: string | null };
+    const saved = JSON.parse(raw) as Partial<WorkflowSnapshot>;
     return {
       q: saved.q || "",
       stage: saved.stage || "",
       status: saved.status || "",
       selected: saved.selected || null,
+      view: saved.view === "chores" ? "chores" : "orders",
     };
   } catch {
     return fromUrl;
@@ -136,7 +187,10 @@ const WorkflowCenter: React.FC = () => {
   );
   const [search, setSearch] = useState(returned.q);
   const [stage, setStage] = useState(returned.stage);
-  const [status, setStatus] = useState(returned.status);
+  const [status, setStatus] = useState(
+    returned.view === "chores" && !isChoreStatus(returned.status) ? "" : returned.status
+  );
+  const [view, setView] = useState<"orders" | "chores">(returned.view);
   const [ownerFilter, setOwnerFilter] = useState("");
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(returned.selected);
@@ -228,16 +282,17 @@ const WorkflowCenter: React.FC = () => {
     if (search.trim()) params.set("q", search.trim());
     if (stage) params.set("stage", stage);
     if (status) params.set("status", status);
+    if (view === "chores") params.set("view", "chores");
     if (selectedId) params.set("selected", selectedId);
     const next = params.toString();
     const current = location.search.startsWith("?") ? location.search.slice(1) : location.search;
     if (next === current) return;
     history.replace({ pathname: location.pathname, search: next ? `?${next}` : "" });
-  }, [search, stage, status, selectedId, history, location.pathname, location.search]);
+  }, [search, stage, status, view, selectedId, history, location.pathname, location.search]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, stage, status, ownerFilter, pageSize]);
+  }, [search, stage, status, view, ownerFilter, pageSize]);
 
   const workflows = overview?.workflows || [];
   const scoped = useMemo(
@@ -249,14 +304,24 @@ const WorkflowCenter: React.FC = () => {
     [workflows, search, stage]
   );
   const listed = useMemo(
-    () => scoped.filter((row) => {
-      if (!matchesStatus(row, status)) return false;
-      if (!ownerFilter) return true;
-      if (ownerFilter === "unassigned") return !row.ownerUserId;
-      return String(row.ownerUserId || "") === ownerFilter;
-    }),
+    () => scoped.filter((row) => matchesStatus(row, status) && ownerMatches(row, ownerFilter)),
     [scoped, status, ownerFilter]
   );
+  const chores = useMemo(() => {
+    const byId = new Map(workflows.map((row) => [row.id, row]));
+    return (overview?.actions || [])
+      .filter((action) => {
+        const row = byId.get(action.workflowId);
+        const text = [action.title, action.detail, action.reference, action.customerName, action.linkText, action.stageLabel, row?.searchText]
+          .filter(Boolean)
+          .join(" ");
+        if (search.trim() && !includesText(text, search)) return false;
+        if (stage && action.stageCode !== stage) return false;
+        if (!matchesChoreStatus(action, status)) return false;
+        return ownerMatches(row, ownerFilter);
+      })
+      .sort(compareChores);
+  }, [overview?.actions, workflows, search, stage, status, ownerFilter]);
   const ownerOptions = useMemo(() => {
     const names = new Map<number, string>();
     workflows.forEach((row) => {
@@ -272,70 +337,90 @@ const WorkflowCenter: React.FC = () => {
     overdue: scoped.filter((row) => row.isOverdue).length,
   }), [scoped]);
 
-  const total = listed.length;
+  const rowsForPage = view === "chores" ? chores : listed;
+  const total = rowsForPage.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
   const pagedRows = listed.slice(start, start + pageSize);
+  const pagedChores = chores.slice(start, start + pageSize);
   const selected = workflows.find((row) => row.id === selectedId) || null;
 
-  const openPath = (event: React.MouseEvent, path?: string | null) => {
+  const openPath = (event: React.MouseEvent, path?: string | null, workflowId?: string) => {
     event.stopPropagation();
     if (!path) return;
+    const returnSelection = workflowId || selectedId;
     const params = new URLSearchParams();
     if (search.trim()) params.set("q", search.trim());
     if (stage) params.set("stage", stage);
     if (status) params.set("status", status);
-    if (selectedId) params.set("selected", selectedId);
+    if (view === "chores") params.set("view", "chores");
+    if (returnSelection) params.set("selected", returnSelection);
     const qs = params.toString();
     const returnTo = qs ? `/workflow?${qs}` : "/workflow";
     sessionStorage.setItem(RETURN_KEY, JSON.stringify({
       q: search.trim(),
       stage,
       status,
-      selected: selectedId,
+      view,
+      selected: returnSelection,
     }));
     history.push(path, { returnTo });
   };
 
-  const toggleStatus = (value: string) => setStatus((current) => (current === value ? "" : value));
+  const showOrders = (nextStatus?: string) => {
+    setView("orders");
+    if (nextStatus !== undefined) setStatus(nextStatus);
+  };
+  const showChores = () => {
+    setView("chores");
+    if (!isChoreStatus(status)) setStatus("");
+  };
 
   return (
     <div className="workflow-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Workflow Center</h1>
-          <p className="page-subtitle">Customer orders and open quotations for the current site.</p>
+          <p className="page-subtitle">
+            {view === "chores"
+              ? "One row for each piece of work. An order can have more than one."
+              : "Customer orders and open quotations for the current site."}
+          </p>
+        </div>
+        <div className="view-toggle" role="group" aria-label="List">
+          <button type="button" className={view === "orders" ? "active" : ""} onClick={() => showOrders()}>Orders</button>
+          <button type="button" className={view === "chores" ? "active" : ""} onClick={showChores}>Chores</button>
         </div>
       </div>
 
       <div className="workflow-metrics">
-        <button type="button" className={status === "active" ? "active" : ""} onClick={() => toggleStatus("active")}>
+        <button type="button" className={view === "orders" && status === "active" ? "active" : ""} onClick={() => showOrders(view === "orders" && status === "active" ? "" : "active")}>
           <strong>{summary.active}</strong>
           <span>Active workflows</span>
         </button>
-        <button type="button" className={status === "needsAction" ? "active" : ""} onClick={() => toggleStatus("needsAction")}>
+        <button type="button" className={view === "orders" && status === "needsAction" ? "active" : ""} onClick={() => showOrders(view === "orders" && status === "needsAction" ? "" : "needsAction")}>
           <strong>{summary.needsAction}</strong>
           <span>Needs action</span>
         </button>
-        <button type="button" className={status === "blocked" ? "active" : ""} onClick={() => toggleStatus("blocked")}>
+        <button type="button" className={view === "orders" && status === "blocked" ? "active" : ""} onClick={() => showOrders(view === "orders" && status === "blocked" ? "" : "blocked")}>
           <strong>{summary.blocked}</strong>
           <span>Blocked</span>
         </button>
-        <button type="button" className={status === "overdue" ? "active" : ""} onClick={() => toggleStatus("overdue")}>
+        <button type="button" className={view === "orders" && status === "overdue" ? "active" : ""} onClick={() => showOrders(view === "orders" && status === "overdue" ? "" : "overdue")}>
           <strong>{summary.overdue}</strong>
           <span>Overdue</span>
         </button>
       </div>
-      <p className="workflow-note">Counts follow the site, search, and stage filters. A workflow can be counted in more than one total.</p>
-      <ul className="stage-legend" aria-label="Stage colors">
+      <p className="workflow-note">These counts are orders. They follow the site, search, and stage filters. An order can be counted in more than one total.</p>
+      {view === "orders" && <ul className="stage-legend" aria-label="Stage colors">
         <li><span className="stage-pill complete">Completed</span></li>
         <li><span className="stage-pill current">Current</span></li>
         <li><span className="stage-pill attention">Needs attention</span></li>
         <li><span className="stage-pill blocked">Blocked</span></li>
         <li><span className="stage-pill upcoming">Upcoming</span></li>
         <li><span className="stage-pill cancelled">Cancelled</span></li>
-      </ul>
+      </ul>}
 
       <div className="page-filters">
         <div className="search-wrapper">
@@ -358,8 +443,8 @@ const WorkflowCenter: React.FC = () => {
             <option key={item.code} value={item.code}>{item.label}</option>
           ))}
         </select>
-        <select className="filter-select" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Status">
-          {STATUS_OPTIONS.map((option) => (
+        <select className="filter-select" value={isChoreStatus(status) || view === "orders" ? status : ""} onChange={(event) => setStatus(event.target.value)} aria-label={view === "chores" ? "Priority" : "Status"}>
+          {(view === "chores" ? CHORE_STATUS_OPTIONS : STATUS_OPTIONS).map((option) => (
             <option key={option.value || "all"} value={option.value}>{option.label}</option>
           ))}
         </select>
@@ -382,16 +467,38 @@ const WorkflowCenter: React.FC = () => {
           <p>{error}</p>
           <button type="button" className="btn-secondary" onClick={load}>Try again</button>
         </div>
-      ) : listed.length === 0 ? (
+      ) : rowsForPage.length === 0 ? (
         <div className="empty-state">
           <p>
-            {workflows.length === 0
-              ? "No customer orders or open quotations for this site."
-              : search.trim()
-                ? "No workflows match that search."
-                : "No workflows match the current filters."}
+            {view === "chores"
+              ? (overview?.actions || []).length === 0
+                ? "No chores for this site."
+                : search.trim()
+                  ? "No chores match that search."
+                  : "No chores match the current filters."
+              : workflows.length === 0
+                ? "No customer orders or open quotations for this site."
+                : search.trim()
+                  ? "No workflows match that search."
+                  : "No workflows match the current filters."}
           </p>
         </div>
+      ) : view === "chores" ? (
+        <ChoreTable
+          rows={pagedChores}
+          workflows={workflows}
+          onOpen={setSelectedId}
+          onOpenPath={openPath}
+          formatDate={formatDateOnlyFromApi}
+          start={start}
+          end={Math.min(start + pageSize, chores.length)}
+          total={chores.length}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          onPage={setPage}
+          onPageSize={setPageSize}
+        />
       ) : (
         <JourneyTable
           rows={pagedRows}
@@ -531,6 +638,20 @@ const isOpenNcrStatus = (status?: string | null) => {
 
 const isOpenInvoice = (substage?: string | null) => substage !== "Paid" && substage !== "Void";
 
+const purchaseTotals = (lines: WorkflowRow["purchases"]) => {
+  const seen = new Set<string>();
+  let ordered = 0;
+  let received = 0;
+  lines.forEach((item) => {
+    const key = item.detailKey || `${item.vendorOrderId}-${item.jobOrderId || 0}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    ordered += item.qtyOrdered || 0;
+    received += item.qtyReceived || 0;
+  });
+  return { ordered, received };
+};
+
 interface StageLink {
   key: string;
   type: string;
@@ -574,6 +695,88 @@ const dueLabel = (
   if (days == null) return formatted;
   return `${formatted} · ${days} day${days === 1 ? "" : "s"} overdue`;
 };
+
+const ChoreTable: React.FC<{
+  rows: WorkflowAction[];
+  workflows: WorkflowRow[];
+  onOpen: (id: string) => void;
+  onOpenPath: (event: React.MouseEvent, path?: string | null, workflowId?: string) => void;
+  formatDate: (value?: string | null) => string;
+  start: number;
+  end: number;
+  total: number;
+  currentPage: number;
+  totalPages: number;
+  pageSize: number;
+  onPage: (page: number) => void;
+  onPageSize: (size: number) => void;
+}> = (props) => (
+  <div className="table-card">
+    <div className="table-wrapper">
+      <table className="customers-table">
+        <thead>
+          <tr>
+            <th>Chore</th>
+            <th>Order</th>
+            <th>Customer</th>
+            <th>Stage</th>
+            <th>Priority</th>
+            <th>Due</th>
+            <th>Owner</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.rows.map((action) => {
+            const order = props.workflows.find((row) => row.id === action.workflowId);
+            const due = action.dueDate
+              ? dueLabel(action.dueDate, action.priorityLabel === "Overdue", props.formatDate)
+              : null;
+            return (
+              <tr key={action.id} onClick={() => props.onOpen(action.workflowId)}>
+                <td>
+                  <button
+                    type="button"
+                    className="entity-number chore-title"
+                    title={action.detail || action.title}
+                    onClick={(event) => {
+                      if (action.linkPath) props.onOpenPath(event, action.linkPath, action.workflowId);
+                      else {
+                        event.stopPropagation();
+                        props.onOpen(action.workflowId);
+                      }
+                    }}
+                  >
+                    {action.title}
+                  </button>
+                </td>
+                <td>
+                  <button type="button" className="entity-number" onClick={(event) => { event.stopPropagation(); props.onOpen(action.workflowId); }}>
+                    {action.reference}
+                  </button>
+                </td>
+                <td className="name-cell" title={action.customerName}>{action.customerName || "—"}</td>
+                <td>{action.stageLabel}</td>
+                <td><span className={`badge ${priorityClass(action.priorityLabel)}`}>{priorityLabel(action.priorityLabel)}</span></td>
+                <td>{due || "—"}</td>
+                <td>{order?.ownerLabel || "Unassigned"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+    <ClientPagination
+      startIndex={props.start}
+      endIndex={props.end}
+      total={props.total}
+      currentPage={props.currentPage}
+      totalPages={props.totalPages}
+      onPageChange={props.onPage}
+      pageSize={props.pageSize}
+      onPageSizeChange={props.onPageSize}
+    />
+  </div>
+);
 
 const chooseAction = (actions: WorkflowAction[], row: WorkflowRow) => {
   const linked = actions.filter((action) => action.linkPath);
@@ -659,8 +862,9 @@ const stageRecords = (
     if (seenOrders.has(purchase.vendorOrderId)) return;
     seenOrders.add(purchase.vendorOrderId);
     const lines = row.purchases.filter((item) => item.vendorOrderId === purchase.vendorOrderId);
-    const qtyOrdered = lines.reduce((sum, item) => sum + (item.qtyOrdered || 0), 0);
-    const qtyReceived = lines.reduce((sum, item) => sum + (item.qtyReceived || 0), 0);
+    const totals = purchaseTotals(lines);
+    const qtyOrdered = totals.ordered;
+    const qtyReceived = totals.received;
     add("Materials", {
       key: `po-${purchase.vendorOrderId}`,
       type: "Vendor order",
@@ -744,6 +948,172 @@ const stageRecords = (
   return buckets;
 };
 
+const WorkPicture: React.FC<{
+  row: WorkflowRow;
+  actions: WorkflowAction[];
+  formatCurrency: (value: number) => string;
+  formatDate: (value?: string | null) => string;
+  onOpenPath: (event: React.MouseEvent, path?: string | null) => void;
+}> = ({ row, actions, formatCurrency, formatDate, onOpenPath }) => {
+  const gaps = actions.filter((action) => action.kind === "PlanningGap");
+  const openInvoices = row.invoices.filter((invoice) => isOpenInvoice(invoice.substage));
+  const outstanding = openInvoices.reduce((sum, invoice) => sum + (invoice.balance || 0), 0);
+  const lanes = row.jobs.map((job) => {
+    const purchases = row.purchases.filter((item) => item.jobOrderId === job.jobOrderId);
+    const seen = new Set<number>();
+    return {
+      key: `job-${job.jobOrderId}`,
+      title: job.number,
+      path: job.path,
+      part: [job.partNo, job.partName].filter(Boolean).join(" · "),
+      status: job.status || "",
+      cards: [
+        ...row.shortages
+          .filter((item) => item.jobOrderId === job.jobOrderId)
+          .map((item) => ({
+            key: `short-${job.jobOrderId}-${item.partNo || item.partName || "part"}`,
+            type: "Material",
+            identifier: item.partNo || item.partName || item.jobNumber,
+            status: [`Short ${item.shortQty}`, item.requiredBy ? `Required by ${formatDate(item.requiredBy)}` : ""].filter(Boolean).join(" · "),
+            path: job.path,
+            affordance: "Open job order",
+          })),
+        ...purchases.filter((item) => {
+          if (seen.has(item.vendorOrderId)) return false;
+          seen.add(item.vendorOrderId);
+          return true;
+        }).map((item) => {
+          const lines = purchases.filter((line) => line.vendorOrderId === item.vendorOrderId);
+          const ordered = lines.reduce((sum, line) => sum + (line.qtyOrdered || 0), 0);
+          const received = lines.reduce((sum, line) => sum + (line.qtyReceived || 0), 0);
+          return {
+            key: `po-${job.jobOrderId}-${item.vendorOrderId}`,
+            type: "Vendor order",
+            identifier: item.number,
+            status: [item.vendorName, `Received ${received} of ${ordered}`].filter(Boolean).join(" · "),
+            path: item.orderPath,
+            affordance: "Open record",
+          };
+        }),
+        ...row.ncrs
+          .filter((item) => item.jobOrderId === job.jobOrderId)
+          .map((item) => ({
+            key: `ncr-${item.ncrId}`,
+            type: "NCR",
+            identifier: item.number,
+            status: [item.status, item.title].filter(Boolean).join(" · "),
+            path: item.path,
+            affordance: isOpenNcrStatus(item.status) ? "Open NCR" : "Open record",
+          })),
+      ],
+    };
+  });
+  if (gaps.length) {
+    lanes.unshift({
+      key: "no-job",
+      title: "No job",
+      path: row.orderPath || "",
+      part: "These parts have no job yet.",
+      status: "",
+      cards: gaps.map((action) => ({
+        key: action.id,
+        type: "Planning",
+        identifier: action.title,
+        status: "",
+        path: action.linkPath || row.orderPath || "",
+        affordance: "Open customer order",
+      })),
+    });
+  }
+
+  return (
+    <div className="work-picture">
+      {lanes.length === 0 ? (
+        <p className="lane-empty">No jobs on this record.</p>
+      ) : (
+        <div className="work-lanes">
+          {lanes.map((lane) => (
+            <section key={lane.key} className="work-lane">
+              <button type="button" className="entity-number" disabled={!lane.path} onClick={(event) => onOpenPath(event, lane.path)}>
+                {lane.title}
+              </button>
+              {lane.part && <p className="lane-part">{lane.part}</p>}
+              {lane.status && <p className="lane-status">{lane.status}</p>}
+              {lane.cards.length === 0 ? (
+                <p className="lane-empty">Nothing else is linked to this job.</p>
+              ) : (
+                <ul className="stage-records">
+                  {lane.cards.map((card) => (
+                    <li key={card.key}>
+                      <button type="button" className="record-link" disabled={!card.path} onClick={(event) => onOpenPath(event, card.path)}>
+                        <span className="record-type">{card.type}</span>
+                        <span className="record-id">{card.identifier}</span>
+                        {card.status && <span className="record-status">{card.status}</span>}
+                        <span className="record-go">{card.affordance}<span aria-hidden="true"> →</span></span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+      {row.orderPath && (
+        <div className="order-band">
+          <h4 className="order-band-title">For the whole order</h4>
+          <section>
+            <h4>Shipment</h4>
+            {row.shipments.length === 0 ? <p className="lane-empty">None yet.</p> : (
+              <ul className="stage-records">
+                {row.shipments.map((item) => (
+                  <li key={item.shipmentId}>
+                    <button type="button" className="record-link" onClick={(event) => onOpenPath(event, item.path)}>
+                      <span className="record-id">{item.number}</span>
+                      {item.shipmentDate && <span className="record-status">{formatDate(item.shipmentDate)}</span>}
+                      <span className="record-go">Open shipment<span aria-hidden="true"> →</span></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section>
+            <h4>Invoice</h4>
+            {row.invoices.length === 0 ? <p className="lane-empty">None yet.</p> : (
+              <ul className="stage-records">
+                {row.invoices.map((item) => (
+                  <li key={item.invoiceId}>
+                    <button type="button" className="record-link" onClick={(event) => onOpenPath(event, item.path)}>
+                      <span className="record-id">{item.number}</span>
+                      <span className="record-status">{item.balance > 0 ? `${item.status} · ${formatCurrency(item.balance)} outstanding` : item.status}</span>
+                      <span className="record-go">Open invoice<span aria-hidden="true"> →</span></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section>
+            <h4>Collection</h4>
+            {openInvoices.length === 0 ? <p className="lane-empty">Nothing to collect.</p> : (
+              <ul className="stage-records">
+                <li>
+                  <button type="button" className="record-link" onClick={(event) => onOpenPath(event, "/accounts/receivable")}>
+                    <span className="record-id">Accounts receivable</span>
+                    <span className="record-status">{formatCurrency(outstanding)} outstanding</span>
+                    <span className="record-go">Open record<span aria-hidden="true"> →</span></span>
+                  </button>
+                </li>
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const WorkflowDetail: React.FC<{
   row: WorkflowRow;
   actions: WorkflowAction[];
@@ -765,6 +1135,7 @@ const WorkflowDetail: React.FC<{
   );
   const [expandedId, setExpandedId] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const [journeyView, setJourneyView] = useState<"list" | "lanes">("list");
   const [assigneeId, setAssigneeId] = useState("");
   const [assignees, setAssignees] = useState<WorkflowAssignee[]>([]);
   const [blockerNote, setBlockerNote] = useState("");
@@ -842,13 +1213,19 @@ const WorkflowDetail: React.FC<{
     || primary?.kind === "OverdueJob"
     || (row.isOverdue && dueValue === row.dueDate);
   const shownDue = showAction ? dueLabel(dueValue, markOverdue, formatDate) : null;
-  const actionPath = showAction ? primary?.linkPath : null;
-  const actionLabel = primary?.linkLabel || "Open record";
   const waitingForMe = row.isActive
     && canAcknowledge
     && row.handoffStatus === "Pending"
     && row.ownerUserId === currentUserId;
   const shownOwner = pendingAction === "assign" && pendingOwner ? pendingOwner : owner;
+  const actionQueue = useMemo(() => {
+    const linked = actions
+      .filter((action) => action.linkPath)
+      .slice()
+      .sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title));
+    if (!primary) return linked;
+    return [primary, ...linked.filter((action) => action.id !== primary.id)];
+  }, [actions, primary]);
   const saveAssignment = async (action: string, work: () => Promise<void>) => {
     setBusy(true);
     setPendingAction(action);
@@ -895,80 +1272,98 @@ const WorkflowDetail: React.FC<{
         <div className="slideout-content">
           <section className={`action-panel${showAction && row.isBlocked ? " blocked" : showAction && row.isOverdue ? " overdue" : ""}`}>
             <StatusBadges row={row} />
-            <h3>{showAction ? "Action required" : "Next action"}</h3>
-            <p className="next-action">{row.nextAction || "None"}</p>
-            {reason && <p className="action-reason">{reason}</p>}
-            {row.manualBlocker && row.manualBlocker !== reason && (
-              <p className="action-reason">Note: {row.manualBlocker}</p>
-            )}
-            {row.rejectionNote && <p className="rejection-note">{row.rejectionNote}</p>}
-            {row.isActive && (
-              <p className="action-meta">
-                <span>
-                  <span className="meta-label">Owner</span> {shownOwner}
-                  {busy && pendingAction === "assign" && (
-                    <span className="saving-note"><span className="saving-spinner" aria-hidden="true" /> Saving…</span>
-                  )}
-                </span>
-                {shownDue && <span><span className="meta-label">Due</span> {shownDue}</span>}
-              </p>
-            )}
-            {row.isActive && canAssign && (
-              <div className="coordination">
-                <select className="filter-select" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} aria-label="Assign to" disabled={busy}>
-                  <option value="">Choose a person</option>
-                  {assignees.map((person) => (
-                    <option key={person.userId} value={person.userId}>{person.name}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={busy || !assigneeId || Number(assigneeId) === row.ownerUserId}
-                  onClick={() => saveAssignment("assign", () => WorkflowService.Assign(row.id, Number(assigneeId), row.coordinationTaskId))}
-                >
-                  {pendingAction === "assign" ? "Saving…" : row.ownerUserId ? "Reassign" : "Assign"}
-                </button>
-              </div>
-            )}
-            {waitingForMe && (
-              <div className="coordination">
-                <button type="button" className="btn-secondary" disabled={busy} onClick={() => saveAssignment("acknowledge", () => WorkflowService.Acknowledge(row.id, row.coordinationTaskId))}>
-                  {pendingAction === "acknowledge" ? "Saving…" : "Acknowledge"}
-                </button>
-                <button type="button" className="link-button" disabled={busy} onClick={() => saveAssignment("reject", () => WorkflowService.Reject(row.id, row.coordinationTaskId))}>
-                  {pendingAction === "reject" ? "Saving…" : "Reject"}
-                </button>
-              </div>
-            )}
-            {busy && pendingAction === "acknowledge" && (
-              <p className="saving-note"><span className="saving-spinner" aria-hidden="true" /> Saving acknowledgement…</p>
-            )}
-            {showAction && row.isBlocked && canAssign && (
-              <div className="coordination">
-                <input
-                  className="form-input"
-                  value={blockerNote}
-                  onChange={(event) => setBlockerNote(event.target.value)}
-                  placeholder="Note about the shortage. This does not clear it."
-                  disabled={busy}
-                  maxLength={500}
-                />
-                <button type="button" className="btn-secondary" disabled={busy} onClick={() => saveAssignment("note", () => WorkflowService.SaveBlockerNote(row.id, blockerNote, row.coordinationTaskId))}>
-                  {pendingAction === "note" ? "Saving…" : "Save note"}
-                </button>
-              </div>
-            )}
-            {formError && <p className="rejection-note">{formError}</p>}
-            {actionPath && (
-              <button type="button" className="btn-primary" onClick={(event) => onOpenPath(event, actionPath)}>
-                {actionLabel}
-              </button>
-            )}
+            <div className="action-row">
+              {(actionQueue.length > 0 ? actionQueue : [null]).map((action, index) => {
+                const current = index === 0;
+                return (
+                  <article key={action?.id || "current"} className={current ? "action-card current" : "action-card"}>
+                    <h3>{current ? (showAction ? "Action required" : "Next action") : action?.stageLabel}</h3>
+                    <p className="next-action">{current ? (row.nextAction || action?.title || "None") : action?.title}</p>
+                    {current && reason && <p className="action-reason">{reason}</p>}
+                    {current && row.manualBlocker && row.manualBlocker !== reason && (
+                      <p className="action-reason">Note: {row.manualBlocker}</p>
+                    )}
+                    {current && row.rejectionNote && <p className="rejection-note">{row.rejectionNote}</p>}
+                    {current && row.isActive && (
+                      <p className="action-meta">
+                        <span>
+                          <span className="meta-label">Owner</span> {shownOwner}
+                          {busy && pendingAction === "assign" && (
+                            <span className="saving-note"><span className="saving-spinner" aria-hidden="true" /> Saving…</span>
+                          )}
+                        </span>
+                        {shownDue && <span><span className="meta-label">Due</span> {shownDue}</span>}
+                      </p>
+                    )}
+                    {current && row.isActive && canAssign && (
+                      <div className="coordination">
+                        <select className="filter-select" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} aria-label="Assign to" disabled={busy}>
+                          <option value="">Choose a person</option>
+                          {assignees.map((person) => (
+                            <option key={person.userId} value={person.userId}>{person.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busy || !assigneeId || Number(assigneeId) === row.ownerUserId}
+                          onClick={() => saveAssignment("assign", () => WorkflowService.Assign(row.id, Number(assigneeId), row.coordinationTaskId))}
+                        >
+                          {pendingAction === "assign" ? "Saving…" : row.ownerUserId ? "Reassign" : "Assign"}
+                        </button>
+                      </div>
+                    )}
+                    {current && waitingForMe && (
+                      <div className="coordination">
+                        <button type="button" className="btn-secondary" disabled={busy} onClick={() => saveAssignment("acknowledge", () => WorkflowService.Acknowledge(row.id, row.coordinationTaskId))}>
+                          {pendingAction === "acknowledge" ? "Saving…" : "Acknowledge"}
+                        </button>
+                        <button type="button" className="link-button" disabled={busy} onClick={() => saveAssignment("reject", () => WorkflowService.Reject(row.id, row.coordinationTaskId))}>
+                          {pendingAction === "reject" ? "Saving…" : "Reject"}
+                        </button>
+                      </div>
+                    )}
+                    {current && busy && pendingAction === "acknowledge" && (
+                      <p className="saving-note"><span className="saving-spinner" aria-hidden="true" /> Saving acknowledgement…</p>
+                    )}
+                    {current && showAction && row.isBlocked && canAssign && (
+                      <div className="coordination">
+                        <input
+                          className="form-input"
+                          value={blockerNote}
+                          onChange={(event) => setBlockerNote(event.target.value)}
+                          placeholder="Note about the shortage. This does not clear it."
+                          disabled={busy}
+                          maxLength={500}
+                        />
+                        <button type="button" className="btn-secondary" disabled={busy} onClick={() => saveAssignment("note", () => WorkflowService.SaveBlockerNote(row.id, blockerNote, row.coordinationTaskId))}>
+                          {pendingAction === "note" ? "Saving…" : "Save note"}
+                        </button>
+                      </div>
+                    )}
+                    {current && formError && <p className="rejection-note">{formError}</p>}
+                    {action?.linkPath && (
+                      <button type="button" className={current ? "btn-primary" : "btn-secondary"} onClick={(event) => onOpenPath(event, action.linkPath)}>
+                        {action.linkLabel || "Open record"}
+                      </button>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
           </section>
 
           <section className="drawer-section">
-            <h3>Workflow journey</h3>
+            <div className="section-head">
+              <h3>Workflow journey</h3>
+              <div className="view-toggle journey-switch" role="group" aria-label="Journey view">
+                <button type="button" className={journeyView === "list" ? "active" : ""} onClick={() => setJourneyView("list")}>List</button>
+                <button type="button" className={journeyView === "lanes" ? "active" : ""} onClick={() => setJourneyView("lanes")}>Side by side</button>
+              </div>
+            </div>
+            {journeyView === "lanes" ? (
+              <WorkPicture row={row} actions={actions} formatCurrency={formatCurrency} formatDate={formatDate} onOpenPath={onOpenPath} />
+            ) : (
             <ol className="journey">
               {stages.map((stage) => {
                 const bucket = records[stage.code];
@@ -1028,6 +1423,7 @@ const WorkflowDetail: React.FC<{
                 );
               })}
             </ol>
+            )}
             <p className="journey-note">
               Derived from the current source records.
               {row.documentDate ? ` Document age ${row.ageDays} days.` : ""}

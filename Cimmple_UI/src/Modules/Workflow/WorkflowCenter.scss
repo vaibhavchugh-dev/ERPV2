@@ -54,6 +54,11 @@
     }
   }
 
+  .chore-title {
+    white-space: normal;
+    text-align: left;
+  }
+
   .workflow-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -343,9 +348,43 @@
       }
     }
 
-    .btn-primary {
-      width: 100%;
-      margin-top: 0.85rem;
+    .action-row {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      overflow-x: auto;
+    }
+
+    .action-card {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: flex-start;
+      width: 18rem;
+      max-width: 85vw;
+      padding: 0.75rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.5rem;
+      background: #ffffff;
+
+      &.current {
+        border-color: #c7d2fe;
+      }
+
+      h3 {
+        margin-top: 0;
+      }
+
+      > .btn-primary,
+      > .btn-secondary {
+        width: auto;
+        margin-top: 0.75rem;
+      }
+
+      .coordination .btn-secondary {
+        margin-top: 0;
+      }
     }
 
     .coordination {
@@ -353,12 +392,14 @@
       flex-wrap: wrap;
       gap: 0.5rem;
       align-items: center;
+      width: 100%;
       margin-top: 0.75rem;
 
       .filter-select,
       .form-input {
-        flex: 1 1 10rem;
-        min-width: 0;
+        flex: 0 1 14rem;
+        width: 14rem;
+        max-width: 100%;
         margin: 0;
       }
 
@@ -399,7 +440,8 @@
     padding-top: 1rem;
     border-top: 1px solid #e5e7eb;
 
-    > h3 {
+    > h3,
+    .section-head h3 {
       margin: 0 0 0.7rem;
       font-size: 0.6875rem;
       font-weight: 700;
@@ -407,6 +449,85 @@
       text-transform: uppercase;
       color: #6b7280;
     }
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.7rem;
+
+    h3 {
+      margin: 0;
+    }
+  }
+
+  .journey-switch {
+    height: 1.75rem;
+
+    button {
+      padding: 0 0.65rem;
+      font-size: 0.75rem;
+    }
+  }
+
+  .work-lanes {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .work-lane {
+    flex: 0 0 16rem;
+    min-width: 0;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background: #f9fafb;
+
+    .lane-part,
+    .lane-status,
+    .lane-empty {
+      margin: 0.2rem 0 0;
+      color: #6b7280;
+      font-size: 0.75rem;
+    }
+
+    .record-link {
+      flex-wrap: wrap;
+    }
+  }
+
+  .order-band {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+
+    .order-band-title {
+      grid-column: 1 / -1;
+      margin: 0;
+    }
+
+    h4 {
+      margin: 0 0 0.2rem;
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+  }
+
+  .lane-empty {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.75rem;
   }
 
   .journey {
@@ -599,8 +720,39 @@
 }
 
 .slideout-overlay:has(.workflow-detail) {
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+.workflow-detail.slideout-panel {
+  width: calc(100% - 280px);
+  max-width: calc(100vw - 280px);
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: -4px 0 6px -2px rgba(0, 0, 0, 0.1);
+  animation: workflowSlideInRight 0.3s ease-out;
+}
+
+@keyframes workflowSlideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 1024px) {
+  .workflow-detail.slideout-panel {
+    width: calc(100% - 250px);
+    max-width: calc(100vw - 250px);
+  }
 }
 
 @media (max-width: 768px) {
@@ -608,21 +760,9 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .slideout-overlay:has(.workflow-detail) {
-    padding: 0;
-    align-items: stretch;
-  }
-
   .workflow-detail.slideout-panel {
     width: 100%;
-    max-width: none;
-    height: 100vh;
-    max-height: 100vh;
-    border-radius: 0;
-  }
-
-  .workflow-detail .action-panel .btn-primary {
-    width: 100%;
+    max-width: 100vw;
   }
 
   .workflow-detail-header .workflow-detail-title h2 {

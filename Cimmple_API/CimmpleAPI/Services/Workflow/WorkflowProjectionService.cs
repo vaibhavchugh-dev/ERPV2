@@ -125,7 +125,7 @@ namespace CimmpleAPI.Services.Workflow
                     g => g.Key,
                     g => g.GroupBy(i => i.Id).Select(x => x.First()).ToList());
 
-            var purchases = await LoadPurchasesAsync(tenantId, jobIds);
+            var purchases = await LoadPurchasesAsync(tenantId, jobs);
             var purchasesByJob = purchases.GroupBy(p => p.JobOrderId).ToDictionary(g => g.Key, g => g.ToList());
 
             var userIds = orders.Select(o => o.UserId)
@@ -152,8 +152,6 @@ namespace CimmpleAPI.Services.Workflow
                 var orderShipments = shipmentsByOrder.TryGetValue(order.OrderID, out var foundShipments) ? foundShipments : new List<Shipping>();
                 var orderPurchases = orderJobs
                     .SelectMany(j => purchasesByJob.TryGetValue(j.JobOrderID, out var list) ? list : Enumerable.Empty<PurchaseHit>())
-                    .GroupBy(p => p.VendorOrderId)
-                    .Select(g => g.First())
                     .ToList();
 
                 QuotationOrder? quotation = null;
@@ -534,31 +532,58 @@ namespace CimmpleAPI.Services.Workflow
             return hits;
         }
 
-        private async Task<List<PurchaseHit>> LoadPurchasesAsync(int tenantId, HashSet<int> jobIds)
+        private async Task<List<PurchaseHit>> LoadPurchasesAsync(int tenantId, List<JobOrderMaster> jobs)
         {
-            if (jobIds.Count == 0)
+            if (jobs.Count == 0)
                 return new List<PurchaseHit>();
 
-            var jobIdList = jobIds.ToList();
+            var jobById = jobs.ToDictionary(j => j.JobOrderID);
+            var jobByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var jobsByNumber = new Dictionary<int, List<int>>();
+            foreach (var job in jobs)
+            {
+                var raw = job.JobOrderNumber > 0 ? job.JobOrderNumber : job.JobOrderID;
+                RememberJobName(jobByName, Doc("JO#", raw), job.JobOrderID);
+                RememberJobName(jobByName, job.JobNumber, job.JobOrderID);
+                if (!jobsByNumber.TryGetValue(raw, out var sameNumber))
+                    jobsByNumber[raw] = sameNumber = new List<int>();
+                if (!sameNumber.Contains(job.JobOrderID))
+                    sameNumber.Add(job.JobOrderID);
+            }
+
+            var jobIdList = jobById.Keys.ToList();
+            var numberList = jobsByNumber.Keys.ToList();
             var lines = await (
                 from d in _context.VendorOrderDetails.AsNoTracking()
                 join v in _context.VendorOrders.AsNoTracking() on d.OrderID equals v.OrderID
-                where v.Tenantid == tenantId && jobIdList.Contains(d.JobId)
+                where v.Tenantid == tenantId
+                    && (jobIdList.Contains(d.JobId)
+                        || numberList.Contains(d.JobId)
+                        || (d.JobNumber != null && d.JobNumber.Contains("JO#")))
                 select new
                 {
                     d.ID,
                     d.OrderID,
                     d.JobId,
+                    d.JobNumber,
                     d.QtyOrdered,
                     v.PONumber,
                     Status = v.Status ?? "",
                     VendorName = v.VendorName ?? "",
                 }).ToListAsync();
-            lines = lines.Where(l => jobIds.Contains(l.JobId)).ToList();
-            if (lines.Count == 0)
+
+            var linked = new List<(int Id, int OrderId, int JobOrderId, int QtyOrdered, int PONumber, string Status, string VendorName)>();
+            foreach (var line in lines)
+            {
+                foreach (var jobOrderId in ResolvePurchaseJobs(line.JobId, line.JobNumber, jobById, jobByName, jobsByNumber))
+                {
+                    linked.Add((line.ID, line.OrderID, jobOrderId, line.QtyOrdered, line.PONumber, line.Status, line.VendorName));
+                }
+            }
+            if (linked.Count == 0)
                 return new List<PurchaseHit>();
 
-            var detailIds = lines.Select(l => l.ID).ToList();
+            var detailIds = linked.Select(l => l.Id).Distinct().ToList();
             var receipts = await _context.VendorReceiving.AsNoTracking()
                 .Where(r => r.Tenantid == tenantId && detailIds.Contains(r.VendorOrderDetailID))
                 .Select(r => new { r.VendorOrderDetailID, r.ReceivedQty })
@@ -567,19 +592,52 @@ namespace CimmpleAPI.Services.Workflow
                 .GroupBy(r => r.VendorOrderDetailID)
                 .ToDictionary(g => g.Key, g => g.Sum(x => x.ReceivedQty));
 
-            return lines
-                .GroupBy(l => new { l.OrderID, l.JobId })
+            return linked
+                .GroupBy(l => new { l.OrderId, l.JobOrderId })
                 .Select(g => new PurchaseHit
                 {
-                    VendorOrderId = g.Key.OrderID,
-                    JobOrderId = g.Key.JobId,
-                    Number = Doc("VO#", g.First().PONumber > 0 ? g.First().PONumber : g.Key.OrderID),
+                    VendorOrderId = g.Key.OrderId,
+                    JobOrderId = g.Key.JobOrderId,
+                    Number = Doc("VO#", g.First().PONumber > 0 ? g.First().PONumber : g.Key.OrderId),
                     VendorName = g.First().VendorName,
                     Status = g.First().Status,
+                    DetailKey = string.Join(",", g.Select(x => x.Id).Distinct().OrderBy(id => id)),
                     QtyOrdered = g.Sum(x => x.QtyOrdered),
-                    QtyReceived = g.Sum(x => receivedByDetail.TryGetValue(x.ID, out var qty) ? qty : 0),
+                    QtyReceived = g.Sum(x => receivedByDetail.TryGetValue(x.Id, out var qty) ? qty : 0),
                 })
                 .ToList();
+        }
+
+        private static void RememberJobName(Dictionary<string, int> jobByName, string? name, int jobOrderId)
+        {
+            var token = (name ?? "").Trim();
+            if (token.Length > 0)
+                jobByName[token] = jobOrderId;
+        }
+
+        private static IEnumerable<int> ResolvePurchaseJobs(
+            int jobId,
+            string? jobNumber,
+            Dictionary<int, JobOrderMaster> jobById,
+            Dictionary<string, int> jobByName,
+            Dictionary<int, List<int>> jobsByNumber)
+        {
+            var found = new HashSet<int>();
+            if (jobId > 0 && jobById.ContainsKey(jobId))
+                found.Add(jobId);
+            else if (jobId > 0 && jobsByNumber.TryGetValue(jobId, out var sameNumber) && sameNumber.Count == 1)
+                found.Add(sameNumber[0]);
+
+            if (!string.IsNullOrWhiteSpace(jobNumber))
+            {
+                foreach (var token in jobNumber.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (jobByName.TryGetValue(token, out var named))
+                        found.Add(named);
+                }
+            }
+
+            return found;
         }
 
         private static void AddOrderActions(
@@ -707,9 +765,8 @@ namespace CimmpleAPI.Services.Workflow
 
             if (evaluation.PlanningGap)
             {
+                // A draft job is already linked to its line. Do not ask for a new job on another part.
                 var missing = lines.Where(l => !jobs.Any(j => j.CustomerOrderDetailID == l.ID)).ToList();
-                if (missing.Count == 0)
-                    missing = lines.Take(1).ToList();
                 foreach (var line in missing)
                 {
                     actions.Add(MakeAction(
@@ -917,6 +974,7 @@ namespace CimmpleAPI.Services.Workflow
         private static WorkflowNcrLinkDto ToNcr(NcrHit ncr) => new()
         {
             NcrId = ncr.NcrId,
+            JobOrderId = ncr.JobOrderId,
             Number = ncr.Number,
             Title = ncr.Title,
             Status = ncr.Status,
@@ -927,6 +985,8 @@ namespace CimmpleAPI.Services.Workflow
         private static WorkflowPurchaseLinkDto ToPurchase(PurchaseHit hit) => new()
         {
             VendorOrderId = hit.VendorOrderId,
+            JobOrderId = hit.JobOrderId,
+            DetailKey = hit.DetailKey,
             Number = hit.Number,
             VendorName = hit.VendorName,
             Status = hit.Status,
@@ -1101,6 +1161,7 @@ namespace CimmpleAPI.Services.Workflow
         {
             public int VendorOrderId { get; set; }
             public int JobOrderId { get; set; }
+            public string DetailKey { get; set; } = "";
             public string Number { get; set; } = "";
             public string? VendorName { get; set; }
             public string? Status { get; set; }
