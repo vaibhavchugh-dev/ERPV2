@@ -37,6 +37,8 @@ namespace CimmpleAPI.Services.Auth
         public const string Download = "Download";
         public const string Manage = "Manage";
         public const string CreateJob = "CreateJob";
+        public const string Assign = "Assign";
+        public const string Acknowledge = "Acknowledge";
         public const string Reconcile = "Reconcile";
         public const string Close = "Close";
         public const string Reopen = "Reopen";
@@ -100,7 +102,7 @@ namespace CimmpleAPI.Services.Auth
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
                 ["/home"] = Array.Empty<string>(),
-                ["/workflow"] = Array.Empty<string>(),
+                ["/workflow"] = new[] { Assign, Acknowledge },
                 ["/quotations/customer"] = new[] { Add, Edit, Delete, Convert, Send, Print, Duplicate },
                 ["/orders/customer"] = new[] { Add, Edit, Delete, Ship, Invoice, Send, Print, Duplicate, CreateJob },
                 ["/orders/customer-shipments"] = new[] { Print, Send, Delete },
@@ -185,6 +187,8 @@ namespace CimmpleAPI.Services.Auth
             var p = path ?? "";
 
             if (Contains(p, "CreateJobOrderFromOrderDetail")) return CreateJob;
+            if (Contains(p, "/Workflow/Assign") || Contains(p, "/Workflow/ResolveBlocker")) return Assign;
+            if (Contains(p, "/Workflow/Acknowledge") || Contains(p, "/Workflow/Reject")) return Acknowledge;
             if (Contains(p, "Convert")) return Convert;
             if (Contains(p, "Compare")) return Compare;
             if (Contains(p, "Duplicate")) return Duplicate;

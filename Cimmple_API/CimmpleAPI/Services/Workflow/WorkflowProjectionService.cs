@@ -13,7 +13,7 @@ namespace CimmpleAPI.Services.Workflow
     public sealed class WorkflowProjectionService
     {
         public const string Limitation =
-            "Stages and counts are calculated from quotations, orders, jobs, inventory, shipments, non-conformance reports, and invoices. Amounts stay on the invoice. A workflow row, its tasks, and an event history are stored and refreshed when those records are saved. Assignment is not on this page yet.";
+            "Stages and counts are calculated from quotations, orders, jobs, inventory, shipments, non-conformance reports, and invoices. Amounts stay on the invoice. A workflow row and its tasks are refreshed when those records are saved. Assignment covers the current coordination task only. A blocker note does not clear a material shortage.";
 
         private readonly CimmpleDbContext _context;
 
@@ -44,6 +44,11 @@ namespace CimmpleAPI.Services.Workflow
             var detailsByOrder = details
                 .GroupBy(d => d.OrderID)
                 .ToDictionary(g => g.Key, g => g.ToList());
+            // Order lines keep a shipped/invoiced copy that can stay at 0 after the documents exist.
+            // Customer orders total the shipment and invoice lines instead, and this page does the same.
+            var detailIds = details.Select(d => d.ID).ToList();
+            var shippedByDetail = await LoadShippedQtyByDetailAsync(tenantId, detailIds);
+            var invoicedByDetail = await LoadInvoicedQtyByDetailAsync(tenantId, detailIds);
 
             var jobs = orderIdList.Count == 0
                 ? new List<JobOrderMaster>()
@@ -165,8 +170,8 @@ namespace CimmpleAPI.Services.Workflow
                     Lines = lines.Select(line => new WorkflowLineFacts
                     {
                         QtyOrdered = line.QtyOrdered,
-                        ShippedQty = line.ShippedQty,
-                        InvoicedQty = line.InvoicedQty,
+                        ShippedQty = Quantity(shippedByDetail, line.ID, line.ShippedQty),
+                        InvoicedQty = Quantity(invoicedByDetail, line.ID, line.InvoicedQty),
                         DueDate = RealDate(line.DueDate),
                         HasJob = orderJobs.Any(j => j.CustomerOrderDetailID == line.ID),
                     }).ToList(),
@@ -205,7 +210,7 @@ namespace CimmpleAPI.Services.Workflow
                     IsCancelled = evaluation.IsCancelled,
                     CreatedByName = UserName(users, order.UserId),
                     DocumentDate = DateText(RealDate(order.OrderDate)),
-                    DueDate = DateText(EarliestDue(lines, orderJobs, invoiceLinks)),
+                    DueDate = DateText(EarliestDue(lines, shippedByDetail, orderJobs, invoiceLinks)),
                     AgeDays = Age(RealDate(order.OrderDate), asOf),
                     BlockerReason = evaluation.BlockerReason,
                     NextAction = evaluation.NextAction,
@@ -938,12 +943,51 @@ namespace CimmpleAPI.Services.Workflow
             State = stage.State,
         };
 
+        private async Task<Dictionary<int, int>> LoadShippedQtyByDetailAsync(int tenantId, List<int> detailIds)
+        {
+            if (detailIds.Count == 0)
+                return new Dictionary<int, int>();
+
+            var rows = await (
+                from sd in _context.ShippingDetails.AsNoTracking()
+                join s in _context.Shipping.AsNoTracking() on sd.ShipmentId equals s.Id
+                where sd.OrderDetailID != null
+                    && detailIds.Contains(sd.OrderDetailID.Value)
+                    && s.TenantId == tenantId
+                group sd by sd.OrderDetailID!.Value into g
+                select new { DetailId = g.Key, Qty = g.Sum(x => x.ShippedQty) }
+            ).ToListAsync();
+            return rows.ToDictionary(r => r.DetailId, r => r.Qty);
+        }
+
+        private async Task<Dictionary<int, int>> LoadInvoicedQtyByDetailAsync(int tenantId, List<int> detailIds)
+        {
+            if (detailIds.Count == 0)
+                return new Dictionary<int, int>();
+
+            var rows = await (
+                from line in _context.InvoiceDetail.AsNoTracking()
+                join invoice in _context.InvoiceMaster.AsNoTracking() on line.InvoiceId equals invoice.Id
+                where line.OrderDetailID != null
+                    && detailIds.Contains(line.OrderDetailID.Value)
+                    && invoice.TenantId == tenantId
+                    && !invoice.IsVoided
+                group line by line.OrderDetailID!.Value into g
+                select new { DetailId = g.Key, Qty = g.Sum(x => x.QtyInvoiced) }
+            ).ToListAsync();
+            return rows.ToDictionary(r => r.DetailId, r => r.Qty);
+        }
+
+        private static int Quantity(IReadOnlyDictionary<int, int> totals, int detailId, int stored) =>
+            totals.TryGetValue(detailId, out var total) ? total : stored;
+
         private static DateTime? EarliestDue(
             List<CustomerOrderDetails> lines,
+            IReadOnlyDictionary<int, int> shippedByDetail,
             List<JobOrderMaster> jobs,
             List<WorkflowInvoiceLinkDto> invoices)
         {
-            var dates = lines.Where(l => l.QtyOrdered > l.ShippedQty).Select(l => RealDate(l.DueDate))
+            var dates = lines.Where(l => l.QtyOrdered > Quantity(shippedByDetail, l.ID, l.ShippedQty)).Select(l => RealDate(l.DueDate))
                 .Concat(jobs.Where(j => !WorkflowStageRules.JobIgnoresMaterialShortage(j.Status)).Select(j => RealDate(j.DueDate)))
                 .Concat(invoices.Where(i => i.Status != "Paid" && i.Status != "Void").Select(i => ParseDate(i.DueDate)));
             var real = dates.Where(d => d.HasValue).Select(d => d!.Value).ToList();

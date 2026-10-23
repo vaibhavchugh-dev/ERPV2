@@ -40,6 +40,19 @@ namespace CimmpleAPI.Services.Workflow
         public const string EventTaskOpened = "TaskOpened";
         public const string EventTaskCompleted = "TaskCompleted";
         public const string EventTaskReopened = "TaskReopened";
+        public const string EventAssigned = "Assigned";
+        public const string EventAcknowledged = "Acknowledged";
+        public const string EventRejected = "Rejected";
+        public const string EventBlockerNoted = "BlockerNoted";
+        public const string EventBecameBlocked = "BecameBlocked";
+        public const string EventBlockerCleared = "BlockerCleared";
+        public const string EventBecameOverdue = "BecameOverdue";
+        public const string EventOverdueCleared = "OverdueCleared";
+
+        public const string HandoffPending = "Pending";
+        public const string HandoffAcknowledged = "Acknowledged";
+        public const string HandoffRejected = "Rejected";
+        public const string HandoffSuperseded = "Superseded";
 
         public static string TaskTypeFor(string actionKind) => actionKind switch
         {
@@ -238,6 +251,130 @@ namespace CimmpleAPI.Services.Workflow
             return changes;
         }
 
+        /// <summary>
+        /// A notice is sent only when a workflow becomes blocked or overdue.
+        /// Staying blocked or overdue does not send another notice.
+        /// </summary>
+        public static List<AttentionNotice> PlanAttentionNotices(bool wasBlocked, bool nowBlocked, bool wasOverdue, bool nowOverdue)
+        {
+            var notices = new List<AttentionNotice>();
+            if (nowBlocked && !wasBlocked)
+                notices.Add(new AttentionNotice(EventBecameBlocked, "Material is short.", true));
+            else if (wasBlocked && !nowBlocked)
+                notices.Add(new AttentionNotice(EventBlockerCleared, "The material shortage has cleared.", false));
+
+            if (nowOverdue && !wasOverdue)
+                notices.Add(new AttentionNotice(EventBecameOverdue, "A due date has been missed.", true));
+            else if (wasOverdue && !nowOverdue)
+                notices.Add(new AttentionNotice(EventOverdueCleared, "The due date is no longer missed.", false));
+            return notices;
+        }
+
+        public static bool WasMarkedOverdue(string? latestOverdueEventType) =>
+            latestOverdueEventType == EventBecameOverdue;
+
+        public static string PersonName(string? first, string? last, string? userName)
+        {
+            var name = string.Join(" ", new[] { first, last }.Where(s => !string.IsNullOrWhiteSpace(s))).Trim();
+            if (name.Length > 0)
+                return name;
+            return string.IsNullOrWhiteSpace(userName) ? "" : userName.Trim();
+        }
+
+        /// <summary>
+        /// A person can take work at a location when that is their usual location,
+        /// they are mapped to it, or they can work at every location.
+        /// A record with no location does not filter the list.
+        /// </summary>
+        public static bool PersonCoversLocation(int? defaultLocationId, bool canAccessAllLocations, bool mappedToLocation, int locationId) =>
+            locationId <= 0
+            || canAccessAllLocations
+            || defaultLocationId == locationId
+            || mappedToLocation;
+
+        public static AssignmentDecision PlanAssign(int? currentOwner, int assigneeId, string assigneeName)
+        {
+            if (assigneeId <= 0 || string.IsNullOrWhiteSpace(assigneeName))
+                return AssignmentDecision.Fail("Choose a person from this company.");
+            if (currentOwner == assigneeId)
+                return AssignmentDecision.Fail("This action is already assigned to that person.");
+            return new AssignmentDecision
+            {
+                Ok = true,
+                OwnerUserId = assigneeId,
+                SupersedePending = true,
+                NewFromUserId = currentOwner,
+                NewToUserId = assigneeId,
+                NewHandoffStatus = HandoffPending,
+                EventType = EventAssigned,
+                EventSummary = "Assigned to " + assigneeName.Trim() + ".",
+            };
+        }
+
+        public static AssignmentDecision PlanAcknowledge(int? currentOwner, int actorId, bool pendingForOwner)
+        {
+            if (currentOwner is not > 0)
+                return AssignmentDecision.Fail("Assign someone before this can be acknowledged.");
+            if (actorId != currentOwner)
+                return AssignmentDecision.Fail("Only the assigned person can acknowledge.");
+            if (!pendingForOwner)
+                return AssignmentDecision.Fail("There is no assignment waiting for acknowledgement.");
+            return new AssignmentDecision
+            {
+                Ok = true,
+                OwnerUserId = currentOwner,
+                UpdatedHandoffStatus = HandoffAcknowledged,
+                EventType = EventAcknowledged,
+                EventSummary = "Assignment acknowledged.",
+            };
+        }
+
+        public static AssignmentDecision PlanReject(int? currentOwner, int actorId, int? previousOwner, bool pendingForOwner, string previousName)
+        {
+            if (currentOwner is not > 0)
+                return AssignmentDecision.Fail("There is nobody assigned to reject this.");
+            if (actorId != currentOwner)
+                return AssignmentDecision.Fail("Only the assigned person can reject.");
+            if (!pendingForOwner)
+                return AssignmentDecision.Fail("There is no assignment waiting to be rejected.");
+            var returnedTo = string.IsNullOrWhiteSpace(previousName) ? "Unassigned" : previousName.Trim();
+            return new AssignmentDecision
+            {
+                Ok = true,
+                OwnerUserId = previousOwner is > 0 ? previousOwner : null,
+                UpdatedHandoffStatus = HandoffRejected,
+                EventType = EventRejected,
+                EventSummary = "Assignment rejected. Returned to " + returnedTo + ".",
+            };
+        }
+
+        public static AssignmentDecision PlanBlockerNote(string? note)
+        {
+            var text = (note ?? "").Trim();
+            if (text.Length > 500)
+                return AssignmentDecision.Fail("Keep the note under 500 characters.");
+            if (text.Length == 0)
+            {
+                return new AssignmentDecision
+                {
+                    Ok = true,
+                    Blocker = null,
+                    BlockerIsManual = false,
+                    EventType = EventBlockerNoted,
+                    EventSummary = "Blocker note cleared.",
+                };
+            }
+
+            return new AssignmentDecision
+            {
+                Ok = true,
+                Blocker = text,
+                BlockerIsManual = true,
+                EventType = EventBlockerNoted,
+                EventSummary = "Blocker note saved.",
+            };
+        }
+
         private static string Key(string sourceType, int sourceId, string taskType) =>
             sourceType + "|" + sourceId.ToString(CultureInfo.InvariantCulture) + "|" + taskType;
 
@@ -279,6 +416,20 @@ namespace CimmpleAPI.Services.Workflow
         public string NextAction { get; init; } = "";
     }
 
+    public sealed class AttentionNotice
+    {
+        public AttentionNotice(string eventType, string summary, bool notify)
+        {
+            EventType = eventType;
+            Summary = summary;
+            Notify = notify;
+        }
+
+        public string EventType { get; }
+        public string Summary { get; }
+        public bool Notify { get; }
+    }
+
     public sealed class StoredTaskState
     {
         public string TaskType { get; init; } = "";
@@ -303,6 +454,24 @@ namespace CimmpleAPI.Services.Workflow
         public string StageCode { get; init; } = "";
         public string? EventType { get; init; }
         public string? EventSummary { get; init; }
+    }
+
+    public sealed class AssignmentDecision
+    {
+        public bool Ok { get; init; }
+        public string? Error { get; init; }
+        public int? OwnerUserId { get; init; }
+        public bool SupersedePending { get; init; }
+        public int? NewFromUserId { get; init; }
+        public int? NewToUserId { get; init; }
+        public string? NewHandoffStatus { get; init; }
+        public string? UpdatedHandoffStatus { get; init; }
+        public string? EventType { get; init; }
+        public string EventSummary { get; init; } = "";
+        public string? Blocker { get; init; }
+        public bool? BlockerIsManual { get; init; }
+
+        public static AssignmentDecision Fail(string error) => new() { Ok = false, Error = error };
     }
 
     public sealed class TaskChange

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { QuotationService, QuotationMaster } from "../../Common/Services/QuotationService";
@@ -24,6 +24,7 @@ const CustomerQuotations: React.FC = () => {
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const returnToRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadQuotations();
@@ -36,10 +37,11 @@ const CustomerQuotations: React.FC = () => {
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedQuotationId(id);
         setShowSlideout(true);
-        // Clean up URL
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
   }, [location.search, history, location.pathname]);
@@ -105,6 +107,11 @@ const CustomerQuotations: React.FC = () => {
     setSelectedQuotationId(0);
     if (refreshList) {
       loadQuotations();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

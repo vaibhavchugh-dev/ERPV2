@@ -86,6 +86,11 @@ export interface WorkflowRow {
   isComplete: boolean;
   isCancelled: boolean;
   ownerLabel: string;
+  ownerUserId?: number | null;
+  coordinationTaskId?: number | null;
+  handoffStatus?: string | null;
+  rejectionNote?: string | null;
+  manualBlocker?: string | null;
   createdByName?: string | null;
   documentDate?: string | null;
   dueDate?: string | null;
@@ -204,6 +209,16 @@ export interface WorkflowOverview {
   collection: WorkflowCollectionCard[];
 }
 
+export interface WorkflowAssignee {
+  userId: number;
+  name: string;
+}
+
+const tenantId = () => {
+  const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+  return storage?.tenantID || 0;
+};
+
 export class WorkflowService {
   public static GetOverview = async (locationId?: number): Promise<WorkflowOverview> => {
     const storage = JSON.parse(localStorage.getItem("storage") || "{}");
@@ -215,5 +230,28 @@ export class WorkflowService {
       },
     });
     return response.data.result as WorkflowOverview;
+  };
+
+  public static GetAssignees = async (workflowId: string): Promise<WorkflowAssignee[]> => {
+    const response = await Instense.get("/Workflow/GetAssignees", {
+      params: { tenantId: tenantId(), workflowId },
+    });
+    return (response.data.result || []) as WorkflowAssignee[];
+  };
+
+  public static Assign = async (workflowId: string, assigneeUserId: number, coordinationTaskId?: number | null): Promise<void> => {
+    await Instense.post("/Workflow/Assign", { workflowId, assigneeUserId, coordinationTaskId, tenantId: tenantId() });
+  };
+
+  public static Acknowledge = async (workflowId: string, coordinationTaskId?: number | null): Promise<void> => {
+    await Instense.post("/Workflow/Acknowledge", { workflowId, coordinationTaskId, tenantId: tenantId() });
+  };
+
+  public static Reject = async (workflowId: string, coordinationTaskId?: number | null): Promise<void> => {
+    await Instense.post("/Workflow/Reject", { workflowId, coordinationTaskId, tenantId: tenantId() });
+  };
+
+  public static SaveBlockerNote = async (workflowId: string, note: string, coordinationTaskId?: number | null): Promise<void> => {
+    await Instense.post("/Workflow/ResolveBlocker", { workflowId, note, coordinationTaskId, tenantId: tenantId() });
   };
 }

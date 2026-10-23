@@ -1,6 +1,7 @@
 using System.Globalization;
 using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
+using CimmpleAPI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -15,15 +16,18 @@ namespace CimmpleAPI.Services.Workflow
     {
         private readonly CimmpleDbContext _context;
         private readonly WorkflowProjectionService _projection;
+        private readonly NotificationService _notifications;
         private readonly ILogger<WorkflowSyncService> _logger;
 
         public WorkflowSyncService(
             CimmpleDbContext context,
             WorkflowProjectionService projection,
+            NotificationService notifications,
             ILogger<WorkflowSyncService> logger)
         {
             _context = context;
             _projection = projection;
+            _notifications = notifications;
             _logger = logger;
         }
 
@@ -101,6 +105,7 @@ namespace CimmpleAPI.Services.Workflow
             var tasks = instanceIds.Count == 0
                 ? new List<WorkflowTask>()
                 : await _context.WorkflowTasks.Where(t => instanceIds.Contains(t.WorkflowInstanceId)).ToListAsync();
+            var wasOverdue = await LoadOverdueMarksAsync(instanceIds);
 
             foreach (var instance in instances.Where(i => i.Status == WorkflowCoordination.Closed))
             {
@@ -128,8 +133,33 @@ namespace CimmpleAPI.Services.Workflow
                 var desired = WorkflowCoordination.PlanTasks(
                     WorkflowCoordination.SeedsFrom(overview.Actions.Where(a => a.WorkflowId == row.Id)));
                 var owned = tasks.Where(t => t.WorkflowInstanceId == instance.Id).ToList();
+                var hadShortage = owned.Any(t => t.Status == WorkflowCoordination.Open && t.TaskType == WorkflowCoordination.TaskMaterialShortage);
+                var owners = owned
+                    .Where(t => t.Status == WorkflowCoordination.Open && t.OwnerUserId is > 0)
+                    .Select(t => t.OwnerUserId!.Value)
+                    .ToHashSet();
                 var changes = WorkflowCoordination.ReconcileTasks(owned.Select(ToState).ToList(), desired);
                 ApplyTaskChanges(tenantId, instance, owned, tasks, changes, actorUserId, now);
+                var current = PickCurrent(row, overview.Actions, owned);
+                if (current?.OwnerUserId is > 0)
+                    owners.Add(current.OwnerUserId.Value);
+                var notices = WorkflowCoordination.PlanAttentionNotices(
+                    hadShortage,
+                    row.IsActive && row.IsBlocked,
+                    wasOverdue.TryGetValue(instance.Id, out var marked) && marked,
+                    row.IsActive && row.IsOverdue);
+                foreach (var notice in notices)
+                {
+                    if (notice.Notify && owners.Count == 0)
+                        continue;
+                    if (notice.Notify && !await TryNotifyAttentionAsync(tenantId, actorUserId, row, owners, notice))
+                        continue;
+                    pendingEvents.Add((instance, notice.EventType, notice.Summary));
+                    if (notice.EventType == WorkflowCoordination.EventBecameOverdue)
+                        wasOverdue[instance.Id] = true;
+                    else if (notice.EventType == WorkflowCoordination.EventOverdueCleared)
+                        wasOverdue[instance.Id] = false;
+                }
                 row.InstanceId = instance.Id;
                 row.InstanceStatus = instance.Status;
             }
@@ -261,6 +291,46 @@ namespace CimmpleAPI.Services.Workflow
 
         private async Task RefreshScopedAsync(int tenantId, int? orderId, int? quotationId, int? actorUserId)
         {
+            await ProjectAndSyncAsync(tenantId, orderId, quotationId, actorUserId);
+        }
+
+        /// <summary>
+        /// Refreshes one order or quotation and returns the overview already loaded for that refresh.
+        /// </summary>
+        public async Task<WorkflowOverviewDto?> RefreshAndReturnAsync(int tenantId, int? orderId, int? quotationId, int? actorUserId)
+        {
+            if (tenantId <= 0)
+                return null;
+            try
+            {
+                if (quotationId is > 0 && orderId is not > 0)
+                {
+                    var converted = await _context.QuotationOrder.AsNoTracking()
+                        .Where(q => q.Tenantid == tenantId && q.OrderID == quotationId)
+                        .Select(q => q.convertedOrderId)
+                        .FirstOrDefaultAsync();
+                    if (converted is > 0)
+                        return await ProjectAndSyncAsync(tenantId, converted, null, actorUserId);
+
+                    var linkedOrderId = await _context.CustomerOrder.AsNoTracking()
+                        .Where(o => o.Tenantid == tenantId && o.quotationId == quotationId)
+                        .Select(o => (int?)o.OrderID)
+                        .FirstOrDefaultAsync();
+                    if (linkedOrderId is > 0)
+                        return await ProjectAndSyncAsync(tenantId, linkedOrderId, null, actorUserId);
+                }
+
+                return await ProjectAndSyncAsync(tenantId, orderId, quotationId, actorUserId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Workflow refresh failed for tenant {TenantId}", tenantId);
+                return null;
+            }
+        }
+
+        private async Task<WorkflowOverviewDto> ProjectAndSyncAsync(int tenantId, int? orderId, int? quotationId, int? actorUserId)
+        {
             var overview = await _projection.GetOverviewAsync(
                 tenantId,
                 null,
@@ -269,6 +339,65 @@ namespace CimmpleAPI.Services.Workflow
                 orderId,
                 quotationId);
             await SyncOverviewAsync(tenantId, overview, actorUserId);
+            return overview;
+        }
+
+        private async Task<Dictionary<int, bool>> LoadOverdueMarksAsync(List<int> instanceIds)
+        {
+            var marks = new Dictionary<int, bool>();
+            if (instanceIds.Count == 0)
+                return marks;
+            var events = await _context.WorkflowEvents.AsNoTracking()
+                .Where(e => instanceIds.Contains(e.WorkflowInstanceId)
+                    && (e.EventType == WorkflowCoordination.EventBecameOverdue || e.EventType == WorkflowCoordination.EventOverdueCleared))
+                .Select(e => new { e.WorkflowInstanceId, e.Id, e.EventType })
+                .ToListAsync();
+            foreach (var group in events.GroupBy(e => e.WorkflowInstanceId))
+            {
+                var latest = group.OrderByDescending(e => e.Id).First();
+                marks[group.Key] = WorkflowCoordination.WasMarkedOverdue(latest.EventType);
+            }
+            return marks;
+        }
+
+        private async Task<bool> TryNotifyAttentionAsync(
+            int tenantId,
+            int? actorUserId,
+            WorkflowRowDto row,
+            HashSet<int> owners,
+            AttentionNotice notice)
+        {
+            var blocked = notice.EventType == WorkflowCoordination.EventBecameBlocked;
+            var reference = string.IsNullOrWhiteSpace(row.Reference) ? "A workflow" : row.Reference.Trim();
+            var customer = string.IsNullOrWhiteSpace(row.CustomerName) ? "" : " for " + row.CustomerName.Trim();
+            var sourceId = row.CustomerOrderId is > 0 ? row.CustomerOrderId.Value : row.QuotationId.GetValueOrDefault();
+            try
+            {
+                foreach (var owner in owners)
+                {
+                    await _notifications.CreateAsync(new NotificationCreateRequest
+                    {
+                        TenantId = tenantId,
+                        RecipientUserId = owner,
+                        ActorUserId = actorUserId is > 0 ? actorUserId : null,
+                        Type = blocked ? NotificationService.TypeWorkflowBlocked : NotificationService.TypeWorkflowOverdue,
+                        Title = reference + (blocked ? " is blocked" : " is overdue"),
+                        Body = blocked
+                            ? reference + customer + " is blocked. Material is short."
+                            : reference + customer + " has a missed due date.",
+                        EntityType = row.CustomerOrderId is > 0 ? "CustomerOrder" : "Quotation",
+                        EntityId = sourceId > 0 ? sourceId : null,
+                        LinkPath = "/workflow?selected=" + row.Id,
+                        SendEmail = false,
+                    });
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Workflow attention notice failed for {WorkflowId}", row.Id);
+                return false;
+            }
         }
 
         private async Task Guard(int tenantId, Func<Task> action)
@@ -417,6 +546,40 @@ namespace CimmpleAPI.Services.Workflow
                     .ThenByDescending(e => e.Id)
                     .ToListAsync();
 
+            var tenantId = instances.FirstOrDefault()?.TenantId ?? tasks.FirstOrDefault()?.TenantId ?? 0;
+            var taskIds = tasks.Where(t => t.Id > 0).Select(t => t.Id).Distinct().ToList();
+            var handoffs = taskIds.Count == 0
+                ? new List<WorkflowHandoff>()
+                : await _context.WorkflowHandoffs.AsNoTracking()
+                    .Where(h => taskIds.Contains(h.WorkflowTaskId))
+                    .ToListAsync();
+            var userIds = tasks.Select(t => t.OwnerUserId)
+                .Concat(handoffs.Select(h => h.FromUserId))
+                .Concat(handoffs.Select(h => h.ToUserId))
+                .Where(id => id is > 0)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+            var names = new Dictionary<int, string>();
+            if (tenantId > 0 && userIds.Count > 0)
+            {
+                var people = await _context.UserDetails.AsNoTracking()
+                    .Where(u => u.TenantID == tenantId && userIds.Contains(u.User_UniqueID))
+                    .Select(u => new { u.User_UniqueID, u.FirstName, u.LastName, u.UserName })
+                    .ToListAsync();
+                foreach (var person in people)
+                {
+                    var name = WorkflowCoordination.PersonName(person.FirstName, person.LastName, person.UserName);
+                    if (name.Length > 0)
+                        names[person.User_UniqueID] = name;
+                }
+            }
+
+            string Person(int? userId) =>
+                userId is > 0 && names.TryGetValue(userId.Value, out var name) && name.Length > 0
+                    ? name
+                    : userId is > 0 ? "User " + userId.Value : "Unassigned";
+
             foreach (var row in overview.Workflows)
             {
                 var instance = FindInstance(instances, row);
@@ -438,12 +601,36 @@ namespace CimmpleAPI.Services.Workflow
                         Status = t.Status,
                         Priority = t.Priority,
                         OwnerUserId = t.OwnerUserId,
-                        OwnerLabel = t.OwnerUserId is > 0 ? "User " + t.OwnerUserId.Value : "Unassigned",
+                        OwnerLabel = Person(t.OwnerUserId),
                         DueDate = t.DueDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                         Blocker = t.Blocker,
                         NextAction = t.NextAction,
                     })
                     .ToList();
+                var owned = tasks.Where(t => t.WorkflowInstanceId == instance.Id).ToList();
+                var current = PickCurrent(row, overview.Actions, owned);
+                if (current != null)
+                {
+                    row.CoordinationTaskId = current.Id;
+                    row.OwnerUserId = current.OwnerUserId;
+                    row.OwnerLabel = Person(current.OwnerUserId);
+                    if (current.BlockerIsManual && !string.IsNullOrWhiteSpace(current.Blocker))
+                        row.ManualBlocker = current.Blocker;
+                    if (!string.IsNullOrWhiteSpace(row.OwnerLabel) && row.OwnerLabel != "Unassigned")
+                        row.SearchText = (row.SearchText + " " + row.OwnerLabel).Trim();
+                    var taskHandoffs = handoffs.Where(h => h.WorkflowTaskId == current.Id).OrderByDescending(h => h.Id).ToList();
+                    var latest = taskHandoffs.FirstOrDefault();
+                    var latestRejected = taskHandoffs.FirstOrDefault(h => h.Status == WorkflowCoordination.HandoffRejected);
+                    var latestAcknowledged = taskHandoffs.FirstOrDefault(h => h.Status == WorkflowCoordination.HandoffAcknowledged);
+                    if (latestRejected != null && (latestAcknowledged == null || latestRejected.Id > latestAcknowledged.Id))
+                        row.RejectionNote = "Assignment rejected. Returned to " + Person(latestRejected.FromUserId) + ".";
+                    if (latest != null
+                        && latest.ToUserId == current.OwnerUserId
+                        && (latest.Status == WorkflowCoordination.HandoffPending || latest.Status == WorkflowCoordination.HandoffAcknowledged))
+                    {
+                        row.HandoffStatus = latest.Status;
+                    }
+                }
                 row.RecentEvents = events
                     .Where(e => e.WorkflowInstanceId == instance.Id)
                     .Take(8)
@@ -455,6 +642,25 @@ namespace CimmpleAPI.Services.Workflow
                     })
                     .ToList();
             }
+        }
+
+        private static WorkflowTask? PickCurrent(WorkflowRowDto row, List<WorkflowActionDto> actions, List<WorkflowTask> tasks)
+        {
+            var open = tasks.Where(t => t.Status == WorkflowCoordination.Open).ToList();
+            var linked = actions.Where(a => a.WorkflowId == row.Id && !string.IsNullOrWhiteSpace(a.LinkPath)).ToList();
+            var matched = linked.Where(a => a.StageCode == row.PrincipalStage).ToList();
+            var pool = matched.Count > 0 ? matched : linked;
+            var primary = pool.OrderBy(a => a.Rank).FirstOrDefault();
+            if (primary != null)
+            {
+                var type = WorkflowCoordination.TaskTypeFor(primary.Kind);
+                var exact = open.FirstOrDefault(t =>
+                    t.TaskType == type && t.SourceType == (primary.SourceType ?? "") && t.SourceId == primary.SourceId);
+                if (exact != null)
+                    return exact;
+            }
+
+            return open.FirstOrDefault(t => t.StageCode == row.PrincipalStage) ?? open.FirstOrDefault();
         }
 
         private static StoredTaskState ToState(WorkflowTask task) => new()

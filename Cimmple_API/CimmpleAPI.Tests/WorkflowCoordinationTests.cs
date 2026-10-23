@@ -146,7 +146,90 @@ public class WorkflowCoordinationTests
         Assert.DoesNotContain("amount", change.EventSummary, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static ActionSeed Seed(string kind, string sourceType, int sourceId, string priority, string? next = "Follow up.") =>
+    [Fact]
+    public void PlanAssign_SetsPendingHandoffAndKeepsThePreviousOwnerAsFrom()
+    {
+        var decision = WorkflowCoordination.PlanAssign(4, 9, "Ada");
+        Assert.True(decision.Ok);
+        Assert.Equal(9, decision.OwnerUserId);
+        Assert.Equal(4, decision.NewFromUserId);
+        Assert.Equal(9, decision.NewToUserId);
+        Assert.Equal(WorkflowCoordination.HandoffPending, decision.NewHandoffStatus);
+        Assert.True(decision.SupersedePending);
+    }
+
+    [Fact]
+    public void PlanAssign_SamePerson_IsRejected()
+    {
+        var decision = WorkflowCoordination.PlanAssign(9, 9, "Ada");
+        Assert.False(decision.Ok);
+    }
+
+    [Fact]
+    public void PlanAcknowledge_OnlyTheAssigneeWithAPendingHandoff()
+    {
+        Assert.False(WorkflowCoordination.PlanAcknowledge(9, 4, true).Ok);
+        Assert.False(WorkflowCoordination.PlanAcknowledge(9, 9, false).Ok);
+        var decision = WorkflowCoordination.PlanAcknowledge(9, 9, true);
+        Assert.True(decision.Ok);
+        Assert.Equal(9, decision.OwnerUserId);
+        Assert.Equal(WorkflowCoordination.HandoffAcknowledged, decision.UpdatedHandoffStatus);
+    }
+
+    [Fact]
+    public void PlanReject_ReturnsToPreviousOwnerAndKeepsTheHandoffRejected()
+    {
+        var decision = WorkflowCoordination.PlanReject(9, 9, 4, true, "Sam");
+        Assert.True(decision.Ok);
+        Assert.Equal(4, decision.OwnerUserId);
+        Assert.Equal(WorkflowCoordination.HandoffRejected, decision.UpdatedHandoffStatus);
+        Assert.Contains("Sam", decision.EventSummary);
+        Assert.False(WorkflowCoordination.PlanReject(9, 4, 4, true, "Sam").Ok);
+    }
+
+    [Fact]
+    public void PlanBlockerNote_DoesNotClaimTheShortageIsCleared()
+    {
+        var decision = WorkflowCoordination.PlanBlockerNote("Waiting on the vendor receipt.");
+        Assert.True(decision.Ok);
+        Assert.True(decision.BlockerIsManual);
+        Assert.Equal("Waiting on the vendor receipt.", decision.Blocker);
+        Assert.DoesNotContain("cleared", decision.EventSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.False(WorkflowCoordination.PlanBlockerNote(new string('x', 501)).Ok);
+        var cleared = WorkflowCoordination.PlanBlockerNote("  ");
+        Assert.True(cleared.Ok);
+        Assert.Equal(false, cleared.BlockerIsManual);
+    }
+
+    [Fact]
+    public void PersonCoversLocation_UsesTheOrdersLocation()
+    {
+        Assert.True(WorkflowCoordination.PersonCoversLocation(4, false, false, 4));
+        Assert.True(WorkflowCoordination.PersonCoversLocation(9, false, true, 4));
+        Assert.True(WorkflowCoordination.PersonCoversLocation(9, true, false, 4));
+        Assert.False(WorkflowCoordination.PersonCoversLocation(9, false, false, 4));
+        Assert.True(WorkflowCoordination.PersonCoversLocation(9, false, false, 0));
+    }
+
+    [Fact]
+    public void PlanAttentionNotices_TellsThemOnceWhenBlockedOrOverdue()
+        {
+            var firstBlock = WorkflowCoordination.PlanAttentionNotices(false, true, false, false);
+            Assert.Equal(WorkflowCoordination.EventBecameBlocked, Assert.Single(firstBlock).EventType);
+            Assert.True(firstBlock[0].Notify);
+
+            Assert.Empty(WorkflowCoordination.PlanAttentionNotices(true, true, true, true));
+
+            var cleared = WorkflowCoordination.PlanAttentionNotices(true, false, true, false);
+            Assert.Equal(2, cleared.Count);
+            Assert.All(cleared, notice => Assert.False(notice.Notify));
+
+            Assert.True(WorkflowCoordination.WasMarkedOverdue(WorkflowCoordination.EventBecameOverdue));
+            Assert.False(WorkflowCoordination.WasMarkedOverdue(WorkflowCoordination.EventOverdueCleared));
+            Assert.False(WorkflowCoordination.WasMarkedOverdue(null));
+        }
+
+        private static ActionSeed Seed(string kind, string sourceType, int sourceId, string priority, string? next = "Follow up.") =>
         new()
         {
             Kind = kind,

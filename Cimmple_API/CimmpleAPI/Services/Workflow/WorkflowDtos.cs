@@ -49,6 +49,11 @@ namespace CimmpleAPI.Services.Workflow
         public bool IsComplete { get; set; }
         public bool IsCancelled { get; set; }
         public string OwnerLabel { get; set; } = "Unassigned";
+        public int? OwnerUserId { get; set; }
+        public int? CoordinationTaskId { get; set; }
+        public string? HandoffStatus { get; set; }
+        public string? RejectionNote { get; set; }
+        public string? ManualBlocker { get; set; }
         public string? CreatedByName { get; set; }
         public string? DocumentDate { get; set; }
         public string? DueDate { get; set; }

@@ -25,6 +25,7 @@ const VendorOrders: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [seedSearch, setSeedSearch] = useState("");
+  const returnToRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadOrders();
@@ -46,10 +47,12 @@ const VendorOrders: React.FC = () => {
     if (orderIdParam && orderIdParam !== processedOrderIdRef.current) {
       const orderId = parseInt(orderIdParam, 10);
       if (orderId > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         processedOrderIdRef.current = orderIdParam;
         setSelectedOrderId(orderId);
         setShowSlideout(true);
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
         return;
       }
     }
@@ -133,6 +136,11 @@ const VendorOrders: React.FC = () => {
     processedOrderIdRef.current = null; // Reset so we can process new orderIds
     if (refreshList) {
       loadOrders();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

@@ -294,7 +294,7 @@ export class AuthService {
    */
   private static readonly PAGE_ACTION_CATALOG: Record<string, string[]> = {
     "/home": [],
-    "/workflow": [],
+    "/workflow": ["Assign", "Acknowledge"],
     "/quotations/customer": ["Add", "Edit", "Delete", "Convert", "Send", "Print", "Duplicate"],
     "/orders/customer": ["Add", "Edit", "Delete", "Ship", "Invoice", "Send", "Print", "Duplicate", "CreateJob"],
     "/orders/customer-shipments": ["Print", "Send", "Delete"],

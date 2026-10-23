@@ -119,6 +119,7 @@ builder.Services.AddHostedService<CimmpleAPI.Services.ReportScheduleHostedServic
 builder.Services.AddScoped<CimmpleAPI.Services.NotificationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.Workflow.WorkflowProjectionService>();
 builder.Services.AddScoped<CimmpleAPI.Services.Workflow.WorkflowSyncService>();
+builder.Services.AddScoped<CimmpleAPI.Services.Workflow.WorkflowAssignmentService>();
 builder.Services.AddScoped<CimmpleAPI.Services.ConversationService>();
 builder.Services.AddScoped<CimmpleAPI.Services.EmailOutboxService>();
 builder.Services.AddScoped<CimmpleAPI.Services.SupportTicketService>();

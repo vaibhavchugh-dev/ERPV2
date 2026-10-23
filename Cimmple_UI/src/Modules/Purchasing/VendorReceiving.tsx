@@ -18,6 +18,7 @@ const VendorReceiving: React.FC = () => {
   const [selectedOrderId, setSelectedOrderId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const hasLoadedOnceRef = useRef(false);
+  const returnToRef = useRef<string | null>(null);
 
   // Handle URL parameter to open detail (from global search)
   useEffect(() => {
@@ -26,9 +27,11 @@ const VendorReceiving: React.FC = () => {
     if (openId) {
       const id = parseInt(openId, 10);
       if (!isNaN(id) && id > 0) {
+        const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+        returnToRef.current = returnTo || null;
         setSelectedOrderId(id);
         setShowDetail(true);
-        history.replace(location.pathname);
+        history.replace(location.pathname, returnTo ? { returnTo } : undefined);
       }
     }
   }, [location.search, history, location.pathname]);
@@ -71,6 +74,11 @@ const VendorReceiving: React.FC = () => {
     setSelectedOrderId(0);
     if (refreshList) {
       loadOrders();
+    }
+    const returnTo = returnToRef.current || (location.state as { returnTo?: string } | null)?.returnTo;
+    if (returnTo) {
+      returnToRef.current = null;
+      history.push(returnTo);
     }
   };
 

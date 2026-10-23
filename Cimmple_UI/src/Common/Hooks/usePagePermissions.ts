@@ -48,7 +48,8 @@ const ACTION_LABELS: Record<string, string> = {
   Reserve: "reserve stock",
   Transfer: "transfer stock",
   Adjust: "adjust stock",
-  View: "view",
+  Assign: "assign",
+  Acknowledge: "acknowledge",
 };
 
 export function permissionDeniedMessage(action: string): string {

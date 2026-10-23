@@ -52,6 +52,9 @@ namespace CimmpleAPI.Services
         public const string TypeCustomerOrderShipped = "CustomerOrderShipped";
         public const string TypeQuotationAccepted = "QuotationAccepted";
         public const string TypeVendorOrderAssignment = "VendorOrderAssignment";
+        public const string TypeWorkflowAssignment = "WorkflowAssignment";
+        public const string TypeWorkflowBlocked = "WorkflowBlocked";
+        public const string TypeWorkflowOverdue = "WorkflowOverdue";
         public const string TypeSupportReply = "SupportReply";
 
         private readonly CimmpleDbContext _context;

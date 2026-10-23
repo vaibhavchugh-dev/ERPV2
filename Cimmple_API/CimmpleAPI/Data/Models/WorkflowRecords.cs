@@ -85,9 +85,7 @@ namespace CimmpleAPI.Data.Models
         public DateTime? CompletedAt { get; set; }
     }
 
-    /// <summary>
-    /// A handoff between users. Phase 2 stores the table. Assignment writes the rows later.
-    /// </summary>
+    /// <summary>A handoff of the current coordination task between users.</summary>
     [Table("WorkflowHandoff")]
     public class WorkflowHandoff
     {
