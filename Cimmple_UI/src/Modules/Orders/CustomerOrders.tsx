@@ -232,6 +232,7 @@ const CustomerOrders: React.FC = () => {
         data={filteredOrders}
         loading={loading}
         enablePagination
+        permissionPath="/orders/customer"
         onAdd={handleAddOrder}
         onRowClick={handleRowClick}
         filters={[

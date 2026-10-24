@@ -8,6 +8,7 @@ import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths"
 import SortIndicator from "../../Common/Components/SortIndicator";
 import ProductMasterSlideout from "./ProductMasterSlideout";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
@@ -28,6 +29,8 @@ const DEFAULT_HIDDEN_COLUMNS = ["quotationCount"];
 const COLUMN_PREFERENCE_KEY = "productMaster.hiddenColumns";
 
 const ProductMasterComponent: React.FC = () => {
+  const { can } = usePagePermissions("/masters/product");
+  const canSync = can("Sync");
   const location = useLocation();
   const history = useHistory();
   const { formatCurrency, formatDate } = useFormatting();
@@ -273,6 +276,7 @@ const ProductMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canSync && (
           <button
             type="button"
             className="btn btn-primary"
@@ -282,6 +286,7 @@ const ProductMasterComponent: React.FC = () => {
           >
             {syncing ? "Syncing…" : "Sync from orders"}
           </button>
+          )}
         </div>
       </div>
 

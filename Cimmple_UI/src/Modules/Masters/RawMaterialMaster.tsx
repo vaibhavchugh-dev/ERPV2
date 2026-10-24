@@ -5,6 +5,7 @@ import ColumnChooser from "../../Common/Components/ColumnChooser";
 import { ColumnDefinition, useColumnChooser } from "../../Common/Hooks/useColumnChooser";
 import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths";
 import SortIndicator from "../../Common/Components/SortIndicator";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import {
   InventoryService,
   RawMaterial,
@@ -125,6 +126,7 @@ const DEFAULT_HIDDEN_COLUMNS = [
 const COLUMN_PREFERENCE_KEY = "cimmple_raw_material_master_hidden_columns";
 
 const RawMaterialMaster: React.FC = () => {
+  const { canAdd, canEdit } = usePagePermissions("/masters/raw-material");
   const location = useLocation();
   const history = useHistory();
   const processedOpenIdRef = useRef<string | null>(null);
@@ -706,6 +708,7 @@ const RawMaterialMaster: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button
             type="button"
             className="btn-primary"
@@ -719,6 +722,7 @@ const RawMaterialMaster: React.FC = () => {
           >
             Add Raw Material
           </button>
+          )}
         </div>
       </div>
 
@@ -1228,9 +1232,11 @@ const RawMaterialMaster: React.FC = () => {
               >
                 Cancel
               </button>
+              {(form.id ? canEdit : canAdd) && (
               <button type="submit" className="btn-primary" disabled={saving}>
                 {saving ? "Saving..." : form.id ? "Update" : "Save"}
               </button>
+              )}
             </div>
           </form>
         </div>

@@ -15,6 +15,7 @@ import { CategoryService, CategoryType } from "../../Common/Services/CategorySer
 import { CategoryTagList } from "../../Common/Components/CategoryTagInput";
 import { buildCsv, downloadCsv } from "../../Common/Utils/CsvImport";
 import { useSettingsSafe } from "../../Common/Contexts/SettingsContext";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { formatDate as formatSystemDate } from "../../Common/Utils/Formatting";
 import JobTemplateMasterSlideout from "./JobTemplateMasterSlideout";
 import "./CustomerMaster.scss";
@@ -46,6 +47,8 @@ const formatDate = (value?: string | null): string => {
 };
 
 const JobTemplateMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/jobtemplate");
+  const canExport = can("Export");
   const location = useLocation();
   const history = useHistory();
   const settings = useSettingsSafe();
@@ -320,6 +323,7 @@ const JobTemplateMasterComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
+          {canExport && (
           <button
             className="btn-secondary"
             onClick={handleExport}
@@ -328,6 +332,7 @@ const JobTemplateMasterComponent: React.FC = () => {
           >
             <span>{exporting ? "Exporting..." : "Export"}</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -336,10 +341,12 @@ const JobTemplateMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddTemplate} type="button">
             <span>+</span>
             <span>Add Template</span>
           </button>
+          )}
         </div>
       </div>
 

@@ -59,7 +59,10 @@ import {
 } from "../../Common/Utils/Formatting";
 import "./VendorOrderSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+
+const PAGE_PATH = "/purchasing/vendor-orders";
 
 /** Statuses that keep an order on Vendor Receiving; saving must not drop these back to Draft. */
 const SENT_OR_LATER_STATUSES = [
@@ -81,6 +84,18 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   onClose,
   onSaved,
 }) => {
+  const {
+    canEdit,
+    canDelete,
+    canPrint,
+    canSend,
+    canDuplicate,
+    canAdd,
+    can,
+  } = usePagePermissions(PAGE_PATH);
+  const canSave = orderId <= 0 ? canAdd : canEdit;
+  const canInvoice = can("Invoice");
+  const { canPrint: canPrintInvoice, canDelete: canDeleteInvoice } = usePagePermissions("/purchasing/vendor-invoices");
   const { formatCurrency, currencySymbol, discountColumnLabel, settings } = useFormatting();
 
   const [formData, setFormData] = useState<VendorOrderMasterReq & { MaterialType?: string }>({
@@ -1345,6 +1360,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   };
 
   const handleSave = async (mode: "draft" | "submit") => {
+    if (!canSave) return;
     if (!formData.VendorID || formData.VendorID <= 0) {
       toast.error("Vendor is required");
       return;
@@ -1543,6 +1559,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {orderId > 0 && (
               <>
+                {canPrint && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1556,6 +1573,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <rect x="6" y="14" width="12" height="8"></rect>
                   </svg>
                 </button>
+                )}
+                {canSend && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1568,6 +1587,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <polyline points="22,6 12,13 2,6"></polyline>
                   </svg>
                 </button>
+                )}
+                {canDuplicate && (
                 <button
                   type="button"
                   className="btn-icon"
@@ -1580,6 +1601,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                   </svg>
                 </button>
+                )}
+                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -1591,6 +1614,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
+                )}
               </>
             )}
             <div className="status-field-inline">
@@ -2586,6 +2610,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
               <div style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "#f9fafb", borderRadius: "0.5rem", border: "1px solid #e5e7eb" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
                   <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: 600 }}>💰 Invoice History</h3>
+                  {canInvoice && (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -2605,6 +2630,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                   >
                     Create Invoice
                   </button>
+                  )}
                 </div>
 
                 {invoices.length === 0 ? (
@@ -2644,6 +2670,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               Amount: {formatCurrency(invoice.totalAmount)}
                             </div>
                             <div style={{ display: "flex", gap: "0.5rem" }}>
+                              {canPrintInvoice && (
                               <button
                                 type="button"
                                 onClick={() => handlePrintInvoice(invoice)}
@@ -2664,10 +2691,13 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                               >
                                 🖨️ Print
                               </button>
+                              )}
+                              {canDeleteInvoice && (
                               <DeleteIconButton
                                 label="Delete invoice"
                                 onClick={() => handleDeleteInvoice(invoice.id)}
                               />
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2727,6 +2757,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
+            <>
             <button
               type="button"
               className="btn-draft"
@@ -2743,6 +2775,8 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             >
               {savingAction === "submit" ? "Saving..." : "Sent"}
             </button>
+            </>
+            )}
           </div>
         </form>
 

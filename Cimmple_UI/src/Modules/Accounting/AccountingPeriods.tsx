@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { AccountingService } from "../../Common/Services/AccountingService";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./AccountingPeriods.scss";
 
 const AccountingPeriods: React.FC = () => {
+  const { can } = usePagePermissions("/accounts/periods");
+  const canClose = can("Close");
+  const canReopen = can("Reopen");
   const [periodKey, setPeriodKey] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -139,6 +143,7 @@ const AccountingPeriods: React.FC = () => {
               maxLength={6}
             />
           </div>
+          {canClose && (
           <button
             type="button"
             className="ap-close"
@@ -147,6 +152,8 @@ const AccountingPeriods: React.FC = () => {
           >
             Close period
           </button>
+          )}
+          {canReopen && (
           <button
             type="button"
             className="ap-open"
@@ -155,6 +162,7 @@ const AccountingPeriods: React.FC = () => {
           >
             Reopen period
           </button>
+          )}
           <button
             type="button"
             className="ap-refresh"

@@ -8,7 +8,6 @@ import {
   ConversationMessage,
   ConversationThread,
 } from "../Services/ConversationService";
-import { UserManagementService } from "../Services/UserManagementService";
 import { GlobalSearchService, SearchResult } from "../Services/GlobalSearchService";
 import {
   ChatMentionOption,
@@ -131,28 +130,22 @@ const ConversationPanel: React.FC<ConversationPanelProps> = ({
       storage?.userId || storage?.user_UniqueID || storage?.userUniqueID || 0
     );
     if (!tenantId) return;
-    UserManagementService.GetUsers({
-      tenantid: tenantId,
-      pageNumber: 1,
-      pageSize: 200,
-      status: "Active",
-    })
-      .then((res: any) => {
-        const raw = res?.users || res?.result?.users || [];
-        const opts: ChatMentionOption[] = (Array.isArray(raw) ? raw : [])
-          .map((u: any) => {
-            const userId = Number(u.userUniqueID ?? u.UserUniqueID ?? u.user_UniqueID ?? 0);
-            const name = `${u.firstName ?? u.FirstName ?? ""} ${u.lastName ?? u.LastName ?? ""}`.trim();
-            const label = name || u.userName || u.UserName || u.email || `User ${userId}`;
+    ConversationService.Directory()
+      .then((raw) => {
+        const opts: ChatMentionOption[] = raw
+          .map((u) => {
+            const userId = Number(u.userUniqueID || 0);
+            const name = `${u.firstName || ""} ${u.lastName || ""}`.trim();
+            const label = name || u.userName || u.email || `User ${userId}`;
             return {
               kind: "user" as const,
               type: "user",
               id: userId,
               label,
-              subtitle: u.email || u.Email || u.userName || u.UserName,
+              subtitle: u.email || u.userName || undefined,
             };
           })
-          .filter((o: ChatMentionOption) => o.id > 0 && o.id !== currentUserId);
+          .filter((o) => o.id > 0 && o.id !== currentUserId);
         setPeople(opts);
       })
       .catch(() => setPeople([]));

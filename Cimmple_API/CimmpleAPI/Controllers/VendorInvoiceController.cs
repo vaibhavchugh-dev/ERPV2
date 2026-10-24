@@ -326,8 +326,10 @@ namespace CimmpleAPI.Controllers
                         invoiceNoDisplay = $"VINV-{invoiceDateForNo.Year}-{invoiceNumber:D4}";
                     }
 
-                    if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc, fallback: 1))
+                    if (!TryResolveLocationId(request.LocationId, out var resolvedInvoiceLoc, out var forbidLoc))
                         return forbidLoc!;
+                    if (resolvedInvoiceLoc <= 0)
+                        return BadRequest(new { error = "A location is required for this vendor invoice. Select a working site or pass a location." });
 
                     var netAmount = Math.Round(request.LineItems.Sum(item => item.Amount), 2);
                     var taxRate = request.TaxRate ?? 0m;
@@ -508,7 +510,7 @@ namespace CimmpleAPI.Controllers
                         Description = postingDesc,
                         AccountingPeriod = billPeriodKey,
                         TenantId = tenantId,
-                        locationId = invoice.locationId > 0 ? invoice.locationId : 1,
+                        locationId = invoice.locationId,
                         createdby = GetUserId(),
                         createdDate = DateTime.UtcNow
                     };

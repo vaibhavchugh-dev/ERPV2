@@ -1,0 +1,106 @@
+.bank-cash-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10040;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.bank-cash-detail {
+  width: 100%;
+  max-width: 32rem;
+  background: #ffffff;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.18);
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+
+    h2 {
+      margin: 0;
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    button {
+      width: 2rem;
+      height: 2rem;
+      border: none;
+      border-radius: 0.375rem;
+      background: transparent;
+      color: #6b7280;
+      font-size: 1.25rem;
+      line-height: 1;
+      cursor: pointer;
+
+      &:hover {
+        background: #f3f4f6;
+        color: #111827;
+      }
+    }
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem 1.25rem;
+    margin: 0;
+    padding: 1.25rem;
+
+    div:nth-child(n + 7) {
+      grid-column: 1 / -1;
+    }
+
+    dt {
+      margin: 0 0 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #6b7280;
+    }
+
+    dd {
+      margin: 0;
+      font-size: 0.875rem;
+      color: #111827;
+      word-break: break-word;
+    }
+  }
+}
+
+.bank-cash-entries-page .page-actions {
+  .btn-cash-withdrawal,
+  .btn-cash-deposit {
+    color: #ffffff;
+  }
+
+  .btn-cash-withdrawal {
+    background: #dc2626;
+    border-color: #dc2626;
+
+    &:hover:not(:disabled) {
+      background: #b91c1c;
+      border-color: #b91c1c;
+      color: #ffffff;
+    }
+  }
+
+  .btn-cash-deposit {
+    background: #059669;
+    border-color: #059669;
+
+    &:hover:not(:disabled) {
+      background: #047857;
+      border-color: #047857;
+      color: #ffffff;
+    }
+  }
+}

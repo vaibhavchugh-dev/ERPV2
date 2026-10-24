@@ -255,8 +255,10 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = $"Accounting period {lockPeriodKey} is closed. Open the period or pick another date to post." });
 
                 var locId = request.LocationId > 0 ? request.LocationId : 0;
-                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc, fallback: 1))
+                if (!TryResolveLocationId(locId > 0 ? locId : null, out locId, out var forbidLoc))
                     return forbidLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required. Select a working site before posting this journal." });
 
                 using var tx = _context.Database.BeginTransaction();
                 try
@@ -564,11 +566,12 @@ namespace CimmpleAPI.Controllers
 
                 var locId = request.LocationId > 0 ? request.LocationId : 0;
                 if (!TryResolveLocationId(
-                        locId > 0 ? locId : null,
+                        locId > 0 ? locId : (source.locationId > 0 ? source.locationId : null),
                         out locId,
-                        out var forbidRevLoc,
-                        fallback: source.locationId > 0 ? source.locationId : 1))
+                        out var forbidRevLoc))
                     return forbidRevLoc!;
+                if (locId <= 0)
+                    return BadRequest(new { error = "A location is required to reverse this journal." });
 
                 using var tx = _context.Database.BeginTransaction();
                 try

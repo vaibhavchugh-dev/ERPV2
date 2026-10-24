@@ -17,6 +17,7 @@ import { PdfService } from "../../Common/Services/PdfService";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import { NCRCodeService, NCRCodeMaster } from "../../Common/Services/NCRCodeService";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import {
@@ -177,6 +178,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
   elevated,
 }) => {
   const { locationId: activeLocationId } = useActiveLocation();
+  const { canAdd, canEdit, canDelete, canPrint, canSend } = usePagePermissions("/quality");
+  const canSave = ncrId > 0 ? canEdit : canAdd;
   const { settings } = useFormatting();
   const currencySymbol = settings?.currencySymbol || "$";
 
@@ -780,6 +783,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {ncrId > 0 && (
               <>
+              {canPrint && (
               <button
                 type="button"
                 className="btn-icon"
@@ -794,6 +798,8 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                   <rect x="6" y="14" width="12" height="8"></rect>
                 </svg>
               </button>
+              )}
+              {canSend && (
               <button
                 type="button"
                 className="btn-icon"
@@ -807,6 +813,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
                   <polyline points="22,6 12,13 2,6"></polyline>
                 </svg>
               </button>
+              )}
               </>
             )}
             <div className="status-field-inline">
@@ -1368,7 +1375,7 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
           </div>
 
           <div className="ncr-slideout-footer">
-            {ncrId > 0 && (
+            {ncrId > 0 && canDelete && (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -1396,10 +1403,12 @@ const NonConformanceReportSlideout: React.FC<NonConformanceReportSlideoutProps> 
             <button type="button" className="btn-cancel" onClick={() => requestClose(false)} disabled={saving}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={saving}>
               <FontAwesomeIcon icon={faSave} style={{ marginRight: "0.5rem" }} />
               {saving ? "Saving..." : ncrId > 0 ? "Update NCR" : "Create NCR"}
             </button>
+            )}
           </div>
         </form>
 

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using CimmpleAPI.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -67,21 +68,98 @@ namespace CimmpleAPI.Services.Auth
             }
 
             var urls = await GetPermissionUrlsAsync(context);
-            var action = ErpPermissionActions.ResolveActionFromRequest(
-                context.HttpContext.Request.Method,
-                context.HttpContext.Request.Path.Value ?? "");
+            var http = context.HttpContext.Request;
+            var path = http.Path.Value ?? "";
+            var action = ErpPermissionActions.ResolveActionFromRequest(http.Method, path);
+            var payload = await ReadPayloadJsonAsync(http, path);
 
-            // OR across alternate page permissions (e.g. AP ↔ Vendor Invoices).
-            foreach (var required in requiredPages)
+            if (ErpPermissionActions.IsPriceBreakdownSave(path))
             {
-                var page = ErpPermissionActions.NormalizePageUrl(required);
-                if (!urls.Contains(page))
-                    continue;
-                if (ErpPermissionActions.HasAction(urls, page, action))
+                var (parsed, hasNew, hasExisting) = ErpPermissionActions.ClassifyPriceBreakdownSave(payload);
+                var page = "/masters/pricebreakdown";
+                if (!parsed || !ErpPermissionActions.PriceBreakdownSaveAllowed(urls, hasNew, hasExisting))
+                {
+                    Forbid(context);
                     return;
+                }
+
+                var items = context.HttpContext.Items;
+                items["ErpPerm.PriceBreakdown.Add"] =
+                    ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Add);
+                items["ErpPerm.PriceBreakdown.Edit"] =
+                    ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Edit);
+                items["ErpPerm.PriceBreakdown.Delete"] =
+                    ErpPermissionActions.HasAction(urls, page, ErpPermissionActions.Delete);
+                items["ErpPerm.PriceBreakdown.Checked"] = true;
+                return;
             }
 
-            Forbid(context);
+            var alternatives = ErpPermissionActions.BuildAlternatives(requiredPages, action, path, payload);
+
+            var authorized = false;
+            foreach (var alt in alternatives)
+            {
+                if (!urls.Contains(alt.PageUrl))
+                    continue;
+                if (ErpPermissionActions.HasAction(urls, alt.PageUrl, alt.Action))
+                {
+                    authorized = true;
+                    break;
+                }
+            }
+
+            if (!authorized)
+            {
+                Forbid(context);
+                return;
+            }
+
+            if (path.Contains("SaveJobOrder", StringComparison.OrdinalIgnoreCase))
+            {
+                var items = context.HttpContext.Items;
+                items[ErpPermissionActions.JobOrderPermCheckedKey] = true;
+                items[ErpPermissionActions.JobOrderPermEditKey] =
+                    ErpPermissionActions.HasAction(urls, "/job-orders", ErpPermissionActions.Edit);
+                items[ErpPermissionActions.JobOrderPermCompleteKey] =
+                    ErpPermissionActions.HasAction(urls, "/job-orders", ErpPermissionActions.Complete);
+            }
+        }
+
+        /// <summary>
+        /// Upsert endpoints need the record id (and quotation id) to choose Add vs Edit vs Convert.
+        /// The body is buffered so the controller can read it again.
+        /// </summary>
+        private static async Task<string?> ReadPayloadJsonAsync(HttpRequest http, string path)
+        {
+            var method = http.Method ?? "";
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+                return null;
+            if (path.IndexOf("Save", StringComparison.OrdinalIgnoreCase) < 0
+                && path.IndexOf("PriceBreakdown", StringComparison.OrdinalIgnoreCase) < 0)
+                return null;
+
+            try
+            {
+                http.EnableBuffering();
+                if (http.HasFormContentType)
+                {
+                    var form = await http.ReadFormAsync();
+                    http.Body.Position = 0;
+                    return form["formField"].FirstOrDefault()
+                        ?? form["FormField"].FirstOrDefault();
+                }
+
+                http.Body.Position = 0;
+                using var reader = new StreamReader(http.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+                var text = await reader.ReadToEndAsync();
+                http.Body.Position = 0;
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                try { http.Body.Position = 0; } catch { /* body may not be seekable */ }
+                return null;
+            }
         }
 
         private static void Forbid(AuthorizationFilterContext context)

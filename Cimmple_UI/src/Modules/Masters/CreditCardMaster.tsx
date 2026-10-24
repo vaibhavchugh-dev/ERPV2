@@ -8,6 +8,7 @@ import { useLockedColumnWidths } from "../../Common/Hooks/useLockedColumnWidths"
 import SortIndicator from "../../Common/Components/SortIndicator";
 import CreditCardMasterSlideout from "./CreditCardMasterSlideout";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -29,6 +30,7 @@ const sortValue = (card: CreditCardMaster, column: keyof CreditCardMaster): any 
 const COLUMN_PREFERENCE_KEY = "creditCardMaster.hiddenColumns";
 
 const CreditCardMasterComponent: React.FC = () => {
+  const { canAdd } = usePagePermissions("/masters/creditcard");
   const location = useLocation();
   const history = useHistory();
   const [creditCards, setCreditCards] = useState<CreditCardMaster[]>([]);
@@ -241,10 +243,12 @@ const CreditCardMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddCreditCard}>
             <span>+</span>
             <span>Add Credit Card</span>
           </button>
+          )}
         </div>
       </div>
 

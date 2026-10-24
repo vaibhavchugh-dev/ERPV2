@@ -4,6 +4,7 @@ import { useHistory, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { DocumentService, Document, DocumentCategory } from "../../Common/Services/DocumentService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { useTableSort } from "../../Common/Hooks/useTableSort";
 import SortableTh from "../../Common/Components/SortableTh";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
@@ -46,6 +47,10 @@ const Documents: React.FC = () => {
   const location = useLocation();
   const history = useHistory();
   const { locationIdParam, masterListFilter } = useSiteListFilter();
+  const { canDelete, can } = usePagePermissions("/documents");
+  const canUpload = can("Upload");
+  const canDownload = can("Download");
+  const canManage = can("Manage");
   const [documents, setDocuments] = useState<Document[]>([]);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -339,9 +344,11 @@ const Documents: React.FC = () => {
           <p className="page-subtitle">Upload, organise and version your company documents</p>
         </div>
         <div className="page-actions">
+          {canUpload && (
           <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
             <FontAwesomeIcon icon={faUpload} /> Upload Document
           </button>
+          )}
         </div>
       </div>
 
@@ -436,9 +443,11 @@ const Documents: React.FC = () => {
         <div className="empty-state">
           <FontAwesomeIcon icon={faFile} size="3x" />
           <p>No documents found</p>
+          {canUpload && (
           <button type="button" className="btn-primary" onClick={() => setShowUploadModal(true)}>
             Upload Your First Document
           </button>
+          )}
         </div>
       ) : filteredDocuments.length === 0 ? (
         <div className="empty-state">
@@ -499,6 +508,7 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faEye} />
                 </button>
+                {canDownload && (
                 <button
                   className="btn-icon"
                   onClick={() => handleDownload(document)}
@@ -506,7 +516,8 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faDownload} />
                 </button>
-                {document.requiresVersionControl && (
+                )}
+                {canManage && document.requiresVersionControl && (
                   <button
                     className="btn-icon"
                     onClick={() => handleDocumentClick(document)}
@@ -515,6 +526,7 @@ const Documents: React.FC = () => {
                     <FontAwesomeIcon icon={faHistory} />
                   </button>
                 )}
+                {canDelete && (
                 <button
                   className="btn-icon btn-danger"
                   onClick={() => handleDelete(document.id)}
@@ -522,6 +534,7 @@ const Documents: React.FC = () => {
                 >
                   <FontAwesomeIcon icon={faTrash} />
                 </button>
+                )}
               </div>
             </div>
           ))}
@@ -588,6 +601,7 @@ const Documents: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faEye} />
                       </button>
+                      {canDownload && (
                       <button
                         type="button"
                         className="btn-icon"
@@ -596,10 +610,13 @@ const Documents: React.FC = () => {
                       >
                         <FontAwesomeIcon icon={faDownload} />
                       </button>
+                      )}
+                      {canDelete && (
                       <DeleteIconButton
                         label="Delete document"
                         onClick={() => handleDelete(document.id)}
                       />
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -686,11 +703,11 @@ const Documents: React.FC = () => {
                 onActiveIndexChange={setActiveViewerIndex}
                 onClose={closeDocumentViewer}
                 onNeedDocument={handleNeedDocument}
-                onDownload={(file) => {
+                onDownload={canDownload ? (file) => {
                   handleViewerDownload(file).catch((error: any) => {
                     toast.error(error?.message || "Failed to download document");
                   });
-                }}
+                } : undefined}
                 mode="view"
               />
             </div>

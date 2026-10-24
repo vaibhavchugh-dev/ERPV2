@@ -9,6 +9,7 @@ import SortIndicator from "../../Common/Components/SortIndicator";
 import CustomerMasterSlideout from "./CustomerMasterSlideout";
 import CustomerMasterImportModal from "./CustomerMasterImportModal";
 import { useClientPagination } from "../../Common/Hooks/useClientPagination";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import ClientPagination from "../../Common/Components/ClientPagination";
 import "./CustomerMaster.scss";
 
@@ -24,6 +25,8 @@ const DEFAULT_HIDDEN_COLUMNS: string[] = [];
 const COLUMN_PREFERENCE_KEY = "customerMaster.hiddenColumns";
 
 const CustomerMasterComponent: React.FC = () => {
+  const { canAdd, can } = usePagePermissions("/masters/customer");
+  const canImport = can("Import");
   const location = useLocation();
   const history = useHistory();
   const [customers, setCustomers] = useState<CustomerMaster[]>([]);
@@ -251,6 +254,7 @@ const CustomerMasterComponent: React.FC = () => {
           <p className="page-subtitle">Manage your customer database</p>
         </div>
         <div className="page-actions">
+          {canImport && (
           <button
             className="btn-secondary"
             onClick={() => setShowImport(true)}
@@ -258,6 +262,7 @@ const CustomerMasterComponent: React.FC = () => {
           >
             <span>Import</span>
           </button>
+          )}
           <ColumnChooser
             columns={COLUMNS}
             hiddenColumns={hiddenColumns}
@@ -266,10 +271,12 @@ const CustomerMasterComponent: React.FC = () => {
             onToggleColumn={toggleColumn}
             containerRef={columnChooserRef}
           />
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddCustomer}>
             <span>+</span>
             <span>Add Customer</span>
           </button>
+          )}
         </div>
       </div>
 

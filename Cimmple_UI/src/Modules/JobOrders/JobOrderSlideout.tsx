@@ -68,10 +68,13 @@ import {
 } from "../../Common/Services/InventoryService";
 import { formatDateOnlyFromApi, formatDateTime } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import "./JobOrderSlideout.scss";
+
+const PAGE_PATH = "/job-orders";
 
 interface JobOrderSlideoutProps {
   jobOrderId: number;
@@ -138,6 +141,19 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   headerPreview,
 }) => {
   const { locationId: activeLocationId } = useActiveLocation();
+  const {
+    canEdit,
+    canDelete,
+    canPrint,
+    canSend,
+    can,
+    ensure,
+  } = usePagePermissions(PAGE_PATH);
+  const isNew = jobOrderId <= 0;
+  // Jobs are created from Customer Orders; JO slideout is edit-only for new drafts seeded from CO.
+  const canSave = canEdit;
+  const canManage = can("Manage");
+  const canComplete = can("Complete");
   const [formData, setFormData] = useState<JobOrderMasterReq>({
     JobOrderID: 0,
     JobOrderNumber: headerPreview?.jobOrderNumber || 0,
@@ -1692,6 +1708,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const requestCompleteStep = (stepId: number) => {
+    if (!ensure("Complete")) return;
     const step = routingSteps.find((s) => s.id === stepId);
     if (!step || isStepCompleted(step)) return;
     const initialQty =
@@ -1704,6 +1721,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const confirmCompleteStep = async (forceComplete = false) => {
+    if (!ensure("Complete")) return;
     const stepId = trackingDialog?.type === "complete" ? trackingDialog.stepId : undefined;
     if (stepId == null) return;
 
@@ -1897,6 +1915,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const requestCompleteJob = () => {
+    if (!ensure("Complete")) return;
     const steps = routingStepsRef.current;
     if (!steps.length) {
       toast.error("Add routing steps and enter produced quantity before completing this job.");
@@ -2498,6 +2517,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
             {jobOrderId > 0 && (
               <>
+                {canPrint && (
                 <button
                   type="button"
                   onClick={() => void handlePrintJobOrder()}
@@ -2521,6 +2541,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   <FontAwesomeIcon icon={faPrint} spin={printing} />
                   {printing ? "Generating…" : "Print"}
                 </button>
+                )}
+                {canSend && (
                 <button
                   type="button"
                   onClick={() => setShowEmailDialog(true)}
@@ -2542,6 +2564,8 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                   <FontAwesomeIcon icon={faEnvelope} />
                   Email
                 </button>
+                )}
+                {canDelete && (
                 <button
                   type="button"
                   className="btn-icon btn-icon-danger"
@@ -2553,6 +2577,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                   </svg>
                 </button>
+                )}
               </>
             )}
             <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
@@ -2597,6 +2622,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     onChange={(e) => {
                       const next = e.target.value;
                       if (next === "Completed") {
+                        if (!canComplete) return;
                         requestCompleteJob();
                         return;
                       }
@@ -2607,12 +2633,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                     <option value="In Progress">In Progress</option>
                     <option value="Partially Shipped">Partially Shipped</option>
                     <option value="Shipped">Shipped</option>
-                    <option value="Completed">Completed</option>
+                    {(canComplete || formData.Status === "Completed") && (
+                      <option value="Completed">Completed</option>
+                    )}
                     <option value="Cancelled">Cancelled</option>
                   </select>
                 </div>
               </div>
-              {!initialLoading && formData.Status !== "Completed" && (
+              {!initialLoading && canComplete && formData.Status !== "Completed" && (
                 <button
                   type="button"
                   onClick={handleMarkJobComplete}
@@ -3498,6 +3526,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       >
                                         ⏸
                                       </button>
+                                      {canComplete && (
                                       <button
                                         type="button"
                                         className="jo-progress-btn jo-progress-btn--complete"
@@ -3507,6 +3536,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       >
                                         ✓
                                       </button>
+                                      )}
                                     </>
                                   ) : step.progressState === "paused" ? (
                                     <>
@@ -3519,6 +3549,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       >
                                         ▶
                                       </button>
+                                      {canComplete && (
                                       <button
                                         type="button"
                                         className="jo-progress-btn jo-progress-btn--complete"
@@ -3528,6 +3559,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       >
                                         ✓
                                       </button>
+                                      )}
                                     </>
                                   ) : (
                                     <button
@@ -3960,9 +3992,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
             <button type="button" className="btn-cancel" onClick={handleCancel}>
               Cancel
             </button>
+            {canSave && (
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? "Saving..." : "Save"}
             </button>
+            )}
           </div>
         </form>
       </div>

@@ -7,10 +7,13 @@ import {
 } from "../../Common/Services/CategoryService";
 import CategoryTypeSlideout from "./CategoryTypeSlideout";
 import DeleteIconButton from "../../Common/Components/DeleteIconButton";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMaster.scss";
 import "./CategoryMaster.scss";
 
 const CategoryMasterComponent: React.FC = () => {
+  const { canAdd, canEdit, canDelete, can } = usePagePermissions("/masters/category");
+  const canSeed = can("Seed");
   const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -215,6 +218,7 @@ const CategoryMasterComponent: React.FC = () => {
           </p>
         </div>
         <div className="page-actions">
+          {canSeed && (
           <button
             className="btn-secondary"
             onClick={handleLoadDefaults}
@@ -223,10 +227,13 @@ const CategoryMasterComponent: React.FC = () => {
           >
             <span>{seeding ? "Loading..." : "Load Default Types"}</span>
           </button>
+          )}
+          {canAdd && (
           <button className="btn-primary" onClick={handleAddType} type="button">
             <span>+</span>
             <span>Add Category Type</span>
           </button>
+          )}
         </div>
       </div>
 
@@ -265,6 +272,7 @@ const CategoryMasterComponent: React.FC = () => {
                     </span>
                   </div>
                   <div className="category-type-actions">
+                    {canEdit && (
                     <button
                       type="button"
                       className="category-icon-button"
@@ -276,6 +284,8 @@ const CategoryMasterComponent: React.FC = () => {
                     >
                       ✎
                     </button>
+                    )}
+                    {canDelete && (
                     <DeleteIconButton
                       label="Delete category type"
                       title={
@@ -289,6 +299,7 @@ const CategoryMasterComponent: React.FC = () => {
                         handleDeleteType(type);
                       }}
                     />
+                    )}
                   </div>
                 </div>
               ))}
@@ -321,6 +332,7 @@ const CategoryMasterComponent: React.FC = () => {
                     }
                   }}
                 />
+                {canAdd && (
                 <button
                   type="button"
                   className="btn-primary category-add-button"
@@ -329,6 +341,7 @@ const CategoryMasterComponent: React.FC = () => {
                 >
                   <span>{savingValue ? "Adding..." : "Add"}</span>
                 </button>
+                )}
               </div>
             )}
 
@@ -356,6 +369,7 @@ const CategoryMasterComponent: React.FC = () => {
                     <span className="category-value-usage">
                       {value.usageCount ? `${value.usageCount} in use` : "unused"}
                     </span>
+                    {canDelete && (
                     <DeleteIconButton
                       label="Delete category value"
                       title={
@@ -366,6 +380,7 @@ const CategoryMasterComponent: React.FC = () => {
                       disabled={!!value.usageCount}
                       onClick={() => handleDeleteValue(value.id, value.name)}
                     />
+                    )}
                   </div>
                 ))
               )}

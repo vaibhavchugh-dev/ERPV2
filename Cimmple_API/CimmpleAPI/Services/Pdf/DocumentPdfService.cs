@@ -1262,60 +1262,72 @@ END");
             return desc;
         }
 
+        private async Task<string> ResolveLogoFilePathAsync(int tenantId, int locationId)
+        {
+            var logo = await _context.LogoAttachment
+                .AsNoTracking()
+                .Where(la => la.locationId == locationId && la.TenantID == tenantId)
+                .OrderByDescending(la => la.Id)
+                .FirstOrDefaultAsync();
+            if (logo == null || string.IsNullOrEmpty(logo.UploadFile))
+                return "";
+
+            var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
+            var cleanUploadFile = logo.UploadFile.TrimStart('/', '\\');
+            var fullLogoPath = Path.Combine(webRootPath, cleanUploadFile.Replace('/', Path.DirectorySeparatorChar));
+            if (System.IO.File.Exists(fullLogoPath))
+                return fullLogoPath;
+
+            var altPath = Path.Combine(_environment.ContentRootPath, "wwwroot", cleanUploadFile.Replace('/', Path.DirectorySeparatorChar));
+            return System.IO.File.Exists(altPath) ? altPath : "";
+        }
+
         private async Task<(string CompanyName, string CompanyAddress, string CompanyCityStateZip, string CompanyEmail, string CompanyPhone, string CompanyWebAddress, string LogoPath)> GetCompanyInfo(int tenantId, int? locationId)
         {
             // Try to get location data first if locationId is provided
             if (locationId.HasValue && locationId.Value > 0)
             {
                 var location = await _context.Locations
+                    .AsNoTracking()
                     .FirstOrDefaultAsync(l => l.LocationId == locationId.Value && l.TenantId == tenantId);
 
                 if (location != null)
                 {
-                    // Get logo if available
-                    var logo = await _context.LogoAttachment
-                        .Where(la => la.locationId == locationId.Value && la.TenantID == tenantId)
-                        .OrderByDescending(la => la.Id)
-                        .FirstOrDefaultAsync();
-
-                    var logoPath = "";
-                    if (logo != null && !string.IsNullOrEmpty(logo.UploadFile))
+                    var chain = new List<Location> { location };
+                    var cursor = location;
+                    var guard = 0;
+                    while (cursor.ParentLocationId is int parentId && parentId > 0 && guard++ < 16)
                     {
-                        // Resolve logo path to full file system path
-                        var webRootPath = _environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot");
-                        
-                        // Remove leading slash if present
-                        var cleanUploadFile = logo.UploadFile.TrimStart('/', '\\');
-                        var fullLogoPath = Path.Combine(webRootPath, cleanUploadFile.Replace('/', Path.DirectorySeparatorChar));
-                        
-                        // Check if file exists
-                        if (System.IO.File.Exists(fullLogoPath))
-                        {
-                            logoPath = fullLogoPath;
-                        }
-                        else
-                        {
-                            // Try alternative path resolution
-                            var altPath = Path.Combine(_environment.ContentRootPath, "wwwroot", cleanUploadFile.Replace('/', Path.DirectorySeparatorChar));
-                            if (System.IO.File.Exists(altPath))
-                            {
-                                logoPath = altPath;
-                            }
-                        }
+                        var parent = await _context.Locations
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(l => l.LocationId == parentId && l.TenantId == tenantId);
+                        if (parent == null)
+                            break;
+                        chain.Add(parent);
+                        cursor = parent;
+                    }
+
+                    var site = chain.LastOrDefault(l => l.LocType == LocationKind.BusinessSite) ?? chain[^1];
+                    var logoPath = "";
+                    foreach (var node in chain)
+                    {
+                        logoPath = await ResolveLogoFilePathAsync(tenantId, node.LocationId);
+                        if (!string.IsNullOrEmpty(logoPath))
+                            break;
                     }
 
                     var cityStateZip = new List<string>();
-                    if (!string.IsNullOrEmpty(location.city)) cityStateZip.Add(location.city);
-                    if (!string.IsNullOrEmpty(location.state)) cityStateZip.Add(location.state);
-                    if (!string.IsNullOrEmpty(location.zip)) cityStateZip.Add(location.zip);
+                    if (!string.IsNullOrEmpty(site.city)) cityStateZip.Add(site.city);
+                    if (!string.IsNullOrEmpty(site.state)) cityStateZip.Add(site.state);
+                    if (!string.IsNullOrEmpty(site.zip)) cityStateZip.Add(site.zip);
 
                     return (
-                        CompanyName: location.Name ?? "Your Company Name",
-                        CompanyAddress: location.Address ?? "",
+                        CompanyName: site.Name ?? "Your Company Name",
+                        CompanyAddress: site.Address ?? "",
                         CompanyCityStateZip: string.Join(", ", cityStateZip),
-                        CompanyEmail: location.email ?? "",
-                        CompanyPhone: location.phone ?? "",
-                        CompanyWebAddress: location.webaddress ?? "",
+                        CompanyEmail: site.email ?? "",
+                        CompanyPhone: site.phone ?? "",
+                        CompanyWebAddress: site.webaddress ?? "",
                         LogoPath: logoPath
                     );
                 }

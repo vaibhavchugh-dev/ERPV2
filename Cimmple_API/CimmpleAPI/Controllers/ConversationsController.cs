@@ -14,6 +14,22 @@ namespace CimmpleAPI.Controllers
             _conversations = conversations;
         }
 
+        /// <summary>Mention list for messages and comments. Not the User Management user record.</summary>
+        [HttpGet("Directory")]
+        public async Task<IActionResult> Directory()
+        {
+            var tenantId = GetTenantId();
+            var userId = GetUserId();
+            if (tenantId <= 0 || userId == null || userId <= 0)
+                return BadRequest(new { error = "Tenant and user are required." });
+
+            if (!TryResolveListLocationFilter(null, out _, out var forbid, out var restrictToLocationIds))
+                return forbid!;
+
+            var users = await _conversations.ListDirectoryAsync(tenantId, restrictToLocationIds);
+            return Ok(new { result = users });
+        }
+
         [HttpGet("ListMine")]
         public async Task<IActionResult> ListMine([FromQuery] int take = 50)
         {

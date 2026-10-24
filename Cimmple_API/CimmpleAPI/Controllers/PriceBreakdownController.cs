@@ -108,7 +108,13 @@ namespace CimmpleAPI.Controllers
 
                 // Delete existing ones that are not in the request
                 var requestIds = request.Where(r => r.Id > 0).Select(r => r.Id).ToList();
-                var toDelete = existingPriceBreakdowns.Where(e => !requestIds.Contains(e.Id)).ToList();
+                var permChecked = HttpContext.Items.ContainsKey("ErpPerm.PriceBreakdown.Checked");
+                var mayAdd = !permChecked || HttpContext.Items["ErpPerm.PriceBreakdown.Add"] as bool? == true;
+                var mayEdit = !permChecked || HttpContext.Items["ErpPerm.PriceBreakdown.Edit"] as bool? == true;
+                var mayDelete = !permChecked || HttpContext.Items["ErpPerm.PriceBreakdown.Delete"] as bool? == true;
+                var toDelete = mayDelete
+                    ? existingPriceBreakdowns.Where(e => !requestIds.Contains(e.Id)).ToList()
+                    : new List<PriceBreakdownMaster>();
                 foreach (var item in toDelete)
                 {
                     var usageCount = CountQuotationLinesUsingPriceBreakdown(tenantId, item.Id);
@@ -130,6 +136,11 @@ namespace CimmpleAPI.Controllers
 
                     if (req.Id > 0)
                     {
+                        if (!mayEdit)
+                        {
+                            continue;
+                        }
+
                         // Update existing
                         priceBreakdown = existingPriceBreakdowns.FirstOrDefault(p => p.Id == req.Id);
                         if (priceBreakdown == null)
@@ -139,6 +150,11 @@ namespace CimmpleAPI.Controllers
                     }
                     else
                     {
+                        if (!mayAdd)
+                        {
+                            continue;
+                        }
+
                         // Create new
                         priceBreakdown = new PriceBreakdownMaster
                         {

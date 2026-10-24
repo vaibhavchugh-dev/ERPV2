@@ -31,6 +31,9 @@ namespace CimmpleAPI.Controllers
             try
             {
                 var tenantId = GetTenantId();
+                var denied = DenyCustomerOrderLocation(orderId, tenantId);
+                if (denied != null)
+                    return denied;
 
                 var detailsList = _context.CustomerOrderDetails
                     .AsNoTracking()
@@ -124,21 +127,24 @@ namespace CimmpleAPI.Controllers
                         return BadRequest(new { error = "Due Date cannot be earlier than Invoice Date." });
                     }
 
-                    var orderDateForValidation = _context.CustomerOrder
+                    var orderHeader = _context.CustomerOrder
                         .AsNoTracking()
                         .Where(o => o.OrderID == request.OrderId && o.Tenantid == tenantId)
-                        .Select(o => (DateTime?)o.OrderDate)
+                        .Select(o => new { o.OrderDate, o.locationId })
                         .FirstOrDefault();
 
-                    if (orderDateForValidation == null)
+                    if (orderHeader == null)
                         return BadRequest(new { error = $"Order {request.OrderId} not found" });
 
+                    if (orderHeader.locationId > 0 && !CanAccessLocation(orderHeader.locationId))
+                        return StatusCode(403, new { error = "You do not have access to this order's site." });
+
                     var effectiveInvoiceDate = (request.InvoiceDate ?? DateTime.Now).Date;
-                    if (effectiveInvoiceDate < orderDateForValidation.Value.Date)
+                    if (effectiveInvoiceDate < orderHeader.OrderDate.Date)
                     {
                         return BadRequest(new
                         {
-                            error = $"Invoice Date cannot be earlier than the Order Date ({orderDateForValidation.Value:yyyy-MM-dd})."
+                            error = $"Invoice Date cannot be earlier than the Order Date ({orderHeader.OrderDate:yyyy-MM-dd})."
                         });
                     }
 
@@ -340,8 +346,11 @@ namespace CimmpleAPI.Controllers
 
                     var postingRef = BuildAutoPostingReference("ARINV", invoice.PrefixInvoiceNo, invoice.Id);
                     var postingDesc = $"Auto-posted customer invoice {invoice.PrefixInvoiceNo ?? invoice.InvoiceNo.ToString()}";
-                    if (!TryResolveLocationId(null, out var jeLocationId, out var forbidJeLoc, fallback: 1))
+                    var invoiceSite = orderHeader.locationId > 0 ? orderHeader.locationId : (int?)null;
+                    if (!TryResolveLocationId(invoiceSite, out var jeLocationId, out var forbidJeLoc))
                         return forbidJeLoc!;
+                    if (jeLocationId <= 0)
+                        return BadRequest(new { error = "A location is required to post this invoice. Set the customer order location or select a working site." });
                     var invoiceHeader = new JournalEntry
                     {
                         EntryDate = invoice.InvoiceDate.Date,
@@ -1342,6 +1351,19 @@ namespace CimmpleAPI.Controllers
             if (invoice.DueDate.Date < DateTime.Now.Date)
                 return "Overdue";
             return "Unpaid";
+        }
+
+        private IActionResult? DenyCustomerOrderLocation(int orderId, int tenantId)
+        {
+            var locationId = _context.CustomerOrder.AsNoTracking()
+                .Where(o => o.OrderID == orderId && o.Tenantid == tenantId)
+                .Select(o => (int?)o.locationId)
+                .FirstOrDefault();
+            if (!locationId.HasValue)
+                return NotFound(new { error = "Order not found" });
+            if (locationId.Value > 0 && !CanAccessLocation(locationId.Value))
+                return StatusCode(403, new { error = "You do not have access to this order's site." });
+            return null;
         }
 
         private string GetInvoiceStatus(InvoiceMaster invoice) => ResolveCustomerInvoiceStatus(invoice);
