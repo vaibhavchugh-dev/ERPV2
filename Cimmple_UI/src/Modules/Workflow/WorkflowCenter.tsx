@@ -96,6 +96,23 @@ const priorityLabel = (priority: string) => {
 const priorityClass = (priority: string) =>
   priority === "Blocked" || priority === "Overdue" ? "badge-danger" : "badge-warning";
 
+const actionStatusBadges = (action: WorkflowAction) => {
+  const badges: { label: string; className: string }[] = [];
+  const seen = new Set<string>();
+  const add = (label: string, className: string) => {
+    if (seen.has(label)) return;
+    seen.add(label);
+    badges.push({ label, className });
+  };
+  if (action.priorityLabel === "Blocked" || action.blockerReason) add("Blocked", "badge-danger");
+  const pastDue = Boolean(action.dueDate && calendarDaysAfter(action.dueDate) != null);
+  if (action.priorityLabel === "Overdue" || pastDue) add("Overdue", "badge-danger");
+  if (!seen.has("Blocked") && !seen.has("Overdue")) {
+    add(priorityLabel(action.priorityLabel), priorityClass(action.priorityLabel));
+  }
+  return badges;
+};
+
 const matchesChoreStatus = (action: WorkflowAction, status: string) => {
   if (status === "blocked") return action.priorityLabel === "Blocked";
   if (status === "overdue") return action.priorityLabel === "Overdue";
@@ -1185,15 +1202,26 @@ const WorkflowDetail: React.FC<{
     page?.classList.add("workflow-scroll-lock");
     const overlay = overlayRef.current;
     const onWheel = (event: WheelEvent) => {
-      const content = overlay?.querySelector(".slideout-content");
-      if (content instanceof HTMLElement && event.target instanceof Node && content.contains(event.target)) {
-        const delta = event.deltaY;
-        const atTop = content.scrollTop <= 0;
-        const atBottom = content.scrollTop + content.clientHeight >= content.scrollHeight - 1;
-        if ((delta < 0 && atTop) || (delta > 0 && atBottom)) event.preventDefault();
+      let node = event.target instanceof Element ? event.target : null;
+      let scroller: HTMLElement | null = null;
+      while (node && node !== overlay) {
+        if (node instanceof HTMLElement) {
+          const overflowY = window.getComputedStyle(node).overflowY;
+          if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight + 1) {
+            scroller = node;
+            break;
+          }
+        }
+        node = node.parentElement;
+      }
+      if (!scroller) {
+        event.preventDefault();
         return;
       }
-      event.preventDefault();
+      const delta = event.deltaY;
+      const atTop = scroller.scrollTop <= 0;
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+      if ((delta < 0 && atTop) || (delta > 0 && atBottom)) event.preventDefault();
     };
     overlay?.addEventListener("wheel", onWheel, { passive: false });
     return () => {
@@ -1277,6 +1305,13 @@ const WorkflowDetail: React.FC<{
                 const current = index === 0;
                 return (
                   <article key={action?.id || "current"} className={current ? "action-card current" : "action-card"}>
+                    {!current && action && (
+                      <div className="badge-row">
+                        {actionStatusBadges(action).map((badge) => (
+                          <span key={badge.label} className={`badge ${badge.className}`}>{badge.label}</span>
+                        ))}
+                      </div>
+                    )}
                     <h3>{current ? (showAction ? "Action required" : "Next action") : action?.stageLabel}</h3>
                     <p className="next-action">{current ? (row.nextAction || action?.title || "None") : action?.title}</p>
                     {current && reason && <p className="action-reason">{reason}</p>}
