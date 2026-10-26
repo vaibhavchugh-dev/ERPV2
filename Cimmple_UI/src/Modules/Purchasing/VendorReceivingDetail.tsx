@@ -28,6 +28,30 @@ interface ReceivingFormData {
   lotNumber: string;
 }
 
+/** Prefer the API sentence. Axios's own text is only "Request failed with status code 400". */
+const receiveErrorText = (error: unknown): string => {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  let api = "";
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed) as { error?: string; message?: string };
+        api = parsed.error || parsed.message || "";
+      } catch {
+        api = trimmed;
+      }
+    } else {
+      api = trimmed;
+    }
+  } else if (data && typeof data === "object") {
+    const body = data as { error?: string; message?: string; detail?: string };
+    api = body.error || body.message || body.detail || "";
+  }
+  if (api.trim() && !/status code \d+/i.test(api)) return api.trim();
+  return "The items could not be received.";
+};
+
 /** Stock lines that book inventory need a location when a master id is present. */
 function willBookInventory(detail: OrderDetailForReceiving): boolean {
   const jobTied =
@@ -74,6 +98,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
   const [showReceivingForm, setShowReceivingForm] = useState<Map<number, boolean>>(new Map());
   const [receivingHistory, setReceivingHistory] = useState<Map<number, ReceivingTransaction[]>>(new Map());
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
+  const [receiveError, setReceiveError] = useState<{ detailId: number; message: string } | null>(null);
 
   const defaultReceiveLocationId = (): number | undefined => {
     if (order?.locationId && order.locationId > 0) return order.locationId;
@@ -257,6 +282,7 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
     }
 
     setReceiving(true);
+    setReceiveError(null);
     try {
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 0;
@@ -279,9 +305,11 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       } else {
         toast.error(result.message || "Failed to receive items");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[VendorReceivingDetail] Error receiving items:", error);
-      toast.error(`Error receiving items: ${error.response?.data?.error || error.message || "Unknown error"}`);
+      const message = receiveErrorText(error);
+      setReceiveError({ detailId: detail.id, message });
+      toast.error(message);
     } finally {
       setReceiving(false);
     }
@@ -342,9 +370,10 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
       } else {
         toast.error(`${failed.length} of ${formsToSubmit.length} receiving transactions failed`);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[VendorReceivingDetail] Error in batch receive:", error);
-      toast.error(`Error receiving items: ${error.message || "Unknown error"}`);
+      const message = receiveErrorText(error);
+      toast.error(message);
     } finally {
       setReceiving(false);
     }
@@ -623,6 +652,9 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
                                   </ul>
                                 )}
                               </div>
+                              {receiveError?.detailId === detail.id && (
+                                <p className="receiving-error" role="alert">{receiveError.message}</p>
+                              )}
                               <div className="form-actions">
                                 <button
                                   type="button"

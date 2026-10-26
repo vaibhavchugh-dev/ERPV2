@@ -1903,6 +1903,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
                                   suggestedUnit={detail.Unit}
                                   suggestedUnitCost={detail.UnitPrice}
                                   vendorId={formData.VendorID}
+                                  vendorSelected={!!formData.VendorID && formData.VendorID > 0}
                                   disabled={isInvoiced}
                                   scrollContainerSelector=".vendor-order-slideout-content"
                                   onChange={(partNo) => {

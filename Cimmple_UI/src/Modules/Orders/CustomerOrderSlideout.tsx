@@ -912,7 +912,8 @@ const CustomerOrderSlideout: React.FC<CustomerOrderSlideoutProps> = ({
       }
     } catch (error: any) {
       console.error("Error creating job order:", error);
-      toast.error(`Error creating job order: ${error.message || "Unknown error"}`);
+      const apiMessage = error?.response?.data?.error;
+      toast.error(apiMessage || "The job order could not be created.");
     } finally {
       setLoading(false);
     }
