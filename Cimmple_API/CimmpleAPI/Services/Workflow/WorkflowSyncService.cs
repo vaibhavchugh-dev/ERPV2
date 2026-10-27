@@ -178,6 +178,8 @@ namespace CimmpleAPI.Services.Workflow
             }
 
             await _context.SaveChangesAsync();
+            if (await CarryQuotationAssignmentAsync(overview, instances, tasks))
+                await _context.SaveChangesAsync();
             await AttachAsync(overview, instances, tasks);
         }
 
@@ -642,6 +644,73 @@ namespace CimmpleAPI.Services.Workflow
                     })
                     .ToList();
             }
+        }
+
+        /// <summary>
+        /// The order's confirm-order task starts with the quotation assignee and the same
+        /// pending or acknowledged handoff. This writes the owner directly, so it does not
+        /// go through Assign and cannot raise a duplicate-assignment error.
+        /// An assignee chosen later on the order is left on the order task only.
+        /// </summary>
+        private async Task<bool> CarryQuotationAssignmentAsync(
+            WorkflowOverviewDto overview,
+            List<WorkflowInstance> instances,
+            List<WorkflowTask> tasks)
+        {
+            var changed = false;
+            foreach (var row in overview.Workflows)
+            {
+                if (row.CustomerOrderId is not > 0 || row.QuotationId is not > 0)
+                    continue;
+                var orderInstance = instances.FirstOrDefault(i => i.CustomerOrderId == row.CustomerOrderId);
+                var quote = instances.FirstOrDefault(i => i.CustomerOrderId == null && i.QuotationId == row.QuotationId);
+                if (orderInstance == null || quote == null)
+                    continue;
+                var current = tasks
+                    .Where(t => t.WorkflowInstanceId == orderInstance.Id
+                        && t.Status == WorkflowCoordination.Open
+                        && t.TaskType == WorkflowCoordination.TaskConfirmOrder
+                        && t.Id > 0)
+                    .OrderBy(t => t.Id)
+                    .FirstOrDefault();
+                if (current == null || current.OwnerUserId is > 0)
+                    continue;
+                if (await _context.WorkflowHandoffs.AnyAsync(h => h.WorkflowTaskId == current.Id))
+                    continue;
+                var follow = tasks
+                    .Where(t => t.WorkflowInstanceId == quote.Id
+                        && t.TaskType == WorkflowCoordination.TaskFollowQuotation
+                        && t.OwnerUserId is > 0)
+                    .OrderByDescending(t => t.Id)
+                    .FirstOrDefault();
+                if (follow == null)
+                    continue;
+
+                current.OwnerUserId = follow.OwnerUserId;
+                var latest = await _context.WorkflowHandoffs
+                    .Where(h => h.WorkflowTaskId == follow.Id)
+                    .OrderByDescending(h => h.Id)
+                    .FirstOrDefaultAsync();
+                var carryStatus = latest != null
+                    && latest.ToUserId == follow.OwnerUserId
+                    && (latest.Status == WorkflowCoordination.HandoffPending || latest.Status == WorkflowCoordination.HandoffAcknowledged)
+                    ? latest.Status
+                    : WorkflowCoordination.HandoffAcknowledged;
+                _context.WorkflowHandoffs.Add(new WorkflowHandoff
+                {
+                    TenantId = current.TenantId,
+                    WorkflowTaskId = current.Id,
+                    FromUserId = carryStatus == latest?.Status ? latest?.FromUserId : null,
+                    ToUserId = follow.OwnerUserId,
+                    Instruction = carryStatus == latest?.Status ? latest?.Instruction ?? "" : "",
+                    DueDate = carryStatus == latest?.Status ? latest?.DueDate : null,
+                    Status = carryStatus,
+                    CreatedAt = DateTime.Now,
+                });
+                changed = true;
+            }
+
+            return changed;
         }
 
         private static WorkflowTask? PickCurrent(WorkflowRowDto row, List<WorkflowActionDto> actions, List<WorkflowTask> tasks)

@@ -746,8 +746,18 @@
 
 }
 
+.page-content:has(.workflow-page) {
+  scrollbar-gutter: stable;
+}
+
 .page-content.workflow-scroll-lock {
   overflow: hidden !important;
+  scrollbar-gutter: stable;
+}
+
+.workflow-nested-document {
+  position: relative;
+  z-index: 1100;
 }
 
 .slideout-overlay:has(.workflow-detail) {

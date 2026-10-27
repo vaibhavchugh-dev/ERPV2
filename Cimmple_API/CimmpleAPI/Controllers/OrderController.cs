@@ -1968,7 +1968,10 @@ namespace CimmpleAPI.Controllers
                 // Delete the order
                 _context.CustomerOrder.Remove(order);
                 _context.SaveChanges();
-                _workflowSync.TryCloseCustomerOrderAsync(tenantId, orderId, GetUserId()).GetAwaiter().GetResult();
+                var actorId = GetUserId();
+                _workflowSync.TryCloseCustomerOrderAsync(tenantId, orderId, actorId).GetAwaiter().GetResult();
+                foreach (var quotation in linkedQuotations)
+                    _workflowSync.TryRefreshQuotationAsync(tenantId, quotation.OrderID, actorId).GetAwaiter().GetResult();
 
                 return Ok(new { result = new { message = "Order deleted successfully" } });
             }
@@ -4148,6 +4151,29 @@ namespace CimmpleAPI.Controllers
             }
         }
 
+        /// <summary>
+        /// A vendor order can be received after it is sent. Draft orders stay off Vendor Receiving
+        /// until then. Fully received orders have nothing left to receive.
+        /// </summary>
+        private static bool VendorOrderAwaitingReceipt(string? status)
+        {
+            var value = (status ?? "").Trim();
+            return value.Equals("Sent", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("Partially Received", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("Receiving", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string VendorOrderReceiptMessage(string? status)
+        {
+            var value = (status ?? "").Trim();
+            if (value.Equals("Fully Received", StringComparison.OrdinalIgnoreCase))
+                return "This vendor order is already fully received.";
+            if (string.IsNullOrEmpty(value) || value.Equals("Draft", StringComparison.OrdinalIgnoreCase))
+                return "Send the vendor order before receiving it.";
+            return "This vendor order is not ready to receive.";
+        }
+
         [HttpGet("GetOrdersForReceiving")]
         public async Task<IActionResult> GetOrdersForReceiving([FromQuery] int tenantId, [FromQuery] int? locationId = null)
         {
@@ -4273,6 +4299,9 @@ namespace CimmpleAPI.Controllers
 
                 if (order.LocationId is int orderLoc and > 0 && !CanAccessLocation(orderLoc))
                     return StatusCode(403, new { error = "You do not have access to this site." });
+
+                if (!VendorOrderAwaitingReceipt(order.Status))
+                    return BadRequest(new { error = VendorOrderReceiptMessage(order.Status) });
 
                 // Get order details — only fields the receiving UI needs
                 var details = await _context.VendorOrderDetails
@@ -4407,6 +4436,8 @@ namespace CimmpleAPI.Controllers
                     return NotFound(new { error = "Vendor order not found" });
                 if (vendorOrder.LocationId is int voLoc and > 0 && !CanAccessLocation(voLoc))
                     return StatusCode(403, new { error = "You do not have access to this vendor order's site." });
+                if (!VendorOrderAwaitingReceipt(vendorOrder.Status))
+                    return BadRequest(new { error = VendorOrderReceiptMessage(vendorOrder.Status) });
                 if (locationId is int recvLoc and > 0 && !CanAccessLocation(recvLoc))
                     return StatusCode(403, new { error = "You do not have access to the selected receiving location." });
 
