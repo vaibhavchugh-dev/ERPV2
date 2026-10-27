@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useHistory, useLocation } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faSearch, faTimes } from "@fortawesome/free-solid-svg-icons";
 import ClientPagination from "../../Common/Components/ClientPagination";
+import SortIndicator from "../../Common/Components/SortIndicator";
 import { useListPageSize } from "../../Common/Hooks/useListPageSize";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
@@ -16,6 +17,45 @@ import {
   WorkflowService,
 } from "../../Common/Services/WorkflowService";
 import "./WorkflowCenter.scss";
+
+const CustomerQuotationSlideout = React.lazy(() => import("../Quotations/CustomerQuotationSlideout"));
+const CustomerOrderSlideout = React.lazy(() => import("../Orders/CustomerOrderSlideout"));
+
+type NestedDocument = { kind: "quotation" | "order"; id: number };
+
+const nestedDocument = (path?: string | null): NestedDocument | null => {
+  const match = /^\/(quotations\/customer|orders\/customer)\?([^#]*)/.exec(path || "");
+  if (!match) return null;
+  const id = Number(new URLSearchParams(match[2]).get("open"));
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return { kind: match[1] === "quotations/customer" ? "quotation" : "order", id };
+};
+
+type WorkflowSortKey = "reference" | "customer" | "stage" | "status" | "owner" | "age" | "next";
+
+const compareWorkflows = (a: WorkflowRow, b: WorkflowRow, key: WorkflowSortKey, dir: "asc" | "desc") => {
+  const sign = dir === "asc" ? 1 : -1;
+  const text = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" }) * sign;
+  switch (key) {
+    case "reference":
+      return text(a.reference || "", b.reference || "");
+    case "customer":
+      return text(a.customerName || "", b.customerName || "");
+    case "stage":
+      return text(a.principalStageLabel || "", b.principalStageLabel || "");
+    case "status":
+      return text(a.indicator || "", b.indicator || "");
+    case "owner":
+      return text(a.ownerLabel || "", b.ownerLabel || "");
+    case "next":
+      return text(a.nextAction || "", b.nextAction || "");
+    default: {
+      const byAge = (a.ageDays - b.ageDays) * sign;
+      if (byAge) return byAge;
+      return (b.documentDate || "").localeCompare(a.documentDate || "");
+    }
+  }
+};
 
 const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
@@ -211,11 +251,30 @@ const WorkflowCenter: React.FC = () => {
   const [ownerFilter, setOwnerFilter] = useState("");
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(returned.selected);
+  const [nested, setNested] = useState<NestedDocument | null>(null);
+  const [sortKey, setSortKey] = useState<WorkflowSortKey>("age");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const closedSelection = useRef<string | null>(null);
+  const heldRow = useRef<WorkflowRow | null>(null);
+  const seenSearch = useRef(location.search);
+  const loadSeq = useRef(0);
+  const selectedIdRef = useRef(selectedId);
+  const awaitingSelection = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   const closeDrawer = () => {
+    if (nested) return;
     closedSelection.current = selectedId;
+    heldRow.current = null;
     setSelectedId(null);
+  };
+
+  const toggleSort = (column: WorkflowSortKey) => {
+    if (sortKey === column) setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(column);
+      setSortDir("asc");
+    }
   };
 
   const patchWorkflow = (id: string, patch: Partial<WorkflowRow>) => {
@@ -232,17 +291,35 @@ const WorkflowCenter: React.FC = () => {
 
   const load = () => {
     const key = locationKey(locationIdParam);
+    const seq = ++loadSeq.current;
     const cached = overviewCache?.key === key ? overviewCache.data : null;
     if (!cached) setLoading(true);
     setError(null);
     return WorkflowService.GetOverview(locationIdParam)
       .then((data) => {
+        if (seq !== loadSeq.current) return false;
+        const pendingId = awaitingSelection.current;
+        if (pendingId) awaitingSelection.current = null;
+        const openId = pendingId ?? selectedIdRef.current;
+        const stillThere = !!openId && data.workflows.some((row) => row.id === openId);
+        // A deleted quotation or order is no longer in this payload. Drop the snapshot
+        // the drawer was holding. If deleting the order restored its quotation, follow that.
+        if (openId && !stillThere && !pendingId) {
+          const previous = heldRow.current;
+          const replacement = previous?.quotationId
+            ? data.workflows.find((row) => row.kind === "Quotation" && row.quotationId === previous.quotationId)
+            : undefined;
+          heldRow.current = null;
+          closedSelection.current = null;
+          setSelectedId(replacement?.id ?? null);
+        }
         overviewCache = { key, data };
         setOverview(data);
         setLoading(false);
         return true;
       })
       .catch((err: { response?: { data?: { error?: string } } }) => {
+        if (seq !== loadSeq.current) return false;
         if (!cached) {
           setOverview(null);
           setError(err?.response?.data?.error || "Workflow Center could not be loaded.");
@@ -253,32 +330,13 @@ const WorkflowCenter: React.FC = () => {
   };
 
   useEffect(() => {
-    let cancelled = false;
     const key = locationKey(locationIdParam);
     const cached = overviewCache?.key === key ? overviewCache.data : null;
-    if (!cached) {
-      setLoading(true);
-      setOverview(null);
-    }
-    setError(null);
-    WorkflowService.GetOverview(locationIdParam)
-      .then((data) => {
-        if (cancelled) return;
-        overviewCache = { key, data };
-        setOverview(data);
-        setLoading(false);
-      })
-      .catch((err: { response?: { data?: { error?: string } } }) => {
-        if (cancelled) return;
-        if (!cached) {
-          setOverview(null);
-          setError(err?.response?.data?.error || "Workflow Center could not be loaded.");
-        }
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    if (cached) setOverview(cached);
+    else setOverview(null);
+    load();
+    // locationIdParam is the site scope. load() reads the latest value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationIdParam]);
 
   useEffect(() => {
@@ -286,13 +344,17 @@ const WorkflowCenter: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const selected = params.get("selected");
+    // Selection is written with replaceState, so this router search stays stale.
+    // Reading it whenever selectedId changes would put the drawer back on the quotation
+    // after a convert, and the timeline would keep the old snapshot.
+    if (location.search === seenSearch.current) return;
+    seenSearch.current = location.search;
+    const selected = new URLSearchParams(location.search).get("selected");
     if (closedSelection.current && selected !== closedSelection.current)
       closedSelection.current = null;
-    if (!selected || selected === selectedId || closedSelection.current === selected) return;
+    if (closedSelection.current === selected) return;
     setSelectedId(selected);
-  }, [location.search, selectedId]);
+  }, [location.search]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -302,14 +364,15 @@ const WorkflowCenter: React.FC = () => {
     if (view === "chores") params.set("view", "chores");
     if (selectedId) params.set("selected", selectedId);
     const next = params.toString();
-    const current = location.search.startsWith("?") ? location.search.slice(1) : location.search;
+    const current = window.location.search.startsWith("?") ? window.location.search.slice(1) : window.location.search;
     if (next === current) return;
-    history.replace({ pathname: location.pathname, search: next ? `?${next}` : "" });
-  }, [search, stage, status, view, selectedId, history, location.pathname, location.search]);
+    const url = next ? `${location.pathname}?${next}` : location.pathname;
+    window.history.replaceState(window.history.state, "", url);
+  }, [search, stage, status, view, selectedId, location.pathname]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, stage, status, view, ownerFilter, pageSize]);
+  }, [search, stage, status, view, ownerFilter, pageSize, sortKey, sortDir]);
 
   const workflows = overview?.workflows || [];
   const scoped = useMemo(
@@ -337,6 +400,7 @@ const WorkflowCenter: React.FC = () => {
         if (!matchesChoreStatus(action, status)) return false;
         return ownerMatches(row, ownerFilter);
       })
+      .filter((action) => action.kind !== "JobInProgress")
       .sort(compareChores);
   }, [overview?.actions, workflows, search, stage, status, ownerFilter]);
   const ownerOptions = useMemo(() => {
@@ -354,18 +418,29 @@ const WorkflowCenter: React.FC = () => {
     overdue: scoped.filter((row) => row.isOverdue).length,
   }), [scoped]);
 
-  const rowsForPage = view === "chores" ? chores : listed;
+  const sorted = useMemo(
+    () => listed.slice().sort((a, b) => compareWorkflows(a, b, sortKey, sortDir)),
+    [listed, sortKey, sortDir]
+  );
+  const rowsForPage = view === "chores" ? chores : sorted;
   const total = rowsForPage.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
-  const pagedRows = listed.slice(start, start + pageSize);
+  const pagedRows = sorted.slice(start, start + pageSize);
   const pagedChores = chores.slice(start, start + pageSize);
   const selected = workflows.find((row) => row.id === selectedId) || null;
+  if (selected) heldRow.current = selected;
+  const shown = selected || (selectedId ? heldRow.current : null);
 
   const openPath = (event: React.MouseEvent, path?: string | null, workflowId?: string) => {
     event.stopPropagation();
     if (!path) return;
+    const document = nestedDocument(path);
+    if (document) {
+      setNested(document);
+      return;
+    }
     const returnSelection = workflowId || selectedId;
     const params = new URLSearchParams();
     if (search.trim()) params.set("q", search.trim());
@@ -530,13 +605,17 @@ const WorkflowCenter: React.FC = () => {
           pageSize={pageSize}
           onPage={setPage}
           onPageSize={setPageSize}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={toggleSort}
         />
       )}
 
-      {selected && (
+      {shown && (
         <WorkflowDetail
-          row={selected}
-          actions={(overview?.actions || []).filter((action) => action.workflowId === selected.id)}
+          key={shown.id}
+          row={shown}
+          actions={(overview?.actions || []).filter((action) => action.workflowId === shown.id)}
           onClose={closeDrawer}
           onOpenPath={openPath}
           onChanged={load}
@@ -548,7 +627,65 @@ const WorkflowCenter: React.FC = () => {
           formatDate={formatDateOnlyFromApi}
         />
       )}
+
+      {nested && (
+        <div className="workflow-nested-document">
+          <Suspense fallback={null}>
+            {nested.kind === "quotation" ? (
+              <CustomerQuotationSlideout
+                quotationId={nested.id}
+                onClose={() => {
+                  setNested(null);
+                  load();
+                }}
+                onConverted={(orderId) => {
+                  setNested(null);
+                  const nextId = `order-${orderId}`;
+                  closedSelection.current = null;
+                  heldRow.current = shown;
+                  awaitingSelection.current = nextId;
+                  selectedIdRef.current = nextId;
+                  setSelectedId(nextId);
+                  load();
+                }}
+              />
+            ) : (
+              <CustomerOrderSlideout
+                orderId={nested.id}
+                onClose={() => {
+                  setNested(null);
+                  load();
+                }}
+              />
+            )}
+          </Suspense>
+        </div>
+      )}
     </div>
+  );
+};
+
+const SortHeader: React.FC<{
+  label: string;
+  column: WorkflowSortKey;
+  sortKey: WorkflowSortKey;
+  sortDir: "asc" | "desc";
+  onSort: (column: WorkflowSortKey) => void;
+  title?: string;
+}> = ({ label, column, sortKey, sortDir, onSort, title }) => {
+  const active = sortKey === column;
+  return (
+    <th
+      className="sortable"
+      title={title}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+      onClick={() => onSort(column)}
+    >
+      <div className="th-content">
+        <span>{label}</span>
+        <SortIndicator active={active} direction={sortDir} />
+      </div>
+    </th>
   );
 };
 
@@ -576,19 +713,22 @@ const JourneyTable: React.FC<{
   pageSize: number;
   onPage: (page: number) => void;
   onPageSize: (size: number) => void;
+  sortKey: WorkflowSortKey;
+  sortDir: "asc" | "desc";
+  onSort: (column: WorkflowSortKey) => void;
 }> = (props) => (
   <div className="table-card">
     <div className="table-wrapper">
       <table className="customers-table">
         <thead>
           <tr>
-            <th>Reference</th>
-            <th>Customer</th>
-            <th>Stage</th>
-            <th>Status</th>
-            <th>Owner</th>
-            <th>Age</th>
-            <th>Next action</th>
+            <SortHeader label="Reference" column="reference" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader label="Customer" column="customer" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader label="Stage" column="stage" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader label="Status" column="status" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader label="Owner" column="owner" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader label="Age" column="age" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} title={AGE_TITLE} />
+            <SortHeader label="Next action" column="next" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
           </tr>
         </thead>
         <tbody>
@@ -689,6 +829,19 @@ const isDraftJob = (status?: string | null) => {
   const value = (status || "").trim().toLowerCase();
   return value === "" || value === "draft";
 };
+
+const vendorOrderCanBeReceived = (status?: string | null) => {
+  const value = (status || "").trim().toLowerCase();
+  return value === "sent" || value === "partially received" || value === "receiving" || value === "completed";
+};
+
+const collectedAmount = (row: WorkflowRow) =>
+  row.invoices
+    .filter((invoice) => invoice.substage !== "Void" && invoice.status !== "Void")
+    .reduce((sum, invoice) => sum + (invoice.paidAmount || 0), 0);
+
+const partLabel = (partNo?: string | null, partName?: string | null) =>
+  [partNo, partName].filter((value) => value && value.trim()).join(" — ");
 
 const calendarDaysAfter = (value?: string | null) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || "");
@@ -843,13 +996,14 @@ const stageRecords = (
   const planningState = row.stages.find((stage) => stage.code === "Planning")?.state;
   const planningGaps = actions.filter((action) => action.kind === "PlanningGap" && (action.linkPath || row.orderPath));
   planningGaps.forEach((action) => {
+    const opensJob = (action.linkPath || "").includes("/job-orders");
     add("Planning", {
       key: action.id,
-      type: "Customer order",
-      identifier: row.reference,
+      type: opensJob ? "Job order" : "Customer order",
+      identifier: action.linkText || row.reference,
       status: action.title || "No job order linked",
       path: action.linkPath || row.orderPath,
-      affordance: "Open customer order",
+      affordance: action.linkLabel || (opensJob ? "Open job order" : "Open customer order"),
     });
   });
   if (!planningGaps.length && row.jobs.length === 0 && row.orderPath && (planningState === "Current" || planningState === "Attention")) {
@@ -864,13 +1018,14 @@ const stageRecords = (
   }
 
   row.jobs.forEach((job) => {
+    const part = partLabel(job.partNo, job.partName);
     add(isDraftJob(job.status) ? "Planning" : "Production", {
       key: `job-${job.jobOrderId}`,
       type: "Job order",
       identifier: job.number,
-      status: job.status || undefined,
+      status: [part, job.status].filter(Boolean).join(" · ") || undefined,
       path: job.path,
-      affordance: "Open record",
+      affordance: "Open job order",
     });
   });
 
@@ -890,14 +1045,16 @@ const stageRecords = (
       path: purchase.orderPath,
       affordance: "Open record",
     });
-    add("Materials", {
-      key: `recv-${purchase.vendorOrderId}`,
-      type: "Receipt",
-      identifier: purchase.number,
-      status: `Received ${qtyReceived} of ${qtyOrdered}`,
-      path: purchase.receivingPath,
-      affordance: "Open receiving",
-    });
+    if (vendorOrderCanBeReceived(purchase.status) && qtyReceived < qtyOrdered) {
+      add("Materials", {
+        key: `recv-${purchase.vendorOrderId}`,
+        type: "Receipt",
+        identifier: purchase.number,
+        status: `Received ${qtyReceived} of ${qtyOrdered}`,
+        path: purchase.receivingPath,
+        affordance: "Open receiving",
+      });
+    }
   });
 
   row.shortages.forEach((item) => {
@@ -951,15 +1108,27 @@ const stageRecords = (
 
   const openInvoices = row.invoices.filter((invoice) => isOpenInvoice(invoice.substage));
   if (openInvoices.length) {
-    const outstanding = openInvoices.reduce((sum, invoice) => sum + (invoice.balance || 0), 0);
-    add("Collection", {
-      key: "ar",
-      type: "Receivable",
-      identifier: "Accounts receivable",
-      status: `${formatCurrency(outstanding)} outstanding`,
-      path: "/accounts/receivable",
-      affordance: "Open record",
+    openInvoices.forEach((invoice) => {
+      add("Collection", {
+        key: `collect-${invoice.invoiceId}`,
+        type: "Invoice",
+        identifier: invoice.number,
+        status: `${formatCurrency(invoice.balance)} outstanding`,
+        path: invoice.path,
+        affordance: "Open invoice",
+      });
     });
+  } else {
+    const collected = collectedAmount(row);
+    if (collected > 0) {
+      add("Collection", {
+        key: "collected",
+        type: "Collected",
+        identifier: formatCurrency(collected),
+        status: "Collected",
+        affordance: "",
+      });
+    }
   }
 
   return buckets;
@@ -974,7 +1143,6 @@ const WorkPicture: React.FC<{
 }> = ({ row, actions, formatCurrency, formatDate, onOpenPath }) => {
   const gaps = actions.filter((action) => action.kind === "PlanningGap");
   const openInvoices = row.invoices.filter((invoice) => isOpenInvoice(invoice.substage));
-  const outstanding = openInvoices.reduce((sum, invoice) => sum + (invoice.balance || 0), 0);
   const lanes = row.jobs.map((job) => {
     const purchases = row.purchases.filter((item) => item.jobOrderId === job.jobOrderId);
     const seen = new Set<number>();
@@ -1036,9 +1204,9 @@ const WorkPicture: React.FC<{
         key: action.id,
         type: "Planning",
         identifier: action.title,
-        status: "",
+        status: action.detail || "",
         path: action.linkPath || row.orderPath || "",
-        affordance: "Open customer order",
+        affordance: action.linkLabel || "Open customer order",
       })),
     });
   }
@@ -1113,16 +1281,22 @@ const WorkPicture: React.FC<{
           </section>
           <section>
             <h4>Collection</h4>
-            {openInvoices.length === 0 ? <p className="lane-empty">Nothing to collect.</p> : (
+            {openInvoices.length > 0 ? (
               <ul className="stage-records">
-                <li>
-                  <button type="button" className="record-link" onClick={(event) => onOpenPath(event, "/accounts/receivable")}>
-                    <span className="record-id">Accounts receivable</span>
-                    <span className="record-status">{formatCurrency(outstanding)} outstanding</span>
-                    <span className="record-go">Open record<span aria-hidden="true"> →</span></span>
-                  </button>
-                </li>
+                {openInvoices.map((invoice) => (
+                  <li key={invoice.invoiceId}>
+                    <button type="button" className="record-link" onClick={(event) => onOpenPath(event, invoice.path)}>
+                      <span className="record-id">{invoice.number}</span>
+                      <span className="record-status">{formatCurrency(invoice.balance)} outstanding</span>
+                      <span className="record-go">Open invoice<span aria-hidden="true"> →</span></span>
+                    </button>
+                  </li>
+                ))}
               </ul>
+            ) : collectedAmount(row) > 0 ? (
+              <p className="lane-empty">Collected {formatCurrency(collectedAmount(row))}.</p>
+            ) : (
+              <p className="lane-empty">Nothing to collect.</p>
             )}
           </section>
         </div>
@@ -1248,7 +1422,7 @@ const WorkflowDetail: React.FC<{
   const shownOwner = pendingAction === "assign" && pendingOwner ? pendingOwner : owner;
   const actionQueue = useMemo(() => {
     const linked = actions
-      .filter((action) => action.linkPath)
+      .filter((action) => action.linkPath && (action.kind !== "JobInProgress" || action.id === primary?.id))
       .slice()
       .sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title));
     if (!primary) return linked;
@@ -1314,6 +1488,9 @@ const WorkflowDetail: React.FC<{
                     )}
                     <h3>{current ? (showAction ? "Action required" : "Next action") : action?.stageLabel}</h3>
                     <p className="next-action">{current ? (row.nextAction || action?.title || "None") : action?.title}</p>
+                    {action?.detail && action.detail !== reason && action.detail !== action.title && (
+                      <p className="action-reason">{action.detail}</p>
+                    )}
                     {current && reason && <p className="action-reason">{reason}</p>}
                     {current && row.manualBlocker && row.manualBlocker !== reason && (
                       <p className="action-reason">Note: {row.manualBlocker}</p>
@@ -1433,10 +1610,12 @@ const WorkflowDetail: React.FC<{
                               <span className="record-type">{item.type}</span>
                               <span className="record-id">{item.identifier}</span>
                               {item.status && <span className="record-status">{item.status}</span>}
-                              <span className="record-go">
-                                {item.affordance}
-                                <span aria-hidden="true"> →</span>
-                              </span>
+                              {item.affordance && (
+                                <span className="record-go">
+                                  {item.affordance}
+                                  <span aria-hidden="true"> →</span>
+                                </span>
+                              )}
                             </button>
                           </li>
                         ))}

@@ -50,12 +50,15 @@ interface CustomerQuotationSlideoutProps {
   quotationId: number;
   onClose: (refreshList?: boolean) => void;
   onSaved?: (quotationId: number) => void;
+  /** When set, a successful convert closes this slideout and reports the new order id. */
+  onConverted?: (orderId: number) => void;
 }
 
 const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   quotationId,
   onClose,
   onSaved,
+  onConverted,
 }) => {
   const { formatCurrency, currencySymbol, discountColumnLabel } = useFormatting();
   const {
@@ -1463,6 +1466,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
         toast.success(`Quotation converted to order successfully! Order Number: ${orderNumber}`, {
           autoClose: 5000
         });
+        if (onConverted) onConverted(result.id);
       } else {
         toast.error("Failed to create order");
       }

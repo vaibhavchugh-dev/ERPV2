@@ -171,7 +171,7 @@ namespace CimmpleAPI.Services.Workflow
                         ShippedQty = Quantity(shippedByDetail, line.ID, line.ShippedQty),
                         InvoicedQty = Quantity(invoicedByDetail, line.ID, line.InvoicedQty),
                         DueDate = RealDate(line.DueDate),
-                        HasJob = orderJobs.Any(j => j.CustomerOrderDetailID == line.ID),
+                        HasJob = orderJobs.Any(j => j.CustomerOrderDetailID == line.ID && IsReleasedJob(j)),
                     }).ToList(),
                     Jobs = orderJobs.Select(job => new WorkflowJobFacts
                     {
@@ -226,7 +226,7 @@ namespace CimmpleAPI.Services.Workflow
                 };
                 row.SearchText = SearchBlob(row);
                 workflows.Add(row);
-                AddOrderActions(actions, row, evaluation, lines, orderJobs, orderNcrs, orderShortages, asOf, order.OrderID);
+                AddOrderActions(actions, row, evaluation, lines, shippedByDetail, orderJobs, orderNcrs, orderShortages, asOf, order.OrderID);
 
                 if (evaluation.HasUninvoicedShipment)
                     collection.Add(ReadyCard(row));
@@ -312,8 +312,8 @@ namespace CimmpleAPI.Services.Workflow
                 .ThenByDescending(c => c.AgeDays)
                 .ToList();
             workflows = workflows
-                .OrderBy(w => IndicatorRank(w.Indicator))
-                .ThenByDescending(w => w.AgeDays)
+                .OrderByDescending(w => w.DocumentDate ?? "")
+                .ThenBy(w => w.AgeDays)
                 .ThenBy(w => w.CustomerName)
                 .ToList();
 
@@ -640,11 +640,30 @@ namespace CimmpleAPI.Services.Workflow
             return found;
         }
 
+        private static bool IsDraftStatus(string? status) =>
+            string.IsNullOrWhiteSpace(status) || status.Trim().Equals("Draft", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsCancelledStatus(string? status)
+        {
+            var value = status?.Trim();
+            return value != null
+                && (value.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("Canceled", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>A released, in-progress, or finished job. Drafts and cancellations do not count.</summary>
+        private static bool IsReleasedJob(JobOrderMaster job) =>
+            !IsDraftStatus(job.Status) && !IsCancelledStatus(job.Status);
+
+        private static string PartLabel(string? partNo, string? partName) =>
+            string.Join(" — ", new[] { partNo, partName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
         private static void AddOrderActions(
             List<WorkflowActionDto> actions,
             WorkflowRowDto row,
             WorkflowEvaluation evaluation,
             List<CustomerOrderDetails> lines,
+            IReadOnlyDictionary<int, int> shippedByDetail,
             List<JobOrderMaster> jobs,
             List<NcrHit> ncrs,
             List<WorkflowShortageDto> shortages,
@@ -698,12 +717,13 @@ namespace CimmpleAPI.Services.Workflow
                 if (!due.HasValue || due.Value.Date >= today || shortages.Any(s => s.JobOrderId == job.JobOrderID))
                     continue;
                 var number = Doc("JO#", job.JobOrderNumber > 0 ? job.JobOrderNumber : job.JobOrderID);
+                var part = PartLabel(job.PartNo, job.PartName);
                 actions.Add(MakeAction(
                     "overdue-job-" + job.JobOrderID,
                     row,
                     "OverdueJob",
                     "Overdue job " + number,
-                    job.PartNo,
+                    string.IsNullOrWhiteSpace(part) ? null : part,
                     WorkflowStageRules.Production,
                     DateText(due),
                     "/job-orders?open=" + job.JobOrderID,
@@ -711,6 +731,25 @@ namespace CimmpleAPI.Services.Workflow
                     linkText: number,
                     sourceType: WorkflowCoordination.SourceJob,
                     sourceId: job.JobOrderID));
+            }
+
+            foreach (var job in jobs.Where(j => IsReleasedJob(j) && !WorkflowStageRules.JobIgnoresMaterialShortage(j.Status)))
+            {
+                if (actions.Any(a => a.Kind == "OverdueJob" && a.SourceId == job.JobOrderID))
+                    continue;
+                var number = Doc("JO#", job.JobOrderNumber > 0 ? job.JobOrderNumber : job.JobOrderID);
+                var part = PartLabel(job.PartNo, job.PartName);
+                actions.Add(MakeAction(
+                    "job-" + job.JobOrderID,
+                    row,
+                    "JobInProgress",
+                    number,
+                    string.IsNullOrWhiteSpace(part) ? null : part,
+                    WorkflowStageRules.Production,
+                    DateText(RealDate(job.DueDate)),
+                    "/job-orders?open=" + job.JobOrderID,
+                    "Open job order",
+                    linkText: number));
             }
 
             foreach (var ncr in ncrs.Where(n => !Eq(n.Status, "Closed") && !Eq(n.Status, "Rejected")))
@@ -765,22 +804,87 @@ namespace CimmpleAPI.Services.Workflow
 
             if (evaluation.PlanningGap)
             {
-                // A draft job is already linked to its line. Do not ask for a new job on another part.
-                var missing = lines.Where(l => !jobs.Any(j => j.CustomerOrderDetailID == l.ID)).ToList();
-                foreach (var line in missing)
+                foreach (var line in lines)
                 {
+                    var lineJobs = jobs.Where(j => j.CustomerOrderDetailID == line.ID).ToList();
+                    var drafts = lineJobs.Where(j => IsDraftStatus(j.Status)).ToList();
+                    var released = lineJobs.Any(IsReleasedJob);
+                    var shipped = Quantity(shippedByDetail, line.ID, line.ShippedQty);
+                    var remaining = line.QtyOrdered > shipped;
+                    var part = string.IsNullOrWhiteSpace(line.PartNo) ? row.Reference : line.PartNo;
+                    if (drafts.Count > 0 && remaining && !released)
+                    {
+                        foreach (var draft in drafts)
+                        {
+                            var number = Doc("JO#", draft.JobOrderNumber > 0 ? draft.JobOrderNumber : draft.JobOrderID);
+                            actions.Add(MakeAction(
+                                "release-" + row.Id + "-" + draft.JobOrderID,
+                                row,
+                                "PlanningGap",
+                                "Release " + number,
+                                PartLabel(line.PartNo, line.partname),
+                                WorkflowStageRules.Planning,
+                                DateText(RealDate(line.DueDate)),
+                                "/job-orders?open=" + draft.JobOrderID,
+                                "Open job order",
+                                linkText: number,
+                                sourceType: WorkflowCoordination.SourceJob,
+                                sourceId: draft.JobOrderID));
+                        }
+                    }
+                    else if (drafts.Count > 0)
+                    {
+                        foreach (var draft in drafts)
+                        {
+                            var number = Doc("JO#", draft.JobOrderNumber > 0 ? draft.JobOrderNumber : draft.JobOrderID);
+                            actions.Add(MakeAction(
+                                "close-draft-" + row.Id + "-" + draft.JobOrderID,
+                                row,
+                                "PlanningGap",
+                                "Close the draft job " + number,
+                                remaining ? PartLabel(line.PartNo, line.partname) : "This line is already fully shipped.",
+                                WorkflowStageRules.Planning,
+                                DateText(RealDate(line.DueDate)),
+                                "/job-orders?open=" + draft.JobOrderID,
+                                "Open job order",
+                                linkText: number,
+                                sourceType: WorkflowCoordination.SourceJob,
+                                sourceId: draft.JobOrderID));
+                        }
+                    }
+                    else if (remaining && !released)
+                    {
+                        actions.Add(MakeAction(
+                            "plan-" + row.Id + "-" + line.ID,
+                            row,
+                            "PlanningGap",
+                            "Create a job for " + part,
+                            line.partname,
+                            WorkflowStageRules.Planning,
+                            DateText(RealDate(line.DueDate)),
+                            row.OrderPath,
+                            "Open customer order",
+                            sourceType: WorkflowCoordination.SourceOrderDetail,
+                            sourceId: line.ID));
+                    }
+                }
+
+                foreach (var draft in jobs.Where(j => IsDraftStatus(j.Status) && !lines.Any(l => l.ID == j.CustomerOrderDetailID)))
+                {
+                    var number = Doc("JO#", draft.JobOrderNumber > 0 ? draft.JobOrderNumber : draft.JobOrderID);
                     actions.Add(MakeAction(
-                        "plan-" + row.Id + "-" + line.ID,
+                        "close-draft-" + row.Id + "-" + draft.JobOrderID,
                         row,
                         "PlanningGap",
-                        "Create a job for " + (string.IsNullOrWhiteSpace(line.PartNo) ? row.Reference : line.PartNo),
-                        line.partname,
+                        "Close the draft job " + number,
+                        PartLabel(draft.PartNo, draft.PartName),
                         WorkflowStageRules.Planning,
-                        DateText(RealDate(line.DueDate)),
-                        row.OrderPath,
-                        "Open customer order",
-                        sourceType: WorkflowCoordination.SourceOrderDetail,
-                        sourceId: line.ID));
+                        DateText(RealDate(draft.DueDate)),
+                        "/job-orders?open=" + draft.JobOrderID,
+                        "Open job order",
+                        linkText: number,
+                        sourceType: WorkflowCoordination.SourceJob,
+                        sourceId: draft.JobOrderID));
                 }
             }
 

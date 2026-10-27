@@ -167,12 +167,14 @@ namespace CimmpleAPI.Services.Workflow
             var hasRequirements = facts.Jobs.Any(j => j.HasMaterialRequirements);
             var hasOpenNcr = facts.Ncrs.Any(IsOpenNcr);
             var openDraftJob = facts.Jobs.Any(j => IsDraft(j.Status));
-            var jobsPlanned = facts.Lines.Count > 0
-                && facts.Lines.All(l => l.HasJob)
-                && !openDraftJob;
-            // A shipped order with no jobs is planned enough. A draft job still open is not.
-            var planningComplete = facts.HasCustomerOrder && !cancelled && !openDraftJob
-                && (jobsPlanned || shipmentComplete);
+            // A line is planned when a released job covers it, or the ordered quantity is already
+            // shipped and no draft job is still open. Shipping alone does not finish planning
+            // while a draft job remains, and one shipped line does not cover the others.
+            var planningComplete = facts.HasCustomerOrder
+                && !cancelled
+                && facts.Lines.Count > 0
+                && !openDraftJob
+                && facts.Lines.All(l => l.HasJob || l.QtyOrdered <= 0 || l.ShippedQty >= l.QtyOrdered);
             var planningGap = facts.HasCustomerOrder && !cancelled && !narrowDraft && !planningComplete;
 
             var productionState = ProductionState(facts.Jobs, startedJobs, terminalJobs, materialBlocked);
@@ -311,7 +313,7 @@ namespace CimmpleAPI.Services.Workflow
             {
                 Quotation => "Follow up or convert the quotation in Customer Quotations.",
                 CustomerOrder => "Confirm the customer order.",
-                Planning => "Create the missing job order from the customer order line.",
+                Planning => "Finish planning for each line that still needs a job, a release, or a draft job closed.",
                 Production => "Production is in progress.",
                 Quality => "Review the open non-conformance report.",
                 Shipment => "Ship the remaining quantity.",

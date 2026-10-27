@@ -293,6 +293,42 @@ public class WorkflowStageRulesTests
     }
 
     [Fact]
+    public void FullyShipped_WithoutJobs_CompletesPlanning()
+    {
+        var result = EvaluateOrder(
+            "Shipped",
+            lines: new[] { Line(10, shipped: 10, invoiced: 10) },
+            invoices: new[] { Invoice(100, 100, Today) });
+
+        Assert.Equal(WorkflowStageRules.Complete, Stage(result, WorkflowStageRules.Planning));
+    }
+
+    [Fact]
+    public void FullyShipped_WithDraftJob_KeepsPlanningOpen()
+    {
+        var result = EvaluateOrder(
+            "Shipped",
+            lines: new[] { Line(10, shipped: 10, invoiced: 10) },
+            jobs: new[] { Job("Draft", Today) },
+            invoices: new[] { Invoice(100, 100, Today) });
+
+        Assert.NotEqual(WorkflowStageRules.Complete, Stage(result, WorkflowStageRules.Planning));
+        Assert.False(result.IsComplete);
+        Assert.Equal(WorkflowStageRules.Planning, result.PrincipalStage);
+    }
+
+    [Fact]
+    public void OpenQuantity_WithReleasedJob_IsPlanned()
+    {
+        var result = EvaluateOrder(
+            "In Progress",
+            lines: new[] { Line(10, shipped: 0, hasJob: true) },
+            jobs: new[] { Job("Released", Today.AddDays(3)) });
+
+        Assert.Equal(WorkflowStageRules.Complete, Stage(result, WorkflowStageRules.Planning));
+    }
+
+    [Fact]
     public void PartialShipment_WithoutJobs_DoesNotPretendPlanningIsDone()
     {
         var result = EvaluateOrder(

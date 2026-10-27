@@ -130,11 +130,12 @@ const VendorReceivingDetail: React.FC<VendorReceivingDetailProps> = ({
         if (!cancelled) {
           setOrder(result || null);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("[VendorReceivingDetail] Error loading order:", error);
-        toast.error(`Error loading order: ${error.message || "Unknown error"}`);
+        toast.error(receiveErrorText(error));
         if (!cancelled) {
           setOrder(null);
+          onClose(false);
         }
       } finally {
         if (!cancelled) {
