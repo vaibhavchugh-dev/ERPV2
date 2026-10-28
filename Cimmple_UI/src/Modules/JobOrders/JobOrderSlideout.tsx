@@ -8,6 +8,7 @@ import {
   JobOrderRoutingStep,
   JobOrderStepNote,
   JobMaterialRequirement,
+  JobMaterialPurchase,
   deriveJobStatus,
   computeElapsedSeconds,
   formatElapsedDuration,
@@ -62,6 +63,7 @@ import { PdfService } from "../../Common/Services/PdfService";
 import SendDocumentEmailDialog from "../../Common/Components/SendDocumentEmailDialog";
 import {
   InventoryService,
+  InventoryBalance,
   JobMaterialUsage,
   InventoryReservation,
   RawMaterial,
@@ -72,6 +74,7 @@ import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+import VendorOrderSlideout, { VendorOrderDraftLine } from "../Purchasing/VendorOrderSlideout";
 import "./JobOrderSlideout.scss";
 
 const PAGE_PATH = "/job-orders";
@@ -109,9 +112,126 @@ const catalogItemLabel = (
   return extra ? `${label} (${extra})` : label;
 };
 
+const MaterialItemPicker: React.FC<{
+  options: { id: number; label: string }[];
+  value: number | null;
+  title?: string;
+  onChange: (id: number | null) => void;
+}> = ({ options, value, title, onChange }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const selected = options.find((option) => option.id === value) || null;
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(selected?.label || "");
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.label || "");
+  }, [open, selected?.label]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      const rect = input.getBoundingClientRect();
+      setPosition({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 260) });
+    };
+    const onDoc = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (inputRef.current?.contains(target) || listRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    place();
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
+  const needle = query.trim().toLowerCase();
+  const showingSelected = needle === (selected?.label || "").trim().toLowerCase();
+  const matches = (showingSelected || !needle
+    ? options
+    : options.filter((option) => option.label.toLowerCase().includes(needle))
+  ).slice(0, 40);
+
+  return (
+    <div className="jo-material-picker">
+      <input
+        ref={inputRef}
+        type="text"
+        className="form-input jo-material-item"
+        value={open ? query : (selected?.label || "")}
+        title={title || selected?.label || undefined}
+        placeholder="Search..."
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+          if (!event.target.value.trim()) onChange(null);
+        }}
+        onFocus={() => {
+          setQuery(selected?.label || "");
+          setOpen(true);
+        }}
+      />
+      {open && position && createPortal(
+        <ul
+          ref={listRef}
+          className="jo-material-picker__list"
+          role="listbox"
+          style={{ top: position.top, left: position.left, width: position.width }}
+        >
+          {matches.length === 0 ? (
+            <li className="is-empty">No matches</li>
+          ) : matches.map((option) => (
+            <li key={option.id}>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(option.id);
+                  setQuery(option.label);
+                  setOpen(false);
+                }}
+              >
+                {option.label}
+              </button>
+            </li>
+          ))}
+        </ul>,
+        document.body
+      )}
+    </div>
+  );
+};
+
 const formatInventoryQty = (n: number | undefined, show: boolean): string => {
   if (!show || typeof n !== "number" || Number.isNaN(n)) return "—";
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+
+/** On hand and free qty at one location, including remnant children of a raw material. */
+const stockAtLocation = (
+  rows: InventoryBalance[],
+  type: "rm" | "product",
+  itemId: number
+) => {
+  const matched = rows.filter((row) =>
+    type === "product"
+      ? row.productId === itemId
+      : row.rawMaterialId === itemId || row.parentRawMaterialId === itemId
+  );
+  return {
+    onHand: matched.reduce((sum, row) => sum + (Number(row.quantityOnHand) || 0), 0),
+    available: matched.reduce((sum, row) => sum + (Number(row.quantityAvailable) || 0), 0),
+    locationId: matched.find((row) => row.locationId > 0)?.locationId,
+    locationName: matched.find((row) => row.locationName)?.locationName || "",
+  };
 };
 
 /** Clearer UX when delete is blocked because finished goods remain on hand. */
@@ -202,9 +322,15 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   const documentCacheRef = useRef(new AttachmentDocumentCache());
   const [comments, setComments] = useState<EntityComment[]>([]);
   const [materialUsage, setMaterialUsage] = useState<JobMaterialUsage[]>([]);
+  const [materialPurchases, setMaterialPurchases] = useState<JobMaterialPurchase[]>([]);
+  const [vendorDraft, setVendorDraft] = useState<VendorOrderDraftLine | null>(null);
+  const [vendorOrderId, setVendorOrderId] = useState<number | null>(null);
   const [jobReservations, setJobReservations] = useState<InventoryReservation[]>([]);
   const [products, setProducts] = useState<{ id: number; partNo: string; partName: string }[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
+  const locationBalancesRef = useRef<{ locationId: number; rows: InventoryBalance[] } | null>(null);
+  const locationBalancesLoad = useRef<{ locationId: number; promise: Promise<InventoryBalance[] | null> } | null>(null);
+  const stockPreviewSeq = useRef<Record<number, number>>({});
   const [materialActionBusy, setMaterialActionBusy] = useState<string | null>(null);
   const [materialKitForced, setMaterialKitForced] = useState<boolean | null>(null);
   const [materialLedgerPanel, setMaterialLedgerPanel] = useState<"none" | "reserved" | "used">(
@@ -301,6 +427,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     if (jobOrderId > 0) {
       loadJobOrder(jobOrderId);
       loadMaterialUsage(jobOrderId);
+      loadMaterialPurchases(jobOrderId);
     }
 
     // Load processes from Process Master
@@ -318,6 +445,19 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   useEffect(() => {
     formDataRef.current = formData;
   }, [formData]);
+
+  const loadMaterialPurchases = async (id?: number) => {
+    const targetId = id || jobIdRef.current || jobOrderId;
+    if (targetId <= 0) {
+      setMaterialPurchases([]);
+      return;
+    }
+    try {
+      setMaterialPurchases(await JobOrderService.GetMaterialPurchases(targetId));
+    } catch {
+      setMaterialPurchases([]);
+    }
+  };
 
   const loadMaterialUsage = async (id?: number) => {
     const targetId = id || jobIdRef.current || jobOrderId;
@@ -485,6 +625,10 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleRemoveMaterialRequirement = (index: number) => {
+    const line = (formData.MaterialRequirements || [])[index];
+    const label = catalogItemLabel(line?.PartNo, line?.PartName);
+    const name = label && label !== "Item" ? label : "this material line";
+    if (!window.confirm(`Delete ${name}?`)) return;
     updateMaterialRequirements((formData.MaterialRequirements || []).filter((_, i) => i !== index));
   };
 
@@ -509,51 +653,124 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
     );
   };
 
+  const jobMaterialLocationId = () => {
+    const fromLine = (formData.MaterialRequirements || []).find((line) => (line.LocationId || 0) > 0);
+    if (fromLine?.LocationId) return fromLine.LocationId;
+    if ((customerOrderDetails?.LocationId || 0) > 0) return customerOrderDetails!.LocationId!;
+    return activeLocationId || 0;
+  };
+
+  const ensureLocationBalances = (locationId: number) => {
+    if (locationBalancesRef.current?.locationId === locationId) {
+      return Promise.resolve(locationBalancesRef.current.rows);
+    }
+    if (locationBalancesLoad.current?.locationId === locationId) {
+      return locationBalancesLoad.current.promise;
+    }
+    const promise = InventoryService.GetBalanceList({ locationId })
+      .then((rows) => {
+        const list = rows || [];
+        locationBalancesRef.current = { locationId, rows: list };
+        return list;
+      })
+      .catch(() => {
+        if (locationBalancesLoad.current?.locationId === locationId) locationBalancesLoad.current = null;
+        return null;
+      });
+    locationBalancesLoad.current = { locationId, promise };
+    return promise;
+  };
+
+  const jobQtyForItem = (type: "rm" | "product", itemId: number) => {
+    const matches = (productId?: number, rawMaterialId?: number) =>
+      type === "product"
+        ? productId === itemId
+        : rawMaterialId === itemId ||
+          rawMaterials.some((rm) => rm.id === rawMaterialId && rm.parentRawMaterialId === itemId);
+    const reserved = jobReservations
+      .filter((row) => matches(row.productId, row.rawMaterialId))
+      .reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
+    const issued = materialUsage
+      .filter((row) => !isFinishedGoodsMove(row) && matches(row.productId, row.rawMaterialId))
+      .reduce((sum, row) => sum + Math.abs(Number(row.quantity) || 0), 0);
+    return { reserved, issued };
+  };
+
+  const applyMaterialStock = (
+    index: number,
+    itemId: number,
+    type: "rm" | "product",
+    stock: { onHand: number; available: number; locationId?: number; locationName: string }
+  ) => {
+    const jobQty = jobQtyForItem(type, itemId);
+    setFormData((prev) => {
+      const next = {
+        ...prev,
+        MaterialRequirements: (prev.MaterialRequirements || []).map((row, i) => {
+          if (i !== index) return row;
+          const currentId = type === "product" ? row.ProductId : row.RawMaterialId;
+          if (currentId !== itemId) return row;
+          return {
+            ...row,
+            LocationId: row.LocationId || stock.locationId || jobMaterialLocationId() || null,
+            LocationName: stock.locationName || row.LocationName || "",
+            QuantityOnHand: stock.onHand,
+            QuantityAvailable: stock.available,
+            QuantityReserved: jobQty.reserved,
+            QuantityIssued: jobQty.issued,
+          };
+        }),
+      };
+      formDataRef.current = next;
+      return next;
+    });
+  };
+
   const handleMaterialRequirementItemChange = (index: number, itemId: number | null) => {
     const lines = formData.MaterialRequirements || [];
     const line = lines[index];
     if (!line) return;
     const type = materialRowType(line);
-    if (type === "product") {
-      const product = products.find((p) => p.id === itemId);
-      updateMaterialRequirements(
-        lines.map((row, i) =>
-          i === index
-            ? {
-                ...row,
-                ProductId: itemId,
-                RawMaterialId: null,
-                PartNo: product?.partNo || "",
-                PartName: product?.partName || "",
-                QuantityOnHand: undefined,
-                QuantityAvailable: undefined,
-                QuantityReserved: undefined,
-                QuantityIssued: undefined,
-              }
-            : row
-        )
-      );
-      return;
-    }
-    const rm = rawMaterials.find((r) => r.id === itemId);
+    const catalog =
+      type === "product" ? products.find((p) => p.id === itemId) : rawMaterials.find((r) => r.id === itemId);
+    const locationId = jobMaterialLocationId();
+    const cached = itemId && locationId ? locationBalancesRef.current : null;
+    const immediate =
+      itemId && cached?.locationId === locationId ? stockAtLocation(cached.rows, type, itemId) : null;
+    const jobQty = itemId && immediate ? jobQtyForItem(type, itemId) : null;
     updateMaterialRequirements(
       lines.map((row, i) =>
         i === index
           ? {
               ...row,
-              RawMaterialId: itemId,
-              ProductId: null,
-              PartNo: rm?.partNo || "",
-              PartName: rm?.partName || "",
-              QuantityOnHand: undefined,
-              QuantityAvailable: undefined,
-              QuantityReserved: undefined,
-              QuantityIssued: undefined,
+              ProductId: type === "product" ? itemId : null,
+              RawMaterialId: type === "product" ? null : itemId,
+              PartNo: catalog?.partNo || "",
+              PartName: catalog?.partName || "",
+              LocationId: immediate?.locationId || row.LocationId || locationId || null,
+              LocationName: immediate?.locationName || "",
+              QuantityOnHand: immediate ? immediate.onHand : undefined,
+              QuantityAvailable: immediate ? immediate.available : undefined,
+              QuantityReserved: jobQty ? jobQty.reserved : undefined,
+              QuantityIssued: jobQty ? jobQty.issued : undefined,
             }
           : row
       )
     );
+    if (!itemId || !locationId || immediate) return;
+    const seq = (stockPreviewSeq.current[index] || 0) + 1;
+    stockPreviewSeq.current[index] = seq;
+    void ensureLocationBalances(locationId).then((rows) => {
+      if (stockPreviewSeq.current[index] !== seq || !rows) return;
+      applyMaterialStock(index, itemId, type, stockAtLocation(rows, type, itemId));
+    });
   };
+
+  useEffect(() => {
+    const fromLine = (formData.MaterialRequirements || []).find((line) => (line.LocationId || 0) > 0);
+    const locationId = fromLine?.LocationId || customerOrderDetails?.LocationId || activeLocationId || 0;
+    if (locationId > 0) void ensureLocationBalances(locationId);
+  }, [activeLocationId, customerOrderDetails?.LocationId, formData.MaterialRequirements]);
 
   const handleMaterialRequirementFieldChange = (
     index: number,
@@ -1647,6 +1864,11 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
   };
 
   const handleDeleteRoutingStep = (id: number) => {
+    const step = routingSteps.find((item) => item.id === id);
+    const label = (step?.processName || "").trim();
+    const name = label || "this manufacturing step";
+    if (!window.confirm(`Delete ${name}?`)) return;
+
     clearStepTimer(id);
 
     const updatedSteps = routingSteps.filter((s) => s.id !== id);
@@ -2923,10 +3145,7 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
               <div className="jo-job-block__material">
                 <div className="jo-job-block__head">
                   <div>
-                    <h3>
-                      Material
-                      {materialNeedsKit ? <span className="jo-job-block__kicker">Kit first</span> : null}
-                    </h3>
+                    <h3>Material</h3>
                     <p className="jo-job-block__hint">
                       Issue to the job before starting the first step. Reserve holds stock on the
                       shelf. Lots go oldest first.
@@ -2982,6 +3201,9 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                               const selectedId =
                                 type === "product" ? line.ProductId || "" : line.RawMaterialId || "";
                               const snapshotReady = (line.Id || 0) > 0;
+                              const stockKnown =
+                                typeof line.QuantityAvailable === "number" &&
+                                !Number.isNaN(line.QuantityAvailable);
                               const lineShort = isMaterialLineShort(line);
                               const shortQty = materialShortageQty(line);
                               const reserveQty = remainingToReserve(line);
@@ -3007,11 +3229,13 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       : undefined
                                   )
                                 : "";
-                              const onHandHint = snapshotReady
+                              const onHandHint = stockKnown
                                 ? `On hand ${formatInventoryQty(line.QuantityOnHand, true)}${
                                     line.LocationName ? ` at ${line.LocationName}` : ""
                                   }`
-                                : "Save the job to see stock at the job location";
+                                : selectedId
+                                  ? "Checking stock at the job location"
+                                  : undefined;
                               return (
                                 <tr
                                   key={line.Id || `new-${index}`}
@@ -3032,36 +3256,26 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                         <option value="rm">Raw material</option>
                                         <option value="product">Product</option>
                                       </select>
-                                      <select
-                                        className="form-input jo-material-item"
-                                        value={selectedId}
-                                        title={selectedItemTitle}
-                                        onChange={(e) =>
-                                          handleMaterialRequirementItemChange(
-                                            index,
-                                            e.target.value === ""
-                                              ? null
-                                              : parseInt(e.target.value, 10)
-                                          )
-                                        }
-                                      >
-                                        <option value="">Select...</option>
-                                        {type === "product"
-                                          ? products.map((p) => (
-                                              <option key={p.id} value={p.id}>
-                                                {catalogItemLabel(p.partNo, p.partName)}
-                                              </option>
-                                            ))
-                                          : rawMaterials.map((rm) => (
-                                              <option key={rm.id} value={rm.id}>
-                                                {catalogItemLabel(
+                                      <MaterialItemPicker
+                                        options={
+                                          type === "product"
+                                            ? products.map((p) => ({
+                                                id: p.id,
+                                                label: catalogItemLabel(p.partNo, p.partName),
+                                              }))
+                                            : rawMaterials.map((rm) => ({
+                                                id: rm.id,
+                                                label: catalogItemLabel(
                                                   rm.partNo,
                                                   rm.partName,
                                                   rm.isRemnant ? "remnant" : undefined
-                                                )}
-                                              </option>
-                                            ))}
-                                      </select>
+                                                ),
+                                              }))
+                                        }
+                                        value={typeof selectedId === "number" ? selectedId : null}
+                                        title={selectedItemTitle}
+                                        onChange={(id) => handleMaterialRequirementItemChange(index, id)}
+                                      />
                                     </div>
                                   </td>
                                   <td className="is-num">
@@ -3105,64 +3319,130 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                       fontWeight: lineShort ? 600 : undefined,
                                     }}
                                   >
-                                    {formatInventoryQty(line.QuantityAvailable, snapshotReady)}
+                                    {formatInventoryQty(line.QuantityAvailable, stockKnown)}
                                     {lineShort ? (
                                       <div className="jo-material-short">Short {shortQty}</div>
                                     ) : null}
                                   </td>
                                   <td className="is-num">
-                                    {formatInventoryQty(line.QuantityReserved, snapshotReady)}
+                                    {formatInventoryQty(line.QuantityReserved, stockKnown)}
                                   </td>
                                   <td className="is-num">
-                                    {formatInventoryQty(line.QuantityIssued, snapshotReady)}
+                                    {formatInventoryQty(line.QuantityIssued, stockKnown)}
                                   </td>
                                   <td className="is-actions">
-                                    {showIssue && (
-                                      <button
-                                        type="button"
-                                        className={`jo-material-btn jo-material-btn--issue${
-                                          actionsBusy ? " is-busy" : ""
-                                        }`}
-                                        disabled={actionsBusy || !canIssue}
-                                        onClick={() => void handleIssueMaterialLine(line)}
-                                        title={
-                                          canIssue
-                                            ? `Issue ${issueQty} to this job (oldest lot first)`
-                                            : "No stock (including this job's reservation) to issue"
-                                        }
-                                      >
-                                        {materialActionBusy === `issue-${line.Id}`
-                                          ? "…"
-                                          : canIssue
-                                            ? `Issue ${issueQty}`
-                                            : "Issue"}
-                                      </button>
-                                    )}
-                                    {showReserve && (
-                                      <button
-                                        type="button"
-                                        className={`jo-material-btn jo-material-btn--reserve${
-                                          actionsBusy ? " is-busy" : ""
-                                        }`}
-                                        disabled={actionsBusy || !canReserve}
-                                        onClick={() => void handleReserveMaterialLine(line)}
-                                        title={
-                                          canReserve
-                                            ? `Reserve ${reserveQty} at the job location`
-                                            : "No available stock at the job location"
-                                        }
-                                      >
-                                        {materialActionBusy === `reserve-${line.Id}`
-                                          ? "…"
-                                          : canReserve
-                                            ? `Reserve ${reserveQty}`
-                                            : "Reserve"}
-                                      </button>
-                                    )}
-                                    <DeleteIconButton
-                                      label="Delete material"
-                                      onClick={() => handleRemoveMaterialRequirement(index)}
-                                    />
+                                    <div className="jo-material-actions">
+                                      {showIssue && (
+                                        <button
+                                          type="button"
+                                          className={`jo-material-btn jo-material-btn--issue${
+                                            actionsBusy ? " is-busy" : ""
+                                          }`}
+                                          disabled={actionsBusy || !canIssue}
+                                          onClick={() => void handleIssueMaterialLine(line)}
+                                          title={
+                                            canIssue
+                                              ? `Issue ${issueQty} to this job (oldest lot first)`
+                                              : "No stock (including this job's reservation) to issue"
+                                          }
+                                        >
+                                          {materialActionBusy === `issue-${line.Id}`
+                                            ? "…"
+                                            : canIssue
+                                              ? `Issue ${issueQty}`
+                                              : "Issue"}
+                                        </button>
+                                      )}
+                                      {showReserve && (
+                                        <button
+                                          type="button"
+                                          className={`jo-material-btn jo-material-btn--reserve${
+                                            actionsBusy ? " is-busy" : ""
+                                          }`}
+                                          disabled={actionsBusy || !canReserve}
+                                          onClick={() => void handleReserveMaterialLine(line)}
+                                          title={
+                                            canReserve
+                                              ? `Reserve ${reserveQty} at the job location`
+                                              : "No available stock at the job location"
+                                          }
+                                        >
+                                          {materialActionBusy === `reserve-${line.Id}`
+                                            ? "…"
+                                            : canReserve
+                                              ? `Reserve ${reserveQty}`
+                                              : "Reserve"}
+                                        </button>
+                                      )}
+                                      {lineShort && selectedId ? (
+                                        (() => {
+                                          const need = Math.max(1, Math.ceil(shortQty - 1e-9));
+                                          const matches = materialPurchases.filter((item) => {
+                                            const remaining = Math.max(0, (item.qtyOrdered || 0) - (item.qtyReceived || 0));
+                                            if (remaining <= 0) return false;
+                                            if (type === "product" && item.productId === selectedId) return true;
+                                            if (type !== "product" && item.rawMaterialId === selectedId) return true;
+                                            const part = (line.PartNo || "").trim().toLowerCase();
+                                            return part.length > 0 && part === (item.partNo || "").trim().toLowerCase();
+                                          });
+                                          const openQty = matches.reduce(
+                                            (sum, item) => sum + Math.max(0, (item.qtyOrdered || 0) - (item.qtyReceived || 0)),
+                                            0
+                                          );
+                                          const cover = openQty >= need ? matches[0] : null;
+                                          if (cover) {
+                                            return (
+                                              <button
+                                                type="button"
+                                                className="jo-material-btn jo-material-btn--order"
+                                                onClick={() => setVendorOrderId(cover.vendorOrderId)}
+                                                title={`${cover.number} already covers ${openQty}`}
+                                              >
+                                                {cover.number}
+                                              </button>
+                                            );
+                                          }
+                                          return (
+                                            <button
+                                              type="button"
+                                              className="jo-material-btn jo-material-btn--order"
+                                              onClick={() => {
+                                                const jobId = formData.JobOrderID || jobOrderId;
+                                                if (jobId <= 0) {
+                                                  toast.error("Save the job before ordering material.");
+                                                  return;
+                                                }
+                                                const unit =
+                                                  type === "rm"
+                                                    ? rawMaterials.find((rm) => rm.id === selectedId)?.unit || "EA"
+                                                    : "EA";
+                                                setVendorDraft({
+                                                  partNo: line.PartNo || selectedCatalog?.partNo || "",
+                                                  partName: line.PartName || selectedCatalog?.partName || "",
+                                                  lineType: type === "product" ? "FinishedProduct" : "RawMaterial",
+                                                  qty: need,
+                                                  unit,
+                                                  jobNumber:
+                                                    formatDisplayJobOrderNumber(formData.JobOrderNumber) ||
+                                                    formData.JobNumber ||
+                                                    "",
+                                                  jobId,
+                                                  productId: type === "product" ? Number(selectedId) : undefined,
+                                                  rawMaterialId: type === "product" ? undefined : Number(selectedId),
+                                                });
+                                              }}
+                                              title={`Order ${need} for the shortage on this job`}
+                                            >
+                                              Order {need}
+                                            </button>
+                                          );
+                                        })()
+                                      ) : null}
+                                      <DeleteIconButton
+                                        label="Delete material"
+                                        onClick={() => handleRemoveMaterialRequirement(index)}
+                                      />
+                                    </div>
                                     {showReserve && !canReserve && !canIssue ? (
                                       <div className="jo-material-stock-hint">
                                         No stock at job location
@@ -4689,6 +4969,22 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
           }}
           onClose={() => {
             closeNcrSlideoutSafely();
+          }}
+        />
+      )}
+      {(vendorDraft || vendorOrderId) && (
+        <VendorOrderSlideout
+          orderId={vendorOrderId || 0}
+          draftLine={vendorOrderId ? null : vendorDraft}
+          onClose={() => {
+            setVendorDraft(null);
+            setVendorOrderId(null);
+            void loadMaterialPurchases();
+          }}
+          onSaved={() => {
+            setVendorDraft(null);
+            setVendorOrderId(null);
+            void loadMaterialPurchases();
           }}
         />
       )}

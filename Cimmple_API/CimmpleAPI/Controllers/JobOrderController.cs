@@ -44,6 +44,83 @@ namespace CimmpleAPI.Controllers
             _workflowSync = workflowSync;
         }
 
+        /// <summary>Open vendor-order lines tied to this job, used to avoid ordering the same shortage twice.</summary>
+        [HttpGet("GetMaterialPurchases")]
+        public async Task<IActionResult> GetMaterialPurchases([FromQuery] int tenantId, [FromQuery] int jobOrderId)
+        {
+            try
+            {
+                var job = await _context.JobOrderMaster.AsNoTracking()
+                    .FirstOrDefaultAsync(j => j.JobOrderID == jobOrderId && j.Tenantid == tenantId);
+                if (job == null)
+                    return Ok(new { result = Array.Empty<object>() });
+
+                var displayNumber = job.JobOrderNumber > 0
+                    ? GlobalSearchSupport.ToDisplayDocNumber(job.JobOrderNumber)
+                    : GlobalSearchSupport.ToDisplayDocNumber(job.JobOrderID);
+                var jobLabel = displayNumber > 0 ? "JO#" + displayNumber : "";
+
+                var lines = await (
+                    from d in _context.VendorOrderDetails.AsNoTracking()
+                    join v in _context.VendorOrders.AsNoTracking() on d.OrderID equals v.OrderID
+                    where v.Tenantid == tenantId
+                        && (d.JobId == job.JobOrderID
+                            || (job.JobOrderNumber > 0 && d.JobId == job.JobOrderNumber)
+                            || (jobLabel != "" && d.JobNumber != null && d.JobNumber.Contains(jobLabel))
+                            || (!string.IsNullOrWhiteSpace(job.JobNumber) && d.JobNumber == job.JobNumber))
+                    select new
+                    {
+                        d.ID,
+                        d.OrderID,
+                        d.PartNo,
+                        d.ProductId,
+                        d.RawMaterialId,
+                        d.QtyOrdered,
+                        v.PONumber,
+                        Status = v.Status ?? "",
+                    }).ToListAsync();
+
+                var detailIds = lines.Select(l => l.ID).Distinct().ToList();
+                var receivedByDetail = detailIds.Count == 0
+                    ? new Dictionary<int, int>()
+                    : await _context.VendorReceiving.AsNoTracking()
+                        .Where(r => r.Tenantid == tenantId && detailIds.Contains(r.VendorOrderDetailID))
+                        .GroupBy(r => r.VendorOrderDetailID)
+                        .Select(g => new { Id = g.Key, Qty = g.Sum(x => x.ReceivedQty) })
+                        .ToDictionaryAsync(x => x.Id, x => x.Qty);
+
+                var result = lines
+                    .Where(line =>
+                    {
+                        var status = (line.Status ?? "").Trim();
+                        if (status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
+                            || status.Equals("Canceled", StringComparison.OrdinalIgnoreCase))
+                            return false;
+                        var received = receivedByDetail.TryGetValue(line.ID, out var qty) ? qty : 0;
+                        return line.QtyOrdered > received;
+                    })
+                    .Select(line => new
+                    {
+                        vendorOrderId = line.OrderID,
+                        number = "VO#" + GlobalSearchSupport.ToDisplayDocNumber(line.PONumber > 0 ? line.PONumber : line.OrderID),
+                        status = line.Status,
+                        orderPath = "/purchasing/vendor-orders?open=" + line.OrderID,
+                        partNo = line.PartNo,
+                        productId = line.ProductId,
+                        rawMaterialId = line.RawMaterialId,
+                        qtyOrdered = line.QtyOrdered,
+                        qtyReceived = receivedByDetail.TryGetValue(line.ID, out var qty) ? qty : 0,
+                    })
+                    .ToList();
+
+                return Ok(new { result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = ex.Message });
+            }
+        }
+
         [HttpGet("GetJobOrders")]
         public async Task<IActionResult> GetJobOrders([FromQuery] int tenantid, [FromQuery] int? locationId = null)
         {
