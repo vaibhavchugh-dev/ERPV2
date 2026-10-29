@@ -23,10 +23,7 @@ const SupportProtectedLayout: React.FC = () => {
       <Route
         exact
         path="/support/clients"
-        render={() => {
-          if (!authed) return <Redirect to="/support/login" />;
-          return SupportStaffAuth.getUser()?.platformAdmin ? <SupportClientsPage /> : <Redirect to="/support" />;
-        }}
+        render={() => (authed ? <SupportClientsPage /> : <Redirect to="/support/login" />)}
       />
       <Route
         path="/support"

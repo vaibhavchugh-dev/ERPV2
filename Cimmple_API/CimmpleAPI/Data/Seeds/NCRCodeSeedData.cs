@@ -167,5 +167,85 @@ namespace CimmpleAPI.Data.Seeds
             ("MISC-003", "Other documentation nonconformance"),
             ("MISC-004", "Nonconformance cause unknown"),
         };
+
+        /// <summary>
+        /// Generic codes that apply to every shop type. Electronics defaults add these
+        /// to the electronics-specific list so a machine-shop code is never inserted
+        /// for an electronics client.
+        /// </summary>
+        private static readonly string[] SharedPrefixes =
+        {
+            "ASM-", "FUNC-", "DOC-", "QTY-", "ID-", "HAND-", "SUP-", "SHIP-", "CUST-", "EQUIP-", "INS-", "MISC-"
+        };
+
+        private static readonly (string Code, string Description)[] ElectronicsSpecific =
+        {
+            ("SLD-001", "Solder bridge"),
+            ("SLD-002", "Insufficient solder"),
+            ("SLD-003", "Excess solder"),
+            ("SLD-004", "Cold solder joint"),
+            ("SLD-005", "Solder void"),
+            ("SLD-006", "Solder ball"),
+            ("SLD-007", "Non-wetting"),
+            ("SLD-008", "Dewetting"),
+            ("SLD-009", "Disturbed solder joint"),
+            ("SLD-010", "Flux residue excessive"),
+            ("SLD-011", "Wrong solder alloy"),
+            ("CMP-001", "Wrong component"),
+            ("CMP-002", "Missing component"),
+            ("CMP-003", "Reversed polarity"),
+            ("CMP-004", "Tombstoned component"),
+            ("CMP-005", "Component misaligned"),
+            ("CMP-006", "Damaged component"),
+            ("CMP-007", "Wrong component value"),
+            ("CMP-008", "Lifted lead"),
+            ("CMP-009", "Component not seated"),
+            ("CMP-010", "Moisture-sensitive device handling failure"),
+            ("PCB-001", "Wrong board revision"),
+            ("PCB-002", "Board damage"),
+            ("PCB-003", "Pad lifted"),
+            ("PCB-004", "Trace damage"),
+            ("PCB-005", "Solder mask defect"),
+            ("PCB-006", "Hole plating defect"),
+            ("PCB-007", "Bow and twist out of specification"),
+            ("PCB-008", "Contamination on board"),
+            ("SMT-001", "Solder paste volume out of specification"),
+            ("SMT-002", "Solder paste misalignment"),
+            ("SMT-003", "Stencil defect"),
+            ("SMT-004", "Placement offset"),
+            ("SMT-005", "Reflow profile incorrect"),
+            ("SMT-006", "Automated optical inspection escape"),
+            ("THL-001", "Incomplete through-hole insertion"),
+            ("THL-002", "Lead protrusion out of specification"),
+            ("THL-003", "Wave solder skip"),
+            ("THL-004", "Selective solder miss"),
+            ("THL-005", "Lead clinch incorrect"),
+            ("TST-001", "In-circuit test failure"),
+            ("TST-002", "Functional test failure"),
+            ("TST-003", "Hi-pot test failure"),
+            ("TST-004", "Burn-in failure"),
+            ("TST-005", "Programming or firmware failure"),
+            ("TST-006", "Boundary scan failure"),
+            ("FIN-001", "Conformal coating missing"),
+            ("FIN-002", "Conformal coating on keep-out area"),
+            ("FIN-003", "Coating thickness out of specification"),
+            ("FIN-004", "Coating voids or bubbles"),
+            ("FIN-005", "Potting incomplete"),
+            ("FIN-006", "Marking incorrect or missing"),
+            ("CBL-001", "Wrong wire length"),
+            ("CBL-002", "Incorrect strip length"),
+            ("CBL-003", "Crimp height out of specification"),
+            ("CBL-004", "Wrong terminal"),
+            ("CBL-005", "Continuity failure"),
+            ("CBL-006", "Wrong pinout"),
+            ("ESD-001", "ESD handling violation"),
+            ("ESD-002", "ESD sensitive device damage suspected"),
+        };
+
+        /// <summary>Electronics-specific codes plus the shop-agnostic codes from the machine-shop list.</summary>
+        public static readonly (string Code, string Description)[] ElectronicsCodes =
+            ElectronicsSpecific
+                .Concat(DefaultCodes.Where(c => SharedPrefixes.Any(p => c.Code.StartsWith(p, StringComparison.OrdinalIgnoreCase))))
+                .ToArray();
     }
 }

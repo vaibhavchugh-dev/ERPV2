@@ -73,13 +73,17 @@ namespace CimmpleAPI.Controllers
                 if (tenantId.HasValue && tenantId.Value != tokenTenantId)
                     return StatusCode(403, new { error = "Default NCR codes can only be seeded for your own tenant" });
 
-                var (inserted, total) = await NcrCodeDefaults.EnsureForTenantAsync(_context, tokenTenantId, userId.Value);
+                var industry = await _context.Tenants.AsNoTracking()
+                    .Where(t => t.TenantId == tokenTenantId)
+                    .Select(t => t.Industry)
+                    .FirstOrDefaultAsync();
+                var (inserted, total) = await NcrCodeDefaults.EnsureForTenantAsync(_context, tokenTenantId, userId.Value, industry);
 
                 return Ok(new
                 {
                     message = "Default NCR codes seeded",
                     inserted,
-                    skipped = NCRCodeSeedData.DefaultCodes.Length - inserted,
+                    skipped = IndustryPacks.NcrCodesFor(industry).Count - inserted,
                     totalForTenant = total
                 });
             }

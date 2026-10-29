@@ -42,7 +42,26 @@ export interface UserDetail {
   ssn?: string;
   sendWelcomeEmail?: number;
   createDate?: Date;
+  hasPassword?: boolean;
 }
+
+export interface LoginSeatUsage {
+  loginSeatLimit: number | null;
+  usedSeats: number;
+  availableSeats: number;
+  configured: boolean;
+}
+
+export const loginSeatLimitMessage = (used: number, limit: number) =>
+  limit <= 0
+    ? "No login seats are allotted. Ask Cimmple to set login seats before enabling login."
+    : `Login seat limit reached (${used} of ${limit} in use). Deactivate another login or ask Cimmple to increase the seat limit.`;
+
+export const isActiveAccountStatus = (status?: string | null) => {
+  if (!status || !status.trim()) return true;
+  const value = status.trim().toLowerCase();
+  return value === "active" || value === "a";
+};
 
 // Note: CreateUserRequest removed - users are created via Employee Master
 // User Management focuses on account management (roles, permissions, status, security)
@@ -128,6 +147,11 @@ export interface PaginatedUsersResponse {
 }
 
 export class UserManagementService {
+  public static async GetLoginSeatUsage(): Promise<LoginSeatUsage> {
+    const response = await Instense.get(`/UserManagement/LoginSeatUsage`);
+    return response.data;
+  }
+
   public static async GetUsers(params: UserQueryParams): Promise<PaginatedUsersResponse> {
     const url = `/UserManagement/GetUsers`;
     const response = await Instense.get(url, {

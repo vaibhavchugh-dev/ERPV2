@@ -3186,13 +3186,14 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                         <table className="jo-material-table">
                           <thead>
                             <tr>
-                              <th>Item</th>
+                              <th className="is-item">Item</th>
                               <th className="is-num">Required</th>
                               <th className="is-notes">Notes</th>
                               <th className="is-num">Available</th>
                               <th className="is-num">Reserved</th>
                               <th className="is-num">Used</th>
                               <th className="is-actions">Actions</th>
+                              <th className="is-delete" aria-label="Delete" />
                             </tr>
                           </thead>
                           <tbody>
@@ -3438,16 +3439,18 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                                           );
                                         })()
                                       ) : null}
-                                      <DeleteIconButton
-                                        label="Delete material"
-                                        onClick={() => handleRemoveMaterialRequirement(index)}
-                                      />
                                     </div>
                                     {showReserve && !canReserve && !canIssue ? (
                                       <div className="jo-material-stock-hint">
                                         No stock at job location
                                       </div>
                                     ) : null}
+                                  </td>
+                                  <td className="is-delete">
+                                    <DeleteIconButton
+                                      label="Delete material"
+                                      onClick={() => handleRemoveMaterialRequirement(index)}
+                                    />
                                   </td>
                                 </tr>
                               );

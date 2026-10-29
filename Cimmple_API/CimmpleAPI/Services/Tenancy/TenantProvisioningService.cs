@@ -50,8 +50,12 @@ namespace CimmpleAPI.Services.Tenancy
                 .GroupBy(u => u.TenantID)
                 .Select(g => new { TenantId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.TenantId, x => x.Count);
+            var seatCounts = await LoginSeatService.CountByTenantAsync(_db);
 
-            return tenants.Select(t => ToSummary(t, userCounts.TryGetValue(t.TenantId, out var c) ? c : 0)).ToList();
+            return tenants.Select(t => ToSummary(
+                t,
+                userCounts.TryGetValue(t.TenantId, out var c) ? c : 0,
+                seatCounts.TryGetValue(t.TenantId, out var seats) ? seats : 0)).ToList();
         }
 
         public async Task<TenantSummaryDto?> GetAsync(int tenantId)
@@ -59,7 +63,8 @@ namespace CimmpleAPI.Services.Tenancy
             var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.TenantId == tenantId);
             if (tenant == null) return null;
             var users = await _db.UserDetails.CountAsync(u => u.TenantID == tenantId && (u.VendorId == null || u.VendorId == 0));
-            return ToSummary(tenant, users);
+            var seats = await LoginSeatService.CountAsync(_db, tenantId);
+            return ToSummary(tenant, users, seats);
         }
 
         public async Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, string createdBy)
@@ -102,6 +107,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                     Code = code,
                     Status = TenantStatus.Provisioning,
                     Plan = TrimOrNull(request.Plan),
+                    LoginSeatLimit = request.LoginSeatLimit,
                     Industry = IndustryPacks.Normalize(request.Industry),
                     ContactName = $"{request.AdminFirstName?.Trim()} {request.AdminLastName?.Trim()}".Trim(),
                     ContactEmail = adminEmail,
@@ -128,6 +134,13 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 foreach (var seeder in TenantSeeders.Core)
                 {
                     await seeder.ApplyAsync(_db, seedContext);
+                }
+
+                if (request.Security != null)
+                {
+                    var settings = await _db.SystemSettings.FirstAsync(s => s.TenantId == tenant.TenantId);
+                    CopySecurity(settings, request.Security);
+                    await _db.SaveChangesAsync();
                 }
 
                 var adminRole = await FindAdminRoleAsync(tenant.TenantId)
@@ -207,14 +220,16 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 Steps = steps
             };
 
-            if (seedError == null && request.IncludeSampleData)
+            var sampleMasters = SampleMastersFor(request);
+            var sampleIndustry = IndustryPacks.Normalize(request.Industry);
+            if (seedError == null && sampleMasters.Count > 0 && sampleIndustry != null)
             {
                 try
                 {
                     var sample = await _masterData.ApplySamplesAsync(
                         tenant.TenantId,
-                        request.Industry,
-                        new[] { MasterDataSetupService.Workstations, MasterDataSetupService.Processes, MasterDataSetupService.JobTemplates },
+                        sampleIndustry,
+                        sampleMasters,
                         createdBy);
                     result.Steps.AddRange(sample.Steps);
                     result.SampleError = sample.Success ? null : sample.Error;
@@ -251,6 +266,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             }
 
             var (steps, error) = await RunDefaultsAsync(tenant, seedContext, activate: true);
+
             return new ProvisionTenantResult
             {
                 Success = error == null,
@@ -260,21 +276,25 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             };
         }
 
-        /// <summary>Re-runs every seeder on an existing tenant. Only adds what is missing.</summary>
-        public async Task<ProvisionTenantResult> ApplyDefaultsAsync(int tenantId)
+        /// <summary>Adds missing roles, permissions, chart of accounts, and payment terms, and saves this client's security settings when they are supplied. Existing default-data rows are left as they are.</summary>
+        public async Task<ProvisionTenantResult> ApplyDefaultsAsync(int tenantId, TenantSecuritySettingsDto? security = null)
         {
+            if (security != null)
+            {
+                var securityError = ValidateSecurity(security);
+                if (securityError != null) return ProvisionTenantResult.Fail(securityError);
+            }
+
             var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.TenantId == tenantId);
             if (tenant == null) return ProvisionTenantResult.Fail("Client not found.");
 
             var seedContext = await BuildSeedContextAsync(tenant);
-            var steps = new List<SeedStepResult>();
-            foreach (var seeder in TenantSeeders.Core)
+            var (steps, error) = await RunSeedersAsync(tenant, seedContext, TenantSeeders.ApplyDefaultData, activate: false);
+            if (error == null && security != null)
             {
-                steps.Add(new SeedStepResult(seeder.Name, await seeder.ApplyAsync(_db, seedContext)));
+                var (_, saveError) = await SaveSecuritySettingsAsync(tenantId, security);
+                error = saveError;
             }
-
-            var (defaultSteps, error) = await RunDefaultsAsync(tenant, seedContext, activate: false);
-            steps.AddRange(defaultSteps);
             return new ProvisionTenantResult
             {
                 Success = error == null,
@@ -359,12 +379,16 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             };
         }
 
-        private async Task<(List<SeedStepResult> Steps, string? Error)> RunDefaultsAsync(
-            Tenant tenant, TenantSeedContext seedContext, bool activate)
+        private Task<(List<SeedStepResult> Steps, string? Error)> RunDefaultsAsync(
+            Tenant tenant, TenantSeedContext seedContext, bool activate) =>
+            RunSeedersAsync(tenant, seedContext, TenantSeeders.Defaults, activate);
+
+        private async Task<(List<SeedStepResult> Steps, string? Error)> RunSeedersAsync(
+            Tenant tenant, TenantSeedContext seedContext, IEnumerable<ITenantSeeder> seeders, bool activate)
         {
             var steps = new List<SeedStepResult>();
             string? error = null;
-            foreach (var seeder in TenantSeeders.Defaults)
+            foreach (var seeder in seeders)
             {
                 try
                 {
@@ -458,9 +482,75 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                    ?? candidates.FirstOrDefault();
         }
 
+        /// <summary>
+        /// Masters inserted for a new client: checked sample options, plus NCR codes when a shop type is selected.
+        /// Job templates also insert that shop type's categories.
+        /// </summary>
+        public static string? ValidateNewClient(ProvisionTenantRequest request) => Validate(request);
+
+        public async Task<TenantSecuritySettingsDto?> GetSecuritySettingsAsync(int tenantId)
+        {
+            if (!await _db.Tenants.AsNoTracking().AnyAsync(t => t.TenantId == tenantId))
+                return null;
+
+            await SystemSettingsSchemaService.EnsureTablesAsync(_db);
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.TenantId == tenantId)
+                ?? TenantDefaults.CreateSystemSettings(tenantId);
+            return ToSecurityDto(settings);
+        }
+
+        public async Task<(TenantSecuritySettingsDto? Settings, string? Error)> SaveSecuritySettingsAsync(
+            int tenantId, TenantSecuritySettingsDto? input)
+        {
+            if (input == null) return (null, "Security settings are required.");
+            var validationError = ValidateSecurity(input);
+            if (validationError != null) return (null, validationError);
+            if (!await _db.Tenants.AnyAsync(t => t.TenantId == tenantId))
+                return (null, "Client not found.");
+
+            await SystemSettingsSchemaService.EnsureTablesAsync(_db);
+            var existing = await _db.SystemSettings.FirstOrDefaultAsync(s => s.TenantId == tenantId);
+            if (existing == null)
+            {
+                existing = TenantDefaults.CreateSystemSettings(tenantId);
+                _db.SystemSettings.Add(existing);
+            }
+
+            CopySecurity(existing, input);
+            existing.UpdatedDate = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return (ToSecurityDto(existing), null);
+        }
+
+        public static IReadOnlyList<string> SampleMastersFor(ProvisionTenantRequest request)
+        {
+            NormalizeSampleFlags(request);
+            var selected = new List<string>();
+            if (request.IncludeSampleWorkstations) selected.Add(MasterDataSetupService.Workstations);
+            if (request.IncludeSampleProcesses) selected.Add(MasterDataSetupService.Processes);
+            if (request.IncludeSampleJobTemplates)
+            {
+                selected.Add(MasterDataSetupService.JobTemplates);
+                selected.Add(MasterDataSetupService.Categories);
+            }
+            if (request.IncludeSampleNcrCodes)
+                selected.Add(MasterDataSetupService.NcrCodes);
+            return selected;
+        }
+
+        private static void NormalizeSampleFlags(ProvisionTenantRequest request)
+        {
+            if (!request.IncludeSampleData) return;
+            request.IncludeSampleWorkstations = true;
+            request.IncludeSampleProcesses = true;
+            request.IncludeSampleJobTemplates = true;
+            request.IncludeSampleNcrCodes = true;
+        }
+
         private static string? Validate(ProvisionTenantRequest? request)
         {
             if (request == null) return "Request is required.";
+            NormalizeSampleFlags(request);
             if (string.IsNullOrWhiteSpace(request.CompanyName)) return "Company name is required.";
             if (request.CompanyName.Trim().Length > 200) return "Company name must be 200 characters or fewer.";
             if (!string.IsNullOrWhiteSpace(request.Code) && !CodePattern.IsMatch(request.Code.Trim().ToUpperInvariant()))
@@ -475,12 +565,73 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 return "Time zone is not valid.";
             if (!string.IsNullOrWhiteSpace(request.Currency) && request.Currency.Trim().Length != 3)
                 return "Currency must be a 3-letter code such as USD.";
-            if (request.IncludeSampleData && IndustryPacks.Normalize(request.Industry) == null)
-                return "Choose an industry when including sample workstations, processes, and job templates.";
+            if (request.Security != null)
+            {
+                var securityError = ValidateSecurity(request.Security);
+                if (securityError != null) return securityError;
+            }
+            var wantsSamples = request.IncludeSampleWorkstations || request.IncludeSampleProcesses
+                || request.IncludeSampleJobTemplates || request.IncludeSampleNcrCodes;
+            if (wantsSamples && IndustryPacks.Normalize(request.Industry) == null)
+                return "Choose an industry when including sample workstations, processes, job templates, or NCR codes.";
+            if (request.IncludeSampleJobTemplates && !request.IncludeSampleProcesses)
+                return "Include sample processes when including sample job templates and categories.";
             if (!string.IsNullOrWhiteSpace(request.Industry) && IndustryPacks.Normalize(request.Industry) == null)
                 return "Unknown industry.";
+            if (request.LoginSeatLimit == null || request.LoginSeatLimit < 0)
+                return "Login seats are required. Use 0 when no employee logins are allotted.";
             return null;
         }
+
+        private static void CopySecurity(SystemSettings target, TenantSecuritySettingsDto input)
+        {
+            target.MinPasswordLength = input.MinPasswordLength;
+            target.RequireUppercase = input.RequireUppercase;
+            target.RequireLowercase = input.RequireLowercase;
+            target.RequireNumbers = input.RequireNumbers;
+            target.RequireSpecialChars = input.RequireSpecialChars;
+            target.PasswordExpirationDays = input.PasswordExpirationDays;
+            target.PasswordHistoryCount = input.PasswordHistoryCount;
+            target.SessionTimeoutMinutes = input.SessionTimeoutMinutes;
+            target.MaxConcurrentSessions = input.MaxConcurrentSessions;
+            target.FailedLoginAttempts = input.FailedLoginAttempts;
+            target.AccountLockoutMinutes = input.AccountLockoutMinutes;
+            target.UpdatedDate = DateTime.UtcNow;
+        }
+
+        private static string? ValidateSecurity(TenantSecuritySettingsDto input)
+        {
+            if (input.MinPasswordLength < 6 || input.MinPasswordLength > 20)
+                return "Password length must be between 6 and 20 characters.";
+            if (input.PasswordExpirationDays < 0)
+                return "Password expiration days cannot be negative.";
+            if (input.PasswordHistoryCount < 0 || input.PasswordHistoryCount > 10)
+                return "Password history count must be between 0 and 10.";
+            if (input.SessionTimeoutMinutes < 5 || input.SessionTimeoutMinutes > 480)
+                return "Session timeout must be between 5 and 480 minutes.";
+            if (input.MaxConcurrentSessions < 1 || input.MaxConcurrentSessions > 10)
+                return "Max concurrent sessions must be between 1 and 10.";
+            if (input.FailedLoginAttempts < 3 || input.FailedLoginAttempts > 10)
+                return "Failed login attempts must be between 3 and 10.";
+            if (input.AccountLockoutMinutes < 5 || input.AccountLockoutMinutes > 1440)
+                return "Account lockout duration must be between 5 and 1440 minutes.";
+            return null;
+        }
+
+        private static TenantSecuritySettingsDto ToSecurityDto(SystemSettings settings) => new()
+        {
+            MinPasswordLength = settings.MinPasswordLength,
+            RequireUppercase = settings.RequireUppercase,
+            RequireLowercase = settings.RequireLowercase,
+            RequireNumbers = settings.RequireNumbers,
+            RequireSpecialChars = settings.RequireSpecialChars,
+            PasswordExpirationDays = settings.PasswordExpirationDays,
+            PasswordHistoryCount = settings.PasswordHistoryCount,
+            SessionTimeoutMinutes = settings.SessionTimeoutMinutes,
+            MaxConcurrentSessions = settings.MaxConcurrentSessions,
+            FailedLoginAttempts = settings.FailedLoginAttempts,
+            AccountLockoutMinutes = settings.AccountLockoutMinutes
+        };
 
         private static bool IsValidEmail(string email)
         {
@@ -527,7 +678,21 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         private static string? TrimOrNull(string? value) =>
             string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-        private static TenantSummaryDto ToSummary(Tenant t, int userCount) => new()
+        public async Task<(TenantSummaryDto? Tenant, string? Error)> SetLoginSeatLimitAsync(int tenantId, int loginSeatLimit)
+        {
+            if (loginSeatLimit < 0)
+                return (null, "Login seats cannot be negative.");
+
+            var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.TenantId == tenantId);
+            if (tenant == null)
+                return (null, "Client not found.");
+
+            tenant.LoginSeatLimit = loginSeatLimit;
+            await _db.SaveChangesAsync();
+            return (await GetAsync(tenantId), null);
+        }
+
+        private static TenantSummaryDto ToSummary(Tenant t, int userCount, int usedLoginSeats) => new()
         {
             TenantId = t.TenantId,
             Name = t.Name,
@@ -545,7 +710,9 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             CreatedUtc = t.CreatedUtc,
             ProvisionedUtc = t.ProvisionedUtc,
             StatusChangedUtc = t.StatusChangedUtc,
-            UserCount = userCount
+            UserCount = userCount,
+            LoginSeatLimit = t.LoginSeatLimit,
+            UsedLoginSeats = usedLoginSeats
         };
     }
 
@@ -554,6 +721,10 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public string CompanyName { get; set; } = "";
         public string? Code { get; set; }
         public string? Plan { get; set; }
+
+        /// <summary>How many non-admin employees may have login access. The administrator is not counted. 0 means none are allotted.</summary>
+        public int? LoginSeatLimit { get; set; }
+
         public string? AdminFirstName { get; set; }
         public string? AdminLastName { get; set; }
         public string AdminEmail { get; set; } = "";
@@ -568,8 +739,37 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public string? CurrencySymbol { get; set; }
         public string? Notes { get; set; }
         public string? Industry { get; set; }
+
+        /// <summary>When true, all three sample options are included. Prefer the individual flags.</summary>
         public bool IncludeSampleData { get; set; }
+
+        public bool IncludeSampleWorkstations { get; set; }
+        public bool IncludeSampleProcesses { get; set; }
+
+        /// <summary>Also inserts the shop type's default categories.</summary>
+        public bool IncludeSampleJobTemplates { get; set; }
+
+        public bool IncludeSampleNcrCodes { get; set; }
+
+        /// <summary>Security policy for this client. Omitted values keep the new-tenant defaults.</summary>
+        public TenantSecuritySettingsDto? Security { get; set; }
+
         public bool SendInviteEmail { get; set; } = true;
+    }
+
+    public class TenantSecuritySettingsDto
+    {
+        public int MinPasswordLength { get; set; } = 8;
+        public bool RequireUppercase { get; set; } = true;
+        public bool RequireLowercase { get; set; } = true;
+        public bool RequireNumbers { get; set; } = true;
+        public bool RequireSpecialChars { get; set; }
+        public int PasswordExpirationDays { get; set; } = 0;
+        public int PasswordHistoryCount { get; set; } = 5;
+        public int SessionTimeoutMinutes { get; set; } = 30;
+        public int MaxConcurrentSessions { get; set; } = 1;
+        public int FailedLoginAttempts { get; set; } = 5;
+        public int AccountLockoutMinutes { get; set; } = 15;
     }
 
     public class TenantSummaryDto
@@ -591,6 +791,8 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public DateTime? ProvisionedUtc { get; set; }
         public DateTime? StatusChangedUtc { get; set; }
         public int UserCount { get; set; }
+        public int? LoginSeatLimit { get; set; }
+        public int UsedLoginSeats { get; set; }
     }
 
     public record SeedStepResult(string Name, int Inserted);

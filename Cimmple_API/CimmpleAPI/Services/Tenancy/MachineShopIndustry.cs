@@ -1,3 +1,5 @@
+using CimmpleAPI.Data.Seeds;
+
 namespace CimmpleAPI.Services.Tenancy
 {
     internal readonly record struct ProcessSeed(
@@ -129,6 +131,8 @@ namespace CimmpleAPI.Services.Tenancy
         public string[] Categories { get; init; } = Array.Empty<string>();
         public ProcessSeed[] Processes { get; init; } = Array.Empty<ProcessSeed>();
         public JobTemplateSeed[] JobTemplates { get; init; } = Array.Empty<JobTemplateSeed>();
+        public (string Name, string Code, int DisplayOrder, string[] Values)[] CategoryTypes { get; init; } = Array.Empty<(string, string, int, string[])>();
+        public (string Code, string Description)[] NcrCodes { get; init; } = Array.Empty<(string, string)>();
 
         public IReadOnlyList<string> WorkstationNames()
         {
@@ -153,7 +157,9 @@ namespace CimmpleAPI.Services.Tenancy
                 Label = MachineShopIndustry.Label,
                 Categories = MachineShopIndustry.Categories,
                 Processes = MachineShopIndustry.Processes,
-                JobTemplates = MachineShopIndustry.JobTemplates
+                JobTemplates = MachineShopIndustry.JobTemplates,
+                CategoryTypes = CategoryDefaults.DefaultCategoryTypes,
+                NcrCodes = NCRCodeSeedData.DefaultCodes
             },
             new()
             {
@@ -161,7 +167,9 @@ namespace CimmpleAPI.Services.Tenancy
                 Label = ElectronicsIndustry.Label,
                 Categories = ElectronicsIndustry.Categories,
                 Processes = ElectronicsIndustry.Processes,
-                JobTemplates = ElectronicsIndustry.JobTemplates
+                JobTemplates = ElectronicsIndustry.JobTemplates,
+                CategoryTypes = ElectronicsIndustry.CategoryTypes,
+                NcrCodes = NCRCodeSeedData.ElectronicsCodes
             }
         };
 
@@ -177,8 +185,27 @@ namespace CimmpleAPI.Services.Tenancy
         public static IReadOnlyList<string> CategoriesFor(string? industryCode) =>
             Find(industryCode)?.Categories ?? MachineShopIndustry.Categories;
 
+        /// <summary>Category master types for the industry. Unknown or blank industry uses the machine-shop set.</summary>
+        public static IReadOnlyList<(string Name, string Code, int DisplayOrder, string[] Values)> CategoryTypesFor(string? industryCode) =>
+            Find(industryCode)?.CategoryTypes ?? CategoryDefaults.DefaultCategoryTypes;
+
+        /// <summary>NCR codes for the industry. Unknown or blank industry uses the machine-shop set.</summary>
+        public static IReadOnlyList<(string Code, string Description)> NcrCodesFor(string? industryCode) =>
+            Find(industryCode)?.NcrCodes ?? NCRCodeSeedData.DefaultCodes;
+
         internal static IndustrySample? Find(string? code) =>
             Samples.FirstOrDefault(s => string.Equals(s.Code, code?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Job-template steps whose process code is not in the same industry pack.</summary>
+        public static IReadOnlyList<string> MissingJobTemplateProcesses(string? industryCode)
+        {
+            var sample = Find(industryCode);
+            if (sample == null) return Array.Empty<string>();
+            var codes = new HashSet<string>(sample.Processes.Select(p => p.Code), StringComparer.OrdinalIgnoreCase);
+            return sample.JobTemplates
+                .SelectMany(t => t.ProcessCodes.Where(c => !codes.Contains(c)).Select(c => $"{t.Code}:{c}"))
+                .ToList();
+        }
     }
 
     public record IndustryOption(string Code, string Label);

@@ -13,7 +13,7 @@ IF @r < 0 THROW 51000, 'NCR code master is busy, please try again.', 1;", $"ncr-
 
         /// <summary>Inserts the default NCR codes the tenant does not have yet (matched by code).</summary>
         public static async Task<(int Inserted, int TotalForTenant)> EnsureForTenantAsync(
-            CimmpleDbContext context, int tenantId, int createdBy)
+            CimmpleDbContext context, int tenantId, int createdBy, string? industry = null)
         {
             await using var tx = context.Database.CurrentTransaction == null
                 ? await context.Database.BeginTransactionAsync()
@@ -28,7 +28,7 @@ IF @r < 0 THROW 51000, 'NCR code master is busy, please try again.', 1;", $"ncr-
 
             var existingSet = new HashSet<string>(existingCodes, StringComparer.OrdinalIgnoreCase);
             var now = DateTime.UtcNow;
-            var toInsert = NCRCodeSeedData.DefaultCodes
+            var toInsert = IndustryPacks.NcrCodesFor(industry)
                 .Where(c => !existingSet.Contains(c.Code))
                 .Select(c => new NCRCodeMaster
                 {

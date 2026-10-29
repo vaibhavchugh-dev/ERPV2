@@ -28,7 +28,8 @@ namespace CimmpleAPI.Services.Auth
             var portal = user.FindFirst("portalType")?.Value ?? "";
             if (string.Equals(portal, "vendor", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(portal, "support", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(portal, "integration", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(portal, "integration", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(user.FindFirst("supportStaff")?.Value, "true", StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }

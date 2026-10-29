@@ -21,6 +21,7 @@ BEGIN
         [Code] nvarchar(50) NULL,
         [Status] nvarchar(20) NOT NULL,
         [Plan] nvarchar(50) NULL,
+        [LoginSeatLimit] int NULL,
         [ContactName] nvarchar(200) NULL,
         [ContactEmail] nvarchar(200) NULL,
         [Notes] nvarchar(2000) NULL,
@@ -64,6 +65,13 @@ GO
 
 IF COL_LENGTH(N'CimmpleFlow.Tenant', N'Industry') IS NULL
     ALTER TABLE CimmpleFlow.Tenant ADD [Industry] nvarchar(50) NULL;
+GO
+
+IF COL_LENGTH(N'CimmpleFlow.Tenant', N'LoginSeatLimit') IS NULL
+    ALTER TABLE CimmpleFlow.Tenant ADD [LoginSeatLimit] int NULL;
+GO
+
+UPDATE CimmpleFlow.Tenant SET [LoginSeatLimit] = 0 WHERE [LoginSeatLimit] IS NULL;
 GO
 
 IF OBJECT_ID(N'CimmpleFlow.TenantMasterImport', N'U') IS NULL

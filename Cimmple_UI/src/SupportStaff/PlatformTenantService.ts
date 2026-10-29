@@ -8,6 +8,8 @@ export interface TenantSummary {
   code?: string | null;
   status: TenantStatus;
   plan?: string | null;
+  loginSeatLimit?: number | null;
+  usedLoginSeats: number;
   industry?: string | null;
   contactName?: string | null;
   contactEmail?: string | null;
@@ -26,6 +28,7 @@ export interface ProvisionTenantRequest {
   companyName: string;
   code?: string;
   plan?: string;
+  loginSeatLimit?: number;
   adminFirstName: string;
   adminLastName: string;
   adminEmail: string;
@@ -37,8 +40,27 @@ export interface ProvisionTenantRequest {
   currencySymbol?: string;
   notes?: string;
   industry?: string;
-  includeSampleData: boolean;
+  includeSampleData?: boolean;
+  includeSampleWorkstations: boolean;
+  includeSampleProcesses: boolean;
+  includeSampleJobTemplates: boolean;
+  includeSampleNcrCodes: boolean;
+  security?: TenantSecuritySettings;
   sendInviteEmail: boolean;
+}
+
+export interface TenantSecuritySettings {
+  minPasswordLength: number;
+  requireUppercase: boolean;
+  requireLowercase: boolean;
+  requireNumbers: boolean;
+  requireSpecialChars: boolean;
+  passwordExpirationDays: number;
+  passwordHistoryCount: number;
+  sessionTimeoutMinutes: number;
+  maxConcurrentSessions: number;
+  failedLoginAttempts: number;
+  accountLockoutMinutes: number;
 }
 
 export interface SeedStepResult {
@@ -92,9 +114,14 @@ export class PlatformTenantService {
     return response.data?.result;
   }
 
-  static async applyDefaults(tenantId: number): Promise<ProvisionTenantResult> {
-    const response = await Instense.post(`/PlatformTenants/ApplyDefaults/${tenantId}`);
+  static async applyDefaults(tenantId: number, security?: TenantSecuritySettings): Promise<ProvisionTenantResult> {
+    const response = await Instense.post(`/PlatformTenants/ApplyDefaults/${tenantId}`, security ?? {});
     return response.data?.result;
+  }
+
+  static async setLoginSeatLimit(tenantId: number, loginSeatLimit: number): Promise<TenantSummary | null> {
+    const response = await Instense.post(`/PlatformTenants/SetLoginSeatLimit/${tenantId}`, { loginSeatLimit });
+    return response.data?.result ?? null;
   }
 
   static async setStatus(tenantId: number, status: TenantStatus): Promise<TenantSummary | null> {
@@ -104,6 +131,16 @@ export class PlatformTenantService {
 
   static async resendInvite(tenantId: number): Promise<ResendInviteResult> {
     const response = await Instense.post(`/PlatformTenants/ResendInvite/${tenantId}`);
+    return response.data?.result;
+  }
+
+  static async getSecuritySettings(tenantId: number): Promise<TenantSecuritySettings> {
+    const response = await Instense.get(`/PlatformTenants/SecuritySettings/${tenantId}`);
+    return response.data?.result;
+  }
+
+  static async saveSecuritySettings(tenantId: number, settings: TenantSecuritySettings): Promise<TenantSecuritySettings> {
+    const response = await Instense.post(`/PlatformTenants/SecuritySettings/${tenantId}`, settings);
     return response.data?.result;
   }
 
@@ -192,6 +229,8 @@ export interface MasterSetupOverview {
   workstations: MasterSetupCount;
   processes: MasterSetupCount;
   jobTemplates: MasterSetupCount;
+  categories: MasterSetupCount;
+  ncrCodes: MasterSetupCount;
 }
 
 export interface MasterRowIssue {

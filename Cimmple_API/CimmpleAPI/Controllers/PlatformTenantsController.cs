@@ -5,8 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace CimmpleAPI.Controllers
 {
     /// <summary>
-    /// Client (tenant) administration for Cimmple platform staff. Requires a support-staff token
-    /// whose Support:Staff entry has PlatformAdmin = true.
+    /// Client administration for Cimmple support staff. Client role permissions do not apply.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -30,14 +29,14 @@ namespace CimmpleAPI.Controllers
         [HttpGet("List")]
         public async Task<IActionResult> List()
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             return Ok(new { result = await _provisioning.ListAsync() });
         }
 
         [HttpGet("Get/{tenantId:int}")]
         public async Task<IActionResult> Get(int tenantId)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var tenant = await _provisioning.GetAsync(tenantId);
             return tenant == null
                 ? NotFound(new { error = "Client not found." })
@@ -47,7 +46,7 @@ namespace CimmpleAPI.Controllers
         [HttpPost("Create")]
         public async Task<IActionResult> Create([FromBody] ProvisionTenantRequest request)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             try
             {
                 var result = await _provisioning.ProvisionAsync(request, GetStaffAuditName());
@@ -67,23 +66,36 @@ namespace CimmpleAPI.Controllers
         [HttpPost("Resume/{tenantId:int}")]
         public async Task<IActionResult> Resume(int tenantId)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var result = await _provisioning.ResumeAsync(tenantId);
             return result.Tenant == null ? BadRequest(new { error = result.Error }) : Ok(new { result });
         }
 
         [HttpPost("ApplyDefaults/{tenantId:int}")]
-        public async Task<IActionResult> ApplyDefaults(int tenantId)
+        public async Task<IActionResult> ApplyDefaults(int tenantId, [FromBody] TenantSecuritySettingsDto? security)
         {
-            if (!IsPlatformAdmin()) return Forbid();
-            var result = await _provisioning.ApplyDefaultsAsync(tenantId);
+            if (!IsSupportStaff()) return Forbid();
+            var result = await _provisioning.ApplyDefaultsAsync(tenantId, security);
             return result.Tenant == null ? BadRequest(new { error = result.Error }) : Ok(new { result });
+        }
+
+        [HttpPost("SetLoginSeatLimit/{tenantId:int}")]
+        public async Task<IActionResult> SetLoginSeatLimit(int tenantId, [FromBody] SetLoginSeatLimitRequest request)
+        {
+            if (!IsSupportStaff()) return Forbid();
+            var (tenant, error) = await _provisioning.SetLoginSeatLimitAsync(tenantId, request?.LoginSeatLimit ?? 0);
+            if (tenant == null) return BadRequest(new { error });
+
+            _logger.LogInformation(
+                "Tenant {TenantId} login seat limit set to {Limit} by {Staff}",
+                tenantId, request!.LoginSeatLimit, GetStaffAuditName());
+            return Ok(new { result = tenant });
         }
 
         [HttpPost("SetStatus/{tenantId:int}")]
         public async Task<IActionResult> SetStatus(int tenantId, [FromBody] SetTenantStatusRequest request)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var (ok, error) = await _provisioning.SetStatusAsync(tenantId, request?.Status);
             if (!ok) return BadRequest(new { error });
 
@@ -94,7 +106,7 @@ namespace CimmpleAPI.Controllers
         [HttpPost("ResendInvite/{tenantId:int}")]
         public async Task<IActionResult> ResendInvite(int tenantId)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var result = await _provisioning.ResendAdminInviteAsync(tenantId);
             if (!result.Success) return BadRequest(new { error = result.Error });
 
@@ -102,17 +114,37 @@ namespace CimmpleAPI.Controllers
             return Ok(new { result });
         }
 
+        [HttpGet("SecuritySettings/{tenantId:int}")]
+        public async Task<IActionResult> GetSecuritySettings(int tenantId)
+        {
+            if (!IsSupportStaff()) return Forbid();
+            var settings = await _provisioning.GetSecuritySettingsAsync(tenantId);
+            return settings == null
+                ? NotFound(new { error = "Client not found." })
+                : Ok(new { result = settings });
+        }
+
+        [HttpPost("SecuritySettings/{tenantId:int}")]
+        public async Task<IActionResult> SaveSecuritySettings(int tenantId, [FromBody] TenantSecuritySettingsDto settings)
+        {
+            if (!IsSupportStaff()) return Forbid();
+            var (saved, error) = await _provisioning.SaveSecuritySettingsAsync(tenantId, settings);
+            if (saved == null) return BadRequest(new { error });
+            _logger.LogInformation("Security settings for tenant {TenantId} updated by {Staff}", tenantId, GetStaffAuditName());
+            return Ok(new { result = saved });
+        }
+
         [HttpGet("Industries")]
         public IActionResult Industries()
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             return Ok(new { result = IndustryPacks.All });
         }
 
         [HttpGet("MasterSetup/{tenantId:int}")]
         public async Task<IActionResult> MasterSetup(int tenantId)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var overview = await _masterData.GetOverviewAsync(tenantId);
             return overview == null
                 ? NotFound(new { error = "Client not found." })
@@ -122,7 +154,7 @@ namespace CimmpleAPI.Controllers
         [HttpPost("SetIndustry/{tenantId:int}")]
         public async Task<IActionResult> SetIndustry(int tenantId, [FromBody] SetIndustryRequest request)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             var (ok, error) = await _masterData.SetIndustryAsync(tenantId, request?.Industry);
             if (!ok) return BadRequest(new { error });
             return Ok(new { result = await _provisioning.GetAsync(tenantId) });
@@ -131,7 +163,7 @@ namespace CimmpleAPI.Controllers
         [HttpPost("ApplySamples/{tenantId:int}")]
         public async Task<IActionResult> ApplySamples(int tenantId, [FromBody] ApplySamplesRequest request)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             try
             {
                 var batch = await _masterData.ApplySamplesAsync(tenantId, request?.Industry, request?.Masters ?? new List<string>(), GetStaffAuditName());
@@ -147,7 +179,7 @@ namespace CimmpleAPI.Controllers
         [HttpGet("MasterTemplate/{master}")]
         public IActionResult MasterTemplate(string master)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             try
             {
                 var csv = MasterDataSetupService.TemplateCsv(master);
@@ -181,7 +213,7 @@ namespace CimmpleAPI.Controllers
 
         private async Task<IActionResult> ImportUploadedFile(int tenantId, string master, IFormFile file, bool commit)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             if (file == null || file.Length == 0) return BadRequest(new { error = "Choose a CSV or Excel file." });
             try
             {
@@ -202,7 +234,7 @@ namespace CimmpleAPI.Controllers
 
         private async Task<IActionResult> ImportUploadedWorkbook(int tenantId, IFormFile file, bool commit)
         {
-            if (!IsPlatformAdmin()) return Forbid();
+            if (!IsSupportStaff()) return Forbid();
             if (file == null || file.Length == 0) return BadRequest(new { error = "Choose an Excel workbook." });
             try
             {
@@ -226,6 +258,11 @@ namespace CimmpleAPI.Controllers
         public class SetTenantStatusRequest
         {
             public string Status { get; set; } = "";
+        }
+
+        public class SetLoginSeatLimitRequest
+        {
+            public int LoginSeatLimit { get; set; }
         }
 
         public class SetIndustryRequest

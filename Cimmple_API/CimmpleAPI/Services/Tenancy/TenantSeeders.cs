@@ -46,14 +46,25 @@ namespace CimmpleAPI.Services.Tenancy
             new MainSiteSeeder()
         };
 
+        /// <summary>
+        /// Applied while a client is created or resumed. Categories and NCR codes are shop-type
+        /// master data, not part of this set.
+        /// </summary>
         public static readonly ITenantSeeder[] Defaults =
         {
             new RolePermissionsSeeder(),
             new ChartOfAccountsSeeder(),
-            new CategoryTypesSeeder(),
-            new NcrCodesSeeder(),
             new PaymentTermsSeeder(),
             new ApprovalLimitsSeeder()
+        };
+
+        /// <summary>What Support Portal "Apply default data" is allowed to add.</summary>
+        public static readonly ITenantSeeder[] ApplyDefaultData =
+        {
+            new RolesSeeder(),
+            new RolePermissionsSeeder(),
+            new ChartOfAccountsSeeder(),
+            new PaymentTermsSeeder()
         };
 
         public static IEnumerable<ITenantSeeder> All => Core.Concat(Defaults);
@@ -167,25 +178,6 @@ namespace CimmpleAPI.Services.Tenancy
 
         public Task<int> ApplyAsync(CimmpleDbContext db, TenantSeedContext context) =>
             Task.FromResult(ManufacturingChartOfAccountsSeed.Apply(db, context.TenantId).Inserted);
-    }
-
-    internal sealed class CategoryTypesSeeder : ITenantSeeder
-    {
-        public string Name => "Category types";
-
-        public Task<int> ApplyAsync(CimmpleDbContext db, TenantSeedContext context)
-        {
-            var (types, values) = CategoryDefaults.EnsureForTenant(db, context.TenantId);
-            return Task.FromResult(types + values);
-        }
-    }
-
-    internal sealed class NcrCodesSeeder : ITenantSeeder
-    {
-        public string Name => "NCR codes";
-
-        public async Task<int> ApplyAsync(CimmpleDbContext db, TenantSeedContext context) =>
-            (await NcrCodeDefaults.EnsureForTenantAsync(db, context.TenantId, context.CreatedByUserId)).Inserted;
     }
 
     internal sealed class PaymentTermsSeeder : ITenantSeeder

@@ -6,8 +6,8 @@ namespace CimmpleAPI.Services.Tenancy
     public static class CategoryDefaults
     {
         /// <summary>
-        /// Starter set provisioned on demand for a tenant. Values are only seeded for the
-        /// axes that are the same in every shop; the rest are left for the customer to fill.
+        /// Machine-shop starter set. Electronics clients use <see cref="ElectronicsIndustry"/> values
+        /// for the same type codes. Empty value lists are left for the customer to fill.
         /// </summary>
         public static readonly (string Name, string Code, int DisplayOrder, string[] Values)[] DefaultCategoryTypes = new[]
         {
@@ -27,8 +27,9 @@ namespace CimmpleAPI.Services.Tenancy
         /// repeatedly: a starter type counts as existing when its code or its name is already
         /// used (so a renamed system type is not re-created), and nothing is overwritten.
         /// </summary>
-        public static (int TypesCreated, int ValuesCreated) EnsureForTenant(CimmpleDbContext context, int tenantId)
+        public static (int TypesCreated, int ValuesCreated) EnsureForTenant(CimmpleDbContext context, int tenantId, string? industry = null)
         {
+            var seeds = IndustryPacks.CategoryTypesFor(industry);
             var existingNames = context.CategoryType
                 .Where(t => t.Tenantid == tenantId)
                 .Select(t => t.Name)
@@ -48,7 +49,7 @@ namespace CimmpleAPI.Services.Tenancy
             var typesCreated = 0;
             var valuesCreated = 0;
 
-            foreach (var seed in DefaultCategoryTypes)
+            foreach (var seed in seeds)
             {
                 if (existingNames.Contains(seed.Name.ToLower()) || existingCodes.Contains(seed.Code.ToLower()))
                 {

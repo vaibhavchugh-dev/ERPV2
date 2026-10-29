@@ -137,7 +137,11 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { error = "A valid tenant is required" });
                 }
 
-                var (typesCreated, valuesCreated) = CategoryDefaults.EnsureForTenant(_context, request.Tenantid);
+                var industry = _context.Tenants.AsNoTracking()
+                    .Where(t => t.TenantId == request.Tenantid)
+                    .Select(t => t.Industry)
+                    .FirstOrDefault();
+                var (typesCreated, valuesCreated) = CategoryDefaults.EnsureForTenant(_context, request.Tenantid, industry);
 
                 return Ok(new { result = new { typesCreated, valuesCreated } });
             }

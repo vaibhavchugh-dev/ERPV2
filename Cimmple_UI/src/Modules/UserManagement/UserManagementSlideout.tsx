@@ -5,7 +5,10 @@ import {
   UserDetail,
   UpdateUserRequest,
   Role,
-  Permission
+  Permission,
+  LoginSeatUsage,
+  isActiveAccountStatus,
+  loginSeatLimitMessage,
 } from "../../Common/Services/UserManagementService";
 import { AuthService } from "../../Common/Services/AuthService";
 import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
@@ -33,6 +36,8 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
   const [showPermissionViewer, setShowPermissionViewer] = useState(false);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [seatUsage, setSeatUsage] = useState<LoginSeatUsage | null>(null);
+  const [loadedStatus, setLoadedStatus] = useState("Active");
   const [userData, setUserData] = useState<UserDetail>({
     userUniqueID: 0,
     firstName: "",
@@ -111,9 +116,14 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       const storage = JSON.parse(localStorage.getItem("storage") || "{}");
       const tenantID = storage?.tenantID || 1;
 
-      const user = await UserManagementService.GetUserById(userId, tenantID);
+      const [user, usage] = await Promise.all([
+        UserManagementService.GetUserById(userId, tenantID),
+        UserManagementService.GetLoginSeatUsage().catch(() => null),
+      ]);
       // Ensure role is a valid number or undefined
       const roleValue = user.role && !isNaN(user.role) && user.role > 0 ? user.role : undefined;
+      setLoadedStatus(user.status || "Active");
+      setSeatUsage(usage);
       setUserData({
         ...user,
         role: roleValue
@@ -163,6 +173,19 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
   const canEditRole = isAdminSession;
 
   const keepActiveReason = getKeepActiveReason(targetRoleName, userData.userUniqueID);
+  const hasLogin = !!userData.hasPassword && !!(userData.userName && userData.userName.trim());
+  const loadedIsAdmin = isAdminRoleName(userData.roleName);
+  const occupiedBefore = hasLogin && isActiveAccountStatus(loadedStatus) && !loadedIsAdmin;
+  const willOccupy = hasLogin && isActiveAccountStatus(userData.status) && !targetIsAdmin;
+  const reactivationNeedsSeat = willOccupy && !occupiedBefore;
+  const seatBlocked =
+    (seatUsage == null || seatUsage.availableSeats <= 0) &&
+    reactivationNeedsSeat &&
+    seatUsage != null;
+  const seatMessage =
+    seatBlocked && seatUsage?.loginSeatLimit != null
+      ? loginSeatLimitMessage(seatUsage.usedSeats, seatUsage.loginSeatLimit)
+      : "";
 
   const validateForm = (): string[] => {
     const errors: string[] = [];
@@ -177,6 +200,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
     if (keepActiveReason && userData.status && userData.status !== "Active") {
       errors.push(keepActiveReason);
     }
+    if (seatMessage) errors.push(seatMessage);
     
     // Validate role - must be a positive number
     const roleValue = userData.role;
@@ -233,7 +257,7 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
       onSave();
     } catch (error: any) {
       console.error('Error saving user:', error);
-      toast.error(`Error saving user: ${error?.response?.data?.message || error.message || 'Unknown error'}`);
+      toast.error(`Error saving user: ${error?.response?.data?.error || error?.response?.data?.message || error.message || 'Unknown error'}`);
     } finally {
       setSaving(false);
     }
@@ -394,6 +418,11 @@ const UserManagementSlideout: React.FC<UserManagementSlideoutProps> = ({
           {keepActiveReason && (
             <small style={{ display: "block", marginTop: "0.25rem", color: "#6b7280" }}>
               {keepActiveReason}
+            </small>
+          )}
+          {seatMessage && (
+            <small style={{ display: "block", marginTop: "0.35rem", color: "#b45309" }}>
+              {seatMessage}
             </small>
           )}
         </div>

@@ -4,6 +4,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
+using CimmpleAPI.Services.Tenancy;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -30,6 +31,17 @@ namespace CimmpleAPI.Controllers
             _authService = authService;
             _configuration = configuration;
             _emailOutbox = emailOutbox;
+        }
+
+        // GET: api/UserManagement/LoginSeatUsage
+        [HttpGet("LoginSeatUsage")]
+        public async Task<IActionResult> LoginSeatUsage()
+        {
+            var tenantId = GetTenantId();
+            if (tenantId <= 0)
+                return Unauthorized(new { message = "Tenant is required." });
+
+            return Ok(await LoginSeatService.GetUsageAsync(_context, tenantId));
         }
 
         // GET: api/UserManagement/GetUsers
@@ -202,7 +214,8 @@ namespace CimmpleAPI.Controllers
                         DOB = u.DOB,
                         SSN = u.SSN,
                         SendWelcomeEmail = u.SendWelcomeEmail,
-                        CreateDate = u.CreateDate
+                        CreateDate = u.CreateDate,
+                        HasPassword = u.Password != null && u.Password != ""
                     })
                     .FirstOrDefaultAsync();
 
@@ -277,6 +290,9 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { message = deactivateBlockReason });
                 }
 
+                var wasAdmin = await LoginSeatService.IsAdminRoleAsync(_context, user.Role);
+                var occupiedBefore = LoginSeatRules.Occupies(user, wasAdmin);
+
                 if (userDto.Role.HasValue)
                 {
                     user.Role = userDto.Role.Value > 0 ? userDto.Role : null;
@@ -307,7 +323,19 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                await _context.SaveChangesAsync();
+                var willBeAdmin = await LoginSeatService.IsAdminRoleAsync(_context, user.Role);
+                var needsNewSeat = LoginSeatRules.Occupies(user, willBeAdmin) && !occupiedBefore;
+                if (needsNewSeat)
+                {
+                    var seatDenial = await LoginSeatService.ExecuteIfAllowedAsync(
+                        _context, user.TenantID, needsNewSeat: true, () => _context.SaveChangesAsync());
+                    if (seatDenial != null)
+                        return StatusCode(409, seatDenial.ToResponse());
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
 
                 return Ok(new { message = "User updated successfully" });
             }
@@ -401,17 +429,30 @@ namespace CimmpleAPI.Controllers
                     return BadRequest(new { message = policyError });
                 }
 
+                var occupiedBeforeReset = LoginSeatRules.Occupies(
+                    user, await LoginSeatService.IsAdminRoleAsync(_context, user.Role));
                 var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
                     user, resetDto.NewPassword, settings);
                 if (!applied)
                     return BadRequest(new { message = applyError });
-
                 user.ChangePassword = "Y";
                 user.FailedLoginCount = 0;
                 user.LockoutEndUtc = null;
                 user.UserToken = ""; // invalidate refresh sessions
 
-                await _context.SaveChangesAsync();
+                var needsNewSeat = LoginSeatRules.Occupies(
+                    user, await LoginSeatService.IsAdminRoleAsync(_context, user.Role)) && !occupiedBeforeReset;
+                if (needsNewSeat)
+                {
+                    var seatDenial = await LoginSeatService.ExecuteIfAllowedAsync(
+                        _context, user.TenantID, needsNewSeat: true, () => _context.SaveChangesAsync());
+                    if (seatDenial != null)
+                        return StatusCode(409, seatDenial.ToResponse());
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
                 await _authService.TrimPasswordHistoryAsync(user.User_UniqueID, settings.PasswordHistoryCount);
 
                 string? emailMessage = null;
@@ -1007,6 +1048,7 @@ namespace CimmpleAPI.Controllers
         public string? SSN { get; set; }
         public int? SendWelcomeEmail { get; set; }
         public DateTime? CreateDate { get; set; }
+        public bool HasPassword { get; set; }
     }
 
     // Note: CreateUserDto removed - users are created via Employee Master
