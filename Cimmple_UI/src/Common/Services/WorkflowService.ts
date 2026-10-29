@@ -54,6 +54,9 @@ export interface WorkflowPurchaseLink {
   number: string;
   vendorName?: string | null;
   status?: string | null;
+  partNo?: string | null;
+  productId?: number | null;
+  rawMaterialId?: number | null;
   qtyOrdered: number;
   qtyReceived: number;
   orderPath: string;
@@ -65,6 +68,8 @@ export interface WorkflowShortage {
   jobNumber: string;
   partNo?: string | null;
   partName?: string | null;
+  productId?: number | null;
+  rawMaterialId?: number | null;
   needed: number;
   available: number;
   reserved: number;
@@ -160,6 +165,8 @@ export interface WorkflowAction {
   nextAction: string;
   linkPath?: string | null;
   linkLabel: string;
+  sourceType?: string | null;
+  sourceId?: number;
 }
 
 export interface WorkflowCollectionCard {

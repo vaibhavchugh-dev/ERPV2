@@ -520,6 +520,8 @@ namespace CimmpleAPI.Services.Workflow
                     JobNumber = Doc("JO#", job.JobOrderNumber > 0 ? job.JobOrderNumber : job.JobOrderID),
                     PartNo = partNo,
                     PartName = partName,
+                    ProductId = line.ProductId,
+                    RawMaterialId = line.RawMaterialId,
                     Needed = line.QuantityNeeded,
                     Available = available,
                     Reserved = reserved,
@@ -567,17 +569,20 @@ namespace CimmpleAPI.Services.Workflow
                     d.JobId,
                     d.JobNumber,
                     d.QtyOrdered,
+                    d.PartNo,
+                    d.ProductId,
+                    d.RawMaterialId,
                     v.PONumber,
                     Status = v.Status ?? "",
                     VendorName = v.VendorName ?? "",
                 }).ToListAsync();
 
-            var linked = new List<(int Id, int OrderId, int JobOrderId, int QtyOrdered, int PONumber, string Status, string VendorName)>();
+            var linked = new List<(int Id, int OrderId, int JobOrderId, int QtyOrdered, string? PartNo, int? ProductId, int? RawMaterialId, int PONumber, string Status, string VendorName)>();
             foreach (var line in lines)
             {
                 foreach (var jobOrderId in ResolvePurchaseJobs(line.JobId, line.JobNumber, jobById, jobByName, jobsByNumber))
                 {
-                    linked.Add((line.ID, line.OrderID, jobOrderId, line.QtyOrdered, line.PONumber, line.Status, line.VendorName));
+                    linked.Add((line.ID, line.OrderID, jobOrderId, line.QtyOrdered, line.PartNo, line.ProductId, line.RawMaterialId, line.PONumber, line.Status, line.VendorName));
                 }
             }
             if (linked.Count == 0)
@@ -593,17 +598,19 @@ namespace CimmpleAPI.Services.Workflow
                 .ToDictionary(g => g.Key, g => g.Sum(x => x.ReceivedQty));
 
             return linked
-                .GroupBy(l => new { l.OrderId, l.JobOrderId })
-                .Select(g => new PurchaseHit
+                .Select(line => new PurchaseHit
                 {
-                    VendorOrderId = g.Key.OrderId,
-                    JobOrderId = g.Key.JobOrderId,
-                    Number = Doc("VO#", g.First().PONumber > 0 ? g.First().PONumber : g.Key.OrderId),
-                    VendorName = g.First().VendorName,
-                    Status = g.First().Status,
-                    DetailKey = string.Join(",", g.Select(x => x.Id).Distinct().OrderBy(id => id)),
-                    QtyOrdered = g.Sum(x => x.QtyOrdered),
-                    QtyReceived = g.Sum(x => receivedByDetail.TryGetValue(x.Id, out var qty) ? qty : 0),
+                    VendorOrderId = line.OrderId,
+                    JobOrderId = line.JobOrderId,
+                    Number = Doc("VO#", line.PONumber > 0 ? line.PONumber : line.OrderId),
+                    VendorName = line.VendorName,
+                    Status = line.Status,
+                    DetailKey = line.Id.ToString(CultureInfo.InvariantCulture),
+                    PartNo = line.PartNo,
+                    ProductId = line.ProductId,
+                    RawMaterialId = line.RawMaterialId,
+                    QtyOrdered = line.QtyOrdered,
+                    QtyReceived = receivedByDetail.TryGetValue(line.Id, out var qty) ? qty : 0,
                 })
                 .ToList();
         }
@@ -1091,6 +1098,9 @@ namespace CimmpleAPI.Services.Workflow
             VendorOrderId = hit.VendorOrderId,
             JobOrderId = hit.JobOrderId,
             DetailKey = hit.DetailKey,
+            PartNo = hit.PartNo,
+            ProductId = hit.ProductId,
+            RawMaterialId = hit.RawMaterialId,
             Number = hit.Number,
             VendorName = hit.VendorName,
             Status = hit.Status,
@@ -1266,6 +1276,9 @@ namespace CimmpleAPI.Services.Workflow
             public int VendorOrderId { get; set; }
             public int JobOrderId { get; set; }
             public string DetailKey { get; set; } = "";
+            public string? PartNo { get; set; }
+            public int? ProductId { get; set; }
+            public int? RawMaterialId { get; set; }
             public string Number { get; set; } = "";
             public string? VendorName { get; set; }
             public string? Status { get; set; }

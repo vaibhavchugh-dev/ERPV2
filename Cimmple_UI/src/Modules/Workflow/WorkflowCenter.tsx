@@ -15,15 +15,23 @@ import {
   WorkflowOverview,
   WorkflowRow,
   WorkflowService,
+  WorkflowShortage,
 } from "../../Common/Services/WorkflowService";
+import { VendorOrderDraftLine } from "../Purchasing/VendorOrderSlideout";
 import "./WorkflowCenter.scss";
 
 const CustomerQuotationSlideout = React.lazy(() => import("../Quotations/CustomerQuotationSlideout"));
 const CustomerOrderSlideout = React.lazy(() => import("../Orders/CustomerOrderSlideout"));
+const VendorOrderSlideout = React.lazy(() => import("../Purchasing/VendorOrderSlideout"));
 
-type NestedDocument = { kind: "quotation" | "order"; id: number };
+type NestedDocument = { kind: "quotation" | "order" | "vendorOrder"; id: number };
 
 const nestedDocument = (path?: string | null): NestedDocument | null => {
+  const vendor = /^\/purchasing\/vendor-orders\?([^#]*)/.exec(path || "");
+  if (vendor) {
+    const id = Number(new URLSearchParams(vendor[1]).get("open"));
+    if (Number.isFinite(id) && id > 0) return { kind: "vendorOrder", id };
+  }
   const match = /^\/(quotations\/customer|orders\/customer)\?([^#]*)/.exec(path || "");
   if (!match) return null;
   const id = Number(new URLSearchParams(match[2]).get("open"));
@@ -31,7 +39,75 @@ const nestedDocument = (path?: string | null): NestedDocument | null => {
   return { kind: match[1] === "quotations/customer" ? "quotation" : "order", id };
 };
 
-type WorkflowSortKey = "reference" | "customer" | "stage" | "status" | "owner" | "age" | "next";
+const shortOrderQty = (qty: number) => Math.max(1, Math.ceil((Number(qty) || 0) - 1e-9));
+
+const purchaseRemaining = (item: { qtyOrdered?: number; qtyReceived?: number; status?: string | null }) => {
+  const status = (item.status || "").trim().toLowerCase();
+  if (status === "cancelled" || status === "canceled") return 0;
+  return Math.max(0, (item.qtyOrdered || 0) - (item.qtyReceived || 0));
+};
+
+const sameMaterial = (
+  left: { partNo?: string | null; productId?: number | null; rawMaterialId?: number | null },
+  right: { partNo?: string | null; productId?: number | null; rawMaterialId?: number | null }
+) => {
+  if (left.rawMaterialId && right.rawMaterialId && left.rawMaterialId === right.rawMaterialId) return true;
+  if (left.productId && right.productId && left.productId === right.productId) return true;
+  const part = (left.partNo || "").trim().toLowerCase();
+  return part.length > 0 && part === (right.partNo || "").trim().toLowerCase();
+};
+
+const coveringPurchase = (row: WorkflowRow, shortage: WorkflowShortage) => {
+  const need = shortOrderQty(shortage.shortQty);
+  const lines = row.purchases.filter(
+    (item) => (item.jobOrderId || 0) === shortage.jobOrderId && purchaseRemaining(item) > 0 && sameMaterial(shortage, item)
+  );
+  const openQty = lines.reduce((sum, item) => sum + purchaseRemaining(item), 0);
+  if (lines.length === 0 || openQty < need) return null;
+  return { number: lines[0].number, path: lines[0].orderPath, openQty };
+};
+
+const materialPartLabel = (shortage: WorkflowShortage) =>
+  [shortage.partNo, shortage.partName].filter((value) => value && value.trim()).join(" — ");
+
+const orderActionLabel = (shortage: WorkflowShortage) => {
+  const qty = shortOrderQty(shortage.shortQty);
+  const part = materialPartLabel(shortage);
+  const job = (shortage.jobNumber || "").trim();
+  const subject = [part, job ? `for ${job}` : ""].filter(Boolean).join(" ");
+  return subject ? `Order ${qty} of ${subject}` : `Order ${qty}`;
+};
+
+const coveredActionLabel = (shortage: WorkflowShortage, cover: { number: string; openQty: number }) => {
+  const part = materialPartLabel(shortage);
+  return part
+    ? `${cover.number} covers ${cover.openQty} of ${part}`
+    : `${cover.number} covers ${cover.openQty}`;
+};
+
+const shortageForAction = (row: WorkflowRow | undefined, action: WorkflowAction) => {
+  if (!row || action.kind !== "MaterialShortage") return null;
+  return row.shortages.find((item) =>
+    item.jobOrderId === action.sourceId
+    && ((item.partNo && action.detail?.includes(item.partNo))
+      || (item.partName && action.detail?.includes(item.partName)))
+  ) || row.shortages.find((item) => item.jobOrderId === action.sourceId) || null;
+};
+
+const draftFromShortage = (shortage: WorkflowShortage): VendorOrderDraftLine => ({
+  partNo: shortage.partNo || "",
+  partName: shortage.partName || "",
+  lineType: shortage.productId ? "FinishedProduct" : "RawMaterial",
+  qty: shortOrderQty(shortage.shortQty),
+  unit: "EA",
+  jobNumber: shortage.jobNumber || "",
+  jobId: shortage.jobOrderId,
+  productId: shortage.productId || undefined,
+  rawMaterialId: shortage.productId ? undefined : shortage.rawMaterialId || undefined,
+});
+
+type WorkflowSortKey = "reference" | "customer" | "status" | "owner" | "age";
+type ChoreSortKey = "chore" | "order" | "customer" | "stage" | "priority" | "due" | "days" | "owner";
 
 const compareWorkflows = (a: WorkflowRow, b: WorkflowRow, key: WorkflowSortKey, dir: "asc" | "desc") => {
   const sign = dir === "asc" ? 1 : -1;
@@ -41,14 +117,10 @@ const compareWorkflows = (a: WorkflowRow, b: WorkflowRow, key: WorkflowSortKey, 
       return text(a.reference || "", b.reference || "");
     case "customer":
       return text(a.customerName || "", b.customerName || "");
-    case "stage":
-      return text(a.principalStageLabel || "", b.principalStageLabel || "");
     case "status":
       return text(a.indicator || "", b.indicator || "");
     case "owner":
       return text(a.ownerLabel || "", b.ownerLabel || "");
-    case "next":
-      return text(a.nextAction || "", b.nextAction || "");
     default: {
       const byAge = (a.ageDays - b.ageDays) * sign;
       if (byAge) return byAge;
@@ -128,46 +200,62 @@ const includesText = (haystack: string, query: string) =>
 
 const isChoreStatus = (status: string) => !status || status === "needsAction" || status === "blocked" || status === "overdue";
 
-const priorityLabel = (priority: string) => {
-  if (priority === "Blocked" || priority === "Overdue" || priority === "High") return priority;
-  return "Needs action";
-};
-
-const priorityClass = (priority: string) =>
-  priority === "Blocked" || priority === "Overdue" ? "badge-danger" : "badge-warning";
-
 const actionStatusBadges = (action: WorkflowAction) => {
-  const badges: { label: string; className: string }[] = [];
-  const seen = new Set<string>();
-  const add = (label: string, className: string) => {
-    if (seen.has(label)) return;
-    seen.add(label);
-    badges.push({ label, className });
-  };
-  if (action.priorityLabel === "Blocked" || action.blockerReason) add("Blocked", "badge-danger");
-  const pastDue = Boolean(action.dueDate && calendarDaysAfter(action.dueDate) != null);
-  if (action.priorityLabel === "Overdue" || pastDue) add("Overdue", "badge-danger");
-  if (!seen.has("Blocked") && !seen.has("Overdue")) {
-    add(priorityLabel(action.priorityLabel), priorityClass(action.priorityLabel));
-  }
-  return badges;
+  if (action.priorityLabel === "Blocked" || action.blockerReason) return [{ label: "Blocked", className: "badge-danger" }];
+  if (action.priorityLabel === "Overdue" || choreIsPastDue(action)) return [{ label: "Overdue", className: "badge-danger" }];
+  if (action.priorityLabel === "High") return [{ label: "High", className: "badge-warning" }];
+  return [{ label: "Needs action", className: "badge-warning" }];
 };
+
+const choreHasBadge = (action: WorkflowAction, label: string) =>
+  actionStatusBadges(action).some((badge) => badge.label === label);
 
 const matchesChoreStatus = (action: WorkflowAction, status: string) => {
-  if (status === "blocked") return action.priorityLabel === "Blocked";
-  if (status === "overdue") return action.priorityLabel === "Overdue";
-  if (status === "needsAction") return action.priorityLabel !== "Blocked" && action.priorityLabel !== "Overdue";
+  if (status === "blocked") return choreHasBadge(action, "Blocked");
+  if (status === "overdue") return choreHasBadge(action, "Overdue");
+  if (status === "needsAction") return choreHasBadge(action, "Needs action") || choreHasBadge(action, "High");
   return true;
 };
 
-const compareChores = (a: WorkflowAction, b: WorkflowAction) => {
-  const group = (priority: string) => (priority === "Blocked" ? 0 : priority === "Overdue" ? 1 : 2);
-  const byGroup = group(a.priorityLabel) - group(b.priorityLabel);
-  if (byGroup) return byGroup;
-  const aDue = a.dueDate || "9999-12-31";
-  const bDue = b.dueDate || "9999-12-31";
-  if (aDue !== bDue) return aDue < bDue ? -1 : 1;
-  return a.reference.localeCompare(b.reference) || a.title.localeCompare(b.title);
+const compareChoreRows = (
+  a: WorkflowAction,
+  b: WorkflowAction,
+  key: ChoreSortKey,
+  dir: "asc" | "desc",
+  ownerOf: (action: WorkflowAction) => string
+) => {
+  const sign = dir === "asc" ? 1 : -1;
+  const text = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" }) * sign;
+  const missingLast = (left: number | null, right: number | null) => {
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return (left - right) * sign;
+  };
+  switch (key) {
+    case "chore":
+      return text(a.title || "", b.title || "");
+    case "order":
+      return text(a.reference || "", b.reference || "");
+    case "customer":
+      return text(a.customerName || "", b.customerName || "");
+    case "stage":
+      return text(a.stageLabel || "", b.stageLabel || "");
+    case "priority": {
+      const rank = (action: WorkflowAction) => (choreHasBadge(action, "Blocked") ? 0 : choreHasBadge(action, "Overdue") ? 1 : 2);
+      return (rank(a) - rank(b)) * sign;
+    }
+    case "days":
+      return missingLast(overdueDayCount(a), overdueDayCount(b));
+    case "owner":
+      return text(ownerOf(a), ownerOf(b));
+    default: {
+      if (!a.dueDate && !b.dueDate) return 0;
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return a.dueDate < b.dueDate ? -sign : a.dueDate > b.dueDate ? sign : 0;
+    }
+  }
 };
 
 type WorkflowSnapshot = {
@@ -252,8 +340,11 @@ const WorkflowCenter: React.FC = () => {
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(returned.selected);
   const [nested, setNested] = useState<NestedDocument | null>(null);
+  const [vendorDraft, setVendorDraft] = useState<VendorOrderDraftLine | null>(null);
   const [sortKey, setSortKey] = useState<WorkflowSortKey>("age");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [choreSortKey, setChoreSortKey] = useState<ChoreSortKey>("due");
+  const [choreSortDir, setChoreSortDir] = useState<"asc" | "desc">("asc");
   const closedSelection = useRef<string | null>(null);
   const heldRow = useRef<WorkflowRow | null>(null);
   const seenSearch = useRef(location.search);
@@ -263,7 +354,7 @@ const WorkflowCenter: React.FC = () => {
   selectedIdRef.current = selectedId;
 
   const closeDrawer = () => {
-    if (nested) return;
+    if (nested || vendorDraft) return;
     closedSelection.current = selectedId;
     heldRow.current = null;
     setSelectedId(null);
@@ -274,6 +365,14 @@ const WorkflowCenter: React.FC = () => {
     else {
       setSortKey(column);
       setSortDir("asc");
+    }
+  };
+
+  const toggleChoreSort = (column: ChoreSortKey) => {
+    if (choreSortKey === column) setChoreSortDir((current) => (current === "asc" ? "desc" : "asc"));
+    else {
+      setChoreSortKey(column);
+      setChoreSortDir(column === "days" ? "desc" : "asc");
     }
   };
 
@@ -372,7 +471,7 @@ const WorkflowCenter: React.FC = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [search, stage, status, view, ownerFilter, pageSize, sortKey, sortDir]);
+  }, [search, stage, status, view, ownerFilter, pageSize, sortKey, sortDir, choreSortKey, choreSortDir]);
 
   const workflows = overview?.workflows || [];
   const scoped = useMemo(
@@ -401,8 +500,14 @@ const WorkflowCenter: React.FC = () => {
         return ownerMatches(row, ownerFilter);
       })
       .filter((action) => action.kind !== "JobInProgress")
-      .sort(compareChores);
-  }, [overview?.actions, workflows, search, stage, status, ownerFilter]);
+      .sort((a, b) => compareChoreRows(
+        a,
+        b,
+        choreSortKey,
+        choreSortDir,
+        (action) => byId.get(action.workflowId)?.ownerLabel || "Unassigned"
+      ));
+  }, [overview?.actions, workflows, search, stage, status, ownerFilter, choreSortKey, choreSortDir]);
   const ownerOptions = useMemo(() => {
     const names = new Map<number, string>();
     workflows.forEach((row) => {
@@ -590,6 +695,10 @@ const WorkflowCenter: React.FC = () => {
           pageSize={pageSize}
           onPage={setPage}
           onPageSize={setPageSize}
+          sortKey={choreSortKey}
+          sortDir={choreSortDir}
+          onSort={toggleChoreSort}
+          onOrderShortage={(shortage) => setVendorDraft(draftFromShortage(shortage))}
         />
       ) : (
         <JourneyTable
@@ -625,6 +734,7 @@ const WorkflowCenter: React.FC = () => {
           currentUserId={signedInUserId()}
           formatCurrency={formatCurrency}
           formatDate={formatDateOnlyFromApi}
+          onOrderShortage={(shortage) => setVendorDraft(draftFromShortage(shortage))}
         />
       )}
 
@@ -649,6 +759,18 @@ const WorkflowCenter: React.FC = () => {
                   load();
                 }}
               />
+            ) : nested.kind === "vendorOrder" ? (
+              <VendorOrderSlideout
+                orderId={nested.id}
+                onClose={() => {
+                  setNested(null);
+                  load();
+                }}
+                onSaved={() => {
+                  setNested(null);
+                  load();
+                }}
+              />
             ) : (
               <CustomerOrderSlideout
                 orderId={nested.id}
@@ -661,22 +783,50 @@ const WorkflowCenter: React.FC = () => {
           </Suspense>
         </div>
       )}
+
+      {vendorDraft && (
+        <div className="workflow-nested-document">
+          <Suspense fallback={null}>
+            <VendorOrderSlideout
+              orderId={0}
+              draftLine={vendorDraft}
+              onClose={() => {
+                setVendorDraft(null);
+                load();
+              }}
+              onSaved={() => {
+                setVendorDraft(null);
+                load();
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
     </div>
   );
 };
 
-const SortHeader: React.FC<{
+function SortHeader<Column extends string>({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+  title,
+  className,
+}: {
   label: string;
-  column: WorkflowSortKey;
-  sortKey: WorkflowSortKey;
+  column: Column;
+  sortKey: Column;
   sortDir: "asc" | "desc";
-  onSort: (column: WorkflowSortKey) => void;
+  onSort: (column: Column) => void;
   title?: string;
-}> = ({ label, column, sortKey, sortDir, onSort, title }) => {
+  className?: string;
+}) {
   const active = sortKey === column;
   return (
     <th
-      className="sortable"
+      className={className ? `sortable ${className}` : "sortable"}
       title={title}
       aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
       onClick={() => onSort(column)}
@@ -687,7 +837,7 @@ const SortHeader: React.FC<{
       </div>
     </th>
   );
-};
+}
 
 const StatusBadges: React.FC<{ row: WorkflowRow }> = ({ row }) => (
   <div className="badge-row">
@@ -724,11 +874,11 @@ const JourneyTable: React.FC<{
           <tr>
             <SortHeader label="Reference" column="reference" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader label="Customer" column="customer" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
-            <SortHeader label="Stage" column="stage" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <th>Stage</th>
             <SortHeader label="Status" column="status" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader label="Owner" column="owner" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader label="Age" column="age" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} title={AGE_TITLE} />
-            <SortHeader label="Next action" column="next" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <th>Next action</th>
           </tr>
         </thead>
         <tbody>
@@ -816,6 +966,10 @@ interface StageLink {
   status?: string;
   path?: string | null;
   affordance: string;
+  orderLabel?: string;
+  shortage?: WorkflowShortage;
+  coveredLabel?: string;
+  coveredPath?: string;
 }
 
 interface StageBucket {
@@ -853,6 +1007,11 @@ const calendarDaysAfter = (value?: string | null) => {
   return days > 0 ? days : null;
 };
 
+const choreIsPastDue = (action: WorkflowAction) => Boolean(action.dueDate && calendarDaysAfter(action.dueDate) != null);
+
+/** Day count when the due date is already past, including a blocked chore. Blank until then. */
+const overdueDayCount = (action: WorkflowAction) => (choreIsPastDue(action) ? calendarDaysAfter(action.dueDate) : null);
+
 const dueLabel = (
   value: string | null | undefined,
   overdue: boolean,
@@ -880,30 +1039,44 @@ const ChoreTable: React.FC<{
   pageSize: number;
   onPage: (page: number) => void;
   onPageSize: (size: number) => void;
+  sortKey: ChoreSortKey;
+  sortDir: "asc" | "desc";
+  onSort: (column: ChoreSortKey) => void;
+  onOrderShortage: (shortage: WorkflowShortage) => void;
 }> = (props) => (
   <div className="table-card">
     <div className="table-wrapper">
-      <table className="customers-table">
+      <table className="customers-table chores-table">
+        <colgroup>
+          <col className="col-chore" />
+          <col className="col-order" />
+          <col className="col-customer" />
+          <col className="col-stage" />
+          <col className="col-priority" />
+          <col className="col-due" />
+          <col className="col-days" />
+          <col className="col-owner" />
+        </colgroup>
         <thead>
           <tr>
-            <th>Chore</th>
-            <th>Order</th>
-            <th>Customer</th>
-            <th>Stage</th>
-            <th>Priority</th>
-            <th>Due</th>
-            <th>Owner</th>
+            <SortHeader className="col-chore" label="Chore" column="chore" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-order" label="Order" column="order" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-customer" label="Customer" column="customer" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-stage" label="Stage" column="stage" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-priority" label="Priority" column="priority" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-due" label="Due date" column="due" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-days" label="Days overdue" column="days" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} title="Days overdue" />
+            <SortHeader className="col-owner" label="Owner" column="owner" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
           </tr>
         </thead>
         <tbody>
           {props.rows.map((action) => {
             const order = props.workflows.find((row) => row.id === action.workflowId);
-            const due = action.dueDate
-              ? dueLabel(action.dueDate, action.priorityLabel === "Overdue", props.formatDate)
-              : null;
+            const dueDate = action.dueDate ? props.formatDate(action.dueDate) : "";
+            const overdueDays = overdueDayCount(action);
             return (
               <tr key={action.id} onClick={() => props.onOpen(action.workflowId)}>
-                <td>
+                <td className="col-chore">
                   <button
                     type="button"
                     className="entity-number chore-title"
@@ -918,6 +1091,35 @@ const ChoreTable: React.FC<{
                   >
                     {action.title}
                   </button>
+                  {(() => {
+                    const workflow = order;
+                    const shortage = shortageForAction(workflow, action);
+                    if (!workflow || !shortage) return null;
+                    const cover = coveringPurchase(workflow, shortage);
+                    if (cover) {
+                      return (
+                        <button
+                          type="button"
+                          className="chore-order"
+                          onClick={(event) => props.onOpenPath(event, cover.path, action.workflowId)}
+                        >
+                          {coveredActionLabel(shortage, cover)}
+                        </button>
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        className="chore-order"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          props.onOrderShortage(shortage);
+                        }}
+                      >
+                        {orderActionLabel(shortage)}
+                      </button>
+                    );
+                  })()}
                 </td>
                 <td>
                   <button type="button" className="entity-number" onClick={(event) => { event.stopPropagation(); props.onOpen(action.workflowId); }}>
@@ -926,8 +1128,15 @@ const ChoreTable: React.FC<{
                 </td>
                 <td className="name-cell" title={action.customerName}>{action.customerName || "—"}</td>
                 <td>{action.stageLabel}</td>
-                <td><span className={`badge ${priorityClass(action.priorityLabel)}`}>{priorityLabel(action.priorityLabel)}</span></td>
-                <td>{due || "—"}</td>
+                <td>
+                  {actionStatusBadges(action).slice(0, 1).map((badge) => (
+                    <span key={badge.label} className={`badge ${badge.className}`}>{badge.label}</span>
+                  ))}
+                </td>
+                <td>{dueDate || "—"}</td>
+                <td className="col-days" title={overdueDays ? `${overdueDays} day${overdueDays === 1 ? "" : "s"} overdue` : undefined}>
+                  {overdueDays ? `${overdueDays} day${overdueDays === 1 ? "" : "s"}` : ""}
+                </td>
                 <td>{order?.ownerLabel || "Unassigned"}</td>
               </tr>
             );
@@ -1060,6 +1269,7 @@ const stageRecords = (
   row.shortages.forEach((item) => {
     const job = row.jobs.find((entry) => entry.jobOrderId === item.jobOrderId);
     const requiredBy = item.requiredBy ? formatDate(item.requiredBy) : "";
+    const cover = coveringPurchase(row, item);
     add("Materials", {
       key: `short-${item.jobOrderId}-${item.partNo || ""}-${item.partName || ""}`,
       type: "Material requirement",
@@ -1067,6 +1277,10 @@ const stageRecords = (
       status: [`Short ${item.shortQty}`, item.jobNumber, requiredBy ? `Required by ${requiredBy}` : ""].filter(Boolean).join(" · "),
       path: job?.path || `/job-orders?open=${item.jobOrderId}`,
       affordance: "Open job order",
+      orderLabel: cover ? undefined : orderActionLabel(item),
+      shortage: cover ? undefined : item,
+      coveredLabel: cover ? coveredActionLabel(item, cover) : undefined,
+      coveredPath: cover?.path,
     });
   });
   if (row.shortages.length) note("Materials", "A vendor order does not make the material available.");
@@ -1134,13 +1348,46 @@ const stageRecords = (
   return buckets;
 };
 
+const ShortageActions: React.FC<{
+  orderLabel?: string;
+  shortage?: WorkflowShortage;
+  coveredLabel?: string;
+  coveredPath?: string;
+  onOpenPath: (event: React.MouseEvent, path?: string | null) => void;
+  onOrderShortage: (shortage: WorkflowShortage) => void;
+}> = ({ orderLabel, shortage, coveredLabel, coveredPath, onOpenPath, onOrderShortage }) => {
+  if (orderLabel && shortage) {
+    return (
+      <button
+        type="button"
+        className="record-order"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOrderShortage(shortage);
+        }}
+      >
+        {orderLabel}
+      </button>
+    );
+  }
+  if (coveredLabel && coveredPath) {
+    return (
+      <button type="button" className="record-covered" onClick={(event) => onOpenPath(event, coveredPath)}>
+        {coveredLabel}
+      </button>
+    );
+  }
+  return null;
+};
+
 const WorkPicture: React.FC<{
   row: WorkflowRow;
   actions: WorkflowAction[];
   formatCurrency: (value: number) => string;
   formatDate: (value?: string | null) => string;
   onOpenPath: (event: React.MouseEvent, path?: string | null) => void;
-}> = ({ row, actions, formatCurrency, formatDate, onOpenPath }) => {
+  onOrderShortage: (shortage: WorkflowShortage) => void;
+}> = ({ row, actions, formatCurrency, formatDate, onOpenPath, onOrderShortage }) => {
   const gaps = actions.filter((action) => action.kind === "PlanningGap");
   const openInvoices = row.invoices.filter((invoice) => isOpenInvoice(invoice.substage));
   const lanes = row.jobs.map((job) => {
@@ -1155,14 +1402,21 @@ const WorkPicture: React.FC<{
       cards: [
         ...row.shortages
           .filter((item) => item.jobOrderId === job.jobOrderId)
-          .map((item) => ({
-            key: `short-${job.jobOrderId}-${item.partNo || item.partName || "part"}`,
-            type: "Material",
-            identifier: item.partNo || item.partName || item.jobNumber,
-            status: [`Short ${item.shortQty}`, item.requiredBy ? `Required by ${formatDate(item.requiredBy)}` : ""].filter(Boolean).join(" · "),
-            path: job.path,
-            affordance: "Open job order",
-          })),
+          .map((item) => {
+            const cover = coveringPurchase(row, item);
+            return {
+              key: `short-${job.jobOrderId}-${item.partNo || item.partName || "part"}`,
+              type: "Material",
+              identifier: item.partNo || item.partName || item.jobNumber,
+              status: [`Short ${item.shortQty}`, item.requiredBy ? `Required by ${formatDate(item.requiredBy)}` : ""].filter(Boolean).join(" · "),
+              path: job.path,
+              affordance: "Open job order",
+              orderLabel: cover ? undefined : orderActionLabel(item),
+              shortage: cover ? undefined : item,
+              coveredLabel: cover ? coveredActionLabel(item, cover) : undefined,
+              coveredPath: cover?.path,
+            };
+          }),
         ...purchases.filter((item) => {
           if (seen.has(item.vendorOrderId)) return false;
           seen.add(item.vendorOrderId);
@@ -1178,6 +1432,10 @@ const WorkPicture: React.FC<{
             status: [item.vendorName, `Received ${received} of ${ordered}`].filter(Boolean).join(" · "),
             path: item.orderPath,
             affordance: "Open record",
+            orderLabel: undefined,
+            shortage: undefined,
+            coveredLabel: undefined,
+            coveredPath: undefined,
           };
         }),
         ...row.ncrs
@@ -1189,6 +1447,10 @@ const WorkPicture: React.FC<{
             status: [item.status, item.title].filter(Boolean).join(" · "),
             path: item.path,
             affordance: isOpenNcrStatus(item.status) ? "Open NCR" : "Open record",
+            orderLabel: undefined,
+            shortage: undefined,
+            coveredLabel: undefined,
+            coveredPath: undefined,
           })),
       ],
     };
@@ -1207,6 +1469,10 @@ const WorkPicture: React.FC<{
         status: action.detail || "",
         path: action.linkPath || row.orderPath || "",
         affordance: action.linkLabel || "Open customer order",
+        orderLabel: undefined,
+        shortage: undefined,
+        coveredLabel: undefined,
+        coveredPath: undefined,
       })),
     });
   }
@@ -1236,6 +1502,14 @@ const WorkPicture: React.FC<{
                         {card.status && <span className="record-status">{card.status}</span>}
                         <span className="record-go">{card.affordance}<span aria-hidden="true"> →</span></span>
                       </button>
+                      <ShortageActions
+                        orderLabel={card.orderLabel}
+                        shortage={card.shortage}
+                        coveredLabel={card.coveredLabel}
+                        coveredPath={card.coveredPath}
+                        onOpenPath={onOpenPath}
+                        onOrderShortage={onOrderShortage}
+                      />
                     </li>
                   ))}
                 </ul>
@@ -1251,15 +1525,18 @@ const WorkPicture: React.FC<{
             <h4>Shipment</h4>
             {row.shipments.length === 0 ? <p className="lane-empty">None yet.</p> : (
               <ul className="stage-records">
-                {row.shipments.map((item) => (
-                  <li key={item.shipmentId}>
-                    <button type="button" className="record-link" onClick={(event) => onOpenPath(event, item.path)}>
-                      <span className="record-id">{item.number}</span>
-                      {item.shipmentDate && <span className="record-status">{formatDate(item.shipmentDate)}</span>}
-                      <span className="record-go">Open shipment<span aria-hidden="true"> →</span></span>
-                    </button>
-                  </li>
-                ))}
+                {row.shipments.map((item) => {
+                  const shipmentDate = item.shipmentDate ? formatDate(item.shipmentDate) : "";
+                  return (
+                    <li key={item.shipmentId}>
+                      <button type="button" className="record-link" onClick={(event) => onOpenPath(event, item.path)}>
+                        <span className="record-id" title={item.number}>{item.number}</span>
+                        {shipmentDate && <span className="record-status" title={shipmentDate}>{shipmentDate}</span>}
+                        <span className="record-go">Open shipment<span aria-hidden="true"> →</span></span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
@@ -1317,7 +1594,8 @@ const WorkflowDetail: React.FC<{
   onPatch: (id: string, patch: Partial<WorkflowRow>) => void;
   formatCurrency: (value: number) => string;
   formatDate: (value?: string | null) => string;
-}> = ({ row, actions, canAssign, canAcknowledge, currentUserId, onClose, onOpenPath, onChanged, onPatch, formatCurrency, formatDate }) => {
+  onOrderShortage: (shortage: WorkflowShortage) => void;
+}> = ({ row, actions, canAssign, canAcknowledge, currentUserId, onClose, onOpenPath, onChanged, onPatch, formatCurrency, formatDate, onOrderShortage }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
   const primary = useMemo(() => chooseAction(actions, row), [actions, row]);
   const records = useMemo(
@@ -1508,7 +1786,7 @@ const WorkflowDetail: React.FC<{
                       </p>
                     )}
                     {current && row.isActive && canAssign && (
-                      <div className="coordination">
+                      <div className="coordination coordination-assign">
                         <select className="filter-select" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} aria-label="Assign to" disabled={busy}>
                           <option value="">Choose a person</option>
                           {assignees.map((person) => (
@@ -1555,9 +1833,28 @@ const WorkflowDetail: React.FC<{
                     )}
                     {current && formError && <p className="rejection-note">{formError}</p>}
                     {action?.linkPath && (
-                      <button type="button" className={current ? "btn-primary" : "btn-secondary"} onClick={(event) => onOpenPath(event, action.linkPath)}>
-                        {action.linkLabel || "Open record"}
-                      </button>
+                      <div className="action-open">
+                        <button type="button" className={current ? "btn-primary" : "btn-secondary"} onClick={(event) => onOpenPath(event, action.linkPath)}>
+                          {action.linkLabel || "Open record"}
+                        </button>
+                        {action.kind === "MaterialShortage" && (() => {
+                          const shortage = shortageForAction(row, action);
+                          if (!shortage) return null;
+                          const cover = coveringPurchase(row, shortage);
+                          if (cover) {
+                            return (
+                              <button type="button" className="btn-secondary" onClick={(event) => onOpenPath(event, cover.path)}>
+                                {coveredActionLabel(shortage, cover)}
+                              </button>
+                            );
+                          }
+                          return (
+                            <button type="button" className="btn-secondary" onClick={() => onOrderShortage(shortage)}>
+                              {orderActionLabel(shortage)}
+                            </button>
+                          );
+                        })()}
+                      </div>
                     )}
                   </article>
                 );
@@ -1574,7 +1871,7 @@ const WorkflowDetail: React.FC<{
               </div>
             </div>
             {journeyView === "lanes" ? (
-              <WorkPicture row={row} actions={actions} formatCurrency={formatCurrency} formatDate={formatDate} onOpenPath={onOpenPath} />
+              <WorkPicture row={row} actions={actions} formatCurrency={formatCurrency} formatDate={formatDate} onOpenPath={onOpenPath} onOrderShortage={onOrderShortage} />
             ) : (
             <ol className="journey">
               {stages.map((stage) => {
@@ -1617,6 +1914,14 @@ const WorkflowDetail: React.FC<{
                                 </span>
                               )}
                             </button>
+                            <ShortageActions
+                              orderLabel={item.orderLabel}
+                              shortage={item.shortage}
+                              coveredLabel={item.coveredLabel}
+                              coveredPath={item.coveredPath}
+                              onOpenPath={onOpenPath}
+                              onOrderShortage={onOrderShortage}
+                            />
                           </li>
                         ))}
                       </ul>

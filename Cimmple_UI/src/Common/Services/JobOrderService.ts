@@ -61,6 +61,18 @@ export interface JobOrderMasterReq {
   MaterialRequirements?: JobMaterialRequirement[];
 }
 
+export interface JobMaterialPurchase {
+  vendorOrderId: number;
+  number: string;
+  status?: string;
+  orderPath: string;
+  partNo?: string | null;
+  productId?: number | null;
+  rawMaterialId?: number | null;
+  qtyOrdered: number;
+  qtyReceived: number;
+}
+
 export interface JobMaterialRequirement {
   Id: number;
   SequenceNumber: number;
@@ -178,10 +190,10 @@ export function jobIgnoresMaterialShortage(status?: string): boolean {
 export function materialShortageQty(
   line: Pick<
     JobMaterialRequirement,
-    "Id" | "QuantityNeeded" | "QuantityReserved" | "QuantityIssued" | "QuantityAvailable"
+    "QuantityNeeded" | "QuantityReserved" | "QuantityIssued" | "QuantityAvailable"
   >
 ): number {
-  if ((line.Id || 0) <= 0) return 0;
+  if (typeof line.QuantityAvailable !== "number" || Number.isNaN(line.QuantityAvailable)) return 0;
   const needed = Number(line.QuantityNeeded) || 0;
   const reserved = Number(line.QuantityReserved) || 0;
   const issued = Number(line.QuantityIssued) || 0;
@@ -464,6 +476,20 @@ export class JobOrderService {
         status: string;
       }[];
     });
+  };
+
+  public static GetMaterialPurchases = async (
+    jobOrderId: number
+  ): Promise<JobMaterialPurchase[]> => {
+    if (jobOrderId <= 0) return [];
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    let tenantID = storage?.tenantID || 0;
+    if (tenantID === 0 && process.env.NODE_ENV === "development") tenantID = 1;
+    const response = await Instense.get("/JobOrder/GetMaterialPurchases", {
+      params: { tenantId: tenantID, jobOrderId },
+    });
+    const rows = response.data?.result;
+    return Array.isArray(rows) ? rows : [];
   };
 
   public static GetJobOrderById = async (

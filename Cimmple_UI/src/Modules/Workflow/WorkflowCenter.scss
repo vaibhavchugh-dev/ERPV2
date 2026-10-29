@@ -59,6 +59,69 @@
     text-align: left;
   }
 
+  .chore-order {
+    display: block;
+    margin-top: 0.35rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #4f46e5;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: left;
+    white-space: normal;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .chores-table {
+    table-layout: fixed;
+    min-width: 68rem;
+
+    col.col-chore { width: 24%; }
+    col.col-order { width: 12%; }
+    col.col-customer { width: 15%; }
+    col.col-stage { width: 10%; }
+    col.col-priority { width: 10%; }
+    col.col-due { width: 10%; }
+    col.col-days { width: 8%; }
+    col.col-owner { width: 11%; }
+
+    th,
+    td {
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+
+    th.sortable.col-days {
+      white-space: normal;
+    }
+
+    th.col-days .th-content {
+      align-items: flex-start;
+      gap: 0.25rem;
+    }
+
+    th.col-days .th-content > span {
+      line-height: 1.15;
+      white-space: normal;
+    }
+
+    td.col-days {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    td.col-chore .chore-title {
+      white-space: normal;
+    }
+  }
+
   .workflow-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -432,6 +495,26 @@
         max-width: none;
         margin: 0;
       }
+
+      &.coordination-assign {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+
+        .filter-select {
+          flex: 1 1 auto;
+          width: auto;
+          min-width: 0;
+          max-width: 16rem;
+        }
+
+        .btn-secondary {
+          flex: 0 0 auto;
+          width: auto;
+          min-width: 5.75rem;
+          white-space: nowrap;
+        }
+      }
     }
 
     .rejection-note {
@@ -552,6 +635,27 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
       color: #6b7280;
+    }
+
+    .record-link {
+      flex-wrap: wrap;
+      align-items: center;
+
+      .record-id {
+        flex: 1 1 auto;
+      }
+
+      .record-go {
+        margin-left: 0.35rem;
+      }
+
+      .record-status {
+        flex: 1 1 100%;
+        order: 3;
+        overflow: visible;
+        text-overflow: unset;
+        white-space: normal;
+      }
     }
   }
 
@@ -733,6 +837,49 @@
       font-weight: 500;
       white-space: nowrap;
     }
+  }
+
+  .record-order,
+  .record-covered {
+    display: block;
+    width: 100%;
+    margin: 0.35rem 0 0.35rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #4f46e5;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: left;
+    white-space: normal;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .action-open {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+    margin-top: 0.75rem;
+
+    .btn-primary,
+    .btn-secondary {
+      width: 100%;
+      margin: 0;
+      white-space: normal;
+      line-height: 1.35;
+      text-align: center;
+    }
+  }
+
+  .record-link {
 
     &:hover:not(:disabled) .record-go {
       text-decoration: underline;

@@ -138,6 +138,9 @@ namespace CimmpleAPI.Services.Workflow
         public string? Status { get; set; }
         public int JobOrderId { get; set; }
         public string DetailKey { get; set; } = "";
+        public string? PartNo { get; set; }
+        public int? ProductId { get; set; }
+        public int? RawMaterialId { get; set; }
         public int QtyOrdered { get; set; }
         public int QtyReceived { get; set; }
         public string OrderPath { get; set; } = "";
@@ -150,6 +153,8 @@ namespace CimmpleAPI.Services.Workflow
         public string JobNumber { get; set; } = "";
         public string? PartNo { get; set; }
         public string? PartName { get; set; }
+        public int? ProductId { get; set; }
+        public int? RawMaterialId { get; set; }
         public decimal Needed { get; set; }
         public decimal Available { get; set; }
         public decimal Reserved { get; set; }

@@ -73,16 +73,31 @@ const SENT_OR_LATER_STATUSES = [
   "Completed",
 ];
 
+export interface VendorOrderDraftLine {
+  partNo: string;
+  partName: string;
+  lineType: "RawMaterial" | "FinishedProduct";
+  qty: number;
+  unit?: string;
+  jobNumber: string;
+  jobId: number;
+  productId?: number;
+  rawMaterialId?: number;
+}
+
 interface VendorOrderSlideoutProps {
   orderId: number;
   onClose: (refreshList?: boolean) => void;
   onSaved?: (orderId: number) => void;
+  /** Prefills a new vendor order. Ignored when opening an existing order. */
+  draftLine?: VendorOrderDraftLine | null;
 }
 
 const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   orderId,
   onClose,
   onSaved,
+  draftLine,
 }) => {
   const {
     canEdit,
@@ -574,8 +589,36 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
       Tenantid: storage?.tenantID || 0,
       OrderType: "Vendor",
       MaterialType: "Material",
-      Details:
-        prev.Details && prev.Details.length > 0
+      Details: draftLine
+        ? [
+            {
+              ID: 0,
+              ItemNo: 1,
+              PartName: draftLine.partName || "",
+              PartNo: draftLine.partNo || "",
+              LineType: draftLine.lineType,
+              DueDate: today,
+              JobNumber: draftLine.jobNumber || "",
+              JobId: draftLine.jobId || 0,
+              JobDesc: "",
+              QtyOrdered: draftLine.qty > 0 ? draftLine.qty : 1,
+              Unit: draftLine.unit || "EA",
+              UnitPrice: 0,
+              JobPriority: 0,
+              Discount: 0,
+              DiscountType: "Percent",
+              ProductId: draftLine.productId,
+              RawMaterialId: draftLine.rawMaterialId,
+              LeadTime: today,
+              Notes: "",
+              ShippedQty: 0,
+              ShippingStatus: "",
+              InvoicedQty: 0,
+              InvoiceStatus: "",
+              glcode: defaultExpenseGlcode || companyDefaultExpenseGlcode,
+            },
+          ]
+        : prev.Details && prev.Details.length > 0
           ? prev.Details
           : [
               {

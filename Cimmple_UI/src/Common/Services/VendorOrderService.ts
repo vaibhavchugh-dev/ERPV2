@@ -104,6 +104,8 @@ export interface VendorOrderDetailReq {
   LineType?: string;
   DueDate: string;
   JobNumber: string;
+  /** Job order id so the line stays tied to the job after save. */
+  JobId?: number;
   JobDesc: string;
   QtyOrdered: number;
   Unit: string;
@@ -253,6 +255,7 @@ export class VendorOrderService {
           defaultLineTypeForOrder(result.MaterialType || result.materialType || "Material"),
         DueDate: formatDate(d.DueDate || d.dueDate),
         JobNumber: d.JobNumber || d.jobNumber || "",
+        JobId: d.JobId || d.jobId || 0,
         JobDesc: d.JobDesc || d.jobDesc || "",
         QtyOrdered: d.QtyOrdered || d.qtyOrdered || 0,
         Unit: d.Unit || d.unit || "",
@@ -373,7 +376,7 @@ export class VendorOrderService {
         InvoiceStatus: d.InvoiceStatus || "Not Invoiced",
         glcode: (d.glcode || "").trim(),
         Received: "No", // Required field
-        JobId: 0, // Required field
+        JobId: d.JobId || 0,
       })),
       Attachments: (request.Attachments || []).map(a => ({
         id: Math.floor(a.id || 0),
