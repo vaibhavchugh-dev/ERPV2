@@ -10,12 +10,11 @@ interface BarcodeScannerSheetProps {
   onScan: (jobOrderId: number, stepId: number) => void;
 }
 
-type CameraChoice = string | MediaTrackConstraints;
-
 const IR_OR_VIRTUAL =
   /\b(ir|infrared|depth|tof|metaverse|virtual|obs|manycam|snap|ndi|hello)\b/i;
-const BACK_CAMERA = /\b(back|rear|environment|trás|arrière|world)\b/i;
-const FRONT_CAMERA = /\b(front|user|face|facing)\b/i;
+// Prefer "facing back/front" (Android) before generic tokens.
+const BACK_CAMERA = /facing[\s_-]*back|\b(back|rear|environment|trás|arrière|world)\b/i;
+const FRONT_CAMERA = /facing[\s_-]*front|\b(front|user|selfie)\b/i;
 
 function isTouchDevice() {
   return (
@@ -38,7 +37,6 @@ function rankCameras(cameras: CameraDevice[]): CameraDevice[] {
       if (aBack !== bBack) return bBack - aBack;
       if (aFront !== bFront) return aFront - bFront;
     } else {
-      // Laptop: prefer first RGB / front webcam, never IR (already filtered).
       if (aFront !== bFront) return bFront - aFront;
       if (aBack !== bBack) return aBack - bBack;
     }
@@ -46,9 +44,20 @@ function rankCameras(cameras: CameraDevice[]): CameraDevice[] {
   });
 }
 
+function pickFacingPair(cameras: CameraDevice[]): {
+  back?: CameraDevice;
+  front?: CameraDevice;
+} {
+  const back = cameras.find((c) => BACK_CAMERA.test(c.label || ""));
+  const front = cameras.find((c) => FRONT_CAMERA.test(c.label || ""));
+  if (back || front) return { back, front };
+  // Labels missing / generic: treat first two ranked devices as back then front.
+  return { back: cameras[0], front: cameras[1] };
+}
+
 function cameraFailureMessage(err: unknown): string {
   if (!window.isSecureContext) {
-    return "Camera needs a secure page (HTTPS or localhost). On a phone use the hosted app https://erp.cimmple.net/shop — LAN http://IP cannot use the camera.";
+    return "Camera needs a secure page (HTTPS or localhost).";
   }
   if (!navigator.mediaDevices?.getUserMedia) {
     return "This browser cannot access the camera. Paste the barcode code below instead.";
@@ -67,8 +76,6 @@ function cameraFailureMessage(err: unknown): string {
 }
 
 async function listCameras(): Promise<CameraDevice[]> {
-  // On phones, warming getUserMedia then immediately restarting often fails
-  // (camera still releasing). Desktop needs the warm-up so IR cams get labels.
   if (!isTouchDevice()) {
     try {
       const warm = await navigator.mediaDevices.getUserMedia({
@@ -78,10 +85,9 @@ async function listCameras(): Promise<CameraDevice[]> {
       warm.getTracks().forEach((t) => t.stop());
       await new Promise((r) => setTimeout(r, 200));
     } catch {
-      // Permission may already be granted or will be requested by start().
+      // ignore — start() will request permission
     }
   }
-
   try {
     return await Html5Qrcode.getCameras();
   } catch {
@@ -89,12 +95,18 @@ async function listCameras(): Promise<CameraDevice[]> {
   }
 }
 
-/** Keep the live <video> inline (avoids black fullscreen player on mobile). */
-function prepareScannerVideo(rootId: string) {
+/**
+ * Mobile browsers (esp. iOS / some Android WebViews) often paint a black
+ * <video> even when the MediaStream is live. Mirroring frames to a <canvas>
+ * keeps a visible preview while html5-qrcode continues decoding.
+ */
+function startPreviewMirror(
+  rootId: string,
+  preview: HTMLCanvasElement
+): () => void {
   const root = document.getElementById(rootId);
-  if (!root) return;
-  const video = root.querySelector("video");
-  if (!video) return;
+  const video = root?.querySelector("video") ?? null;
+  if (!video) return () => undefined;
 
   video.setAttribute("playsinline", "true");
   video.setAttribute("webkit-playsinline", "true");
@@ -103,10 +115,44 @@ function prepareScannerVideo(rootId: string) {
   video.playsInline = true;
   video.disablePictureInPicture = true;
   video.controls = false;
+  void video.play().catch(() => undefined);
 
-  void video.play().catch(() => {
-    // Autoplay may be blocked briefly; stream can still decode frames.
-  });
+  const ctx = preview.getContext("2d", { alpha: false });
+  if (!ctx) return () => undefined;
+
+  let raf = 0;
+  let stopped = false;
+
+  const paint = () => {
+    if (stopped) return;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (vw > 0 && vh > 0) {
+      const cw = preview.clientWidth || 320;
+      const ch = preview.clientHeight || 260;
+      if (preview.width !== cw || preview.height !== ch) {
+        preview.width = cw;
+        preview.height = ch;
+      }
+      // cover-fit
+      const scale = Math.max(cw / vw, ch / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      const dx = (cw - dw) / 2;
+      const dy = (ch - dh) / 2;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(video, dx, dy, dw, dh);
+    }
+    raf = window.requestAnimationFrame(paint);
+  };
+
+  raf = window.requestAnimationFrame(paint);
+
+  return () => {
+    stopped = true;
+    window.cancelAnimationFrame(raf);
+  };
 }
 
 export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerSheetProps) {
@@ -114,14 +160,22 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
   const onScanRef = useRef(onScan);
   const handledRef = useRef(false);
   const startGenRef = useRef(0);
+  const stopMirrorRef = useRef<(() => void) | null>(null);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
+
   const [manualCode, setManualCode] = useState("");
   const [error, setError] = useState("");
   const [cameraError, setCameraError] = useState("");
   const [starting, setStarting] = useState(false);
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState<string>("");
+  const [selectedCameraId, setSelectedCameraId] = useState("");
 
   onScanRef.current = onScan;
+
+  const clearMirror = () => {
+    stopMirrorRef.current?.();
+    stopMirrorRef.current = null;
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -131,6 +185,7 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     setCameraError("");
     setManualCode("");
     setStarting(true);
+    clearMirror();
 
     const gen = ++startGenRef.current;
     let cancelled = false;
@@ -147,12 +202,11 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
       setError("");
       void (async () => {
         try {
-          if (scannerRef.current?.isScanning) {
-            await scannerRef.current.stop();
-          }
+          if (scannerRef.current?.isScanning) await scannerRef.current.stop();
         } catch {
-          // ignore stop errors
+          // ignore
         }
+        clearMirror();
         onScanRef.current(parsed.jobOrderId, parsed.stepId);
       })();
     };
@@ -171,18 +225,21 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
       }
     };
 
-    const tryStart = async (camera: CameraChoice, region: HTMLElement) => {
-      const boxSize = Math.min(240, Math.max(160, Math.floor(region.clientWidth * 0.7)));
+    const attachMirror = () => {
+      const preview = previewRef.current;
+      if (!preview || cancelled) return;
+      clearMirror();
+      stopMirrorRef.current = startPreviewMirror(SCANNER_ELEMENT_ID, preview);
+    };
+
+    const tryStart = async (camera: string | MediaTrackConstraints) => {
+      // No qrbox — shaded overlays often look like a full black screen on mobile
+      // when the underlying <video> fails to paint.
       await scanner!.start(
         camera,
-        {
-          fps: 10,
-          qrbox: { width: boxSize, height: boxSize },
-        },
+        { fps: 10 },
         handleDecoded,
-        () => {
-          // ignore per-frame "not found" noise
-        }
+        () => undefined
       );
     };
 
@@ -196,7 +253,6 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
             throw new Error("Only secure origins are allowed");
           }
 
-          // Ensure any previous instance fully released the device (Strict Mode).
           await stopScanner(scannerRef.current);
           if (cancelled || gen !== startGenRef.current) return;
 
@@ -210,18 +266,14 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           const preferredId = devices[0]?.id ?? "";
           setSelectedCameraId(preferredId);
 
-          const attempts: CameraChoice[] = [];
-          // Mobile: facingMode first — more reliable than deviceId after enumerate.
+          const attempts: Array<string | MediaTrackConstraints> = [];
+          if (preferredId) attempts.push(preferredId);
+          for (const cam of devices.slice(1, 4)) attempts.push(cam.id);
           if (isTouchDevice()) {
             attempts.push({ facingMode: { ideal: "environment" } });
             attempts.push({ facingMode: "environment" });
             attempts.push({ facingMode: "user" });
-          }
-          if (preferredId) attempts.push(preferredId);
-          for (const cam of devices.slice(1, 4)) {
-            attempts.push(cam.id);
-          }
-          if (!isTouchDevice()) {
+          } else {
             attempts.push({ facingMode: "user" });
             attempts.push({ facingMode: "environment" });
           }
@@ -237,11 +289,9 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
             seen.add(key);
 
             try {
-              await tryStart(attempt, region);
+              await tryStart(attempt);
               started = true;
-              if (typeof attempt === "string") {
-                setSelectedCameraId(attempt);
-              }
+              if (typeof attempt === "string") setSelectedCameraId(attempt);
               break;
             } catch (err) {
               lastError = err;
@@ -258,8 +308,13 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
             return;
           }
 
-          prepareScannerVideo(SCANNER_ELEMENT_ID);
-          window.setTimeout(() => prepareScannerVideo(SCANNER_ELEMENT_ID), 150);
+          // Give the library a tick to inject <video>, then mirror to canvas.
+          window.setTimeout(() => {
+            if (cancelled || gen !== startGenRef.current) return;
+            attachMirror();
+            window.setTimeout(attachMirror, 250);
+          }, 50);
+
           setStarting(false);
         } catch (err: unknown) {
           if (cancelled || gen !== startGenRef.current) return;
@@ -267,11 +322,12 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           setCameraError(cameraFailureMessage(err));
         }
       })();
-    }, 50);
+    }, 80);
 
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
+      clearMirror();
       const active = scannerRef.current ?? scanner;
       scannerRef.current = null;
       void stopScanner(active);
@@ -284,8 +340,8 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     setCameraError("");
     setStarting(true);
     handledRef.current = false;
+    clearMirror();
 
-    const region = document.getElementById(SCANNER_ELEMENT_ID);
     const active = scannerRef.current;
     try {
       if (active?.isScanning) await active.stop();
@@ -298,7 +354,7 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
       // ignore
     }
 
-    if (!region || !open) {
+    if (!open || !document.getElementById(SCANNER_ELEMENT_ID)) {
       setStarting(false);
       return;
     }
@@ -306,10 +362,9 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     try {
       const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID, { verbose: false });
       scannerRef.current = scanner;
-      const boxSize = Math.min(240, Math.max(160, Math.floor(region.clientWidth * 0.7)));
       await scanner.start(
         cameraId,
-        { fps: 10, qrbox: { width: boxSize, height: boxSize } },
+        { fps: 10 },
         (decodedText) => {
           if (handledRef.current) return;
           const parsed = parseStepScanCode(decodedText);
@@ -325,20 +380,39 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
             } catch {
               // ignore
             }
+            clearMirror();
             onScanRef.current(parsed.jobOrderId, parsed.stepId);
           })();
         },
         () => undefined
       );
-      prepareScannerVideo(SCANNER_ELEMENT_ID);
+
+      const preview = previewRef.current;
+      if (preview) {
+        window.setTimeout(() => {
+          clearMirror();
+          stopMirrorRef.current = startPreviewMirror(SCANNER_ELEMENT_ID, preview);
+        }, 50);
+      }
       setStarting(false);
     } catch {
       setStarting(false);
-      setCameraError("Could not switch camera. Try another device from the list.");
+      setCameraError("Could not switch camera. Try Back or Front again.");
     }
   };
 
   if (!open) return null;
+
+  const facing = pickFacingPair(cameras);
+  const usingFront =
+    !!facing.front && selectedCameraId === facing.front.id;
+  const canToggleFacing = !!(facing.back && facing.front);
+
+  const flipCamera = () => {
+    if (!canToggleFacing || starting) return;
+    const next = usingFront ? facing.back!.id : facing.front!.id;
+    void switchCamera(next);
+  };
 
   const submitManual = () => {
     const parsed = parseStepScanCode(manualCode);
@@ -369,10 +443,41 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           </button>
         </div>
 
-        <div
-          id={SCANNER_ELEMENT_ID}
-          className="pwa-barcode-scanner mb-3 h-[260px] overflow-hidden rounded-2xl bg-black"
-        />
+        <div className="relative mb-3 h-[280px] overflow-hidden rounded-2xl bg-black">
+          {/* Library mounts <video> here (often black on mobile). */}
+          <div id={SCANNER_ELEMENT_ID} className="pwa-barcode-scanner absolute inset-0" />
+          {/* Visible preview painted from the live stream */}
+          <canvas
+            ref={previewRef}
+            className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+            aria-hidden
+          />
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+            <div className="h-44 w-44 rounded-2xl border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+          </div>
+
+          {canToggleFacing && (
+            <button
+              type="button"
+              onClick={flipCamera}
+              disabled={starting}
+              className="absolute bottom-3 right-3 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md ring-1 ring-white/25 transition active:scale-95 disabled:opacity-50"
+              aria-label={usingFront ? "Switch to back camera" : "Switch to front camera"}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M16 4h2a2 2 0 012 2v2M8 20H6a2 2 0 01-2-2v-2M20 8l2-2-2-2M4 16l-2 2 2 2"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle cx="12" cy="12" r="3.25" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            </button>
+          )}
+        </div>
+
         {starting && !cameraError && (
           <p className="mb-2 text-center text-xs font-semibold text-slate-500 dark:text-slate-300">
             Starting camera…
@@ -387,21 +492,39 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           </p>
         )}
 
-        {cameras.length > 1 && (
-          <label className="mb-3 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-            Camera
-            <select
-              value={selectedCameraId}
-              onChange={(e) => void switchCamera(e.target.value)}
-              className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400"
+        {canToggleFacing && (
+          <div
+            className="mb-3 flex rounded-full bg-slate-100 p-1 dark:bg-slate-800"
+            role="group"
+            aria-label="Camera"
+          >
+            <button
+              type="button"
+              disabled={starting || !facing.back}
+              onClick={() => facing.back && void switchCamera(facing.back.id)}
+              aria-pressed={!usingFront}
+              className={`min-h-11 flex-1 rounded-full text-sm font-bold transition ${
+                !usingFront
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white"
+                  : "text-slate-500 dark:text-slate-300"
+              }`}
             >
-              {cameras.map((cam, i) => (
-                <option key={cam.id} value={cam.id}>
-                  {cam.label?.trim() || `Camera ${i + 1}`}
-                </option>
-              ))}
-            </select>
-          </label>
+              Back
+            </button>
+            <button
+              type="button"
+              disabled={starting || !facing.front}
+              onClick={() => facing.front && void switchCamera(facing.front.id)}
+              aria-pressed={usingFront}
+              className={`min-h-11 flex-1 rounded-full text-sm font-bold transition ${
+                usingFront
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white"
+                  : "text-slate-500 dark:text-slate-300"
+              }`}
+            >
+              Front
+            </button>
+          </div>
         )}
 
         <label className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
