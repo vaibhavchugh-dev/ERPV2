@@ -20,8 +20,11 @@ type BarcodeDetectorLike = {
 };
 
 function getBarcodeDetector(): BarcodeDetectorLike | null {
-  const Ctor = (window as unknown as { BarcodeDetector?: new (opts?: { formats?: string[] }) => BarcodeDetectorLike })
-    .BarcodeDetector;
+  const Ctor = (
+    window as unknown as {
+      BarcodeDetector?: new (opts?: { formats?: string[] }) => BarcodeDetectorLike;
+    }
+  ).BarcodeDetector;
   if (!Ctor) return null;
   try {
     return new Ctor({
@@ -43,16 +46,11 @@ function classifyFacing(label: string): CamInfo["facing"] {
 }
 
 function isBraveBrowser(): boolean {
-  const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
-  return (
-    !!nav.brave ||
-    /Brave/i.test(navigator.userAgent) ||
-    // Chromium Brave often omits "Brave" in UA but keeps this brand hint.
-    ((navigator as Navigator & { userAgentData?: { brands?: Array<{ brand: string }> } }).userAgentData?.brands?.some(
-      (b) => /Brave/i.test(b.brand)
-    ) ??
-      false)
-  );
+  const nav = navigator as Navigator & { brave?: unknown };
+  const brands =
+    (navigator as Navigator & { userAgentData?: { brands?: Array<{ brand: string }> } })
+      .userAgentData?.brands ?? [];
+  return !!nav.brave || /Brave/i.test(navigator.userAgent) || brands.some((b) => /Brave/i.test(b.brand));
 }
 
 function normalizeCameras(devices: MediaDeviceInfo[]): CamInfo[] {
@@ -83,8 +81,7 @@ function normalizeCameras(devices: MediaDeviceInfo[]): CamInfo[] {
   });
 }
 
-/** Enumerate without a warm-up stop/start (Brave Android often fails that pattern). */
-async function listVideoCamerasQuiet(): Promise<CamInfo[]> {
+async function listVideoCameras(): Promise<CamInfo[]> {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     return normalizeCameras(devices);
@@ -93,26 +90,35 @@ async function listVideoCamerasQuiet(): Promise<CamInfo[]> {
   }
 }
 
-async function acquireCameraStream(cameraId?: string): Promise<MediaStream> {
+/**
+ * Open a camera stream.
+ * Initial open: facingMode only (most reliable on Chrome Android).
+ * Explicit switch: try deviceId, then facingMode for that side.
+ */
+async function acquireCameraStream(opts: {
+  cameraId?: string;
+  facing?: "back" | "front";
+}): Promise<MediaStream> {
   const attempts: MediaStreamConstraints[] = [];
 
-  if (cameraId) {
-    attempts.push({ audio: false, video: { deviceId: { exact: cameraId } } });
-    attempts.push({ audio: false, video: { deviceId: cameraId } });
+  if (opts.cameraId) {
+    attempts.push({ audio: false, video: { deviceId: { exact: opts.cameraId } } });
+    attempts.push({ audio: false, video: { deviceId: opts.cameraId } });
   }
 
-  // Facing-mode first is more reliable in Brave than deviceId after a failed enumerate.
-  attempts.push({ audio: false, video: { facingMode: { ideal: "environment" } } });
-  attempts.push({ audio: false, video: { facingMode: "environment" } });
-  attempts.push({ audio: false, video: { facingMode: "user" } });
-  attempts.push({ audio: false, video: true });
+  if (opts.facing === "front") {
+    attempts.push({ audio: false, video: { facingMode: { ideal: "user" } } });
+    attempts.push({ audio: false, video: { facingMode: "user" } });
+  } else {
+    // Default / back
+    attempts.push({ audio: false, video: { facingMode: { ideal: "environment" } } });
+    attempts.push({ audio: false, video: { facingMode: "environment" } });
+    attempts.push({ audio: false, video: true });
+    attempts.push({ audio: false, video: { facingMode: "user" } });
+  }
 
   let lastError: unknown;
-  const seen = new Set<string>();
   for (const constraints of attempts) {
-    const key = JSON.stringify(constraints);
-    if (seen.has(key)) continue;
-    seen.add(key);
     try {
       return await navigator.mediaDevices.getUserMedia(constraints);
     } catch (err) {
@@ -131,7 +137,7 @@ function cameraFailureMessage(err: unknown): string {
   }
   const message = err instanceof Error ? err.message : String(err ?? "");
   if (isBraveBrowser()) {
-    return "Brave blocked the camera. Allow Camera for this site, turn Shields down (or Fingerprinting → Standard), and allow Autoplay — then tap Retry. Chrome also works.";
+    return "Brave blocked the camera. Allow Camera for this site, set Shields Fingerprinting to Standard (or Shields off for this site), allow Autoplay, then tap Retry.";
   }
   if (/NotAllowedError|Permission|denied|secure origins|Only secure/i.test(message)) {
     return "Camera permission denied or blocked. Allow camera access, or paste the code below.";
@@ -158,7 +164,7 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
   const [cameraError, setCameraError] = useState("");
   const [starting, setStarting] = useState(false);
   const [cameras, setCameras] = useState<CamInfo[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState("");
+  const [facing, setFacing] = useState<"back" | "front">("back");
 
   onScanRef.current = onScan;
 
@@ -169,9 +175,22 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     }
     const stream = streamRef.current;
     streamRef.current = null;
-    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (stream) {
+      for (const track of stream.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      }
+    }
     const video = videoRef.current;
     if (video) {
+      try {
+        video.pause();
+      } catch {
+        // ignore
+      }
       video.srcObject = null;
     }
   };
@@ -217,7 +236,6 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
         if (!ctx) return;
         const w = video.videoWidth;
         const h = video.videoHeight;
-        // Downscale for speed on phones
         const maxW = 480;
         const scale = w > maxW ? maxW / w : 1;
         const cw = Math.max(1, Math.floor(w * scale));
@@ -234,17 +252,9 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     }, 250);
   };
 
-  const startCamera = async (cameraId: string | undefined, gen: number) => {
+  const attachStreamToVideo = async (stream: MediaStream, gen: number) => {
     const video = videoRef.current;
     if (!video) throw new Error("Video element missing");
-
-    stopStream();
-
-    // Small delay helps Brave/Android release a previous track before reopen.
-    await new Promise((r) => setTimeout(r, 120));
-    if (gen !== startGenRef.current) return;
-
-    const stream = await acquireCameraStream(cameraId || undefined);
 
     if (gen !== startGenRef.current) {
       stream.getTracks().forEach((t) => t.stop());
@@ -261,12 +271,16 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     video.autoplay = true;
     video.srcObject = stream;
 
-    try {
-      await video.play();
-    } catch {
-      // Autoplay policies (common in Brave): try once more after a tick.
-      await new Promise((r) => setTimeout(r, 100));
-      await video.play();
+    // Wait for metadata so play() is less flaky on mobile Chrome.
+    if (video.readyState < 1) {
+      await new Promise<void>((resolve) => {
+        const onMeta = () => {
+          video.removeEventListener("loadedmetadata", onMeta);
+          resolve();
+        };
+        video.addEventListener("loadedmetadata", onMeta);
+        window.setTimeout(resolve, 800);
+      });
     }
 
     if (gen !== startGenRef.current) {
@@ -274,31 +288,63 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
       return;
     }
 
-    // Refresh device list while permission is live (labels populate).
-    const cams = await listVideoCamerasQuiet();
+    try {
+      await video.play();
+    } catch {
+      // Ignore AbortError from overlapping starts; retry once if still paused.
+      if (gen === startGenRef.current && video.paused) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (gen === startGenRef.current) {
+          await video.play().catch(() => undefined);
+        }
+      }
+    }
+
+    if (gen !== startGenRef.current) {
+      stopStream();
+      return;
+    }
+
+    const cams = await listVideoCameras();
     if (gen === startGenRef.current && cams.length) {
       setCameras(cams);
-      const activeId =
-        stream.getVideoTracks()[0]?.getSettings()?.deviceId || cameraId || "";
-      if (activeId) setSelectedCameraId(activeId);
     }
 
     startDecodeLoop(video);
   };
 
+  const startFacing = async (nextFacing: "back" | "front", gen: number) => {
+    const video = videoRef.current;
+    if (!video) throw new Error("Video element missing");
+
+    stopStream();
+    setFacing(nextFacing);
+
+    const cam =
+      nextFacing === "front"
+        ? cameras.find((c) => c.facing === "front")
+        : cameras.find((c) => c.facing === "back");
+
+    const stream = await acquireCameraStream({
+      cameraId: cam?.id,
+      facing: nextFacing,
+    });
+    await attachStreamToVideo(stream, gen);
+  };
+
+  /** First open: facingMode environment only — do not use stale deviceIds. */
   const bootCamera = async (gen: number) => {
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Only secure origins are allowed");
     }
+    const video = videoRef.current;
+    if (!video) throw new Error("Video element missing");
 
-    // Prefer opening the stream first (Brave often blocks pre-permission enumerate).
-    const prior = await listVideoCamerasQuiet();
-    const preferred =
-      prior.find((c) => c.facing === "back")?.id || prior[0]?.id || "";
-    if (preferred) setSelectedCameraId(preferred);
-    if (prior.length) setCameras(prior);
+    stopStream();
+    setFacing("back");
 
-    await startCamera(preferred || undefined, gen);
+    const stream = await acquireCameraStream({ facing: "back" });
+    await attachStreamToVideo(stream, gen);
   };
 
   useEffect(() => {
@@ -309,10 +355,12 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     setCameraError("");
     setManualCode("");
     setStarting(true);
+    setCameras([]);
 
     const gen = ++startGenRef.current;
     let cancelled = false;
 
+    // Wait a frame so <video> is mounted (sheet returns null when closed).
     const boot = window.setTimeout(() => {
       void (async () => {
         try {
@@ -325,25 +373,26 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           setCameraError(cameraFailureMessage(err));
         }
       })();
-    }, 50);
+    }, 100);
 
     return () => {
       cancelled = true;
       window.clearTimeout(boot);
+      // Invalidate in-flight start so attach/play aborts cleanly.
+      startGenRef.current += 1;
       stopStream();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- open-only lifecycle
   }, [open]);
 
-  const switchCamera = async (cameraId: string) => {
-    if (!cameraId || cameraId === selectedCameraId || starting) return;
-    setSelectedCameraId(cameraId);
+  const switchFacing = async (nextFacing: "back" | "front") => {
+    if (starting || nextFacing === facing) return;
     setCameraError("");
     setStarting(true);
     handledRef.current = false;
     const gen = ++startGenRef.current;
     try {
-      await startCamera(cameraId, gen);
+      await startFacing(nextFacing, gen);
       if (gen === startGenRef.current) setStarting(false);
     } catch (err: unknown) {
       if (gen === startGenRef.current) {
@@ -375,13 +424,8 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
 
   const backCam = cameras.find((c) => c.facing === "back");
   const frontCam = cameras.find((c) => c.facing === "front");
-  const canToggleFacing = !!(backCam && frontCam);
-  const usingFront = !!frontCam && selectedCameraId === frontCam.id;
-
-  const flipCamera = () => {
-    if (!canToggleFacing || starting) return;
-    void switchCamera(usingFront ? backCam!.id : frontCam!.id);
-  };
+  const canToggleFacing = cameras.length > 1 || !!(backCam && frontCam);
+  const usingFront = facing === "front";
 
   const submitManual = () => {
     const parsed = parseStepScanCode(manualCode);
@@ -427,9 +471,9 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           {canToggleFacing && (
             <button
               type="button"
-              onClick={flipCamera}
+              onClick={() => void switchFacing(usingFront ? "back" : "front")}
               disabled={starting}
-              className="absolute bottom-3 right-3 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md ring-1 ring-white/25 transition active:scale-95 disabled:opacity-50"
+              className="absolute bottom-3 right-3 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-black/45 text-white ring-1 ring-white/25 transition active:scale-95 disabled:opacity-50"
               aria-label={usingFront ? "Switch to back camera" : "Switch to front camera"}
             >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -477,8 +521,8 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           >
             <button
               type="button"
-              disabled={starting || !backCam}
-              onClick={() => backCam && void switchCamera(backCam.id)}
+              disabled={starting}
+              onClick={() => void switchFacing("back")}
               aria-pressed={!usingFront}
               className={`min-h-11 flex-1 rounded-full text-sm font-bold transition ${
                 !usingFront
@@ -490,8 +534,8 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
             </button>
             <button
               type="button"
-              disabled={starting || !frontCam}
-              onClick={() => frontCam && void switchCamera(frontCam.id)}
+              disabled={starting}
+              onClick={() => void switchFacing("front")}
               aria-pressed={usingFront}
               className={`min-h-11 flex-1 rounded-full text-sm font-bold transition ${
                 usingFront
