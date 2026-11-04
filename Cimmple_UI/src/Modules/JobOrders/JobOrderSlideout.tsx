@@ -71,8 +71,6 @@ import {
 import { formatDateOnlyFromApi, formatDateTime } from "../../Common/Utils/Formatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
-import { faPrint, faEnvelope } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
 import VendorOrderSlideout, { VendorOrderDraftLine } from "../Purchasing/VendorOrderSlideout";
 import "./JobOrderSlideout.scss";
@@ -2742,49 +2740,31 @@ const JobOrderSlideout: React.FC<JobOrderSlideoutProps> = ({
                 {canPrint && (
                 <button
                   type="button"
+                  className="btn-icon"
                   onClick={() => void handlePrintJobOrder()}
                   disabled={printing}
-                  title={printing ? "Generating PDF…" : "Print job order"}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    backgroundColor: printing ? '#9ca3af' : '#6b7280',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    cursor: printing ? 'wait' : 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    opacity: printing ? 0.85 : 1,
-                  }}
+                  title={printing ? "Generating PDF…" : "Print"}
+                  style={{ color: "#6366f1", opacity: printing ? 0.6 : 1 }}
                 >
-                  <FontAwesomeIcon icon={faPrint} spin={printing} />
-                  {printing ? "Generating…" : "Print"}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                    <rect x="6" y="14" width="12" height="8"></rect>
+                  </svg>
                 </button>
                 )}
                 {canSend && (
                 <button
                   type="button"
+                  className="btn-icon"
                   onClick={() => setShowEmailDialog(true)}
-                  title="Email job order"
-                  style={{
-                    padding: '0.5rem 1rem',
-                    backgroundColor: '#2563eb',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                  }}
+                  title="Email"
+                  style={{ color: "#6366f1" }}
                 >
-                  <FontAwesomeIcon icon={faEnvelope} />
-                  Email
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
+                  </svg>
                 </button>
                 )}
                 {canDelete && (

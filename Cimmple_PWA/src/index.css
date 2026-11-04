@@ -115,3 +115,26 @@ html.dark .bg-slate-50\/80 {
 html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
   border-color: #334155;
 }
+
+/* html5-qrcode: keep camera preview visible (avoid black / zero-height video) */
+.pwa-barcode-scanner {
+  position: relative;
+  background: #000;
+}
+
+.pwa-barcode-scanner video,
+#pwa-barcode-scanner-region video {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 220px;
+  object-fit: cover;
+  background: #000;
+}
+
+.pwa-barcode-scanner canvas,
+#pwa-barcode-scanner-region canvas {
+  /* Library uses a hidden canvas for decode; keep it out of the way */
+  position: absolute !important;
+}
