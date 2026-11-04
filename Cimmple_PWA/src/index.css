@@ -116,30 +116,3 @@ html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
   border-color: #334155;
 }
 
-/*
- * html5-qrcode injects a <video> that often paints black on mobile even when
- * the MediaStream is live. We keep that video mounted for decoding, but hide
- * it visually and mirror frames to our own preview <canvas>.
- */
-.pwa-barcode-scanner {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  opacity: 0.01; /* nearly invisible but still “visible” for some WebKit decoders */
-  pointer-events: none;
-}
-
-.pwa-barcode-scanner video,
-#pwa-barcode-scanner-region video {
-  position: absolute !important;
-  inset: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: cover !important;
-}
-
-.pwa-barcode-scanner canvas,
-#pwa-barcode-scanner-region canvas,
-#qr-shaded-region {
-  display: none !important;
-}
