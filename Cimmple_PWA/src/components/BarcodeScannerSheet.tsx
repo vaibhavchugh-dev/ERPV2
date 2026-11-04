@@ -42,25 +42,28 @@ function classifyFacing(label: string): CamInfo["facing"] {
   return "unknown";
 }
 
-async function listVideoCameras(): Promise<CamInfo[]> {
-  // Permission + labels
-  try {
-    const warm = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    warm.getTracks().forEach((t) => t.stop());
-  } catch {
-    // startCamera will surface errors
-  }
+function isBraveBrowser(): boolean {
+  const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
+  return (
+    !!nav.brave ||
+    /Brave/i.test(navigator.userAgent) ||
+    // Chromium Brave often omits "Brave" in UA but keeps this brand hint.
+    ((navigator as Navigator & { userAgentData?: { brands?: Array<{ brand: string }> } }).userAgentData?.brands?.some(
+      (b) => /Brave/i.test(b.brand)
+    ) ??
+      false)
+  );
+}
 
-  const devices = await navigator.mediaDevices.enumerateDevices();
+function normalizeCameras(devices: MediaDeviceInfo[]): CamInfo[] {
   const cams = devices
-    .filter((d) => d.kind === "videoinput" && !IR_OR_VIRTUAL.test(d.label || ""))
+    .filter((d) => d.kind === "videoinput" && d.deviceId && !IR_OR_VIRTUAL.test(d.label || ""))
     .map((d) => ({
       id: d.deviceId,
       label: d.label || "",
       facing: classifyFacing(d.label || ""),
     }));
 
-  // Prefer labeled back, then first device as back, second as front when unlabeled.
   const back = cams.find((c) => c.facing === "back");
   const front = cams.find((c) => c.facing === "front");
   if (!back && !front && cams.length >= 1) {
@@ -80,6 +83,45 @@ async function listVideoCameras(): Promise<CamInfo[]> {
   });
 }
 
+/** Enumerate without a warm-up stop/start (Brave Android often fails that pattern). */
+async function listVideoCamerasQuiet(): Promise<CamInfo[]> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return normalizeCameras(devices);
+  } catch {
+    return [];
+  }
+}
+
+async function acquireCameraStream(cameraId?: string): Promise<MediaStream> {
+  const attempts: MediaStreamConstraints[] = [];
+
+  if (cameraId) {
+    attempts.push({ audio: false, video: { deviceId: { exact: cameraId } } });
+    attempts.push({ audio: false, video: { deviceId: cameraId } });
+  }
+
+  // Facing-mode first is more reliable in Brave than deviceId after a failed enumerate.
+  attempts.push({ audio: false, video: { facingMode: { ideal: "environment" } } });
+  attempts.push({ audio: false, video: { facingMode: "environment" } });
+  attempts.push({ audio: false, video: { facingMode: "user" } });
+  attempts.push({ audio: false, video: true });
+
+  let lastError: unknown;
+  const seen = new Set<string>();
+  for (const constraints of attempts) {
+    const key = JSON.stringify(constraints);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError ?? new Error("Could not start camera");
+}
+
 function cameraFailureMessage(err: unknown): string {
   if (!window.isSecureContext) {
     return "Camera needs a secure page (HTTPS or localhost).";
@@ -88,6 +130,9 @@ function cameraFailureMessage(err: unknown): string {
     return "This browser cannot access the camera. Paste the barcode code below instead.";
   }
   const message = err instanceof Error ? err.message : String(err ?? "");
+  if (isBraveBrowser()) {
+    return "Brave blocked the camera. Allow Camera for this site, turn Shields down (or Fingerprinting → Standard), and allow Autoplay — then tap Retry. Chrome also works.";
+  }
   if (/NotAllowedError|Permission|denied|secure origins|Only secure/i.test(message)) {
     return "Camera permission denied or blocked. Allow camera access, or paste the code below.";
   }
@@ -189,39 +234,17 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     }, 250);
   };
 
-  const startCamera = async (cameraId: string, gen: number) => {
+  const startCamera = async (cameraId: string | undefined, gen: number) => {
     const video = videoRef.current;
     if (!video) throw new Error("Video element missing");
 
     stopStream();
 
-    const constraints: MediaStreamConstraints = {
-      audio: false,
-      video: cameraId
-        ? {
-            deviceId: { exact: cameraId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          }
-        : {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-    };
+    // Small delay helps Brave/Android release a previous track before reopen.
+    await new Promise((r) => setTimeout(r, 120));
+    if (gen !== startGenRef.current) return;
 
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch {
-      // Exact deviceId can fail after re-enumeration; retry softer.
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: cameraId
-          ? { deviceId: cameraId }
-          : { facingMode: "environment" },
-      });
-    }
+    const stream = await acquireCameraStream(cameraId || undefined);
 
     if (gen !== startGenRef.current) {
       stream.getTracks().forEach((t) => t.stop());
@@ -232,17 +255,50 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     video.setAttribute("playsinline", "true");
     video.setAttribute("webkit-playsinline", "true");
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
     video.controls = false;
+    video.autoplay = true;
     video.srcObject = stream;
 
-    await video.play();
+    try {
+      await video.play();
+    } catch {
+      // Autoplay policies (common in Brave): try once more after a tick.
+      await new Promise((r) => setTimeout(r, 100));
+      await video.play();
+    }
+
     if (gen !== startGenRef.current) {
       stopStream();
       return;
     }
 
+    // Refresh device list while permission is live (labels populate).
+    const cams = await listVideoCamerasQuiet();
+    if (gen === startGenRef.current && cams.length) {
+      setCameras(cams);
+      const activeId =
+        stream.getVideoTracks()[0]?.getSettings()?.deviceId || cameraId || "";
+      if (activeId) setSelectedCameraId(activeId);
+    }
+
     startDecodeLoop(video);
+  };
+
+  const bootCamera = async (gen: number) => {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Only secure origins are allowed");
+    }
+
+    // Prefer opening the stream first (Brave often blocks pre-permission enumerate).
+    const prior = await listVideoCamerasQuiet();
+    const preferred =
+      prior.find((c) => c.facing === "back")?.id || prior[0]?.id || "";
+    if (preferred) setSelectedCameraId(preferred);
+    if (prior.length) setCameras(prior);
+
+    await startCamera(preferred || undefined, gen);
   };
 
   useEffect(() => {
@@ -260,21 +316,7 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
     const boot = window.setTimeout(() => {
       void (async () => {
         try {
-          if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-            throw new Error("Only secure origins are allowed");
-          }
-
-          const cams = await listVideoCameras();
-          if (cancelled || gen !== startGenRef.current) return;
-
-          setCameras(cams);
-          const preferred =
-            cams.find((c) => c.facing === "back")?.id ||
-            cams[0]?.id ||
-            "";
-          setSelectedCameraId(preferred);
-
-          await startCamera(preferred, gen);
+          await bootCamera(gen);
           if (cancelled || gen !== startGenRef.current) return;
           setStarting(false);
         } catch (err: unknown) {
@@ -309,6 +351,24 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
         setCameraError(cameraFailureMessage(err));
       }
     }
+  };
+
+  const retryCamera = () => {
+    setCameraError("");
+    setStarting(true);
+    handledRef.current = false;
+    const gen = ++startGenRef.current;
+    void (async () => {
+      try {
+        await bootCamera(gen);
+        if (gen === startGenRef.current) setStarting(false);
+      } catch (err: unknown) {
+        if (gen === startGenRef.current) {
+          setStarting(false);
+          setCameraError(cameraFailureMessage(err));
+        }
+      }
+    })();
   };
 
   if (!open) return null;
@@ -392,7 +452,16 @@ export function BarcodeScannerSheet({ open, onClose, onScan }: BarcodeScannerShe
           </p>
         )}
         {cameraError && (
-          <p className="mb-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{cameraError}</p>
+          <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
+            <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">{cameraError}</p>
+            <button
+              type="button"
+              onClick={retryCamera}
+              className="mt-2 min-h-10 rounded-full bg-amber-700 px-4 text-xs font-bold text-white dark:bg-amber-600"
+            >
+              Retry camera
+            </button>
+          </div>
         )}
         {error && (
           <p className="mb-2 text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
