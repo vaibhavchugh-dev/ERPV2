@@ -46,6 +46,10 @@ export type DocumentViewerWorkspaceProps = {
   mode?: DocumentViewerMode;
   selectedPages?: number[];
   onSelectedPagesChange?: (pages: number[]) => void;
+  /** Fired when PDF page count is known (useful for extraction page-range UI). */
+  onPageCountChange?: (numPages: number) => void;
+  /** Optional: hide the built-in Close button when the parent provides its own chrome. */
+  hideCloseButton?: boolean;
   className?: string;
 };
 
@@ -143,6 +147,8 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   mode = "view",
   selectedPages,
   onSelectedPagesChange,
+  onPageCountChange,
+  hideCloseButton = false,
   className,
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -161,6 +167,10 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolvedContentType, setResolvedContentType] = useState<string | undefined>(undefined);
   const [resolvedForKey, setResolvedForKey] = useState<string | null>(null);
+  const [pageRangeInput, setPageRangeInput] = useState("");
+  const isSelectPagesMode = mode === "select-pages" || mode === "extract";
+  /** In select/extract mode only render the active page (large-doc friendly). */
+  const singlePageCanvas = isSelectPagesMode;
 
   const safeIndex = Math.min(Math.max(activeIndex, 0), Math.max(documents.length - 1, 0));
   const current = documents[safeIndex];
@@ -343,11 +353,12 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   const goToPage = useCallback((page: number) => {
     if (page < 1 || (numPages > 0 && page > numPages)) return;
     setPageNumber(page);
+    if (singlePageCanvas) return;
     const target = pageRefs.current[page];
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }, [numPages]);
+  }, [numPages, singlePageCanvas]);
 
   const handleZoomIn = () => {
     setFitMode("custom");
@@ -402,15 +413,17 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
     setPageNumber(1);
     setDocLoading(false);
     setDocError(null);
+    onPageCountChange?.(next);
   };
 
   const onDocumentLoadError = () => {
     setDocLoading(false);
     setDocError("Failed to load this PDF document.");
+    onPageCountChange?.(0);
   };
 
   const togglePageSelection = (page: number) => {
-    if (mode !== "select-pages" || !onSelectedPagesChange) return;
+    if (!isSelectPagesMode || !onSelectedPagesChange) return;
     const currentSelection = selectedPages || [];
     if (currentSelection.includes(page)) {
       onSelectedPagesChange(currentSelection.filter((p) => p !== page));
@@ -418,6 +431,53 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
       onSelectedPagesChange([...currentSelection, page].sort((a, b) => a - b));
     }
   };
+
+  const selectAllPages = () => {
+    if (!isSelectPagesMode || !onSelectedPagesChange || numPages <= 0) return;
+    onSelectedPagesChange(Array.from({ length: numPages }, (_, i) => i + 1));
+  };
+
+  const clearPageSelection = () => {
+    if (!isSelectPagesMode || !onSelectedPagesChange) return;
+    onSelectedPagesChange([]);
+  };
+
+  const applyPageRangeInput = () => {
+    if (!isSelectPagesMode || !onSelectedPagesChange || numPages <= 0) return;
+    const raw = pageRangeInput.trim();
+    if (!raw) {
+      onSelectedPagesChange([]);
+      return;
+    }
+    const result = new Set<number>();
+    const parts = raw.split(/[,;\s]+/).map((p) => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      const rangeMatch = part.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+      if (rangeMatch) {
+        let start = Number(rangeMatch[1]);
+        let end = Number(rangeMatch[2]);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        if (start > end) [start, end] = [end, start];
+        for (let p = start; p <= end; p++) {
+          if (p >= 1 && p <= numPages) result.add(p);
+        }
+        continue;
+      }
+      const single = Number(part);
+      if (Number.isFinite(single) && single >= 1 && single <= numPages) {
+        result.add(single);
+      }
+    }
+    onSelectedPagesChange(Array.from(result).sort((a, b) => a - b));
+  };
+
+  const selectedCount = (selectedPages || []).length;
+  const selectionSummary =
+    !numPages
+      ? ""
+      : selectedCount === 0
+        ? `All ${numPages} pages (none selected)`
+        : `${selectedCount} of ${numPages} selected`;
 
   if (!current) {
     return (
@@ -586,14 +646,49 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
               )}
             </svg>
           </IconButton>
-          <IconButton title="Close viewer" onClick={onClose}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="19" y1="5" x2="5" y2="19" />
-              <line x1="5" y1="5" x2="19" y2="19" />
-            </svg>
-          </IconButton>
+          {!hideCloseButton && (
+            <IconButton title="Close viewer" onClick={onClose}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="19" y1="5" x2="5" y2="19" />
+                <line x1="5" y1="5" x2="19" y2="19" />
+              </svg>
+            </IconButton>
+          )}
         </div>
       </div>
+
+      {isSelectPagesMode && kind === "pdf" && numPages > 0 && (
+        <div className="doc-viewer__select-bar" role="region" aria-label="Page selection">
+          <span className="doc-viewer__select-summary">{selectionSummary}</span>
+          <div className="doc-viewer__select-actions">
+            <button type="button" className="doc-viewer__text-btn" onClick={selectAllPages}>
+              Select all
+            </button>
+            <button type="button" className="doc-viewer__text-btn" onClick={clearPageSelection}>
+              Clear
+            </button>
+            <label className="doc-viewer__range-label">
+              Range
+              <input
+                type="text"
+                className="doc-viewer__range-input"
+                placeholder="e.g. 1-3, 7, 10-12"
+                value={pageRangeInput}
+                onChange={(e) => setPageRangeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyPageRangeInput();
+                  }
+                }}
+              />
+            </label>
+            <button type="button" className="doc-viewer__text-btn" onClick={applyPageRangeInput}>
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="doc-viewer__body">
         {!docError && !sourceUrl && (docLoading || kind === "pdf" || kind === "image" || kind === "text") ? (
@@ -619,30 +714,41 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
                 {Array.from({ length: numPages }, (_, i) => i + 1).map((page) => {
                   const selected = (selectedPages || []).includes(page);
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={`thumb-${current.id}-${page}`}
                       className={`doc-viewer__thumb ${page === pageNumber ? "is-active" : ""} ${selected ? "is-selected" : ""}`}
-                      onClick={() => {
-                        goToPage(page);
-                        togglePageSelection(page);
-                      }}
                     >
-                      <div className="doc-viewer__thumb-page">
-                        <Page
-                          pageNumber={page}
-                          width={96}
-                          renderTextLayer={false}
-                          renderAnnotationLayer={false}
-                        />
-                      </div>
-                      <span className="doc-viewer__thumb-label">{page}</span>
-                      {mode === "select-pages" && (
-                        <span className={`doc-viewer__thumb-check ${selected ? "checked" : ""}`} aria-hidden>
+                      <button
+                        type="button"
+                        className="doc-viewer__thumb-nav"
+                        title={`Go to page ${page}`}
+                        onClick={() => goToPage(page)}
+                      >
+                        <div className="doc-viewer__thumb-page">
+                          <Page
+                            pageNumber={page}
+                            width={96}
+                            renderTextLayer={false}
+                            renderAnnotationLayer={false}
+                          />
+                        </div>
+                        <span className="doc-viewer__thumb-label">{page}</span>
+                      </button>
+                      {isSelectPagesMode && (
+                        <button
+                          type="button"
+                          className={`doc-viewer__thumb-check ${selected ? "checked" : ""}`}
+                          title={selected ? `Deselect page ${page}` : `Select page ${page}`}
+                          aria-pressed={selected}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePageSelection(page);
+                          }}
+                        >
                           {selected ? "✓" : ""}
-                        </span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
               </aside>
@@ -658,7 +764,10 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
 
               <div className="doc-viewer__pdf">
                 {numPages > 0 &&
-                  Array.from({ length: numPages }, (_, i) => i + 1).map((page) => (
+                  (singlePageCanvas
+                    ? [pageNumber]
+                    : Array.from({ length: numPages }, (_, i) => i + 1)
+                  ).map((page) => (
                     <div
                       key={`page-${current.id}-${page}`}
                       className={`doc-viewer__page-wrap ${page === pageNumber ? "is-active" : ""}`}
@@ -671,8 +780,8 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
                         pageNumber={page}
                         width={pageWidth}
                         rotate={rotation}
-                        renderTextLayer
-                        renderAnnotationLayer
+                        renderTextLayer={!singlePageCanvas}
+                        renderAnnotationLayer={!singlePageCanvas}
                         loading={
                           <div className="doc-viewer__page-loading">Loading page {page}…</div>
                         }

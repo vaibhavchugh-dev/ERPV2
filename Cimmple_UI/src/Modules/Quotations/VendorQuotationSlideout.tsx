@@ -43,6 +43,7 @@ import {
   getApiErrorMessage,
   isApiForbidden,
   clearOpenQueryFromUrl,
+  createPendingAttachments,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { PdfService } from "../../Common/Services/PdfService";
@@ -62,6 +63,15 @@ import "./VendorQuotationSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+import {
+  DocumentExtractionSlideout,
+  createEmptyExtractionSession,
+  clearExtractionSession,
+  applyVendorQuotationImport,
+  formHasMeaningfulLines,
+  type DocumentExtractionSession,
+  type DocumentExtractionImportPayload,
+} from "../../Common/DocumentExtraction";
 
 const PAGE_PATH = "/quotations/vendor";
 
@@ -199,6 +209,10 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set());
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
   const [orderSlideoutId, setOrderSlideoutId] = useState<number>(0);
+  const [showExtractionSlideout, setShowExtractionSlideout] = useState(false);
+  const [extractionSession, setExtractionSession] = useState<DocumentExtractionSession>(
+    () => createEmptyExtractionSession("vendorQuotation")
+  );
   // Refs for job order input fields
   const jobOrderInputRefs = useRef<Map<number, HTMLInputElement>>(new Map());
   // Store display values for numeric fields (as strings) to allow clearing
@@ -577,6 +591,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     setAttachments([]);
     setDeletedAttachmentIds([]);
+    setShowExtractionSlideout(false);
+    setExtractionSession((prev) => clearExtractionSession(prev));
 
     setFormData(prev => ({
       ...prev,
@@ -1539,19 +1555,106 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   useEffect(() => {
     return () => {
       documentCacheRef.current.clear();
+      setExtractionSession((prev) => clearExtractionSession(prev));
     };
   }, []);
+
+  const handleExtractionImport = async (payload: DocumentExtractionImportPayload) => {
+    let expenseGl = defaultExpenseGlcode || companyDefaultExpenseGlcode || "";
+    let contactPerson = "";
+    let contactEmail = "";
+
+    // Contact person comes from Vendor Master once vendor is matched — not from extraction.
+    if (payload.review.matchedVendorId > 0) {
+      try {
+        const fullVendorDetails = await VendorService.GetVendorById(
+          payload.review.matchedVendorId
+        );
+        if (fullVendorDetails) {
+          if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
+            const defaultContact =
+              fullVendorDetails.VendorContact.find((c) => c.isDefault) ||
+              fullVendorDetails.VendorContact[0];
+            contactPerson =
+              `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
+            contactEmail =
+              defaultContact.email ||
+              fullVendorDetails.email ||
+              "";
+          }
+          expenseGl =
+            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+            companyDefaultExpenseGlcode ||
+            expenseGl;
+          setDefaultExpenseGlcode(expenseGl);
+          if (contactEmail.trim()) {
+            setVendorEmail(contactEmail.trim());
+          }
+        }
+      } catch {
+        // Non-fatal — import still proceeds with extracted fields.
+      }
+    }
+
+    const { formPatch, details, warnings } = applyVendorQuotationImport({
+      currentForm: formData,
+      review: {
+        ...payload.review,
+        buyerName: "",
+        vendorPoNumber: "",
+      },
+      mode: payload.mode,
+      defaultGlcode: expenseGl,
+    });
+
+    setFormData((prev) => ({
+      ...prev,
+      ...formPatch,
+      BuyerName: contactPerson || prev.BuyerName,
+      Details: details,
+    }));
+    setIsStateChanged(true);
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (formPatch.VendorID) delete next.VendorID;
+      if (formPatch.OrderDate) delete next.OrderDate;
+      return next;
+    });
+
+    if (payload.attachSourceFile && payload.sourceFile) {
+      const pending = createPendingAttachments([payload.sourceFile]);
+      setAttachments((prev) => {
+        const already = prev.some(
+          (a) =>
+            a.isPending &&
+            a.name === payload.sourceFile!.name &&
+            a.size === payload.sourceFile!.size
+        );
+        if (already) return prev;
+        return [...prev, ...(pending as ModuleAttachment[])];
+      });
+    }
+
+    warnings.forEach((w) => toast.warning(w));
+    toast.success(
+      "Extracted details imported into the quotation. Review and save when ready."
+    );
+  };
 
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to close?")) {
         closeDocumentViewer();
         documentCacheRef.current.clear();
+        setShowExtractionSlideout(false);
+        setExtractionSession((prev) => clearExtractionSession(prev));
         onClose(listNeedsRefreshRef.current);
       }
     } else {
       closeDocumentViewer();
       documentCacheRef.current.clear();
+      setShowExtractionSlideout(false);
+      setExtractionSession((prev) => clearExtractionSession(prev));
       onClose(listNeedsRefreshRef.current);
     }
   };
@@ -1756,6 +1859,34 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            {isNew && canSave && (
+              <button
+                type="button"
+                className="btn-secondary vendor-quotation-import-pdf-btn"
+                onClick={() => setShowExtractionSlideout(true)}
+                title="Upload a vendor quotation PDF and extract details with AI"
+              >
+                <svg
+                  className="vendor-quotation-import-pdf-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#DC2626"
+                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                  />
+                  <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
+                  <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
+                  <path
+                    fill="#fff"
+                    d="M7.1 17.3v-3.6h1.15c.72 0 1.18.38 1.18 1.02 0 .55-.32.9-.82.98l.95 1.6H8.95l-.82-1.48H8.15v1.48H7.1zm1.05-2.22h.28c.28 0 .45-.14.45-.38s-.17-.36-.45-.36h-.28v.74zm3.02 2.22v-3.6h1.55c1.08 0 1.72.62 1.72 1.8s-.64 1.8-1.72 1.8H11.17zm1.05-2.72v1.84h.48c.52 0 .82-.3.82-.92 0-.62-.3-.92-.82-.92h-.48zm3.35 2.72v-3.6h2.55v.88h-1.5v.62h1.35v.86h-1.35v1.24H15.57z"
+                  />
+                </svg>
+                Import from PDF
+              </button>
+            )}
             {quotationId > 0 && (
               <>
                 {canPrint && (
@@ -3349,6 +3480,22 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           />
         </div>
       ) : null}
+
+      {/* Document extraction nested slideout (New Quotation only) — portaled above VQ transform */}
+      {showExtractionSlideout && isNew
+        ? createPortal(
+            <DocumentExtractionSlideout
+              kind="vendorQuotation"
+              session={extractionSession}
+              onSessionChange={setExtractionSession}
+              onClose={() => setShowExtractionSlideout(false)}
+              vendors={vendors}
+              hostHasExistingLines={formHasMeaningfulLines(formData.Details)}
+              onImport={handleExtractionImport}
+            />,
+            document.body
+          )
+        : null}
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog

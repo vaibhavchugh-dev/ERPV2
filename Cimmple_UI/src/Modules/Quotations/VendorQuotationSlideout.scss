@@ -42,6 +42,17 @@
   }
 }
 
+.vendor-quotation-import-pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.vendor-quotation-import-pdf-icon {
+  flex-shrink: 0;
+  display: block;
+}
+
 .vendor-quotation-slideout-header {
   display: flex;
   justify-content: space-between;
