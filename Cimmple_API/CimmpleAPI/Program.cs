@@ -109,6 +109,27 @@ builder.Services.AddScoped<CimmpleAPI.Services.Pdf.DocumentPdfService>();
 // Register Document Storage Service
 builder.Services.AddScoped<CimmpleAPI.Services.DocumentStorageService>();
 
+// Document extraction — primary: api.extraction.cimmple.net; fallback: Claude Haiku
+builder.Services.Configure<CimmpleAPI.Data.Dtos.ClaudeSettings>(
+    builder.Configuration.GetSection(CimmpleAPI.Data.Dtos.ClaudeSettings.SectionName));
+builder.Services.Configure<CimmpleAPI.Data.Dtos.DocumentExtractionSettings>(
+    builder.Configuration.GetSection(CimmpleAPI.Data.Dtos.DocumentExtractionSettings.SectionName));
+builder.Services.AddHttpClient("ClaudeDocumentExtraction", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(5);
+});
+builder.Services.AddHttpClient("CimmpleExtractionApi", (sp, client) =>
+{
+    var opt = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CimmpleAPI.Data.Dtos.DocumentExtractionSettings>>().Value;
+    var seconds = opt.CimmpleApi?.TimeoutSeconds > 0 ? opt.CimmpleApi.TimeoutSeconds : 120;
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 15, 300));
+});
+builder.Services.AddScoped<CimmpleAPI.Services.DocumentExtraction.CimmpleExtractionApiClient>();
+builder.Services.AddScoped<CimmpleAPI.Services.DocumentExtraction.IClaudeDocumentExtractionService,
+    CimmpleAPI.Services.DocumentExtraction.ClaudeDocumentExtractionService>();
+builder.Services.AddScoped<CimmpleAPI.Services.DocumentExtraction.IDocumentExtractionService,
+    CimmpleAPI.Services.DocumentExtraction.DocumentExtractionOrchestrator>();
+
 // Register Inventory Service
 builder.Services.AddScoped<CimmpleAPI.Services.InventoryService>();
 builder.Services.AddScoped<CimmpleAPI.Services.FaceRecognitionService>();

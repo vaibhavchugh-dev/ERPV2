@@ -8,6 +8,7 @@ declare module "react-pdf" {
   export const pdfjs: {
     version: string;
     GlobalWorkerOptions: { workerSrc: string };
+    getDocument: (src: any) => { promise: Promise<any> };
   };
 
   export const Document: ComponentType<any>;
