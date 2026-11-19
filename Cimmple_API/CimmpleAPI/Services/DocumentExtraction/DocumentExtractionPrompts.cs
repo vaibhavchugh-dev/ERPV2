@@ -18,172 +18,59 @@ namespace CimmpleAPI.Services.DocumentExtraction
 
     public static class DocumentExtractionPrompts
     {
-        public const string VendorQuotationExtractionPrompt = @"Extract all engineering drawing information, fabrication drawing information, BOM tables, material takeoff data, RFQ information, vendor quotation information, and line item details from this PDF document.
+        /// <summary>
+        /// Lean Vendor Quotation prompt (Haiku fallback). Keep short for faster responses.
+        /// </summary>
+        public const string VendorQuotationExtractionPrompt = @"Extract vendor quotation / RFQ data from this PDF. Return ONLY valid JSON (no markdown, no fences, no commentary). Use null for missing values. Dates must be yyyy-MM-dd. Do not invent values.
 
-IMPORTANT RULES:
+VENDOR:
+* vendorNames is always a string array.
+* Prefer Bill To / Ship To / Supplier / Vendor names.
+* Do NOT use issuer/from-company when Bill To or Ship To exists.
+* Split comma/line-separated vendor names into separate array entries.
 
-* Return ONLY a valid JSON object.
-* Do NOT wrap the response in markdown.
-* Do NOT use `json or ` fences.
-* Do NOT include explanations, notes, warnings, comments, or additional text.
-* The entire response must be directly parseable by JsonSerializer.Deserialize().
-* Use null for missing values.
-* Dates must be ISO 8601 format (yyyy-MM-dd).
-* Extract all identifiable line items, assemblies, subassemblies, materials, and parts.
-* Preserve quantities exactly as shown.
-* Preserve vendor names exactly as shown.
-* Preserve part numbers exactly as shown.
-* Preserve job numbers exactly as shown.
-* Do not invent values.
-* Do not combine multiple vendors into a single string.
-* Do not combine multiple part numbers into a single string.
-* Do not combine multiple job numbers into a single string.
+LINES:
+* Extract every line item with qty, unit, unitPrice, amount when present.
+* partNo from PART NUMBER / PART NO / SKU columns exactly as shown.
+* itemName only if an Item Name/Item column exists; otherwise null.
+* Put discount in discount + discountType (""Amount"" or ""Percent"") only — never in notes.
+* notes = document notes only (no duplicate lines, no discount text).
+* One parts[] entry per part/job pair when both exist.
 
-VENDOR EXTRACTION RULES:
-
-* vendorNames must always be an array.
-* Prefer Bill To / Ship To / Supplier / Vendor company names for vendorNames.
-* Do NOT put the document issuer / from-company into vendorNames when Bill To or Ship To is present.
-* If multiple vendor names are listed, extract each vendor separately.
-* If vendor names are comma-separated, split them into separate array entries.
-* If vendor names appear on separate lines, extract each as a separate array entry.
-
-ITEM NAME RULES
-
-* Populate itemName ONLY when the document explicitly contains a column or field named:
-Item Name
-Item
-* If no Item Name field or column exists in the document, set:
-itemName = null
-
-PART EXTRACTION RULES:
-
-* A detail item may contain multiple Part Numbers.
-* A detail item may contain multiple Job Numbers.
-* Create one object in parts[] for each identifiable part.
-* If only Part Numbers exist, create one parts[] record per Part Number.
-* If only Job Numbers exist, create one parts[] record per Job Number.
-* If both Part Numbers and Job Numbers exist, associate them in the order they appear.
-* If a drawing contains only part names, populate partName and leave unavailable fields as null.
-
-PART NUMBER EXTRACTION RULES
-
-* If the source column/header is ""PART NUMBER"", ""PART NO"", ""PART#"", ""PART NUM"", or similar, always map the value to partNo exactly as shown.
-* partNo may contain any combination of:
-
-  * letters
-  * numbers
-  * spaces
-  * dashes
-  * slashes
-  * periods
-  * special engineering characters
-
-Valid examples:
-A-1001
-BP-22
-12345
-DWG-100
-P001
-AB1234
-Rectangular Beam
-Handrail Assembly
-Support Frame
-
-* Do not attempt to determine whether the value is a code or a descriptive name.
-* If the value appears under a Part Number column, store it in partNo exactly as displayed.
-
-
-COLUMN PRIORITY
-
-PART NUMBER column → partNo
-PART NAME column → partName
-ITEM NAME column → itemName
-DESCRIPTION column → description
-QTY column → quantity
-UNIT column → unit
-JOB NO column → jobNo
-
-
-DRAWING EXTRACTION RULES:
-
-* Extract drawing metadata when available.
-* Extract BOM tables.
-* Extract material lists.
-* Extract part callouts.
-* Extract fabrication details.
-* Extract assembly details.
-* Extract all identifiable part names.
-
-Return JSON matching EXACTLY this schema:
-
+Schema:
 {
 ""documentType"": string,
-
-""drawingNumber"": string,
-""drawingTitle"": string,
-""revision"": string,
-""revisionDate"": string,
-""sheetNumber"": string,
-""totalSheets"": string,
-""drawingDate"": string,
-""projectName"": string,
-""clientName"": string,
-""companyName"": string,
-""drawnBy"": string,
-""checkedBy"": string,
-""approvedBy"": string,
-""scale"": string,
-""units"": string,
-""material"": string,
-
 ""quotationNumber"": string,
 ""quotationDate"": string,
 ""dueDate"": string,
-
-""vendorNames"": [
-string
-],
-
+""projectName"": string,
+""material"": string,
+""vendorNames"": [string],
 ""vendorContactName"": string,
 ""vendorPhone"": string,
 ""vendorEmail"": string,
-
-""details"": [
-{
-""itemName"": string,
-""itemDescription"": string,
-""quantity"": number,
-""unit"": string,
-""unitPrice"": number,
-""amount"": number,
-""discount"": number,
-""discountType"": string,
-""notes"": string,
-
-  ""parts"": [
-    {
-      ""partNo"": string,
-      ""jobNo"": string,
-      ""partName"": string,
-      ""description"": string,
-      ""material"": string,
-      ""quantity"": number,
-      ""unit"": string,
-      ""remarks"": string
-    }
-  ]
-}
-
-]
-}
-
-DISCOUNT RULES:
-
-* Put line discount in discount + discountType only.
-* discountType must be ""Amount"" or ""Percent"".
-* Do NOT write discount values into notes or remarks.
-* notes must contain only document notes/remarks text (no duplicated lines).";
+""details"": [{
+  ""itemName"": string,
+  ""itemDescription"": string,
+  ""quantity"": number,
+  ""unit"": string,
+  ""unitPrice"": number,
+  ""amount"": number,
+  ""discount"": number,
+  ""discountType"": string,
+  ""notes"": string,
+  ""parts"": [{
+    ""partNo"": string,
+    ""jobNo"": string,
+    ""partName"": string,
+    ""description"": string,
+    ""material"": string,
+    ""quantity"": number,
+    ""unit"": string,
+    ""remarks"": string
+  }]
+}]
+}";
 
         public static string ResolvePrompt(string documentKind)
         {

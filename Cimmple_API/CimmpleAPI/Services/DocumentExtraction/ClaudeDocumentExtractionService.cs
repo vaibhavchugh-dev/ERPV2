@@ -50,7 +50,9 @@ namespace CimmpleAPI.Services.DocumentExtraction
                 _extractionSettings.AllowAutoSwitch);
             DocumentExtractionPrompts.EnsureCheapClaudeModel(model);
 
-            var maxTokens = _claudeSettings.MaxTokens > 0 ? _claudeSettings.MaxTokens : 8192;
+            // Cap tokens for faster Haiku fallback (still enough for typical VQ line lists).
+            var configuredTokens = _claudeSettings.MaxTokens > 0 ? _claudeSettings.MaxTokens : 4096;
+            var maxTokens = Math.Clamp(configuredTokens, 1024, 4096);
             var prompt = DocumentExtractionPrompts.ResolvePrompt(DocumentExtractionKinds.VendorQuotation);
 
             var requestBody = new JObject

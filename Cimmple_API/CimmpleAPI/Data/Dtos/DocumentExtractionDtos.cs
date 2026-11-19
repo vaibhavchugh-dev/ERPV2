@@ -8,7 +8,7 @@ namespace CimmpleAPI.Data.Dtos
 
         public string ApiKey { get; set; } = string.Empty;
         public string Model { get; set; } = "claude-haiku-4-5";
-        public int MaxTokens { get; set; } = 8192;
+        public int MaxTokens { get; set; } = 4096;
     }
 
     public class DocumentExtractionSettings

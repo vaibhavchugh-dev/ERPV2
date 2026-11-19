@@ -20,6 +20,10 @@ import type {
   VendorQuotationExtractionReview,
   VendorQuotationExtractionReviewLine,
 } from "./types";
+import {
+  JobOrderService,
+  type JobOrderMaster,
+} from "../Services/JobOrderService";
 import "../../Modules/Quotations/VendorQuotationSlideout.scss";
 import "./DocumentExtractionSlideout.scss";
 
@@ -38,8 +42,66 @@ interface DocumentExtractionSlideoutProps {
   onSessionChange: (next: DocumentExtractionSession) => void;
   onClose: () => void;
   vendors: VendorCandidate[];
+  /** Optional preloaded job orders; loaded internally when omitted. */
+  jobOrders?: JobOrderMaster[];
   hostHasExistingLines: boolean;
   onImport: (payload: DocumentExtractionImportPayload) => void;
+}
+
+function formatJobOrderLabel(job: JobOrderMaster): string {
+  return (job.jobNumber || `JO#${job.jobOrderNumber}`).trim();
+}
+
+function matchJobOrderToken(
+  token: string,
+  jobs: JobOrderMaster[]
+): JobOrderMaster | undefined {
+  const raw = token.trim();
+  if (!raw) return undefined;
+
+  const exact = jobs.find(
+    (j) =>
+      formatJobOrderLabel(j).toLowerCase() === raw.toLowerCase() ||
+      (j.jobNumber || "").trim().toLowerCase() === raw.toLowerCase()
+  );
+  if (exact) return exact;
+
+  const match = raw.match(/JO#?\s*(\d+)/i) || raw.match(/^(\d+)$/);
+  if (!match) return undefined;
+
+  const num = Number(match[1]);
+  return jobs.find(
+    (j) =>
+      j.jobOrderNumber === num ||
+      String(j.jobOrderNumber) === match[1] ||
+      (j.jobNumber || "").replace(/\D/g, "") === match[1]
+  );
+}
+
+/** Resolve one or more JobNumber tokens (comma-separated) to jobOrderIDs. */
+function resolveJobOrderIds(
+  jobNumber: string | null | undefined,
+  jobs: JobOrderMaster[]
+): number[] {
+  const raw = (jobNumber || "").trim();
+  if (!raw || jobs.length === 0) return [];
+
+  const ids: number[] = [];
+  raw.split(",").forEach((token) => {
+    const matched = matchJobOrderToken(token, jobs);
+    if (matched && !ids.includes(matched.jobOrderID)) {
+      ids.push(matched.jobOrderID);
+    }
+  });
+  return ids;
+}
+
+function jobNumbersFromIds(ids: number[], jobs: JobOrderMaster[]): string {
+  return ids
+    .map((id) => jobs.find((j) => j.jobOrderID === id))
+    .filter((j): j is JobOrderMaster => !!j)
+    .map((j) => formatJobOrderLabel(j))
+    .join(", ");
 }
 
 const STEPS = [
@@ -62,6 +124,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
   onSessionChange,
   onClose,
   vendors,
+  jobOrders: jobOrdersProp,
   hostHasExistingLines,
   onImport,
 }) => {
@@ -71,6 +134,47 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
   const [importModePrompt, setImportModePrompt] = useState(false);
   const [processingIndex, setProcessingIndex] = useState(0);
   const [showFullPreview, setShowFullPreview] = useState(false);
+  const [jobOrdersLocal, setJobOrdersLocal] = useState<JobOrderMaster[]>([]);
+  const [openJobDropdownKey, setOpenJobDropdownKey] = useState<string | null>(
+    null
+  );
+
+  const jobOrders = jobOrdersProp && jobOrdersProp.length > 0
+    ? jobOrdersProp
+    : jobOrdersLocal;
+
+  useEffect(() => {
+    if (!openJobDropdownKey) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.(`[data-job-dropdown="${openJobDropdownKey}"]`)) {
+        return;
+      }
+      setOpenJobDropdownKey(null);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [openJobDropdownKey]);
+
+  useEffect(() => {
+    if (jobOrdersProp && jobOrdersProp.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+        const tenantID = storage?.tenantID || 0;
+        const result = await JobOrderService.GetJobOrders({ tenantid: tenantID });
+        if (!cancelled && Array.isArray(result)) {
+          setJobOrdersLocal(result);
+        }
+      } catch {
+        // Job list is optional for review; leave empty on failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobOrdersProp]);
 
   const updateSession = useCallback(
     (patch: Partial<DocumentExtractionSession>) => {
@@ -181,7 +285,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
         return;
       }
 
-      const { result, provider } = callResult;
+      const { result } = callResult;
       const review = buildVendorQuotationReview(result, vendors);
       updateSession({
         step: "review",
@@ -189,13 +293,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
         review,
         error: null,
       });
-      if (provider === "Claude") {
-        toast.info(
-          "Hosted extraction API was unavailable — used Claude fallback."
-        );
-      } else {
-        toast.success("Document details extracted successfully.");
-      }
+      toast.success("Document details extracted successfully.");
     } catch (err) {
       const message = getApiErrorMessage(err, "Document extraction failed.");
       updateSession({ step: "select", error: message });
@@ -537,7 +635,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                   <div className="doc-extraction-preview-panel">
                     <div className="panel-title">
                       <span className="doc-extraction-pdf-chip">PDF</span>
-                      PDF Preview
+                      <span>Source preview</span>
                     </div>
                     <div className="doc-extraction-preview-frame">
                       {session.localUrl ? (
@@ -563,17 +661,21 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                   </div>
 
                   <div className="doc-extraction-details-panel">
-                    <div className="panel-title">Extracted Details</div>
+                    <div className="panel-title">
+                      <span>Quotation header</span>
+                      {session.review.matchedVendorId > 0 ? (
+                        <span className="doc-extraction-inline-badge is-success">
+                          Vendor matched
+                        </span>
+                      ) : (
+                        <span className="doc-extraction-inline-badge is-warn">
+                          Select vendor
+                        </span>
+                      )}
+                    </div>
                     <div className="doc-extraction-grid">
-                      <div className="doc-extraction-field">
-                        <label>
-                          Vendor
-                          {session.review.matchedVendorId > 0 ? (
-                            <span className="doc-extraction-inline-badge is-success">
-                              Matched
-                            </span>
-                          ) : null}
-                        </label>
+                      <div className="doc-extraction-field doc-extraction-field-wide">
+                        <label>Vendor</label>
                         <select
                           value={session.review.matchedVendorId || 0}
                           onChange={(e) =>
@@ -593,7 +695,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                         </select>
                         {session.review.vendorNameHint ? (
                           <span className="hint">
-                            Extracted: {session.review.vendorNameHint}
+                            From document: {session.review.vendorNameHint}
                           </span>
                         ) : null}
                       </div>
@@ -620,9 +722,9 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                         />
                       </div>
 
-                      <div className="doc-extraction-field">
+                      <div className="doc-extraction-field doc-extraction-field-wide">
                         <label>Source file</label>
-                        <label className="doc-extraction-checkbox-label">
+                        <label className="doc-extraction-attach-toggle">
                           <input
                             type="checkbox"
                             checked={attachSourceFile}
@@ -630,222 +732,416 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                               setAttachSourceFile(e.target.checked)
                             }
                           />
-                          Attach PDF to quotation after import
+                          <span>
+                            Attach this PDF to the quotation after import
+                          </span>
                         </label>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="doc-extraction-lines-header">
-                  <h3>
-                    Extracted line items ({includedLines.length} selected)
-                  </h3>
-                  {linesNeedingReview > 0 ? (
-                    <span className="doc-extraction-badge is-warn">
-                      {linesNeedingReview} item
-                      {linesNeedingReview === 1 ? "" : "s"} need review
-                    </span>
-                  ) : null}
-                </div>
-
-                {session.review.lines.length === 0 ? (
-                  <div className="doc-extraction-empty-lines">
-                    No line items were extracted. You can still import header
-                    fields, then add lines manually on the quotation form.
+                <div className="doc-extraction-lines-panel">
+                  <div className="doc-extraction-lines-header">
+                    <div className="lines-header-copy">
+                      <h3>Line items</h3>
+                      <p>
+                        {includedLines.length} of {session.review.lines.length}{" "}
+                        selected for import
+                      </p>
+                    </div>
+                    <div className="lines-header-meta">
+                      {linesNeedingReview > 0 ? (
+                        <span className="doc-extraction-badge is-warn">
+                          {linesNeedingReview}{" "}
+                          {linesNeedingReview === 1 ? "needs" : "need"} review
+                        </span>
+                      ) : session.review.lines.length > 0 ? (
+                        <span className="doc-extraction-badge is-success">
+                          All ready
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                ) : (
-                  <div className="doc-extraction-line-cards">
-                    {session.review.lines.map((line) => {
-                      const needsReview =
-                        line.included &&
-                        (!line.partName?.trim() || !(Number(line.unitPrice) > 0));
-                      return (
-                        <div
-                          key={line.key}
-                          className={`doc-extraction-line-card ${
-                            !line.included ? "is-excluded" : ""
-                          } ${needsReview ? "needs-review" : ""}`}
-                        >
-                          <div className="line-card-top">
-                            <label className="doc-extraction-checkbox-label">
-                              <input
-                                type="checkbox"
-                                checked={line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    included: e.target.checked,
-                                  })
-                                }
-                              />
-                              Include
-                            </label>
-                            {needsReview ? (
-                              <span className="doc-extraction-badge is-warn">
-                                Needs review
-                              </span>
-                            ) : line.included ? (
-                              <span className="doc-extraction-badge is-success">
-                                Ready
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="line-card-grid">
-                            <div className="doc-extraction-field">
-                              <label>Part No</label>
-                              <input
-                                type="text"
-                                value={line.partNo}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    partNo: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Description</label>
-                              <input
-                                type="text"
-                                value={line.partName}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    partName: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Job #</label>
-                              <input
-                                type="text"
-                                value={line.jobNumber}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    jobNumber: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Qty</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                value={line.qtyOrdered}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    qtyOrdered: Number(e.target.value) || 0,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Unit</label>
-                              <input
-                                type="text"
-                                value={line.unit}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, { unit: e.target.value })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Rate</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                value={line.unitPrice}
-                                disabled={!line.included}
-                                className={
-                                  needsReview && !(Number(line.unitPrice) > 0)
-                                    ? "is-warn-input"
-                                    : ""
-                                }
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    unitPrice: Number(e.target.value) || 0,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="doc-extraction-field">
-                              <label>Discount</label>
-                              <div style={{ display: "flex", gap: "0.35rem" }}>
+
+                  {session.review.lines.length === 0 ? (
+                    <div className="doc-extraction-empty-lines">
+                      No line items were extracted. You can still import header
+                      fields, then add lines manually on the quotation form.
+                    </div>
+                  ) : (
+                    <div className="doc-extraction-line-cards">
+                      {session.review.lines.map((line, index) => {
+                        const needsReview =
+                          line.included &&
+                          (!line.partName?.trim() ||
+                            !(Number(line.unitPrice) > 0));
+                        const qty = Number(line.qtyOrdered) || 0;
+                        const rate = Number(line.unitPrice) || 0;
+                        const gross = qty * rate;
+                        const discountValue = Number(line.discount) || 0;
+                        const discountAmt =
+                          line.discountType === "Amount"
+                            ? Math.min(discountValue, gross)
+                            : gross * (discountValue / 100);
+                        const lineTotal = Math.max(0, gross - discountAmt);
+
+                        return (
+                          <div
+                            key={line.key}
+                            className={`doc-extraction-line-card ${
+                              !line.included ? "is-excluded" : ""
+                            } ${needsReview ? "needs-review" : ""} ${
+                              openJobDropdownKey === line.key
+                                ? "is-job-menu-open"
+                                : ""
+                            }`}
+                          >
+                            <div className="line-card-rail">
+                              <span className="line-index">{index + 1}</span>
+                              <label
+                                className="doc-extraction-checkbox-label line-include"
+                                title="Include this line"
+                              >
                                 <input
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                  value={line.discount}
-                                  disabled={!line.included}
+                                  type="checkbox"
+                                  checked={line.included}
                                   onChange={(e) =>
                                     patchLine(line.key, {
-                                      discount: Number(e.target.value) || 0,
+                                      included: e.target.checked,
                                     })
                                   }
-                                  style={{ flex: 1 }}
                                 />
-                                <select
-                                  value={line.discountType}
-                                  disabled={!line.included}
-                                  onChange={(e) =>
-                                    patchLine(line.key, {
-                                      discountType:
-                                        e.target.value === "Amount"
-                                          ? "Amount"
-                                          : "Percent",
-                                    })
-                                  }
-                                  style={{ width: "4.5rem" }}
-                                >
-                                  <option value="Percent">%</option>
-                                  <option value="Amount">Amt</option>
-                                </select>
-                              </div>
+                              </label>
                             </div>
-                            <div className="doc-extraction-field line-notes">
-                              <label>Notes</label>
-                              <input
-                                type="text"
-                                value={line.notes}
-                                disabled={!line.included}
-                                onChange={(e) =>
-                                  patchLine(line.key, {
-                                    notes: e.target.value,
-                                  })
-                                }
-                              />
+
+                            <div className="line-card-body">
+                              <div className="line-card-top">
+                                <div className="line-card-title">
+                                  <span className="line-title-text">
+                                    {line.partName?.trim() ||
+                                      line.partNo?.trim() ||
+                                      `Line ${index + 1}`}
+                                  </span>
+                                  {line.partNo?.trim() ? (
+                                    <span className="line-part-chip">
+                                      {line.partNo}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="line-card-top-right">
+                                  {needsReview ? (
+                                    <span className="doc-extraction-badge is-warn">
+                                      Needs review
+                                    </span>
+                                  ) : line.included ? (
+                                    <span className="doc-extraction-badge is-success">
+                                      Ready
+                                    </span>
+                                  ) : (
+                                    <span className="doc-extraction-badge is-muted">
+                                      Excluded
+                                    </span>
+                                  )}
+                                  <span className="line-amount">
+                                    {lineTotal.toLocaleString(undefined, {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="line-card-grid">
+                                <div className="doc-extraction-field">
+                                  <label>Part No</label>
+                                  <input
+                                    type="text"
+                                    value={line.partNo}
+                                    disabled={!line.included}
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        partNo: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div className="doc-extraction-field line-desc">
+                                  <label>Description</label>
+                                  <input
+                                    type="text"
+                                    value={line.partName}
+                                    disabled={!line.included}
+                                    className={
+                                      needsReview && !line.partName?.trim()
+                                        ? "is-warn-input"
+                                        : ""
+                                    }
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        partName: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div
+                                  className="doc-extraction-field line-job"
+                                  data-job-dropdown={line.key}
+                                >
+                                  <label>Job #</label>
+                                  {(() => {
+                                    const selectedIds = resolveJobOrderIds(
+                                      line.jobNumber,
+                                      jobOrders
+                                    );
+                                    const selectedJobs = selectedIds
+                                      .map((id) =>
+                                        jobOrders.find((j) => j.jobOrderID === id)
+                                      )
+                                      .filter(
+                                        (j): j is JobOrderMaster => !!j
+                                      );
+                                    const displayText =
+                                      selectedJobs.length > 0
+                                        ? selectedJobs
+                                            .map((j) => formatJobOrderLabel(j))
+                                            .join(", ")
+                                        : "";
+                                    const unmatched =
+                                      line.jobNumber?.trim() &&
+                                      selectedIds.length === 0
+                                        ? line.jobNumber.trim()
+                                        : "";
+                                    const isOpen =
+                                      openJobDropdownKey === line.key;
+
+                                    return (
+                                      <div className="line-job-multiselect">
+                                        <button
+                                          type="button"
+                                          className="line-job-trigger"
+                                          disabled={!line.included}
+                                          title={
+                                            displayText ||
+                                            unmatched ||
+                                            "Select job orders"
+                                          }
+                                          onClick={() =>
+                                            setOpenJobDropdownKey(
+                                              isOpen ? null : line.key
+                                            )
+                                          }
+                                        >
+                                          <span
+                                            className={
+                                              displayText || unmatched
+                                                ? "line-job-value"
+                                                : "line-job-placeholder"
+                                            }
+                                          >
+                                            {displayText ||
+                                              (unmatched
+                                                ? `Unmatched: ${unmatched}`
+                                                : "Select job orders…")}
+                                          </span>
+                                          <span className="line-job-caret" aria-hidden>
+                                            ▾
+                                          </span>
+                                        </button>
+                                        {isOpen && line.included ? (
+                                          <div className="line-job-menu">
+                                            {[...jobOrders]
+                                              .sort((a, b) => {
+                                                const aSel = selectedIds.includes(
+                                                  a.jobOrderID
+                                                )
+                                                  ? 0
+                                                  : 1;
+                                                const bSel = selectedIds.includes(
+                                                  b.jobOrderID
+                                                )
+                                                  ? 0
+                                                  : 1;
+                                                return aSel - bSel;
+                                              })
+                                              .map((job) => {
+                                                const checked =
+                                                  selectedIds.includes(
+                                                    job.jobOrderID
+                                                  );
+                                                return (
+                                                  <label
+                                                    key={job.jobOrderID}
+                                                    className={`line-job-option ${
+                                                      checked ? "is-selected" : ""
+                                                    }`}
+                                                  >
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={checked}
+                                                      onChange={() => {
+                                                        const next = checked
+                                                          ? selectedIds.filter(
+                                                              (id) =>
+                                                                id !==
+                                                                job.jobOrderID
+                                                            )
+                                                          : [
+                                                              ...selectedIds,
+                                                              job.jobOrderID,
+                                                            ];
+                                                        patchLine(line.key, {
+                                                          jobNumber:
+                                                            jobNumbersFromIds(
+                                                              next,
+                                                              jobOrders
+                                                            ),
+                                                        });
+                                                      }}
+                                                    />
+                                                    <span>
+                                                      <span className="line-job-option-title">
+                                                        {formatJobOrderLabel(job)}
+                                                      </span>
+                                                      {job.partName ? (
+                                                        <span className="line-job-option-sub">
+                                                          {job.partName}
+                                                        </span>
+                                                      ) : null}
+                                                    </span>
+                                                  </label>
+                                                );
+                                              })}
+                                            {jobOrders.length === 0 ? (
+                                              <div className="line-job-empty">
+                                                No job orders available
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                                <div className="doc-extraction-field line-qty">
+                                  <label>Qty</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    value={line.qtyOrdered}
+                                    disabled={!line.included}
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        qtyOrdered: Number(e.target.value) || 0,
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div className="doc-extraction-field line-unit">
+                                  <label>Unit</label>
+                                  <input
+                                    type="text"
+                                    value={line.unit}
+                                    disabled={!line.included}
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        unit: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div className="doc-extraction-field line-rate">
+                                  <label>Rate</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    value={line.unitPrice}
+                                    disabled={!line.included}
+                                    className={
+                                      needsReview && !(Number(line.unitPrice) > 0)
+                                        ? "is-warn-input"
+                                        : ""
+                                    }
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        unitPrice: Number(e.target.value) || 0,
+                                      })
+                                    }
+                                  />
+                                </div>
+                                <div className="doc-extraction-field line-discount">
+                                  <label>Discount</label>
+                                  <div className="line-discount-group">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="any"
+                                      value={line.discount}
+                                      disabled={!line.included}
+                                      onChange={(e) =>
+                                        patchLine(line.key, {
+                                          discount: Number(e.target.value) || 0,
+                                        })
+                                      }
+                                    />
+                                    <select
+                                      value={line.discountType}
+                                      disabled={!line.included}
+                                      onChange={(e) =>
+                                        patchLine(line.key, {
+                                          discountType:
+                                            e.target.value === "Amount"
+                                              ? "Amount"
+                                              : "Percent",
+                                        })
+                                      }
+                                    >
+                                      <option value="Percent">%</option>
+                                      <option value="Amount">Amt</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="doc-extraction-field line-notes">
+                                  <label>Notes</label>
+                                  <input
+                                    type="text"
+                                    value={line.notes}
+                                    disabled={!line.included}
+                                    onChange={(e) =>
+                                      patchLine(line.key, {
+                                        notes: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </div>
+
+                              {needsReview ? (
+                                <p className="line-card-hint">
+                                  Verify description and rate against the PDF
+                                  before importing.
+                                </p>
+                              ) : null}
                             </div>
                           </div>
-                          {needsReview ? (
-                            <p className="line-card-hint">
-                              Verify this line against the original PDF before
-                              importing.
-                            </p>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        );
+                      })}
+                    </div>
+                  )}
 
-                <div className="doc-extraction-review-summary">
-                  <span>
-                    Extracted subtotal (selected lines):{" "}
-                    <strong>
+                  <div className="doc-extraction-review-summary">
+                    <div className="summary-label">
+                      Selected lines subtotal
+                    </div>
+                    <div className="summary-value">
                       {reviewSubtotal.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
-                    </strong>
-                  </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
