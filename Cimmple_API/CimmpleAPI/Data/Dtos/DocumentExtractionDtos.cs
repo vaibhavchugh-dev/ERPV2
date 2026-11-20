@@ -8,7 +8,8 @@ namespace CimmpleAPI.Data.Dtos
 
         public string ApiKey { get; set; } = string.Empty;
         public string Model { get; set; } = "claude-haiku-4-5";
-        public int MaxTokens { get; set; } = 4096;
+        /// <summary>Output token budget. Keep low for Haiku cost/latency (VQ JSON fits ~2048).</summary>
+        public int MaxTokens { get; set; } = 2048;
     }
 
     public class DocumentExtractionSettings
@@ -16,10 +17,10 @@ namespace CimmpleAPI.Data.Dtos
         public const string SectionName = "DocumentExtraction";
 
         /// <summary>
-        /// Preferred provider: "CimmpleApi" (hosted extraction) or "Claude".
+        /// Preferred provider: "Claude" (direct Haiku) or "CimmpleApi" (hosted extraction).
         /// When CimmpleApi fails and FallbackToClaude is true, Claude Haiku is used.
         /// </summary>
-        public string Provider { get; set; } = "CimmpleApi";
+        public string Provider { get; set; } = "Claude";
 
         /// <summary>When true and Claude:Model is empty, fall back to claude-haiku-4-5.</summary>
         public bool AllowAutoSwitch { get; set; } = false;

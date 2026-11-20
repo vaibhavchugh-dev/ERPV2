@@ -19,58 +19,13 @@ namespace CimmpleAPI.Services.DocumentExtraction
     public static class DocumentExtractionPrompts
     {
         /// <summary>
-        /// Lean Vendor Quotation prompt (Haiku fallback). Keep short for faster responses.
+        /// Compact Vendor Quotation prompt for Haiku. Short to minimize input tokens.
         /// </summary>
-        public const string VendorQuotationExtractionPrompt = @"Extract vendor quotation / RFQ data from this PDF. Return ONLY valid JSON (no markdown, no fences, no commentary). Use null for missing values. Dates must be yyyy-MM-dd. Do not invent values.
+        public const string VendorQuotationExtractionPrompt = @"Return ONLY JSON (no markdown). null if missing. Dates yyyy-MM-dd. Do not invent.
 
-VENDOR:
-* vendorNames is always a string array.
-* Prefer Bill To / Ship To / Supplier / Vendor names.
-* Do NOT use issuer/from-company when Bill To or Ship To exists.
-* Split comma/line-separated vendor names into separate array entries.
+Rules: vendorNames=array; prefer Bill To/Ship To/Supplier over issuer; split multi-vendors. Line items: qty,unit,unitPrice,amount; partNo exact from PART NO/SKU; itemName only if Item column exists else null; discount+discountType(Amount|Percent) never in notes; notes=doc notes only; one parts[] per part/job.
 
-LINES:
-* Extract every line item with qty, unit, unitPrice, amount when present.
-* partNo from PART NUMBER / PART NO / SKU columns exactly as shown.
-* itemName only if an Item Name/Item column exists; otherwise null.
-* Put discount in discount + discountType (""Amount"" or ""Percent"") only — never in notes.
-* notes = document notes only (no duplicate lines, no discount text).
-* One parts[] entry per part/job pair when both exist.
-
-Schema:
-{
-""documentType"": string,
-""quotationNumber"": string,
-""quotationDate"": string,
-""dueDate"": string,
-""projectName"": string,
-""material"": string,
-""vendorNames"": [string],
-""vendorContactName"": string,
-""vendorPhone"": string,
-""vendorEmail"": string,
-""details"": [{
-  ""itemName"": string,
-  ""itemDescription"": string,
-  ""quantity"": number,
-  ""unit"": string,
-  ""unitPrice"": number,
-  ""amount"": number,
-  ""discount"": number,
-  ""discountType"": string,
-  ""notes"": string,
-  ""parts"": [{
-    ""partNo"": string,
-    ""jobNo"": string,
-    ""partName"": string,
-    ""description"": string,
-    ""material"": string,
-    ""quantity"": number,
-    ""unit"": string,
-    ""remarks"": string
-  }]
-}]
-}";
+{""documentType"":string,""quotationNumber"":string,""quotationDate"":string,""dueDate"":string,""projectName"":string,""material"":string,""vendorNames"":[string],""vendorContactName"":string,""vendorPhone"":string,""vendorEmail"":string,""details"":[{""itemName"":string,""itemDescription"":string,""quantity"":number,""unit"":string,""unitPrice"":number,""amount"":number,""discount"":number,""discountType"":string,""notes"":string,""parts"":[{""partNo"":string,""jobNo"":string,""partName"":string,""description"":string,""material"":string,""quantity"":number,""unit"":string,""remarks"":string}]}]}";
 
         public static string ResolvePrompt(string documentKind)
         {
@@ -81,48 +36,38 @@ Schema:
             };
         }
 
-        /// <summary>Only Claude Haiku models are allowed for document extraction (no Sonnet/Opus).</summary>
+        /// <summary>
+        /// Locked cheapest Claude model for document extraction.
+        /// Sonnet/Opus and other tiers are never used on this path.
+        /// </summary>
         public const string DefaultHaikuModel = "claude-haiku-4-5";
 
+        /// <summary>
+        /// Always returns <see cref="DefaultHaikuModel"/>.
+        /// Configured Claude:Model is ignored so a higher tier can never be selected.
+        /// </summary>
         public static string ResolveClaudeModel(string? configuredModel, bool allowAutoSwitch)
         {
-            if (!string.IsNullOrWhiteSpace(configuredModel))
-            {
-                var model = configuredModel.Trim();
-                EnsureCheapClaudeModel(model);
-                return model;
-            }
-
-            if (!allowAutoSwitch)
-                throw new InvalidOperationException(
-                    "Claude:Model is not configured and DocumentExtraction:AllowAutoSwitch is disabled.");
-
+            _ = configuredModel;
+            _ = allowAutoSwitch;
+            EnsureCheapClaudeModel(DefaultHaikuModel);
             return DefaultHaikuModel;
         }
 
         /// <summary>
-        /// Hard guard: model name must contain "haiku" and must not be Sonnet/Opus/upper tiers.
+        /// Hard guard: must be exactly the locked Haiku model (no Sonnet/Opus/other).
         /// </summary>
         public static void EnsureCheapClaudeModel(string model)
         {
             if (string.IsNullOrWhiteSpace(model))
                 throw new InvalidOperationException(
-                    "Claude model is empty. Only Haiku models are permitted for document extraction.");
+                    "Claude model is empty. Document extraction is locked to claude-haiku-4-5 only.");
 
             var normalized = model.Trim();
-            var lower = normalized.ToLowerInvariant();
-
-            if (lower.Contains("sonnet") || lower.Contains("opus") ||
-                lower.Contains("sonnet-") || lower.Contains("opus-"))
+            if (!string.Equals(normalized, DefaultHaikuModel, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    $"Claude model '{normalized}' is not allowed. Document extraction is restricted to Haiku only (no Sonnet/Opus).");
-            }
-
-            if (!lower.Contains("haiku"))
-            {
-                throw new InvalidOperationException(
-                    $"Claude model '{normalized}' is not allowed. Only Haiku models are permitted for document extraction.");
+                    $"Claude model '{normalized}' is not allowed. Document extraction is locked to '{DefaultHaikuModel}' only (no Sonnet/Opus/other).");
             }
         }
 

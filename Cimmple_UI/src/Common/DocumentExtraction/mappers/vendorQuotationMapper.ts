@@ -190,7 +190,23 @@ function detailToLines(
     ];
   }
 
-  return parts.map((part, partIndex) => {
+  // One review row per part identity. Multiple jobs on the same part/item
+  // stay on a single row (comma-joined) for the Job multi-select — do not
+  // explode into one row per job.
+  type PartGroup = {
+    partNo: string;
+    partName: string;
+    jobNos: string[];
+    partQty: number;
+    partUnit: string;
+    partNotes: string;
+    firstIndex: number;
+  };
+
+  const groups: PartGroup[] = [];
+  const groupIndex = new Map<string, number>();
+
+  parts.forEach((part, partIndex) => {
     const partNo = (part.partNo || "").trim();
     const partName =
       (part.partName || "").trim() ||
@@ -202,21 +218,65 @@ function detailToLines(
     const partQty = Number(part.quantity ?? qty) || (qty > 0 ? qty : 1);
     const partUnit = ((part.unit || unit || "EA") as string).trim() || "EA";
     const partNotes = uniqueJoinNotes(part.remarks, notes);
+    const key = [
+      partNo.toLowerCase(),
+      partName.toLowerCase(),
+      String(partQty),
+      partUnit.toLowerCase(),
+    ].join("|");
 
-    return {
-      key: `d${detailIndex}-p${partIndex}`,
+    const existingIdx = groupIndex.get(key);
+    if (existingIdx != null) {
+      const group = groups[existingIdx];
+      if (jobNumber) {
+        jobNumber.split(",").forEach((token) => {
+          const t = token.trim();
+          if (t && !group.jobNos.some((j) => j.toLowerCase() === t.toLowerCase())) {
+            group.jobNos.push(t);
+          }
+        });
+      }
+      if (partNotes) {
+        group.partNotes = uniqueJoinNotes(group.partNotes, partNotes);
+      }
+      return;
+    }
+
+    const jobNos: string[] = [];
+    if (jobNumber) {
+      jobNumber.split(",").forEach((token) => {
+        const t = token.trim();
+        if (t && !jobNos.some((j) => j.toLowerCase() === t.toLowerCase())) {
+          jobNos.push(t);
+        }
+      });
+    }
+
+    groupIndex.set(key, groups.length);
+    groups.push({
       partNo,
       partName,
-      jobNumber,
-      qtyOrdered: partQty > 0 ? partQty : 1,
-      unit: partUnit,
-      unitPrice,
-      discount,
-      discountType,
-      notes: partNotes,
-      included: true,
-    };
+      jobNos,
+      partQty: partQty > 0 ? partQty : 1,
+      partUnit,
+      partNotes,
+      firstIndex: partIndex,
+    });
   });
+
+  return groups.map((group) => ({
+    key: `d${detailIndex}-p${group.firstIndex}`,
+    partNo: group.partNo,
+    partName: group.partName,
+    jobNumber: group.jobNos.join(", "),
+    qtyOrdered: group.partQty,
+    unit: group.partUnit,
+    unitPrice,
+    discount,
+    discountType,
+    notes: group.partNotes,
+    included: true,
+  }));
 }
 
 /**

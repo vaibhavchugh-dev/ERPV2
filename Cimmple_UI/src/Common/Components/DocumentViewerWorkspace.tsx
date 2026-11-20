@@ -157,13 +157,18 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
-  const [fitMode, setFitMode] = useState<"width" | "page" | "custom">("width");
+  /** Default: natural PDF size (100%). Fit width/page are opt-in. */
+  const [fitMode, setFitMode] = useState<"width" | "page" | "custom">("custom");
   const [thumbnailsOpen, setThumbnailsOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
   const [textContent, setTextContent] = useState("");
   const [containerWidth, setContainerWidth] = useState(720);
+  const [containerHeight, setContainerHeight] = useState(600);
+  /** Natural page width/height ratio (unrotated PDF page). */
+  const [pageAspect, setPageAspect] = useState(8.5 / 11);
+  const containerSizeRef = useRef({ width: 720, height: 600 });
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolvedContentType, setResolvedContentType] = useState<string | undefined>(undefined);
   const [resolvedForKey, setResolvedForKey] = useState<string | null>(null);
@@ -269,27 +274,51 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
     onPrefetchDocument(next, nextIndex);
   }, [sourceUrl, safeIndex, documents, onPrefetchDocument, current]);
 
-  // Track canvas width for Fit Width / Fit Page
+  // Track viewport size for Fit Width / Fit Page.
+  // Debounce + threshold avoids ResizeObserver feedback loops (scrollbar ↔ page width).
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width && width > 0) {
-        setContainerWidth(width);
+
+    let rafId = 0;
+    const applySize = (width: number, height: number) => {
+      const w = Math.round(width);
+      const h = Math.round(height);
+      const prev = containerSizeRef.current;
+      // Ignore sub-pixel / scrollbar jitter that retriggers layout.
+      if (Math.abs(w - prev.width) < 2 && Math.abs(h - prev.height) < 2) {
+        return;
       }
+      containerSizeRef.current = { width: w > 0 ? w : prev.width, height: h > 0 ? h : prev.height };
+      if (w > 0) setContainerWidth(w);
+      if (h > 0) setContainerHeight(h);
+    };
+
+    applySize(el.clientWidth, el.clientHeight);
+
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        applySize(rect.width, rect.height);
+      });
     });
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [safeIndex, kind, sourceUrl]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, [safeIndex, kind, sourceUrl, numPages, thumbnailsOpen, isFullscreen]);
 
   // Reset per-document view state when switching attachments
   useEffect(() => {
     setNumPages(0);
     setPageNumber(1);
     setRotation(0);
-    setFitMode("width");
+    setFitMode("custom");
     setScale(1);
+    setPageAspect(8.5 / 11);
     setTextContent("");
   }, [current?.id]);
 
@@ -340,15 +369,29 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
     };
   }, [current, kind, sourceUrl]);
 
-  const pageWidth = useMemo(() => {
+  /** Pixel width used only for fit-width / fit-page modes. */
+  const fittedPageWidth = useMemo(() => {
+    const padX = 48;
+    const padY = 48;
+    const availW = Math.max(240, containerWidth - padX);
+    const availH = Math.max(200, containerHeight - padY);
+    const aspect = pageAspect > 0.05 ? pageAspect : 8.5 / 11;
+    // After 90/270° rotation, displayed aspect swaps.
+    const displayAspect = rotation % 180 !== 0 ? 1 / aspect : aspect;
+
     if (fitMode === "width") {
-      return Math.max(240, containerWidth - 48);
+      return availW;
     }
     if (fitMode === "page") {
-      return Math.max(240, Math.min(containerWidth - 48, 820));
+      const widthIfFitWidth = availW;
+      const heightIfFitWidth = widthIfFitWidth / displayAspect;
+      if (heightIfFitWidth <= availH) {
+        return widthIfFitWidth;
+      }
+      return Math.max(240, availH * displayAspect);
     }
-    return Math.max(240, (containerWidth - 48) * scale);
-  }, [fitMode, containerWidth, scale]);
+    return null;
+  }, [fitMode, containerWidth, containerHeight, pageAspect, rotation]);
 
   const goToPage = useCallback((page: number) => {
     if (page < 1 || (numPages > 0 && page > numPages)) return;
@@ -370,15 +413,50 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
     setScale((s) => Math.max(MIN_ZOOM, +(s - ZOOM_STEP).toFixed(2)));
   };
 
+  const measureViewport = () => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const w = Math.round(el.clientWidth);
+    const h = Math.round(el.clientHeight);
+    containerSizeRef.current = { width: w, height: h };
+    setContainerWidth(w);
+    setContainerHeight(h);
+  };
+
   const handleFitWidth = () => {
+    // Toggle off → back to natural size.
+    if (fitMode === "width") {
+      setFitMode("custom");
+      setScale(1);
+      return;
+    }
+    measureViewport();
     setFitMode("width");
     setScale(1);
   };
 
   const handleFitPage = () => {
+    // Toggle off → back to natural size.
+    if (fitMode === "page") {
+      setFitMode("custom");
+      setScale(1);
+      return;
+    }
+    measureViewport();
     setFitMode("page");
     setScale(1);
   };
+
+  const handlePageLoadSuccess = useCallback((page: { originalWidth?: number; originalHeight?: number; width?: number; height?: number }) => {
+    const w = page.originalWidth || page.width || 0;
+    const h = page.originalHeight || page.height || 0;
+    if (w > 0 && h > 0) {
+      setPageAspect((prev) => {
+        const next = w / h;
+        return Math.abs(prev - next) < 0.001 ? prev : next;
+      });
+    }
+  }, []);
 
   const handleRotate = () => {
     setRotation((r) => (r + 90) % 360);
@@ -778,10 +856,13 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
                     >
                       <Page
                         pageNumber={page}
-                        width={pageWidth}
+                        {...(fittedPageWidth != null
+                          ? { width: fittedPageWidth }
+                          : { scale })}
                         rotate={rotation}
                         renderTextLayer={!singlePageCanvas}
                         renderAnnotationLayer={!singlePageCanvas}
+                        onLoadSuccess={handlePageLoadSuccess}
                         loading={
                           <div className="doc-viewer__page-loading">Loading page {page}…</div>
                         }

@@ -183,6 +183,26 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
     [session, onSessionChange, kind]
   );
 
+  // Keep only matched job labels on review lines; unmatched jobs stay blank.
+  useEffect(() => {
+    if (session.step !== "review" || !session.review || jobOrders.length === 0) {
+      return;
+    }
+    const review = session.review;
+    let changed = false;
+    const nextLines = review.lines.map((line) => {
+      const raw = (line.jobNumber || "").trim();
+      if (!raw) return line;
+      const matchedIds = resolveJobOrderIds(raw, jobOrders);
+      const matchedLabel = jobNumbersFromIds(matchedIds, jobOrders);
+      if (matchedLabel === raw) return line;
+      changed = true;
+      return { ...line, jobNumber: matchedLabel };
+    });
+    if (!changed) return;
+    updateSession({ review: { ...review, lines: nextLines } });
+  }, [session.step, session.review, jobOrders, updateSession]);
+
   useEffect(() => {
     if (session.step !== "extracting") {
       setProcessingIndex(0);
@@ -684,7 +704,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                         >
                           <option value={0}>
                             {session.review.vendorNameHint
-                              ? `Unmatched: ${session.review.vendorNameHint}`
+                              ? "Unmatched"
                               : "Select vendor…"}
                           </option>
                           {vendors.map((v) => (
@@ -907,11 +927,6 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                                             .map((j) => formatJobOrderLabel(j))
                                             .join(", ")
                                         : "";
-                                    const unmatched =
-                                      line.jobNumber?.trim() &&
-                                      selectedIds.length === 0
-                                        ? line.jobNumber.trim()
-                                        : "";
                                     const isOpen =
                                       openJobDropdownKey === line.key;
 
@@ -922,9 +937,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                                           className="line-job-trigger"
                                           disabled={!line.included}
                                           title={
-                                            displayText ||
-                                            unmatched ||
-                                            "Select job orders"
+                                            displayText || "Select job orders"
                                           }
                                           onClick={() =>
                                             setOpenJobDropdownKey(
@@ -934,15 +947,13 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                                         >
                                           <span
                                             className={
-                                              displayText || unmatched
+                                              displayText
                                                 ? "line-job-value"
                                                 : "line-job-placeholder"
                                             }
                                           >
                                             {displayText ||
-                                              (unmatched
-                                                ? `Unmatched: ${unmatched}`
-                                                : "Select job orders…")}
+                                              "Select job orders…"}
                                           </span>
                                           <span className="line-job-caret" aria-hidden>
                                             ▾

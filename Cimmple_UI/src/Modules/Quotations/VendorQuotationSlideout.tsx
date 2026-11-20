@@ -1620,15 +1620,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     }
 
     const nextSelectedJobs = new Map<number, Set<number>>();
-    details.forEach((detail, index) => {
+    const detailsWithMatchedJobs = details.map((detail, index) => {
       const jobSource = (detail.JobNumber || "").trim();
-      if (!jobSource) return;
+      if (!jobSource) {
+        return { ...detail, JobNumber: "" };
+      }
 
       const jobTokens = jobSource
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
       const selectedIds = new Set<number>();
+      const matchedLabels: string[] = [];
       jobTokens.forEach((jobNum) => {
         const matching = availableJobs.find((jo) => {
           const label = (jo.jobNumber || `JO#${jo.jobOrderNumber}`).trim();
@@ -1639,11 +1642,18 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
             jo.jobOrderNumber?.toString() === jobNum.replace(/^JO#?/i, "")
           );
         });
-        if (matching) selectedIds.add(matching.jobOrderID);
+        if (matching && !selectedIds.has(matching.jobOrderID)) {
+          selectedIds.add(matching.jobOrderID);
+          matchedLabels.push(
+            (matching.jobNumber || `JO#${matching.jobOrderNumber}`).trim()
+          );
+        }
       });
       if (selectedIds.size > 0) {
         nextSelectedJobs.set(index, selectedIds);
       }
+      // Unmatched jobs are dropped — leave blank instead of carrying raw text.
+      return { ...detail, JobNumber: matchedLabels.join(", ") };
     });
     setSelectedJobOrders(nextSelectedJobs);
 
@@ -1651,7 +1661,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       ...prev,
       ...formPatch,
       BuyerName: contactPerson || prev.BuyerName,
-      Details: details,
+      Details: detailsWithMatchedJobs,
     }));
     setIsStateChanged(true);
     setErrors((prev) => {

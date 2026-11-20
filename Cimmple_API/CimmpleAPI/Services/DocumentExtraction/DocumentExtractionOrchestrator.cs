@@ -123,9 +123,14 @@ namespace CimmpleAPI.Services.DocumentExtraction
             string? fileName,
             CancellationToken cancellationToken)
         {
-            Console.WriteLine("[DocumentExtraction] Using Claude Haiku FALLBACK");
+            var viaFallback = PreferCimmpleApi();
+            Console.WriteLine(
+                viaFallback
+                    ? "[DocumentExtraction] Using Claude Haiku FALLBACK"
+                    : "[DocumentExtraction] Using Claude Haiku (primary)");
             _logger.LogWarning(
-                "Extracting vendor quotation via Claude Haiku fallback ({File}).",
+                "Extracting vendor quotation via Claude Haiku ({Mode}) ({File}).",
+                viaFallback ? "fallback" : "primary",
                 fileName ?? "document.pdf");
 
             var claudeResult = await _claude.ExtractVendorQuotationFromPdfAsync(
@@ -137,7 +142,9 @@ namespace CimmpleAPI.Services.DocumentExtraction
             {
                 Result = claudeResult,
                 Provider = "Claude",
-                Message = "Extracted via Claude Haiku fallback"
+                Message = viaFallback
+                    ? "Extracted via Claude Haiku fallback"
+                    : "Extracted via Claude Haiku"
             };
         }
 
