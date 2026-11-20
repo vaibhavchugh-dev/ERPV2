@@ -1607,6 +1607,46 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       defaultGlcode: expenseGl,
     });
 
+    // Sync Job No multi-select state so the main slideout dropdown shows selections.
+    const availableJobs =
+      jobOrders.length > 0
+        ? jobOrders
+        : await JobOrderService.GetJobOrders({
+            tenantid:
+              JSON.parse(localStorage.getItem("storage") || "{}")?.tenantID || 0,
+          }).then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as JobOrderMaster[]);
+    if (availableJobs.length > 0 && jobOrders.length === 0) {
+      setJobOrders(availableJobs);
+    }
+
+    const nextSelectedJobs = new Map<number, Set<number>>();
+    details.forEach((detail, index) => {
+      const jobSource = (detail.JobNumber || "").trim();
+      if (!jobSource) return;
+
+      const jobTokens = jobSource
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const selectedIds = new Set<number>();
+      jobTokens.forEach((jobNum) => {
+        const matching = availableJobs.find((jo) => {
+          const label = (jo.jobNumber || `JO#${jo.jobOrderNumber}`).trim();
+          return (
+            label.toLowerCase() === jobNum.toLowerCase() ||
+            (jo.jobNumber || "").trim().toLowerCase() === jobNum.toLowerCase() ||
+            `JO#${jo.jobOrderNumber}` === jobNum ||
+            jo.jobOrderNumber?.toString() === jobNum.replace(/^JO#?/i, "")
+          );
+        });
+        if (matching) selectedIds.add(matching.jobOrderID);
+      });
+      if (selectedIds.size > 0) {
+        nextSelectedJobs.set(index, selectedIds);
+      }
+    });
+    setSelectedJobOrders(nextSelectedJobs);
+
     setFormData((prev) => ({
       ...prev,
       ...formPatch,
@@ -2847,11 +2887,16 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                     </tbody>
                     <tfoot>
                       <tr style={{ backgroundColor: "#f9fafb", fontWeight: 600 }}>
-                        <td colSpan={8} style={{ padding: "0.75rem", textAlign: "right" }}>Total Amount:</td>
+                        {/* Columns: Item, Line type, Part No, Description, Job No, Qty, Unit, Unit Price, Discount = 9 */}
+                        <td colSpan={9} style={{ padding: "0.75rem", textAlign: "right" }}>
+                          Total Amount:
+                        </td>
+                        {/* Align under line Total column */}
                         <td style={{ padding: "0.75rem", fontWeight: 600 }}>
                           {formatCurrency(formData.TotalAmount)}
                         </td>
-                        <td colSpan={2} style={{ padding: "0.75rem" }}></td>
+                        {/* Account, Notes, Action */}
+                        <td colSpan={3} style={{ padding: "0.75rem" }}></td>
                       </tr>
                     </tfoot>
                   </table>
@@ -3490,6 +3535,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
               onSessionChange={setExtractionSession}
               onClose={() => setShowExtractionSlideout(false)}
               vendors={vendors}
+              jobOrders={jobOrders}
               hostHasExistingLines={formHasMeaningfulLines(formData.Details)}
               onImport={handleExtractionImport}
             />,

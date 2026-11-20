@@ -60,10 +60,28 @@ namespace CimmpleAPI.Services.DocumentExtraction
                 return await ExtractWithClaudeAsync(pdfBytes, fileName, cancellationToken);
             }
 
-            var remote = await _cimmpleApi.TryExtractVendorQuotationAsync(
-                pdfBytes,
-                fileName,
-                cancellationToken);
+            // Fail fast on hosted API so Claude fallback can start quickly when the host is down.
+            using var hostedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var hostedTimeoutSeconds = _settings.CimmpleApi?.TimeoutSeconds > 0
+                ? Math.Clamp(_settings.CimmpleApi.TimeoutSeconds, 5, 60)
+                : 20;
+            hostedCts.CancelAfter(TimeSpan.FromSeconds(hostedTimeoutSeconds));
+
+            CimmpleExtractionAttempt remote;
+            try
+            {
+                remote = await _cimmpleApi.TryExtractVendorQuotationAsync(
+                    pdfBytes,
+                    fileName,
+                    hostedCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                remote = new CimmpleExtractionAttempt
+                {
+                    Error = $"api.extraction.cimmple.net timed out after {hostedTimeoutSeconds}s."
+                };
+            }
 
             if (remote.Succeeded && remote.Result != null)
             {
