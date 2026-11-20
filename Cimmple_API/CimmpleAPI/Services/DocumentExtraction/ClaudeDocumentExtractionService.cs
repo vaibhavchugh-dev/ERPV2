@@ -44,15 +44,17 @@ namespace CimmpleAPI.Services.DocumentExtraction
             if (pdfBytes == null || pdfBytes.Length == 0)
                 throw new ArgumentException("PDF file is empty.", nameof(pdfBytes));
 
-            // Haiku-only: resolve + re-validate immediately before the Anthropic call.
+            // Strict low-model lock: always Haiku; ignore Claude:Model if set to a higher tier.
             var model = DocumentExtractionPrompts.ResolveClaudeModel(
                 _claudeSettings.Model,
                 _extractionSettings.AllowAutoSwitch);
             DocumentExtractionPrompts.EnsureCheapClaudeModel(model);
+            // Belt-and-suspenders: never send whatever was in config.
+            model = DocumentExtractionPrompts.DefaultHaikuModel;
 
-            // Cap tokens for faster Haiku fallback (still enough for typical VQ line lists).
-            var configuredTokens = _claudeSettings.MaxTokens > 0 ? _claudeSettings.MaxTokens : 4096;
-            var maxTokens = Math.Clamp(configuredTokens, 1024, 4096);
+            // Cap tokens for cheaper/faster Haiku (typical VQ JSON fits well under 2048).
+            var configuredTokens = _claudeSettings.MaxTokens > 0 ? _claudeSettings.MaxTokens : 2048;
+            var maxTokens = Math.Clamp(configuredTokens, 512, 4096);
             var prompt = DocumentExtractionPrompts.ResolvePrompt(DocumentExtractionKinds.VendorQuotation);
 
             var requestBody = new JObject
