@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
@@ -67,11 +67,16 @@ import {
   DocumentExtractionSlideout,
   createEmptyExtractionSession,
   clearExtractionSession,
+  hasExtractionProgress,
   applyVendorQuotationImport,
   formHasMeaningfulLines,
+  isVendorExtractionReview,
   type DocumentExtractionSession,
   type DocumentExtractionImportPayload,
+  type ExtractedVendorDraft,
 } from "../../Common/DocumentExtraction";
+
+const VendorMasterSlideout = lazy(() => import("../Masters/VendorMasterSlideout"));
 
 const PAGE_PATH = "/quotations/vendor";
 
@@ -115,6 +120,7 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
     canAdd,
     ensure,
   } = usePagePermissions(PAGE_PATH);
+  const { canAdd: canAddVendor } = usePagePermissions("/masters/vendor");
   const isNew = quotationId <= 0;
   const canSave = isNew ? canAdd : canEdit;
 
@@ -204,6 +210,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [vendorEmail, setVendorEmail] = useState("");
   const [showConvertToOrderDialog, setShowConvertToOrderDialog] = useState(false);
+  const [showCreateVendor, setShowCreateVendor] = useState(false);
+  const [vendorCreateInitialValues, setVendorCreateInitialValues] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [unmatchedVendorDraft, setUnmatchedVendorDraft] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [unmatchedVendorHint, setUnmatchedVendorHint] = useState("");
   const [convertingToOrder, setConvertingToOrder] = useState(false);
   const [selectedLineItems, setSelectedLineItems] = useState<Set<number>>(new Set());
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set());
@@ -630,59 +642,70 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   };
 
   const handleVendorChange = async (vendorId: number) => {
-    const selectedVendor = vendors.find(v => v.vendor_id === vendorId);
-    if (selectedVendor) {
-      // Update basic vendor information first
-      setFormData(prev => ({
+    if (!vendorId || vendorId <= 0) {
+      setFormData((prev) => ({
         ...prev,
-        VendorID: selectedVendor.vendor_id,
-        VendorCode: selectedVendor.vendorcode,
-        VendorName: selectedVendor.company_name,
+        VendorID: 0,
+        VendorCode: "",
+        VendorName: "",
+        BuyerName: "",
       }));
+      setVendorEmail("");
+      setIsStateChanged(true);
+      return;
+    }
 
-      // Fetch full vendor details to get default contact person
-      try {
-        const fullVendorDetails = await VendorService.GetVendorById(vendorId);
-        if (fullVendorDetails) {
-          // Find default contact person from VendorContact array
-          let defaultContactPerson = "";
-          if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
-            const defaultContact = fullVendorDetails.VendorContact.find(contact => contact.isDefault);
-            if (defaultContact) {
-              // Format as "FirstName LastName" or just use first name if no last name
-              defaultContactPerson = `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
-            } else if (fullVendorDetails.VendorContact.length > 0) {
-              // If no default is set, use the first contact
-              const firstContact = fullVendorDetails.VendorContact[0];
-              defaultContactPerson = `${firstContact.firstname} ${firstContact.lastname || ""}`.trim();
-            }
+    const listed = vendors.find((v) => v.vendor_id === vendorId);
+    try {
+      const fullVendorDetails = await VendorService.GetVendorById(vendorId);
+      if (fullVendorDetails) {
+        let defaultContactPerson = "";
+        if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
+          const defaultContact = fullVendorDetails.VendorContact.find((contact) => contact.isDefault);
+          if (defaultContact) {
+            defaultContactPerson = `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
+          } else {
+            const firstContact = fullVendorDetails.VendorContact[0];
+            defaultContactPerson = `${firstContact.firstname} ${firstContact.lastname || ""}`.trim();
           }
-
-          // Update form data with default contact person and expense defaults
-          const vendorExpenseGl =
-            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
-            companyDefaultExpenseGlcode;
-          setDefaultExpenseGlcode(vendorExpenseGl);
-          const contactEmail =
-            fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
-            fullVendorDetails.VendorContact?.[0]?.email ||
-            fullVendorDetails.email ||
-            "";
-          setVendorEmail(contactEmail.trim());
-          setFormData(prev => ({
-            ...prev,
-            BuyerName: defaultContactPerson,
-            Details: (prev.Details || []).map((d) =>
-              !d.glcode || !String(d.glcode).trim()
-                ? { ...d, glcode: vendorExpenseGl }
-                : d
-            ),
-          }));
         }
-      } catch (error) {
-        console.error("Error fetching vendor details:", error);
-        // Don't show error toast for this - it's not critical
+
+        const vendorExpenseGl =
+          accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+          companyDefaultExpenseGlcode;
+        setDefaultExpenseGlcode(vendorExpenseGl);
+        const contactEmail =
+          fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
+          fullVendorDetails.VendorContact?.[0]?.email ||
+          fullVendorDetails.email ||
+          "";
+        setVendorEmail(contactEmail.trim());
+        setFormData((prev) => ({
+          ...prev,
+          VendorID: fullVendorDetails.vendor_id || vendorId,
+          VendorCode: fullVendorDetails.vendorcode || listed?.vendorcode || "",
+          VendorName: fullVendorDetails.company_name || listed?.company_name || "",
+          BuyerName: defaultContactPerson,
+          Details: (prev.Details || []).map((d) =>
+            !d.glcode || !String(d.glcode).trim()
+              ? { ...d, glcode: vendorExpenseGl }
+              : d
+          ),
+        }));
+        setIsStateChanged(true);
+        return;
       }
+    } catch (error) {
+      console.error("Error fetching vendor details:", error);
+    }
+
+    if (listed) {
+      setFormData((prev) => ({
+        ...prev,
+        VendorID: listed.vendor_id,
+        VendorCode: listed.vendorcode,
+        VendorName: listed.company_name,
+      }));
     }
     setIsStateChanged(true);
   };
@@ -1560,6 +1583,8 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   }, []);
 
   const handleExtractionImport = async (payload: DocumentExtractionImportPayload) => {
+    if (!isVendorExtractionReview(payload.review)) return;
+
     let expenseGl = defaultExpenseGlcode || companyDefaultExpenseGlcode || "";
     let contactPerson = "";
     let contactEmail = "";
@@ -1621,9 +1646,37 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
     const nextSelectedJobs = new Map<number, Set<number>>();
     const detailsWithMatchedJobs = details.map((detail, index) => {
-      const jobSource = (detail.JobNumber || "").trim();
+      // Pull any job refs that leaked into Notes into the Job No matching path.
+      const notesRaw = (detail.Notes || "").trim();
+      const jobFromNotes: string[] = [];
+      let cleanedNotes = notesRaw;
+      if (notesRaw) {
+        const labeledRe =
+          /\b(?:job\s*(?:no\.?|number|#)?|jo\s*(?:no\.?|#)?)\s*[:\-–]?\s*([A-Za-z0-9][\w\-\/]*)/gi;
+        let labeledMatch: RegExpExecArray | null;
+        while ((labeledMatch = labeledRe.exec(notesRaw)) !== null) {
+          if (labeledMatch[1]) jobFromNotes.push(labeledMatch[1].trim());
+        }
+        const bare = notesRaw.match(/\b(?:JO[#\-_\s]?\d+|#JO\d+)\b/gi) || [];
+        bare.forEach((t) => jobFromNotes.push(t.trim()));
+        cleanedNotes = notesRaw
+          .replace(
+            /\b(?:job\s*(?:no\.?|number|#)?|jo\s*(?:no\.?|#)?)\s*[:\-–]?\s*[A-Za-z0-9][\w\-\/]*/gi,
+            " "
+          )
+          .replace(/\b(?:JO[#\-_\s]?\d+|#JO\d+)\b/gi, " ")
+          .split(/\s*\|\s*/)
+          .map((f) => f.replace(/\s+/g, " ").trim())
+          .filter((f) => f && !looksLikeJobPartNo(f))
+          .join(" | ");
+      }
+
+      const jobSource = [detail.JobNumber || "", ...jobFromNotes]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(", ");
       if (!jobSource) {
-        return { ...detail, JobNumber: "" };
+        return { ...detail, JobNumber: "", Notes: cleanedNotes };
       }
 
       const jobTokens = jobSource
@@ -1633,13 +1686,17 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       const selectedIds = new Set<number>();
       const matchedLabels: string[] = [];
       jobTokens.forEach((jobNum) => {
+        const normalized = jobNum.replace(/^JO[#\-_\s]?/i, "").trim();
         const matching = availableJobs.find((jo) => {
           const label = (jo.jobNumber || `JO#${jo.jobOrderNumber}`).trim();
+          const joNum = (jo.jobNumber || "").trim();
           return (
             label.toLowerCase() === jobNum.toLowerCase() ||
-            (jo.jobNumber || "").trim().toLowerCase() === jobNum.toLowerCase() ||
-            `JO#${jo.jobOrderNumber}` === jobNum ||
-            jo.jobOrderNumber?.toString() === jobNum.replace(/^JO#?/i, "")
+            joNum.toLowerCase() === jobNum.toLowerCase() ||
+            label.toLowerCase() === `jo#${normalized}`.toLowerCase() ||
+            joNum.toLowerCase() === normalized.toLowerCase() ||
+            `JO#${jo.jobOrderNumber}`.toLowerCase() === jobNum.toLowerCase() ||
+            jo.jobOrderNumber?.toString() === normalized
           );
         });
         if (matching && !selectedIds.has(matching.jobOrderID)) {
@@ -1652,8 +1709,12 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       if (selectedIds.size > 0) {
         nextSelectedJobs.set(index, selectedIds);
       }
-      // Unmatched jobs are dropped — leave blank instead of carrying raw text.
-      return { ...detail, JobNumber: matchedLabels.join(", ") };
+      // Match → preselect in Job No dropdown; no match → leave blank (never dump into Notes).
+      return {
+        ...detail,
+        JobNumber: matchedLabels.join(", "),
+        Notes: cleanedNotes,
+      };
     });
     setSelectedJobOrders(nextSelectedJobs);
 
@@ -1685,10 +1746,52 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
       });
     }
 
+    if (
+      payload.review.matchedVendorId <= 0 &&
+      (payload.review.extractedVendorDraft || payload.review.vendorNameHint)
+    ) {
+      setUnmatchedVendorDraft(
+        payload.review.extractedVendorDraft || {
+          company_name: payload.review.vendorNameHint.split(",")[0]?.trim() || "",
+          email: "",
+          phone_number: "",
+          address: "",
+          apartment: "",
+          City: "",
+          states: "",
+          zipcode: "",
+          country: "US",
+          shippingaddress: "",
+          shippingApartment: "",
+          shippingCity: "",
+          shippingStates: "",
+          shippingZipCode: "",
+          shippingCountry: "US",
+          contactFirstName: "",
+          contactLastName: "",
+          contactEmail: "",
+          contactPhone: "",
+        }
+      );
+      setUnmatchedVendorHint(payload.review.vendorNameHint || "");
+    } else {
+      setUnmatchedVendorDraft(null);
+      setUnmatchedVendorHint("");
+    }
+
     warnings.forEach((w) => toast.warning(w));
     toast.success(
-      "Extracted details imported into the quotation. Review and save when ready."
+      "Extracted details added to the quotation. Review and save when ready."
     );
+  };
+
+  const openCreateVendorFromExtraction = () => {
+    if (!canAddVendor) {
+      toast.error("You do not have permission to create vendors.");
+      return;
+    }
+    setVendorCreateInitialValues(unmatchedVendorDraft);
+    setShowCreateVendor(true);
   };
 
   const handleCancel = () => {
@@ -1829,7 +1932,20 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
   return (
     <div
       className="vendor-quotation-slideout-overlay"
-      onClick={handleCancel}
+      onClick={() => {
+        if (
+          showCreateVendor ||
+          showOrderSlideout ||
+          showExtractionSlideout ||
+          showMultiVendorDialog ||
+          showConvertToOrderDialog ||
+          showTextEditorPopup ||
+          showEmailDialog
+        ) {
+          return;
+        }
+        handleCancel();
+      }}
     >
       {documentViewerOpen &&
         createPortal(
@@ -1914,7 +2030,11 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                 type="button"
                 className="btn-secondary vendor-quotation-import-pdf-btn"
                 onClick={() => setShowExtractionSlideout(true)}
-                title="Upload a vendor quotation PDF and extract details with AI"
+                title={
+                  hasExtractionProgress(extractionSession)
+                    ? `Resume PDF import${extractionSession.fileName ? `: ${extractionSession.fileName}` : ""}`
+                    : "Upload a vendor quotation PDF and extract details with AI"
+                }
               >
                 <svg
                   className="vendor-quotation-import-pdf-icon"
@@ -1929,12 +2049,21 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
                   />
                   <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
                   <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
-                  <path
+                  <text
+                    x="12"
+                    y="17.6"
+                    textAnchor="middle"
                     fill="#fff"
-                    d="M7.1 17.3v-3.6h1.15c.72 0 1.18.38 1.18 1.02 0 .55-.32.9-.82.98l.95 1.6H8.95l-.82-1.48H8.15v1.48H7.1zm1.05-2.22h.28c.28 0 .45-.14.45-.38s-.17-.36-.45-.36h-.28v.74zm3.02 2.22v-3.6h1.55c1.08 0 1.72.62 1.72 1.8s-.64 1.8-1.72 1.8H11.17zm1.05-2.72v1.84h.48c.52 0 .82-.3.82-.92 0-.62-.3-.92-.82-.92h-.48zm3.35 2.72v-3.6h2.55v.88h-1.5v.62h1.35v.86h-1.35v1.24H15.57z"
-                  />
+                    fontSize="6"
+                    fontWeight="700"
+                    fontFamily="Arial, Helvetica, sans-serif"
+                  >
+                    PDF
+                  </text>
                 </svg>
-                Import from PDF
+                {hasExtractionProgress(extractionSession)
+                  ? "Resume PDF import"
+                  : "Import from PDF"}
               </button>
             )}
             {quotationId > 0 && (
@@ -2085,29 +2214,88 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
 
         <form className="vendor-quotation-slideout-form" onSubmit={(e) => e.preventDefault()}>
           <div className="vendor-quotation-slideout-content">
+            {unmatchedVendorDraft && formData.VendorID <= 0 && (
+              <div className="extraction-vendor-miss-message" role="status">
+                <div className="extraction-vendor-miss-text">
+                  Vendor{" "}
+                  <strong>
+                    {unmatchedVendorHint ||
+                      unmatchedVendorDraft.company_name ||
+                      "from PDF"}
+                  </strong>{" "}
+                  was not found in Vendor Master.
+                  {unmatchedVendorDraft.address || unmatchedVendorDraft.City
+                    ? " Address and contact details from the PDF can be used to create it."
+                    : " You can create it from the extracted details."}
+                </div>
+                <div className="extraction-vendor-miss-actions">
+                  {canAddVendor && (
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      onClick={openCreateVendorFromExtraction}
+                    >
+                      Create vendor
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    onClick={() => {
+                      setUnmatchedVendorDraft(null);
+                      setUnmatchedVendorHint("");
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Basic Information */}
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="VendorID">Vendor <span className="required">*</span></label>
-                <div className={`input-group ${errors.VendorID ? "has-error" : ""}`}>
-                  <div className="input-group-prepend">
-                    <span className="input-group-icon">🏢</span>
+                <div className="party-select-with-add">
+                  <div className={`input-group ${errors.VendorID ? "has-error" : ""}`}>
+                    <div className="input-group-prepend">
+                      <span className="input-group-icon">🏢</span>
+                    </div>
+                    <select
+                      id="VendorID"
+                      name="VendorID"
+                      className={`form-input ${errors.VendorID ? "error" : ""}`}
+                      value={formData.VendorID}
+                      onChange={(e) => {
+                        handleVendorChange(Number(e.target.value));
+                        if (Number(e.target.value) > 0) {
+                          setUnmatchedVendorDraft(null);
+                          setUnmatchedVendorHint("");
+                        }
+                      }}
+                      required
+                    >
+                      <option value="0">Select Vendor</option>
+                      {vendors.map((vendor) => (
+                        <option key={vendor.vendor_id} value={vendor.vendor_id}>
+                          {vendor.company_name} ({vendor.vendorcode})
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    id="VendorID"
-                    name="VendorID"
-                    className={`form-input ${errors.VendorID ? "error" : ""}`}
-                    value={formData.VendorID}
-                    onChange={(e) => handleVendorChange(Number(e.target.value))}
-                    required
-                  >
-                    <option value="0">Select Vendor</option>
-                    {vendors.map((vendor) => (
-                      <option key={vendor.vendor_id} value={vendor.vendor_id}>
-                        {vendor.company_name} ({vendor.vendorcode})
-                      </option>
-                    ))}
-                  </select>
+                  {canAddVendor && (
+                    <button
+                      type="button"
+                      className="btn-add-party"
+                      title="Add new vendor"
+                      onClick={() => {
+                        setVendorCreateInitialValues(null);
+                        setShowCreateVendor(true);
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
                 {errors.VendorID && <span className="error-message">{errors.VendorID}</span>}
               </div>
@@ -3535,6 +3723,27 @@ const VendorQuotationSlideout: React.FC<VendorQuotationSlideoutProps> = ({
           />
         </div>
       ) : null}
+
+      {showCreateVendor && (
+        <Suspense fallback={null}>
+          <VendorMasterSlideout
+            vendorId={0}
+            initialValues={vendorCreateInitialValues}
+            onSaved={async (id) => {
+              await loadVendors();
+              await handleVendorChange(id);
+              setUnmatchedVendorDraft(null);
+              setUnmatchedVendorHint("");
+              setVendorCreateInitialValues(null);
+              setShowCreateVendor(false);
+            }}
+            onClose={() => {
+              setShowCreateVendor(false);
+              setVendorCreateInitialValues(null);
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Document extraction nested slideout (New Quotation only) — portaled above VQ transform */}
       {showExtractionSlideout && isNew

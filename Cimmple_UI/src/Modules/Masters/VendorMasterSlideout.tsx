@@ -16,14 +16,41 @@ import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 
+export interface VendorMasterInitialValues {
+  company_name?: string;
+  email?: string;
+  phone_number?: string;
+  address?: string;
+  apartment?: string;
+  City?: string;
+  states?: string;
+  zipcode?: string;
+  country?: string;
+  shippingaddress?: string;
+  shippingApartment?: string;
+  shippingCity?: string;
+  shippingStates?: string;
+  shippingZipCode?: string;
+  shippingCountry?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+}
+
 interface VendorMasterSlideoutProps {
   vendorId: number;
   onClose: (refreshList?: boolean) => void;
+  onSaved?: (vendorId: number) => void | Promise<void>;
+  /** Prefill for new vendor create (e.g. from document extraction). */
+  initialValues?: VendorMasterInitialValues | null;
 }
 
 const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
   vendorId,
   onClose,
+  onSaved,
+  initialValues,
 }) => {
   const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/vendor");
   const canSave = vendorId > 0 ? canEdit : canAdd;
@@ -115,20 +142,80 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
       setPortalPassword("");
       setPortalPasswordConfirm("");
       setSendPortalInviteEmail(true);
-      setContacts([
-        {
-          id: 0,
-          customer_id: 0,
-          title: "",
-          firstname: "",
-          lastname: "",
-          phoneno: "",
-          email: "",
-          isDefault: true,
-        },
-      ]);
+      const draft = initialValues || null;
+      if (draft) {
+        const billingAddress = draft.address || "";
+        const billingApt = draft.apartment || "";
+        const billingCity = draft.City || "";
+        const billingState = draft.states || "";
+        const billingZip = draft.zipcode || "";
+        const billingCountry = draft.country || "US";
+        const shippingAddress = (draft.shippingaddress || "").trim();
+        const shippingApt = (draft.shippingApartment || "").trim();
+        const shippingCity = (draft.shippingCity || "").trim();
+        const shippingState = (draft.shippingStates || "").trim();
+        const shippingZip = (draft.shippingZipCode || "").trim();
+        const shippingCountry = (draft.shippingCountry || "").trim();
+        const hasDistinctShipping = !!(
+          shippingAddress ||
+          shippingCity ||
+          shippingState ||
+          shippingZip
+        );
+        setFormData((prev) => ({
+          ...prev,
+          company_name: draft.company_name || "",
+          email: draft.email || "",
+          phone_number: draft.phone_number || "",
+          address: billingAddress,
+          apartment: billingApt,
+          City: billingCity,
+          states: billingState,
+          zipcode: billingZip,
+          country: billingCountry,
+          // Always use extracted shipping when present — never silently overwrite with billing.
+          shippingaddress: hasDistinctShipping ? shippingAddress : "",
+          shippingApartment: hasDistinctShipping ? shippingApt : "",
+          shippingCity: hasDistinctShipping ? shippingCity : "",
+          shippingStates: hasDistinctShipping ? shippingState : "",
+          shippingZipCode: hasDistinctShipping ? shippingZip : "",
+          shippingCountry: hasDistinctShipping
+            ? shippingCountry || "US"
+            : "US",
+          TenantID: storage?.tenantID || 0,
+        }));
+        setContacts([
+          {
+            id: 0,
+            customer_id: 0,
+            title: "",
+            firstname: draft.contactFirstName || "",
+            lastname: draft.contactLastName || "",
+            phoneno: draft.contactPhone || draft.phone_number || "",
+            email: draft.contactEmail || draft.email || "",
+            isDefault: true,
+          },
+        ]);
+        // Never auto-check "copy from billing" on extract — that hid distinct Ship To.
+        setCopyFromBilling(false);
+        setIsStateChanged(true);
+        setActiveTab("vendor");
+      } else {
+        setContacts([
+          {
+            id: 0,
+            customer_id: 0,
+            title: "",
+            firstname: "",
+            lastname: "",
+            phoneno: "",
+            email: "",
+            isDefault: true,
+          },
+        ]);
+      }
     }
-  }, [vendorId]);
+  }, [vendorId, initialValues]);
 
   const loadVendor = async () => {
     setLoading(true);
@@ -553,6 +640,9 @@ const VendorMasterSlideout: React.FC<VendorMasterSlideoutProps> = ({
         vendorId > 0 ? "Vendor updated successfully" : "Vendor created successfully"
       );
       setIsStateChanged(false);
+      if (savedVendorId > 0) {
+        await Promise.resolve(onSaved?.(savedVendorId));
+      }
       onClose(true);
     } catch (error: any) {
       const message =

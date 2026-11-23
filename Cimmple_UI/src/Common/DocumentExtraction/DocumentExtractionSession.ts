@@ -1,8 +1,8 @@
 import type {
   DocumentExtractionKind,
+  DocumentExtractionReview,
   DocumentExtractionStep,
   VendorQuotationExtractionResult,
-  VendorQuotationExtractionReview,
 } from "./types";
 
 export interface DocumentExtractionSession {
@@ -17,7 +17,7 @@ export interface DocumentExtractionSession {
   selectedPages: number[];
   pageCount: number;
   rawResult: VendorQuotationExtractionResult | null;
-  review: VendorQuotationExtractionReview | null;
+  review: DocumentExtractionReview | null;
   /** True after a successful Import into the host form */
   hasImported: boolean;
   error: string | null;

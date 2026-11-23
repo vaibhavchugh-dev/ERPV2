@@ -386,6 +386,47 @@
   margin-bottom: 0.5rem;
 }
 
+/* Party select with inline "+ create" (orders / quotations) */
+.party-select-with-add {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+
+  > .input-group {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .btn-add-party {
+    flex-shrink: 0;
+    width: 2.5rem;
+    padding: 0;
+    border: 1px solid #d1d5db;
+    background-color: #ffffff;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    color: #6b7280;
+    font-size: 1.25rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+
+    &:hover:not(:disabled) {
+      background-color: #f3f4f6;
+      color: #6366f1;
+      border-color: #6366f1;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
+
 /* Input Groups - Airframe React Style */
 .input-group {
   position: relative;

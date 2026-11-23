@@ -10,7 +10,7 @@ namespace CimmpleAPI.Controllers
 {
     /// <summary>
     /// PDF document extraction endpoints.
-    /// Primary: hosted Cimmple extraction API; fallback: Claude Haiku.
+    /// Primary: hosted Cimmple extraction API; fallback: Claude Haiku (kind-specific prompt).
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -25,6 +25,26 @@ namespace CimmpleAPI.Controllers
             _extractionService = extractionService;
         }
 
+        /// <summary>
+        /// Extract a PDF for any supported kind (vendorQuotation, vendorOrder, customerQuotation, customerOrder).
+        /// </summary>
+        [HttpPost("Extract")]
+        [Consumes("multipart/form-data")]
+        [Produces("application/json")]
+        [RequestSizeLimit(MaxFileSize)]
+        [RequestFormLimits(MultipartBodyLengthLimit = MaxFileSize)]
+        public async Task<IActionResult> Extract(
+            [FromForm] IFormFile? file,
+            [FromForm] string? documentKind,
+            CancellationToken cancellationToken)
+        {
+            return await ExtractInternalAsync(
+                file,
+                DocumentExtractionKinds.Normalize(documentKind),
+                cancellationToken);
+        }
+
+        /// <summary>Backward-compatible vendor quotation endpoint.</summary>
         [HttpPost("ExtractVendorQuotation")]
         [Consumes("multipart/form-data")]
         [Produces("application/json")]
@@ -32,6 +52,17 @@ namespace CimmpleAPI.Controllers
         [RequestFormLimits(MultipartBodyLengthLimit = MaxFileSize)]
         public async Task<IActionResult> ExtractVendorQuotation(
             [FromForm] IFormFile? file,
+            CancellationToken cancellationToken)
+        {
+            return await ExtractInternalAsync(
+                file,
+                DocumentExtractionKinds.VendorQuotation,
+                cancellationToken);
+        }
+
+        private async Task<IActionResult> ExtractInternalAsync(
+            IFormFile? file,
+            string documentKind,
             CancellationToken cancellationToken)
         {
             if (file == null || file.Length == 0)
@@ -44,6 +75,15 @@ namespace CimmpleAPI.Controllers
             if (extension != ".PDF")
                 return BadRequest(new { success = false, message = "Only PDF files are supported." });
 
+            if (!DocumentExtractionKinds.IsKnown(documentKind))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = $"Unsupported documentKind '{documentKind}'. Use vendorQuotation, vendorOrder, customerQuotation, or customerOrder."
+                });
+            }
+
             try
             {
                 byte[] pdfBytes;
@@ -54,10 +94,11 @@ namespace CimmpleAPI.Controllers
                 }
 
                 Console.WriteLine(
-                    $"[DocumentExtractionController] ExtractVendorQuotation file={file.FileName}, size={pdfBytes.Length}");
+                    $"[DocumentExtractionController] Extract kind={documentKind} file={file.FileName}, size={pdfBytes.Length}");
 
-                var outcome = await _extractionService.ExtractVendorQuotationFromPdfAsync(
+                var outcome = await _extractionService.ExtractDocumentFromPdfAsync(
                     pdfBytes,
+                    documentKind,
                     file.FileName,
                     cancellationToken);
 
@@ -66,6 +107,7 @@ namespace CimmpleAPI.Controllers
                     success = true,
                     message = outcome.Message ?? "Success",
                     provider = outcome.Provider,
+                    documentKind,
                     result = outcome.Result
                 });
             }

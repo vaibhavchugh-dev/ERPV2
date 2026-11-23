@@ -465,12 +465,13 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   const toggleFullscreen = async () => {
     const root = canvasRef.current?.closest(".doc-viewer") as HTMLElement | null;
     if (!root) return;
+    const ownerDoc = root.ownerDocument;
     try {
-      if (!document.fullscreenElement) {
+      if (!ownerDoc.fullscreenElement) {
         await root.requestFullscreen();
         setIsFullscreen(true);
       } else {
-        await document.exitFullscreen();
+        await ownerDoc.exitFullscreen();
         setIsFullscreen(false);
       }
     } catch {
@@ -479,12 +480,41 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
   };
 
   useEffect(() => {
+    const root = canvasRef.current?.closest(".doc-viewer") as HTMLElement | null;
+    const ownerDoc = root?.ownerDocument || document;
     const onFsChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      setIsFullscreen(!!ownerDoc.fullscreenElement);
     };
-    document.addEventListener("fullscreenchange", onFsChange);
-    return () => document.removeEventListener("fullscreenchange", onFsChange);
+    ownerDoc.addEventListener("fullscreenchange", onFsChange);
+    return () => ownerDoc.removeEventListener("fullscreenchange", onFsChange);
   }, []);
+
+  const openInNewTab = useCallback(async () => {
+    const originalUrl = sourceUrl || (current ? toSourceUrl(current) : null) || current?.localUrl || null;
+    if (!originalUrl) {
+      window.alert("File is not ready to open in a new tab yet.");
+      return;
+    }
+
+    let openUrl = originalUrl;
+    try {
+      // Open the actual file (PDF) in a new browser tab — not an empty about:blank shell.
+      const response = await fetch(originalUrl);
+      const buffer = await response.arrayBuffer();
+      const mime =
+        current?.contentType ||
+        response.headers.get("content-type") ||
+        (kind === "pdf" ? "application/pdf" : "application/octet-stream");
+      openUrl = URL.createObjectURL(new Blob([buffer], { type: mime }));
+    } catch {
+      openUrl = originalUrl;
+    }
+
+    const opened = window.open(openUrl, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      window.alert("Pop-up blocked. Allow pop-ups for this site to open the file.");
+    }
+  }, [sourceUrl, current, kind]);
 
   const onDocumentLoadSuccess = ({ numPages: next }: { numPages: number }) => {
     setNumPages(next);
@@ -705,6 +735,13 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
               </svg>
             </IconButton>
           )}
+          <IconButton title="Open file in new tab" onClick={openInNewTab}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </IconButton>
           <IconButton title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {isFullscreen ? (
@@ -745,9 +782,12 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
             <button type="button" className="doc-viewer__text-btn" onClick={clearPageSelection}>
               Clear
             </button>
-            <label className="doc-viewer__range-label">
-              Range
+            <div className="doc-viewer__range-group">
+              <label className="doc-viewer__range-label" htmlFor="doc-viewer-page-range">
+                Range
+              </label>
               <input
+                id="doc-viewer-page-range"
                 type="text"
                 className="doc-viewer__range-input"
                 placeholder="e.g. 1-3, 7, 10-12"
@@ -760,7 +800,7 @@ const DocumentViewerWorkspace: React.FC<DocumentViewerWorkspaceProps> = ({
                   }
                 }}
               />
-            </label>
+            </div>
             <button type="button" className="doc-viewer__text-btn" onClick={applyPageRangeInput}>
               Apply
             </button>
