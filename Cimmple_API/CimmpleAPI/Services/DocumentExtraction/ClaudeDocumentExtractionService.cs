@@ -32,8 +32,19 @@ namespace CimmpleAPI.Services.DocumentExtraction
             _extractionSettings = extractionSettings.Value;
         }
 
-        public async Task<VendorQuotationExtractionDto> ExtractVendorQuotationFromPdfAsync(
+        public Task<VendorQuotationExtractionDto> ExtractVendorQuotationFromPdfAsync(
             byte[] pdfBytes,
+            string? fileName = null,
+            CancellationToken cancellationToken = default) =>
+            ExtractDocumentFromPdfAsync(
+                pdfBytes,
+                DocumentExtractionKinds.VendorQuotation,
+                fileName,
+                cancellationToken);
+
+        public async Task<VendorQuotationExtractionDto> ExtractDocumentFromPdfAsync(
+            byte[] pdfBytes,
+            string documentKind,
             string? fileName = null,
             CancellationToken cancellationToken = default)
         {
@@ -43,6 +54,10 @@ namespace CimmpleAPI.Services.DocumentExtraction
 
             if (pdfBytes == null || pdfBytes.Length == 0)
                 throw new ArgumentException("PDF file is empty.", nameof(pdfBytes));
+
+            var kind = DocumentExtractionKinds.Normalize(documentKind);
+            if (!DocumentExtractionKinds.IsKnown(kind))
+                throw new ArgumentException($"Unsupported document kind: {documentKind}", nameof(documentKind));
 
             // Strict low-model lock: always Haiku; ignore Claude:Model if set to a higher tier.
             var model = DocumentExtractionPrompts.ResolveClaudeModel(
@@ -55,7 +70,7 @@ namespace CimmpleAPI.Services.DocumentExtraction
             // Cap tokens for cheaper/faster Haiku (typical VQ JSON fits well under 2048).
             var configuredTokens = _claudeSettings.MaxTokens > 0 ? _claudeSettings.MaxTokens : 2048;
             var maxTokens = Math.Clamp(configuredTokens, 512, 4096);
-            var prompt = DocumentExtractionPrompts.ResolvePrompt(DocumentExtractionKinds.VendorQuotation);
+            var prompt = DocumentExtractionPrompts.ResolvePrompt(kind);
 
             var requestBody = new JObject
             {

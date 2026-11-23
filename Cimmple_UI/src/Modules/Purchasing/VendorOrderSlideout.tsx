@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
@@ -31,6 +31,7 @@ import {
   getApiErrorMessage,
   isApiForbidden,
   clearOpenQueryFromUrl,
+  createPendingAttachments,
 } from "../../Common/Services/FileUploadHelper";
 import {
   VENDOR_ORDER_LINE_TYPES,
@@ -61,6 +62,20 @@ import "./VendorOrderSlideout.scss";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+import {
+  DocumentExtractionSlideout,
+  createEmptyExtractionSession,
+  clearExtractionSession,
+  hasExtractionProgress,
+  applyVendorOrderImport,
+  formHasMeaningfulLines,
+  isVendorExtractionReview,
+  type DocumentExtractionSession,
+  type DocumentExtractionImportPayload,
+  type ExtractedVendorDraft,
+} from "../../Common/DocumentExtraction";
+
+const VendorMasterSlideout = lazy(() => import("../Masters/VendorMasterSlideout"));
 
 const PAGE_PATH = "/purchasing/vendor-orders";
 
@@ -111,6 +126,7 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   const canSave = orderId <= 0 ? canAdd : canEdit;
   const canInvoice = can("Invoice");
   const { canPrint: canPrintInvoice, canDelete: canDeleteInvoice } = usePagePermissions("/purchasing/vendor-invoices");
+  const { canAdd: canAddVendor } = usePagePermissions("/masters/vendor");
   const { formatCurrency, currencySymbol, discountColumnLabel, settings } = useFormatting();
 
   const [formData, setFormData] = useState<VendorOrderMasterReq & { MaterialType?: string }>({
@@ -192,6 +208,16 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
   // Invoice state
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [showCreateVendor, setShowCreateVendor] = useState(false);
+  const [vendorCreateInitialValues, setVendorCreateInitialValues] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [unmatchedVendorDraft, setUnmatchedVendorDraft] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [unmatchedVendorHint, setUnmatchedVendorHint] = useState("");
+  const [showExtractionSlideout, setShowExtractionSlideout] = useState(false);
+  const [extractionSession, setExtractionSession] = useState<DocumentExtractionSession>(
+    () => createEmptyExtractionSession("vendorOrder")
+  );
   const [invoiceableItems, setInvoiceableItems] = useState<InvoiceableItemForVendor[]>([]);
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<InvoiceableItemForVendor[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
@@ -651,51 +677,69 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
   };
 
   const handleVendorChange = async (vendorId: number) => {
-    const selectedVendor = vendors.find(v => v.vendor_id === vendorId);
-    if (selectedVendor) {
-      setFormData(prev => ({
+    if (!vendorId || vendorId <= 0) {
+      setFormData((prev) => ({
         ...prev,
-        VendorID: selectedVendor.vendor_id,
-        VendorCode: selectedVendor.vendorcode,
-        VendorName: selectedVendor.company_name,
+        VendorID: 0,
+        VendorCode: "",
+        VendorName: "",
+        BuyerName: "",
       }));
+      setVendorEmail("");
+      setIsStateChanged(true);
+      return;
+    }
 
-      try {
-        const fullVendorDetails = await VendorService.GetVendorById(vendorId);
-        if (fullVendorDetails) {
-          let defaultContactPerson = "";
-          if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
-            const defaultContact = fullVendorDetails.VendorContact.find(contact => contact.isDefault);
-            if (defaultContact) {
-              defaultContactPerson = `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
-            } else if (fullVendorDetails.VendorContact.length > 0) {
-              const firstContact = fullVendorDetails.VendorContact[0];
-              defaultContactPerson = `${firstContact.firstname} ${firstContact.lastname || ""}`.trim();
-            }
+    const listed = vendors.find((v) => v.vendor_id === vendorId);
+    try {
+      const fullVendorDetails = await VendorService.GetVendorById(vendorId);
+      if (fullVendorDetails) {
+        let defaultContactPerson = "";
+        if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
+          const defaultContact = fullVendorDetails.VendorContact.find((contact) => contact.isDefault);
+          if (defaultContact) {
+            defaultContactPerson = `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
+          } else {
+            const firstContact = fullVendorDetails.VendorContact[0];
+            defaultContactPerson = `${firstContact.firstname} ${firstContact.lastname || ""}`.trim();
           }
-          const vendorExpenseGl =
-            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
-            companyDefaultExpenseGlcode;
-          setDefaultExpenseGlcode(vendorExpenseGl);
-          const contactEmail =
-            fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
-            fullVendorDetails.VendorContact?.[0]?.email ||
-            fullVendorDetails.email ||
-            "";
-          setVendorEmail(contactEmail.trim());
-          setFormData(prev => ({
-            ...prev,
-            BuyerName: defaultContactPerson,
-            Details: (prev.Details || []).map((d) =>
-              !d.glcode || !String(d.glcode).trim()
-                ? { ...d, glcode: vendorExpenseGl }
-                : d
-            ),
-          }));
         }
-      } catch (error) {
-        console.error("Error fetching vendor details:", error);
+        const vendorExpenseGl =
+          accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+          companyDefaultExpenseGlcode;
+        setDefaultExpenseGlcode(vendorExpenseGl);
+        const contactEmail =
+          fullVendorDetails.VendorContact?.find((c) => c.isDefault)?.email ||
+          fullVendorDetails.VendorContact?.[0]?.email ||
+          fullVendorDetails.email ||
+          "";
+        setVendorEmail(contactEmail.trim());
+        setFormData((prev) => ({
+          ...prev,
+          VendorID: fullVendorDetails.vendor_id || vendorId,
+          VendorCode: fullVendorDetails.vendorcode || listed?.vendorcode || "",
+          VendorName: fullVendorDetails.company_name || listed?.company_name || "",
+          BuyerName: defaultContactPerson,
+          Details: (prev.Details || []).map((d) =>
+            !d.glcode || !String(d.glcode).trim()
+              ? { ...d, glcode: vendorExpenseGl }
+              : d
+          ),
+        }));
+        setIsStateChanged(true);
+        return;
       }
+    } catch (error) {
+      console.error("Error fetching vendor details:", error);
+    }
+
+    if (listed) {
+      setFormData((prev) => ({
+        ...prev,
+        VendorID: listed.vendor_id,
+        VendorCode: listed.vendorcode,
+        VendorName: listed.company_name,
+      }));
     }
     setIsStateChanged(true);
   };
@@ -1375,16 +1419,228 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     return () => {
       documentCacheRef.current.clear();
       revokeLocalAttachmentUrls(attachments.filter((a) => a.isPending && a.localUrl));
+      setExtractionSession((prev) => clearExtractionSession(prev));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleExtractionImport = async (payload: DocumentExtractionImportPayload) => {
+    if (!isVendorExtractionReview(payload.review)) return;
+
+    let expenseGl = defaultExpenseGlcode || companyDefaultExpenseGlcode || "";
+    let contactPerson = "";
+    let contactEmail = "";
+
+    if (payload.review.matchedVendorId > 0) {
+      try {
+        const fullVendorDetails = await VendorService.GetVendorById(
+          payload.review.matchedVendorId
+        );
+        if (fullVendorDetails) {
+          if (fullVendorDetails.VendorContact && fullVendorDetails.VendorContact.length > 0) {
+            const defaultContact =
+              fullVendorDetails.VendorContact.find((c) => c.isDefault) ||
+              fullVendorDetails.VendorContact[0];
+            contactPerson =
+              `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
+            contactEmail =
+              defaultContact.email ||
+              fullVendorDetails.email ||
+              "";
+          }
+          expenseGl =
+            accountIdToGlcode((fullVendorDetails as any).defaultExpenseAccountId) ||
+            companyDefaultExpenseGlcode ||
+            expenseGl;
+          setDefaultExpenseGlcode(expenseGl);
+          if (contactEmail.trim()) {
+            setVendorEmail(contactEmail.trim());
+          }
+        }
+      } catch {
+        // Non-fatal — import still proceeds with extracted fields.
+      }
+    }
+
+    const { formPatch, details, warnings } = applyVendorOrderImport({
+      currentForm: formData,
+      review: {
+        ...payload.review,
+        buyerName: "",
+      },
+      mode: payload.mode,
+      defaultGlcode: expenseGl,
+    });
+
+    const availableJobs =
+      jobOrders.length > 0
+        ? jobOrders
+        : await JobOrderService.GetJobOrders({
+            tenantid:
+              JSON.parse(localStorage.getItem("storage") || "{}")?.tenantID || 0,
+          }).then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as JobOrderMaster[]);
+    if (availableJobs.length > 0 && jobOrders.length === 0) {
+      setJobOrders(availableJobs);
+    }
+
+    const nextSelectedJobs = new Map<number, Set<number>>();
+    const detailsWithMatchedJobs = details.map((detail, index) => {
+      const notesRaw = (detail.Notes || "").trim();
+      const jobFromNotes: string[] = [];
+      let cleanedNotes = notesRaw;
+      if (notesRaw) {
+        const labeledRe =
+          /\b(?:job\s*(?:no\.?|number|#)?|jo\s*(?:no\.?|#)?)\s*[:\-–]?\s*([A-Za-z0-9][\w\-\/]*)/gi;
+        let labeledMatch: RegExpExecArray | null;
+        while ((labeledMatch = labeledRe.exec(notesRaw)) !== null) {
+          if (labeledMatch[1]) jobFromNotes.push(labeledMatch[1].trim());
+        }
+        const bare = notesRaw.match(/\b(?:JO[#\-_\s]?\d+|#JO\d+)\b/gi) || [];
+        bare.forEach((t) => jobFromNotes.push(t.trim()));
+        cleanedNotes = notesRaw
+          .replace(
+            /\b(?:job\s*(?:no\.?|number|#)?|jo\s*(?:no\.?|#)?)\s*[:\-–]?\s*[A-Za-z0-9][\w\-\/]*/gi,
+            " "
+          )
+          .replace(/\b(?:JO[#\-_\s]?\d+|#JO\d+)\b/gi, " ")
+          .split(/\s*\|\s*/)
+          .map((f) => f.replace(/\s+/g, " ").trim())
+          .filter((f) => f && !looksLikeJobPartNo(f))
+          .join(" | ");
+      }
+
+      const jobSource = [detail.JobNumber || "", ...jobFromNotes]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(", ");
+      if (!jobSource) {
+        return { ...detail, JobNumber: "", Notes: cleanedNotes };
+      }
+
+      const jobTokens = jobSource
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const selectedIds = new Set<number>();
+      const matchedLabels: string[] = [];
+      jobTokens.forEach((jobNum) => {
+        const normalized = jobNum.replace(/^JO[#\-_\s]?/i, "").trim();
+        const matching = availableJobs.find((jo) => {
+          const label = (jo.jobNumber || `JO#${jo.jobOrderNumber}`).trim();
+          const joNum = (jo.jobNumber || "").trim();
+          return (
+            label.toLowerCase() === jobNum.toLowerCase() ||
+            joNum.toLowerCase() === jobNum.toLowerCase() ||
+            label.toLowerCase() === `jo#${normalized}`.toLowerCase() ||
+            joNum.toLowerCase() === normalized.toLowerCase() ||
+            `JO#${jo.jobOrderNumber}`.toLowerCase() === jobNum.toLowerCase() ||
+            jo.jobOrderNumber?.toString() === normalized
+          );
+        });
+        if (matching && !selectedIds.has(matching.jobOrderID)) {
+          selectedIds.add(matching.jobOrderID);
+          matchedLabels.push(
+            (matching.jobNumber || `JO#${matching.jobOrderNumber}`).trim()
+          );
+        }
+      });
+      if (selectedIds.size > 0) {
+        nextSelectedJobs.set(index, selectedIds);
+      }
+      return {
+        ...detail,
+        JobNumber: matchedLabels.join(", "),
+        Notes: cleanedNotes,
+      };
+    });
+    setSelectedJobOrders(nextSelectedJobs);
+
+    setFormData((prev) => ({
+      ...prev,
+      ...formPatch,
+      BuyerName: contactPerson || prev.BuyerName,
+      Details: detailsWithMatchedJobs,
+    }));
+    setIsStateChanged(true);
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (formPatch.VendorID) delete next.VendorID;
+      if (formPatch.OrderDate) delete next.OrderDate;
+      return next;
+    });
+
+    if (payload.attachSourceFile && payload.sourceFile) {
+      const pending = createPendingAttachments([payload.sourceFile]);
+      setAttachments((prev) => {
+        const already = prev.some(
+          (a) =>
+            a.isPending &&
+            a.name === payload.sourceFile!.name &&
+            a.size === payload.sourceFile!.size
+        );
+        if (already) return prev;
+        return [...prev, ...(pending as ModuleAttachment[])];
+      });
+    }
+
+    if (
+      payload.review.matchedVendorId <= 0 &&
+      (payload.review.extractedVendorDraft || payload.review.vendorNameHint)
+    ) {
+      setUnmatchedVendorDraft(
+        payload.review.extractedVendorDraft || {
+          company_name: payload.review.vendorNameHint.split(",")[0]?.trim() || "",
+          email: "",
+          phone_number: "",
+          address: "",
+          apartment: "",
+          City: "",
+          states: "",
+          zipcode: "",
+          country: "US",
+          shippingaddress: "",
+          shippingApartment: "",
+          shippingCity: "",
+          shippingStates: "",
+          shippingZipCode: "",
+          shippingCountry: "US",
+          contactFirstName: "",
+          contactLastName: "",
+          contactEmail: "",
+          contactPhone: "",
+        }
+      );
+      setUnmatchedVendorHint(payload.review.vendorNameHint || "");
+    } else {
+      setUnmatchedVendorDraft(null);
+      setUnmatchedVendorHint("");
+    }
+
+    warnings.forEach((w) => toast.warning(w));
+    toast.success(
+      "Extracted details added to the order. Review and save when ready."
+    );
+  };
+
+  const openCreateVendorFromExtraction = () => {
+    if (!canAddVendor) {
+      toast.error("You do not have permission to create vendors.");
+      return;
+    }
+    setVendorCreateInitialValues(unmatchedVendorDraft);
+    setShowCreateVendor(true);
+  };
+
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to close?")) {
+        setShowExtractionSlideout(false);
+        setExtractionSession((prev) => clearExtractionSession(prev));
         onClose(listNeedsRefreshRef.current);
       }
     } else {
+      setShowExtractionSlideout(false);
+      setExtractionSession((prev) => clearExtractionSession(prev));
       onClose(listNeedsRefreshRef.current);
     }
   };
@@ -1538,7 +1794,17 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
     <div
       className="vendor-order-slideout-overlay"
       onClick={() => {
-        if (viewInvoiceId > 0) return;
+        if (
+          viewInvoiceId > 0 ||
+          showCreateVendor ||
+          showExtractionSlideout ||
+          showInvoiceModal ||
+          showTextEditorPopup ||
+          showPrintModal ||
+          showEmailDialog
+        ) {
+          return;
+        }
         handleCancel();
       }}
     >
@@ -1600,6 +1866,47 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            {orderId <= 0 && canSave && (
+              <button
+                type="button"
+                className="btn-secondary vendor-order-import-pdf-btn"
+                onClick={() => setShowExtractionSlideout(true)}
+                title={
+                  hasExtractionProgress(extractionSession)
+                    ? `Resume PDF import${extractionSession.fileName ? `: ${extractionSession.fileName}` : ""}`
+                    : "Upload a vendor order PDF and extract details with AI"
+                }
+              >
+                <svg
+                  className="vendor-order-import-pdf-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#DC2626"
+                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                  />
+                  <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
+                  <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
+                  <text
+                    x="12"
+                    y="17.6"
+                    textAnchor="middle"
+                    fill="#fff"
+                    fontSize="6"
+                    fontWeight="700"
+                    fontFamily="Arial, Helvetica, sans-serif"
+                  >
+                    PDF
+                  </text>
+                </svg>
+                {hasExtractionProgress(extractionSession)
+                  ? "Resume PDF import"
+                  : "Import from PDF"}
+              </button>
+            )}
             {orderId > 0 && (
               <>
                 {canPrint && (
@@ -1702,29 +2009,82 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
 
         <form className="vendor-order-slideout-form" onSubmit={(e) => e.preventDefault()}>
           <div className="vendor-order-slideout-content">
+            {unmatchedVendorDraft && formData.VendorID <= 0 && (
+              <div className="extraction-vendor-miss-message" role="status">
+                <div className="extraction-vendor-miss-text">
+                  Vendor{" "}
+                  <strong>
+                    {unmatchedVendorHint ||
+                      unmatchedVendorDraft.company_name ||
+                      "from PDF"}
+                  </strong>{" "}
+                  was not found in Vendor Master.
+                  {unmatchedVendorDraft.address || unmatchedVendorDraft.City
+                    ? " Address and contact details from the PDF can be used to create it."
+                    : " You can create it from the extracted details."}
+                </div>
+                <div className="extraction-vendor-miss-actions">
+                  {canAddVendor && (
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      onClick={openCreateVendorFromExtraction}
+                    >
+                      Create vendor
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    onClick={() => {
+                      setUnmatchedVendorDraft(null);
+                      setUnmatchedVendorHint("");
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Basic Information */}
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="VendorID">Vendor <span className="required">*</span></label>
-                <div className={`input-group ${errors.VendorID ? "has-error" : ""}`}>
-                  <div className="input-group-prepend">
-                    <span className="input-group-icon">🏢</span>
+                <div className="party-select-with-add">
+                  <div className={`input-group ${errors.VendorID ? "has-error" : ""}`}>
+                    <div className="input-group-prepend">
+                      <span className="input-group-icon">🏢</span>
+                    </div>
+                    <select
+                      id="VendorID"
+                      name="VendorID"
+                      className={`form-input ${errors.VendorID ? "error" : ""}`}
+                      value={formData.VendorID}
+                      onChange={(e) => handleVendorChange(Number(e.target.value))}
+                      required
+                    >
+                      <option value="0">Select Vendor</option>
+                      {vendors.map((vendor) => (
+                        <option key={vendor.vendor_id} value={vendor.vendor_id}>
+                          {vendor.company_name} ({vendor.vendorcode})
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    id="VendorID"
-                    name="VendorID"
-                    className={`form-input ${errors.VendorID ? "error" : ""}`}
-                    value={formData.VendorID}
-                    onChange={(e) => handleVendorChange(Number(e.target.value))}
-                    required
-                  >
-                    <option value="0">Select Vendor</option>
-                    {vendors.map((vendor) => (
-                      <option key={vendor.vendor_id} value={vendor.vendor_id}>
-                        {vendor.company_name} ({vendor.vendorcode})
-                      </option>
-                    ))}
-                  </select>
+                  {canAddVendor && (
+                    <button
+                      type="button"
+                      className="btn-add-party"
+                      title="Add new vendor"
+                      onClick={() => {
+                        setVendorCreateInitialValues(null);
+                        setShowCreateVendor(true);
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
                 {errors.VendorID && <span className="error-message">{errors.VendorID}</span>}
               </div>
@@ -3010,6 +3370,43 @@ const VendorOrderSlideout: React.FC<VendorOrderSlideoutProps> = ({
           }
           onClose={() => setShowEmailDialog(false)}
         />
+
+        {showCreateVendor && (
+          <Suspense fallback={null}>
+            <VendorMasterSlideout
+              vendorId={0}
+              initialValues={vendorCreateInitialValues}
+              onSaved={async (id) => {
+                await loadVendors();
+                await handleVendorChange(id);
+                setUnmatchedVendorDraft(null);
+                setUnmatchedVendorHint("");
+                setVendorCreateInitialValues(null);
+                setShowCreateVendor(false);
+              }}
+              onClose={() => {
+                setShowCreateVendor(false);
+                setVendorCreateInitialValues(null);
+              }}
+            />
+          </Suspense>
+        )}
+
+        {showExtractionSlideout && orderId <= 0
+          ? createPortal(
+              <DocumentExtractionSlideout
+                kind="vendorOrder"
+                session={extractionSession}
+                onSessionChange={setExtractionSession}
+                onClose={() => setShowExtractionSlideout(false)}
+                vendors={vendors}
+                jobOrders={jobOrders}
+                hostHasExistingLines={formHasMeaningfulLines(formData.Details as any)}
+                onImport={handleExtractionImport}
+              />,
+              document.body
+            )
+          : null}
       </div>
     </div>
   );

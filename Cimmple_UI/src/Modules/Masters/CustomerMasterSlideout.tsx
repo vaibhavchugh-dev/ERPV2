@@ -13,9 +13,34 @@ import DeleteIconButton from "../../Common/Components/DeleteIconButton";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
 
+export interface CustomerMasterInitialValues {
+  company_name?: string;
+  email?: string;
+  phone_number?: string;
+  address?: string;
+  apartment?: string;
+  City?: string;
+  states?: string;
+  zip?: string;
+  country?: string;
+  shippingAddress?: string;
+  shippingApartment?: string;
+  shippingCity?: string;
+  shippingStates?: string;
+  shippingZipCode?: string;
+  shippingCountry?: string;
+  contactFirstName?: string;
+  contactLastName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+}
+
 interface CustomerMasterSlideoutProps {
   customerId: number;
   onClose: (refreshList?: boolean) => void;
+  onSaved?: (customerId: number) => void | Promise<void>;
+  /** Prefill for new customer create (e.g. from document extraction). */
+  initialValues?: CustomerMasterInitialValues | null;
 }
 
 const apiError = (error: any) =>
@@ -24,6 +49,8 @@ const apiError = (error: any) =>
 const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
   customerId,
   onClose,
+  onSaved,
+  initialValues,
 }) => {
   const { canAdd, canEdit, canDelete } = usePagePermissions("/masters/customer");
   const canSave = customerId > 0 ? canEdit : canAdd;
@@ -77,20 +104,70 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
     if (customerId > 0) {
       loadCustomer();
     } else {
-      setContacts([
-        {
-          id: 0,
-          customer_id: 0,
-          title: "",
-          firstname: "",
-          lastname: "",
-          phoneno: "",
-          email: "",
-          isDefault: true,
-        },
-      ]);
+      const draft = initialValues || null;
+      if (draft) {
+        const hasDistinctShipping = !!(
+          (draft.shippingAddress || "").trim() ||
+          (draft.shippingCity || "").trim() ||
+          (draft.shippingStates || "").trim() ||
+          (draft.shippingZipCode || "").trim()
+        );
+        setFormData((prev) => ({
+          ...prev,
+          company_name: draft.company_name || "",
+          email: draft.email || "",
+          phone_number: draft.phone_number || "",
+          address: draft.address || "",
+          apartment: draft.apartment || "",
+          City: draft.City || "",
+          states: draft.states || "",
+          zip: draft.zip || "",
+          country: draft.country || "US",
+          shippingAddress: hasDistinctShipping ? draft.shippingAddress || "" : "",
+          shippingApartment: hasDistinctShipping
+            ? draft.shippingApartment || ""
+            : "",
+          shippingCity: hasDistinctShipping ? draft.shippingCity || "" : "",
+          shippingStates: hasDistinctShipping ? draft.shippingStates || "" : "",
+          shippingZipCode: hasDistinctShipping
+            ? draft.shippingZipCode || ""
+            : "",
+          shippingCountry: hasDistinctShipping
+            ? draft.shippingCountry || "US"
+            : "US",
+          TenantID: storage?.tenantID || 0,
+        }));
+        setContacts([
+          {
+            id: 0,
+            customer_id: 0,
+            title: "",
+            firstname: draft.contactFirstName || "",
+            lastname: draft.contactLastName || "",
+            phoneno: draft.contactPhone || draft.phone_number || "",
+            email: draft.contactEmail || draft.email || "",
+            isDefault: true,
+          },
+        ]);
+        setCopyFromBilling(false);
+        setIsStateChanged(true);
+        setActiveTab("company");
+      } else {
+        setContacts([
+          {
+            id: 0,
+            customer_id: 0,
+            title: "",
+            firstname: "",
+            lastname: "",
+            phoneno: "",
+            email: "",
+            isDefault: true,
+          },
+        ]);
+      }
     }
-  }, [customerId]);
+  }, [customerId, initialValues]);
 
   const loadCustomer = async () => {
     setLoading(true);
@@ -532,11 +609,18 @@ const CustomerMasterSlideout: React.FC<CustomerMasterSlideoutProps> = ({
         CustomerContact: contacts,
       };
 
-      await CustomerService.SaveCustomerData(saveData);
+      const saveResult = await CustomerService.SaveCustomerData(saveData);
+      const savedCustomerId =
+        customerId > 0
+          ? customerId
+          : (saveResult?.customer_id ?? saveResult?.customerId ?? 0);
       toast.success(
         customerId > 0 ? "Customer updated successfully" : "Customer created successfully"
       );
       setIsStateChanged(false);
+      if (savedCustomerId > 0) {
+        await Promise.resolve(onSaved?.(savedCustomerId));
+      }
       onClose(true);
     } catch (error: any) {
       const message =

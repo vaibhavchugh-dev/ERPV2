@@ -239,7 +239,14 @@ namespace CimmpleAPI.Services.DocumentExtraction
             {
                 try
                 {
-                    return DocumentExtractionPrompts.ParseVendorQuotationJson(candidate.ToString(Formatting.None));
+                    var parsed = DocumentExtractionPrompts.ParseVendorQuotationJson(
+                        candidate.ToString(Formatting.None));
+                    // Bill To wins over company/letterhead for vendor name + billing.
+                    DocumentExtractionPrompts.PreferBillToVendorAndBilling(parsed, candidate);
+                    DocumentExtractionPrompts.EnrichAddressesFromNestedParties(parsed, candidate);
+                    DocumentExtractionPrompts.EnrichDatesFromRaw(parsed, candidate);
+                    DocumentExtractionPrompts.StripIssuerFromVendorNames(parsed, candidate);
+                    return parsed;
                 }
                 catch (InvalidOperationException)
                 {
@@ -263,49 +270,83 @@ namespace CimmpleAPI.Services.DocumentExtraction
                     FirstString(obj, "quotationDate", "invoiceDate", "date", "orderDate", "documentDate")),
                 DueDate = NormalizeDateString(
                     FirstString(obj, "dueDate", "paymentDueDate", "policyEndDate")),
-                VendorPhone = FirstString(obj, "vendorPhone", "phone"),
-                VendorEmail = FirstString(obj, "vendorEmail", "email"),
+                // Track letterhead/company so it can be stripped from vendor — do NOT use as vendor.
+                CompanyName = FirstString(obj, "companyName", "issuerName", "preparedBy", "fromCompany", "documentCompany"),
+                // Phone/email only from vendor* keys here; Bill To fills contact later.
+                VendorPhone = FirstString(obj, "vendorPhone"),
+                VendorEmail = FirstString(obj, "vendorEmail"),
                 Material = FirstString(obj, "quotationType", "material"),
                 ProjectName = FirstString(obj, "quotationTerms", "paymentTerms", "policyNumber"),
             };
 
-            // Hosted API: vendor is billTo / shipTo (not issuerName).
+            // Hosted API: vendor is Bill To / Ship To / Supplier — never letterhead issuer/companyName.
             if (obj["vendorNames"] is JArray namesArr)
             {
                 foreach (var n in namesArr)
                 {
                     var s = n?.ToString()?.Trim();
-                    if (!string.IsNullOrWhiteSpace(s))
+                    if (!string.IsNullOrWhiteSpace(s)
+                        && !IsLikelyIssuerName(s!, obj))
+                    {
                         AddVendorName(dto, s!);
+                    }
                 }
             }
 
             var billTo = obj["billTo"] as JObject;
             var shipTo = obj["shipTo"] as JObject;
-            if (billTo != null)
-                AddVendorName(dto, FirstString(billTo, "name", "companyName", "company", "vendorName"));
-            if (shipTo != null)
-                AddVendorName(dto, FirstString(shipTo, "name", "companyName", "company", "vendorName"));
+            var soldTo = obj["soldTo"] as JObject;
 
-            AddVendorName(
-                dto,
-                FirstString(
-                    obj,
-                    "vendorName",
-                    "supplierName",
-                    "supplier",
-                    "sellerName",
-                    "seller"));
+            // Flat vendor* fields only — NEVER root "address"/"city"/"companyName" (letterhead).
+            dto.VendorAddress ??= FirstString(obj, "vendorAddress", "billingAddress");
+            dto.VendorApartment ??= FirstString(obj, "vendorApartment", "billingApartment");
+            dto.VendorCity ??= FirstString(obj, "vendorCity", "billingCity");
+            dto.VendorState ??= FirstString(obj, "vendorState", "billingState");
+            dto.VendorZip ??= FirstString(obj, "vendorZip", "billingZip");
+            dto.VendorCountry ??= FirstString(obj, "vendorCountry", "billingCountry");
+            dto.VendorShippingAddress ??= FirstString(obj, "vendorShippingAddress", "shippingAddress");
+            dto.VendorShippingApartment ??= FirstString(obj, "vendorShippingApartment", "shippingApartment");
+            dto.VendorShippingCity ??= FirstString(obj, "vendorShippingCity", "shippingCity");
+            dto.VendorShippingState ??= FirstString(obj, "vendorShippingState", "shippingState");
+            dto.VendorShippingZip ??= FirstString(obj, "vendorShippingZip", "shippingZip", "shippingZipCode");
+            dto.VendorShippingCountry ??= FirstString(obj, "vendorShippingCountry", "shippingCountry");
+            dto.VendorContactName ??= FirstString(obj, "vendorContactName");
+            dto.VendorPhone ??= FirstString(obj, "vendorPhone");
+            dto.VendorEmail ??= FirstString(obj, "vendorEmail");
+
+            // Bill To is authoritative for vendor name + billing (overwrites company/letterhead).
+            DocumentExtractionPrompts.PreferBillToVendorAndBilling(dto, obj);
+            ApplyBillingParty(dto, billTo);
+            if (billTo == null)
+                ApplyBillingParty(dto, soldTo);
+            ApplyShippingParty(dto, shipTo);
+
+            // Explicit vendor/supplier name only — never companyName / issuerName / clientName.
+            var explicitVendor = FirstString(
+                obj,
+                "vendorName",
+                "supplierName",
+                "sellerName");
+            if (!string.IsNullOrWhiteSpace(explicitVendor) && !IsLikelyIssuerName(explicitVendor!, obj))
+                AddVendorName(dto, explicitVendor);
 
             var nestedVendor = obj["vendor"] as JObject
                 ?? obj["supplier"] as JObject
                 ?? obj["seller"] as JObject;
-            if (nestedVendor != null)
+            // Only use nested vendor when it is NOT the document company/letterhead.
+            if (nestedVendor != null && billTo == null)
             {
-                AddVendorName(dto, FirstString(nestedVendor, "name", "companyName", "company"));
-                dto.VendorPhone ??= FirstString(nestedVendor, "phone");
-                dto.VendorEmail ??= FirstString(nestedVendor, "email");
+                var nestedName = FirstString(nestedVendor, "name", "companyName", "company", "vendorName");
+                if (string.IsNullOrWhiteSpace(nestedName) || !IsLikelyIssuerName(nestedName!, obj))
+                    ApplyBillingParty(dto, nestedVendor);
             }
+
+            if (dto.VendorNames.Count == 0)
+            {
+                ApplyBillingParty(dto, billTo ?? soldTo);
+            }
+
+            DocumentExtractionPrompts.StripIssuerFromVendorNames(dto, obj);
 
             var lines = obj["lineItems"] as JArray
                 ?? obj["details"] as JArray
@@ -319,11 +360,30 @@ namespace CimmpleAPI.Services.DocumentExtraction
                     if (lineToken is not JObject line)
                         continue;
 
-                    var description = FirstString(line, "description", "itemDescription", "desc");
-                    var itemName = FirstString(line, "itemName", "product", "name", "partName")
-                        ?? description;
-                    // Keep notes as document notes only — never append discount here.
-                    var notes = FirstString(line, "notes", "remark", "remarks");
+                    var description = FirstString(
+                        line,
+                        "description",
+                        "itemDescription",
+                        "desc",
+                        "productDescription",
+                        "lineDescription");
+                    var itemName = FirstString(
+                        line,
+                        "itemName",
+                        "product",
+                        "productName",
+                        "name",
+                        "partName");
+                    // Notes = remarks/comments only — never reuse description/part text.
+                    var notes = FirstString(line, "notes", "remark", "remarks", "comment", "comments");
+                    if (!string.IsNullOrWhiteSpace(notes)
+                        && ((!string.IsNullOrWhiteSpace(description)
+                                && string.Equals(notes.Trim(), description.Trim(), StringComparison.OrdinalIgnoreCase))
+                            || (!string.IsNullOrWhiteSpace(itemName)
+                                && string.Equals(notes.Trim(), itemName.Trim(), StringComparison.OrdinalIgnoreCase))))
+                    {
+                        notes = null;
+                    }
 
                     var discountAmount = FirstDecimal(line, "discountAmount", "discount_amount");
                     var discountPercent = FirstDecimal(
@@ -359,17 +419,72 @@ namespace CimmpleAPI.Services.DocumentExtraction
                     {
                         ItemName = itemName,
                         ItemDescription = description,
-                        Quantity = FirstDecimal(line, "quantity", "qty", "qtyOrdered"),
-                        Unit = FirstString(line, "unit", "uom", "unitOfMeasure") ?? "EA",
-                        UnitPrice = FirstDecimal(line, "unitPrice", "rate", "price", "unit_price"),
-                        Amount = FirstDecimal(line, "amount", "total", "lineTotal", "totalPrice"),
+                        Quantity = FirstDecimal(line, "quantity", "qty", "qtyOrdered", "orderedQty", "orderQty"),
+                        Unit = FirstString(line, "unit", "uom", "unitOfMeasure", "unitOfMeas") ?? "EA",
+                        UnitPrice = FirstDecimal(
+                            line,
+                            "unitPrice",
+                            "rate",
+                            "price",
+                            "unit_price",
+                            "unitCost",
+                            "each"),
+                        Amount = FirstDecimal(
+                            line,
+                            "amount",
+                            "total",
+                            "lineTotal",
+                            "totalPrice",
+                            "extendedPrice",
+                            "extPrice"),
                         Discount = discount,
                         DiscountType = discountType,
                         Notes = notes,
                     };
 
-                    var partNo = FirstString(line, "partNumber", "partNo", "articleId", "sku", "itemCode");
-                    var jobNo = FirstString(line, "jobNo", "jobNumber");
+                    var partNo = FirstString(
+                        line,
+                        "partNumber",
+                        "partNo",
+                        "articleId",
+                        "sku",
+                        "itemCode",
+                        "itemNumber",
+                        "catalogNumber",
+                        "catalogNo");
+                    var jobNo = FirstString(line, "jobNo", "jobNumber", "job", "joNumber", "workOrder");
+
+                    // If notes is only a job/JO ref, move it to jobNo and clear notes.
+                    if (string.IsNullOrWhiteSpace(jobNo) && !string.IsNullOrWhiteSpace(notes))
+                    {
+                        var notesTrim = notes!.Trim();
+                        if (System.Text.RegularExpressions.Regex.IsMatch(
+                                notesTrim,
+                                @"^(?:JO[#\-_\s]?\d+|#JO\d+|JOB[#\-_\s]?\w[\w\-]*)$",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                            || System.Text.RegularExpressions.Regex.IsMatch(
+                                notesTrim,
+                                @"^(?:job|jo)\s*(?:no\.?|number|#)?\s*[:\-–]?\s*[A-Za-z0-9][\w\-\/]*$",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        {
+                            jobNo = notesTrim;
+                            notes = null;
+                            detail.Notes = null;
+                        }
+                    }
+
+                    // PartNo that looks like a JO → treat as jobNo.
+                    if (string.IsNullOrWhiteSpace(jobNo)
+                        && !string.IsNullOrWhiteSpace(partNo)
+                        && System.Text.RegularExpressions.Regex.IsMatch(
+                            partNo!,
+                            @"JO#|#JO|^JO\d|^JO[-_\s]",
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    {
+                        jobNo = partNo;
+                        partNo = null;
+                    }
+
                     detail.Parts.Add(new VendorQuotationExtractionPartDto
                     {
                         PartNo = partNo,
@@ -386,6 +501,7 @@ namespace CimmpleAPI.Services.DocumentExtraction
                         && string.IsNullOrWhiteSpace(detail.ItemDescription)
                         && detail.Quantity == null
                         && detail.UnitPrice == null
+                        && detail.Amount == null
                         && string.IsNullOrWhiteSpace(partNo))
                     {
                         continue;
@@ -395,7 +511,53 @@ namespace CimmpleAPI.Services.DocumentExtraction
                 }
             }
 
+            // Final pass: nested address objects / alternate shipTo keys + date aliases.
+            DocumentExtractionPrompts.EnrichAddressesFromNestedParties(dto, obj);
+            DocumentExtractionPrompts.EnrichDatesFromRaw(dto, obj);
             return dto;
+        }
+
+        /// <summary>
+        /// Copy name + contact + billing address from Bill To / Vendor / Sold To.
+        /// </summary>
+        private static void ApplyBillingParty(VendorQuotationExtractionDto dto, JObject? party)
+        {
+            if (party == null) return;
+
+            DocumentExtractionPrompts.EnrichAddressesFromNestedParties(
+                dto,
+                new JObject { ["billTo"] = party });
+        }
+
+        /// <summary>
+        /// Copy Ship To address only — never overwrite billing fields.
+        /// </summary>
+        private static void ApplyShippingParty(VendorQuotationExtractionDto dto, JObject? party)
+        {
+            if (party == null) return;
+
+            // Name on Ship To can still identify vendor when Bill To was empty.
+            AddVendorName(
+                dto,
+                FirstString(party, "name", "companyName", "company", "vendorName", "supplierName"));
+
+            // Prefer shared nested-address enrichment (handles address objects + line arrays).
+            DocumentExtractionPrompts.EnrichAddressesFromNestedParties(
+                dto,
+                new JObject { ["shipTo"] = party });
+        }
+
+        private static bool IsLikelyIssuerName(string candidate, JObject root)
+        {
+            var issuer = FirstString(
+                root,
+                "issuerName",
+                "companyName",
+                "preparedBy",
+                "fromCompany",
+                "documentCompany");
+            return !string.IsNullOrWhiteSpace(issuer)
+                && string.Equals(issuer.Trim(), candidate.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
         private static void AddVendorName(VendorQuotationExtractionDto dto, string? name)
@@ -422,6 +584,8 @@ namespace CimmpleAPI.Services.DocumentExtraction
         {
             var token = obj[name];
             if (token == null || token.Type == JTokenType.Null) return null;
+            // Nested address objects/arrays are handled by EnrichAddressesFromNestedParties.
+            if (token.Type == JTokenType.Object || token.Type == JTokenType.Array) return null;
             var s = token.Type == JTokenType.String ? token.Value<string>() : token.ToString();
             return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
         }

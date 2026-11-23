@@ -1,35 +1,42 @@
 import { postMultipart } from "../Services/FileUploadHelper";
-import type { VendorQuotationExtractionResult } from "./types";
+import type {
+  DocumentExtractionKind,
+  VendorQuotationExtractionResult,
+} from "./types";
 
 type ExtractionApiResponse = {
   success?: boolean;
   message?: string;
   /** "CimmpleApi" (hosted swagger API) or "Claude" (fallback) */
   provider?: string;
+  documentKind?: string;
   result?: VendorQuotationExtractionResult;
 };
 
-export type VendorQuotationExtractionCallResult = {
+export type DocumentExtractionCallResult = {
   result: VendorQuotationExtractionResult;
   provider: string;
   message?: string;
+  documentKind: DocumentExtractionKind;
 };
 
 export class DocumentExtractionService {
   /**
-   * Extract Vendor Quotation fields from a PDF (optionally page-trimmed client-side).
-   * Backend tries api.extraction.cimmple.net first, then Claude Haiku fallback.
+   * Extract document fields from a PDF for the given kind.
+   * Backend tries api.extraction.cimmple.net first, then Claude Haiku with kind-specific prompt.
    */
-  public static ExtractVendorQuotation = async (
+  public static Extract = async (
+    kind: DocumentExtractionKind,
     pdfFile: File
-  ): Promise<VendorQuotationExtractionCallResult | null> => {
+  ): Promise<DocumentExtractionCallResult | null> => {
     if (!pdfFile) return null;
 
     const formData = new FormData();
-    formData.append("file", pdfFile, pdfFile.name || "vendor-quotation.pdf");
+    formData.append("file", pdfFile, pdfFile.name || `${kind}.pdf`);
+    formData.append("documentKind", kind);
 
     const response = await postMultipart<ExtractionApiResponse>(
-      "/DocumentExtraction/ExtractVendorQuotation",
+      "/DocumentExtraction/Extract",
       formData
     );
 
@@ -43,6 +50,13 @@ export class DocumentExtractionService {
       result: response.result,
       provider: response.provider || "unknown",
       message: response.message,
+      documentKind: kind,
     };
   };
+
+  /** @deprecated Use Extract("vendorQuotation", file) */
+  public static ExtractVendorQuotation = async (
+    pdfFile: File
+  ): Promise<DocumentExtractionCallResult | null> =>
+    DocumentExtractionService.Extract("vendorQuotation", pdfFile);
 }

@@ -3,6 +3,57 @@
 @import "../Masters/CustomerMasterSlideout.scss";
 @import "../../Common/Styles/vendorLineType.scss";
 
+.extraction-vendor-miss-message {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  border-radius: 0.375rem;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 0;
+
+  .extraction-vendor-miss-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.75rem;
+    color: #92400e;
+    line-height: 1.25;
+  }
+
+  .extraction-vendor-miss-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+    margin-left: auto;
+    align-items: center;
+
+    .btn-submit,
+    .btn-cancel {
+      padding: 0.2rem 0.55rem;
+      font-size: 0.75rem;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+  }
+}
+
+.vendor-order-import-pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.vendor-order-import-pdf-icon {
+  flex-shrink: 0;
+  display: block;
+}
+
 .vendor-order-slideout-overlay {
   position: fixed;
   top: 0;

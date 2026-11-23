@@ -8,8 +8,8 @@ namespace CimmpleAPI.Data.Dtos
 
         public string ApiKey { get; set; } = string.Empty;
         public string Model { get; set; } = "claude-haiku-4-5";
-        /// <summary>Output token budget. Keep low for Haiku cost/latency (VQ JSON fits ~2048).</summary>
-        public int MaxTokens { get; set; } = 2048;
+        /// <summary>Output token budget. Higher default reduces truncated line-item JSON on multi-page quotes.</summary>
+        public int MaxTokens { get; set; } = 4096;
     }
 
     public class DocumentExtractionSettings
@@ -93,6 +93,22 @@ namespace CimmpleAPI.Data.Dtos
         public string? VendorContactName { get; set; }
         public string? VendorPhone { get; set; }
         public string? VendorEmail { get; set; }
+
+        /// <summary>Billing address (prefer Bill To / Sold To / Vendor billing block).</summary>
+        public string? VendorAddress { get; set; }
+        public string? VendorApartment { get; set; }
+        public string? VendorCity { get; set; }
+        public string? VendorState { get; set; }
+        public string? VendorZip { get; set; }
+        public string? VendorCountry { get; set; }
+
+        /// <summary>Shipping address (prefer Ship To). Leave null when absent — do not copy billing.</summary>
+        public string? VendorShippingAddress { get; set; }
+        public string? VendorShippingApartment { get; set; }
+        public string? VendorShippingCity { get; set; }
+        public string? VendorShippingState { get; set; }
+        public string? VendorShippingZip { get; set; }
+        public string? VendorShippingCountry { get; set; }
 
         public List<VendorQuotationExtractionDetailDto> Details { get; set; } = new();
     }

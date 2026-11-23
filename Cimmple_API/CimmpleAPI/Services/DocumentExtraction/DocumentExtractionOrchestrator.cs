@@ -10,7 +10,7 @@ namespace CimmpleAPI.Services.DocumentExtraction
 {
     /// <summary>
     /// Primary: hosted Cimmple extraction API (api.extraction.cimmple.net).
-    /// Fallback: Claude Haiku only when FallbackToClaude=true AND the hosted call fails.
+    /// Fallback: Claude Haiku with kind-specific prompt when FallbackToClaude=true.
     /// </summary>
     public class DocumentExtractionOrchestrator : IDocumentExtractionService
     {
@@ -34,19 +34,34 @@ namespace CimmpleAPI.Services.DocumentExtraction
             _logger = logger;
         }
 
-        public async Task<DocumentExtractionOutcome> ExtractVendorQuotationFromPdfAsync(
+        public Task<DocumentExtractionOutcome> ExtractVendorQuotationFromPdfAsync(
             byte[] pdfBytes,
+            string? fileName = null,
+            CancellationToken cancellationToken = default) =>
+            ExtractDocumentFromPdfAsync(
+                pdfBytes,
+                DocumentExtractionKinds.VendorQuotation,
+                fileName,
+                cancellationToken);
+
+        public async Task<DocumentExtractionOutcome> ExtractDocumentFromPdfAsync(
+            byte[] pdfBytes,
+            string documentKind,
             string? fileName = null,
             CancellationToken cancellationToken = default)
         {
             if (pdfBytes == null || pdfBytes.Length == 0)
                 throw new ArgumentException("PDF file is empty.", nameof(pdfBytes));
 
+            var kind = DocumentExtractionKinds.Normalize(documentKind);
+            if (!DocumentExtractionKinds.IsKnown(kind))
+                throw new ArgumentException($"Unsupported document kind: {documentKind}", nameof(documentKind));
+
             var preferCimmple = PreferCimmpleApi();
             var fallbackToClaude = ResolveFallbackToClaude();
 
             Console.WriteLine(
-                $"[DocumentExtraction] PreferCimmpleApi={preferCimmple}, FallbackToClaude={fallbackToClaude}, File={fileName}, Bytes={pdfBytes.Length}");
+                $"[DocumentExtraction] Kind={kind}, PreferCimmpleApi={preferCimmple}, FallbackToClaude={fallbackToClaude}, File={fileName}, Bytes={pdfBytes.Length}");
 
             if (!preferCimmple)
             {
@@ -57,10 +72,9 @@ namespace CimmpleAPI.Services.DocumentExtraction
                 }
 
                 Console.WriteLine("[DocumentExtraction] Skipping CimmpleApi (disabled/not configured); using Claude.");
-                return await ExtractWithClaudeAsync(pdfBytes, fileName, cancellationToken);
+                return await ExtractWithClaudeAsync(pdfBytes, kind, fileName, cancellationToken);
             }
 
-            // Fail fast on hosted API so Claude fallback can start quickly when the host is down.
             using var hostedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var hostedTimeoutSeconds = _settings.CimmpleApi?.TimeoutSeconds > 0
                 ? Math.Clamp(_settings.CimmpleApi.TimeoutSeconds, 5, 60)
@@ -70,6 +84,7 @@ namespace CimmpleAPI.Services.DocumentExtraction
             CimmpleExtractionAttempt remote;
             try
             {
+                // Hosted API is document-agnostic; kind-specific Claude prompt used on fallback.
                 remote = await _cimmpleApi.TryExtractVendorQuotationAsync(
                     pdfBytes,
                     fileName,
@@ -85,9 +100,10 @@ namespace CimmpleAPI.Services.DocumentExtraction
 
             if (remote.Succeeded && remote.Result != null)
             {
-                Console.WriteLine("[DocumentExtraction] SUCCESS via CimmpleApi (api.extraction.cimmple.net)");
+                Console.WriteLine($"[DocumentExtraction] SUCCESS via CimmpleApi (kind={kind})");
                 _logger.LogWarning(
-                    "Vendor quotation extracted via Cimmple extraction API ({File}).",
+                    "Document extracted via Cimmple extraction API ({Kind}, {File}).",
+                    kind,
                     fileName ?? "document.pdf");
 
                 return new DocumentExtractionOutcome
@@ -105,7 +121,8 @@ namespace CimmpleAPI.Services.DocumentExtraction
             Console.WriteLine(
                 $"[DocumentExtraction] CimmpleApi failed. FallbackToClaude={fallbackToClaude}. Error={hostedError}");
             _logger.LogWarning(
-                "Cimmple extraction API unavailable for {File}. FallbackToClaude={Fallback}. Error={Error}",
+                "Cimmple extraction API unavailable for {Kind}/{File}. FallbackToClaude={Fallback}. Error={Error}",
+                kind,
                 fileName ?? "document.pdf",
                 fallbackToClaude,
                 hostedError);
@@ -115,26 +132,29 @@ namespace CimmpleAPI.Services.DocumentExtraction
                 throw new InvalidOperationException(hostedError);
             }
 
-            return await ExtractWithClaudeAsync(pdfBytes, fileName, cancellationToken);
+            return await ExtractWithClaudeAsync(pdfBytes, kind, fileName, cancellationToken);
         }
 
         private async Task<DocumentExtractionOutcome> ExtractWithClaudeAsync(
             byte[] pdfBytes,
+            string documentKind,
             string? fileName,
             CancellationToken cancellationToken)
         {
             var viaFallback = PreferCimmpleApi();
             Console.WriteLine(
                 viaFallback
-                    ? "[DocumentExtraction] Using Claude Haiku FALLBACK"
-                    : "[DocumentExtraction] Using Claude Haiku (primary)");
+                    ? $"[DocumentExtraction] Using Claude Haiku FALLBACK (kind={documentKind})"
+                    : $"[DocumentExtraction] Using Claude Haiku (primary, kind={documentKind})");
             _logger.LogWarning(
-                "Extracting vendor quotation via Claude Haiku ({Mode}) ({File}).",
+                "Extracting {Kind} via Claude Haiku ({Mode}) ({File}).",
+                documentKind,
                 viaFallback ? "fallback" : "primary",
                 fileName ?? "document.pdf");
 
-            var claudeResult = await _claude.ExtractVendorQuotationFromPdfAsync(
+            var claudeResult = await _claude.ExtractDocumentFromPdfAsync(
                 pdfBytes,
+                documentKind,
                 fileName,
                 cancellationToken);
 

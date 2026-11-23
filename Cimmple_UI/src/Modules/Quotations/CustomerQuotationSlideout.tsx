@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import { duplicateResultNotes } from "../../Common/Utils/documentDuplication";
@@ -31,6 +31,7 @@ import {
   getApiErrorMessage,
   isApiForbidden,
   clearOpenQueryFromUrl,
+  createPendingAttachments,
 } from "../../Common/Services/FileUploadHelper";
 import { Icons } from "../../Common/Components/MasterSlideout/SharedFieldConfigs";
 import { isBlankQuoteOrOrderLine } from "../../Common/Constants/vendorOrderLineTypes";
@@ -42,7 +43,21 @@ import {
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import SlideoutHydratingOverlay from "../../Common/Components/SlideoutHydratingOverlay";
+import {
+  DocumentExtractionSlideout,
+  createEmptyExtractionSession,
+  clearExtractionSession,
+  hasExtractionProgress,
+  applyCustomerQuotationImport,
+  formHasMeaningfulLines,
+  isCustomerExtractionReview,
+  type DocumentExtractionSession,
+  type DocumentExtractionImportPayload,
+  type ExtractedCustomerDraft,
+} from "../../Common/DocumentExtraction";
 import "./CustomerQuotationSlideout.scss";
+
+const CustomerMasterSlideout = lazy(() => import("../Masters/CustomerMasterSlideout"));
 
 const PAGE_PATH = "/quotations/customer";
 
@@ -70,6 +85,7 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     canDuplicate,
     canAdd,
   } = usePagePermissions(PAGE_PATH);
+  const { canAdd: canAddCustomer } = usePagePermissions("/masters/customer");
   const canSave = quotationId <= 0 ? canAdd : canEdit;
 
   const [formData, setFormData] = useState<QuotationMasterReq>({
@@ -131,6 +147,16 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   const [editingField, setEditingField] = useState<{ index: number; field: "PartName" | "Notes"; value: string } | null>(null);
   const [priceBreakdownMatrixData, setPriceBreakdownMatrixData] = useState<Map<number, PriceBreakdownMatrix>>(new Map()); // Map of ItemNo to price breakdown matrix
   const [showConvertToOrderDialog, setShowConvertToOrderDialog] = useState(false);
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+  const [customerCreateInitialValues, setCustomerCreateInitialValues] =
+    useState<ExtractedCustomerDraft | null>(null);
+  const [unmatchedCustomerDraft, setUnmatchedCustomerDraft] =
+    useState<ExtractedCustomerDraft | null>(null);
+  const [unmatchedCustomerHint, setUnmatchedCustomerHint] = useState("");
+  const [showExtractionSlideout, setShowExtractionSlideout] = useState(false);
+  const [extractionSession, setExtractionSession] = useState<DocumentExtractionSession>(
+    () => createEmptyExtractionSession("customerQuotation")
+  );
   const [selectedLineItems, setSelectedLineItems] = useState<Set<number>>(new Set()); // Set of ItemNo values
   const [selectedAttachments, setSelectedAttachments] = useState<Set<number>>(new Set()); // Set of attachment IDs
   const [showOrderSlideout, setShowOrderSlideout] = useState(false);
@@ -459,45 +485,51 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
   };
 
   const handleCustomerChange = async (customerId: number) => {
-    const customer = customers.find(c => c.customer_id === customerId);
-    if (customer) {
-      // Load customer details to get default contact person
-      try {
-        const customerDetails = await CustomerService.GetCustomerById(customerId);
-        if (customerDetails) {
-          const defaultContact = customerDetails.CustomerContact?.find(c => c.isDefault) || 
-                                 customerDetails.customerContact?.find(c => c.isDefault);
-          const buyerName = defaultContact 
-            ? `${defaultContact.firstname} ${defaultContact.lastname}`.trim()
-            : "";
-          
-          setFormData((prev) => ({
-            ...prev,
-            CustomerID: customerId,
-            CustomerCode: customer.customercode,
-            CustomerName: customer.company_name,
-            BuyerName: buyerName,
-          }));
-          setIsStateChanged(true);
-        } else {
-          setFormData((prev) => ({
-            ...prev,
-            CustomerID: customerId,
-            CustomerCode: customer.customercode,
-            CustomerName: customer.company_name,
-          }));
-          setIsStateChanged(true);
-        }
-      } catch (error) {
-        console.error("Error loading customer details:", error);
+    if (!customerId || customerId <= 0) {
+      setFormData((prev) => ({
+        ...prev,
+        CustomerID: 0,
+        CustomerCode: "",
+        CustomerName: "",
+        BuyerName: "",
+      }));
+      setIsStateChanged(true);
+      return;
+    }
+
+    const listed = customers.find((c) => c.customer_id === customerId);
+    try {
+      const customerDetails = await CustomerService.GetCustomerById(customerId);
+      if (customerDetails) {
+        const defaultContact =
+          customerDetails.CustomerContact?.find((c) => c.isDefault) ||
+          customerDetails.customerContact?.find((c) => c.isDefault);
+        const buyerName = defaultContact
+          ? `${defaultContact.firstname} ${defaultContact.lastname}`.trim()
+          : "";
+
         setFormData((prev) => ({
           ...prev,
           CustomerID: customerId,
-          CustomerCode: customer.customercode,
-          CustomerName: customer.company_name,
+          CustomerCode: customerDetails.customercode || listed?.customercode || "",
+          CustomerName: customerDetails.company_name || listed?.company_name || "",
+          BuyerName: buyerName,
         }));
         setIsStateChanged(true);
+        return;
       }
+    } catch (error) {
+      console.error("Error loading customer details:", error);
+    }
+
+    if (listed) {
+      setFormData((prev) => ({
+        ...prev,
+        CustomerID: customerId,
+        CustomerCode: listed.customercode,
+        CustomerName: listed.company_name,
+      }));
+      setIsStateChanged(true);
     }
   };
 
@@ -1059,18 +1091,128 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     });
   };
 
+  const handleExtractionImport = async (payload: DocumentExtractionImportPayload) => {
+    if (!isCustomerExtractionReview(payload.review)) return;
+
+    let buyerName = "";
+    if (payload.review.matchedCustomerId > 0) {
+      try {
+        const customerDetails = await CustomerService.GetCustomerById(
+          payload.review.matchedCustomerId
+        );
+        if (customerDetails) {
+          const defaultContact =
+            customerDetails.CustomerContact?.find((c) => c.isDefault) ||
+            customerDetails.customerContact?.find((c) => c.isDefault) ||
+            customerDetails.CustomerContact?.[0] ||
+            customerDetails.customerContact?.[0];
+          if (defaultContact) {
+            buyerName = `${defaultContact.firstname} ${defaultContact.lastname || ""}`.trim();
+          }
+        }
+      } catch {
+        // Non-fatal — import still proceeds with extracted fields.
+      }
+    }
+
+    const { formPatch, details, warnings } = applyCustomerQuotationImport({
+      currentForm: formData,
+      review: payload.review,
+      mode: payload.mode,
+    });
+
+    setFormData((prev) => ({
+      ...prev,
+      ...formPatch,
+      BuyerName: buyerName || prev.BuyerName,
+      Details: details,
+    }));
+    setIsStateChanged(true);
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (formPatch.CustomerID) delete next.CustomerID;
+      if (formPatch.OrderDate) delete next.OrderDate;
+      return next;
+    });
+
+    if (
+      payload.review.matchedCustomerId <= 0 &&
+      (payload.review.extractedCustomerDraft || payload.review.customerNameHint)
+    ) {
+      setUnmatchedCustomerDraft(
+        payload.review.extractedCustomerDraft || {
+          company_name: payload.review.customerNameHint.split(",")[0]?.trim() || "",
+          email: "",
+          phone_number: "",
+          address: "",
+          apartment: "",
+          City: "",
+          states: "",
+          zip: "",
+          country: "US",
+          shippingAddress: "",
+          shippingApartment: "",
+          shippingCity: "",
+          shippingStates: "",
+          shippingZipCode: "",
+          shippingCountry: "US",
+          contactFirstName: "",
+          contactLastName: "",
+          contactEmail: "",
+          contactPhone: "",
+        }
+      );
+      setUnmatchedCustomerHint(payload.review.customerNameHint || "");
+    } else {
+      setUnmatchedCustomerDraft(null);
+      setUnmatchedCustomerHint("");
+    }
+
+    if (payload.attachSourceFile && payload.sourceFile) {
+      const pending = createPendingAttachments([payload.sourceFile]);
+      setAttachments((prev) => {
+        const already = prev.some(
+          (a) =>
+            a.isPending &&
+            a.name === payload.sourceFile!.name &&
+            a.size === payload.sourceFile!.size
+        );
+        if (already) return prev;
+        return [...prev, ...(pending as ModuleAttachment[])];
+      });
+    }
+
+    warnings.forEach((w) => toast.warning(w));
+    toast.success(
+      "Extracted details added to the quotation. Review and save when ready."
+    );
+  };
+
+  const openCreateCustomerFromExtraction = () => {
+    if (!canAddCustomer) {
+      toast.error("You do not have permission to create customers.");
+      return;
+    }
+    setCustomerCreateInitialValues(unmatchedCustomerDraft);
+    setShowCreateCustomer(true);
+  };
+
   const handleCancel = () => {
     if (isStateChanged) {
       if (window.confirm("You have unsaved changes. Are you sure you want to cancel?")) {
         discardPendingAttachments();
         closeDocumentViewer();
         clearDocumentSessionCache();
+        setShowExtractionSlideout(false);
+        setExtractionSession((prev) => clearExtractionSession(prev));
         onClose(listNeedsRefreshRef.current);
       }
     } else {
       discardPendingAttachments();
       closeDocumentViewer();
       clearDocumentSessionCache();
+      setShowExtractionSlideout(false);
+      setExtractionSession((prev) => clearExtractionSession(prev));
       onClose(listNeedsRefreshRef.current);
     }
   };
@@ -1517,7 +1659,14 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
     <div
       className="customer-quotation-slideout-overlay"
       onClick={() => {
-        if (!showPriceBreakdownPopup && !showTextEditorPopup && !showConvertToOrderDialog) {
+        if (
+          !showPriceBreakdownPopup &&
+          !showTextEditorPopup &&
+          !showConvertToOrderDialog &&
+          !showCreateCustomer &&
+          !showExtractionSlideout &&
+          !showOrderSlideout
+        ) {
           handleCancel();
         }
       }}
@@ -1603,6 +1752,47 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            {quotationId <= 0 && canSave && (
+              <button
+                type="button"
+                className="btn-secondary customer-quotation-import-pdf-btn"
+                onClick={() => setShowExtractionSlideout(true)}
+                title={
+                  hasExtractionProgress(extractionSession)
+                    ? `Resume PDF import${extractionSession.fileName ? `: ${extractionSession.fileName}` : ""}`
+                    : "Upload a customer quotation PDF and extract details with AI"
+                }
+              >
+                <svg
+                  className="customer-quotation-import-pdf-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#DC2626"
+                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                  />
+                  <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
+                  <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
+                  <text
+                    x="12"
+                    y="17.6"
+                    textAnchor="middle"
+                    fill="#fff"
+                    fontSize="6"
+                    fontWeight="700"
+                    fontFamily="Arial, Helvetica, sans-serif"
+                  >
+                    PDF
+                  </text>
+                </svg>
+                {hasExtractionProgress(extractionSession)
+                  ? "Resume PDF import"
+                  : "Import from PDF"}
+              </button>
+            )}
             {effectiveQuotationId > 0 && (
               <>
                 {canPrint && (
@@ -1713,31 +1903,84 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
 
         <form className="customer-quotation-slideout-form" onSubmit={handleSubmit}>
           <div className="customer-quotation-slideout-content">
+            {unmatchedCustomerDraft && formData.CustomerID <= 0 && (
+              <div className="extraction-vendor-miss-message" role="status">
+                <div className="extraction-vendor-miss-text">
+                  Customer{" "}
+                  <strong>
+                    {unmatchedCustomerHint ||
+                      unmatchedCustomerDraft.company_name ||
+                      "from PDF"}
+                  </strong>{" "}
+                  was not found in Customer Master.
+                  {unmatchedCustomerDraft.address || unmatchedCustomerDraft.City
+                    ? " Address and contact details from the PDF can be used to create it."
+                    : " You can create it from the extracted details."}
+                </div>
+                <div className="extraction-vendor-miss-actions">
+                  {canAddCustomer && (
+                    <button
+                      type="button"
+                      className="btn-submit"
+                      onClick={openCreateCustomerFromExtraction}
+                    >
+                      Create customer
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-cancel"
+                    onClick={() => {
+                      setUnmatchedCustomerDraft(null);
+                      setUnmatchedCustomerHint("");
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Basic Information */}
             <div className="form-row">
               <div className="form-group">
                 <label htmlFor="CustomerID">Customer <span className="required">*</span></label>
-                <div className={`input-group ${errors.CustomerID ? "has-error" : ""}`}>
-                  <div className="input-group-prepend">
-                    <span className="input-group-icon">🏢</span>
+                <div className="party-select-with-add">
+                  <div className={`input-group ${errors.CustomerID ? "has-error" : ""}`}>
+                    <div className="input-group-prepend">
+                      <span className="input-group-icon">🏢</span>
+                    </div>
+                    <select
+                      id="CustomerID"
+                      name="CustomerID"
+                      className={`form-input ${errors.CustomerID ? "error" : ""}`}
+                      value={formData.CustomerID}
+                      onChange={(e) => handleCustomerChange(parseInt(e.target.value))}
+                      required
+                    >
+                      <option value="0">Select Customer</option>
+                      {customers
+                        .filter((customer) => customer.status !== "Inactive" || customer.customer_id === formData.CustomerID)
+                        .map((customer) => (
+                          <option key={customer.customer_id} value={customer.customer_id}>
+                            {customer.company_name} ({customer.customercode}){customer.status === "Inactive" ? " - Inactive" : ""}
+                          </option>
+                        ))}
+                    </select>
                   </div>
-                  <select
-                    id="CustomerID"
-                    name="CustomerID"
-                    className={`form-input ${errors.CustomerID ? "error" : ""}`}
-                    value={formData.CustomerID}
-                    onChange={(e) => handleCustomerChange(parseInt(e.target.value))}
-                    required
-                  >
-                    <option value="0">Select Customer</option>
-                    {customers
-                      .filter((customer) => customer.status !== "Inactive" || customer.customer_id === formData.CustomerID)
-                      .map((customer) => (
-                        <option key={customer.customer_id} value={customer.customer_id}>
-                          {customer.company_name} ({customer.customercode}){customer.status === "Inactive" ? " - Inactive" : ""}
-                        </option>
-                      ))}
-                  </select>
+                  {canAddCustomer && (
+                    <button
+                      type="button"
+                      className="btn-add-party"
+                      title="Add new customer"
+                      onClick={() => {
+                        setCustomerCreateInitialValues(null);
+                        setShowCreateCustomer(true);
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
                 {errors.CustomerID && <span className="error-message">{errors.CustomerID}</span>}
               </div>
@@ -2877,6 +3120,46 @@ const CustomerQuotationSlideout: React.FC<CustomerQuotationSlideoutProps> = ({
           }}
         />
       )}
+
+      {showCreateCustomer && (
+        <Suspense fallback={null}>
+          <CustomerMasterSlideout
+            customerId={0}
+            initialValues={customerCreateInitialValues}
+            onSaved={async (id) => {
+              await loadCustomers();
+              await handleCustomerChange(id);
+              setUnmatchedCustomerDraft(null);
+              setUnmatchedCustomerHint("");
+              setCustomerCreateInitialValues(null);
+              setShowCreateCustomer(false);
+            }}
+            onClose={() => {
+              setShowCreateCustomer(false);
+              setCustomerCreateInitialValues(null);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {showExtractionSlideout && quotationId <= 0
+        ? createPortal(
+            <DocumentExtractionSlideout
+              kind="customerQuotation"
+              session={extractionSession}
+              onSessionChange={setExtractionSession}
+              onClose={() => setShowExtractionSlideout(false)}
+              customers={customers.map((c) => ({
+                customer_id: c.customer_id,
+                company_name: c.company_name,
+                customercode: c.customercode,
+              }))}
+              hostHasExistingLines={formHasMeaningfulLines(formData.Details)}
+              onImport={handleExtractionImport}
+            />,
+            document.body
+          )
+        : null}
 
       {/* Deletion Impact Dialog */}
       <DeletionImpactDialog
