@@ -20,6 +20,18 @@ export {
   buildVendorOrderReview,
 } from "./mappers/vendorOrderMapper";
 export {
+  applyDirectVendorInvoiceImport,
+  buildVendorInvoiceReview,
+  directInvoiceHasMeaningfulLines,
+  reconcileInvoiceModalImport,
+} from "./mappers/vendorInvoiceMapper";
+export type {
+  DirectVendorInvoiceLineDraft,
+  ApplyDirectVendorInvoiceImportResult,
+  InvoiceModalReconcileItem,
+  InvoiceModalReconcileResult,
+} from "./mappers/vendorInvoiceMapper";
+export {
   applyCustomerQuotationImport,
   applyCustomerOrderImport,
   buildCustomerDocumentReview,

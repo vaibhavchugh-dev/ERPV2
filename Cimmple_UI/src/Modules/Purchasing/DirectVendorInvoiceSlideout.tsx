@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import {
   VendorInvoiceService,
@@ -7,12 +8,27 @@ import {
 import { VendorService } from "../../Common/Services/VendorService";
 import { ChartofAccountsService } from "../../Common/Services/ChartofAccountsService";
 import { AccountingService } from "../../Common/Services/AccountingService";
+import {
+  DocumentExtractionSlideout,
+  applyDirectVendorInvoiceImport,
+  clearExtractionSession,
+  createEmptyExtractionSession,
+  directInvoiceHasMeaningfulLines,
+  hasExtractionProgress,
+  isVendorExtractionReview,
+  type DocumentExtractionImportPayload,
+  type DocumentExtractionSession,
+  type ExtractedVendorDraft,
+} from "../../Common/DocumentExtraction";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { useActiveLocation } from "../../Common/Hooks/useActiveLocation";
+import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
 import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 import "./DirectVendorInvoiceSlideout.scss";
+
+const VendorMasterSlideout = lazy(() => import("../Masters/VendorMasterSlideout"));
 
 interface PaymentTermOption {
   id: number;
@@ -60,6 +76,7 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
 }) => {
   const { formatCurrency } = useFormatting();
   const { locationId: activeLocationId } = useActiveLocation();
+  const { canAdd: canAddVendor } = usePagePermissions("/masters/vendor");
 
   const [vendors, setVendors] = useState<
     Array<{ vendor_id: number; company_name: string; vendorcode: string }>
@@ -86,6 +103,44 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
   const [bootstrapping, setBootstrapping] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // PDF Document Extraction state
+  const [showExtractionSlideout, setShowExtractionSlideout] = useState(false);
+  const [extractionSession, setExtractionSession] = useState<DocumentExtractionSession>(() =>
+    createEmptyExtractionSession("vendorInvoice")
+  );
+  const extractionSessionRef = useRef(extractionSession);
+  extractionSessionRef.current = extractionSession;
+  const [unmatchedVendorDraft, setUnmatchedVendorDraft] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [unmatchedVendorHint, setUnmatchedVendorHint] = useState("");
+  const [showCreateVendor, setShowCreateVendor] = useState(false);
+  const [vendorCreateInitialValues, setVendorCreateInitialValues] =
+    useState<ExtractedVendorDraft | null>(null);
+  const [extractedPdfTotal, setExtractedPdfTotal] = useState<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      clearExtractionSession(extractionSessionRef.current);
+    };
+  }, []);
+
+  const loadVendors = useCallback(async () => {
+    const storage = JSON.parse(localStorage.getItem("storage") || "{}");
+    const tenantID = storage?.tenantID || 0;
+    const vendorList = await VendorService.GetVendorlist({ tenantid: tenantID });
+    if (Array.isArray(vendorList)) {
+      setVendors(
+        vendorList
+          .filter((v: any) => (v.status || "Active").toLowerCase() !== "inactive")
+          .map((v: any) => ({
+            vendor_id: v.vendor_id,
+            company_name: v.company_name || "",
+            vendorcode: v.vendorcode || "",
+          }))
+      );
+    }
+  }, []);
 
   const markDirty = () => setIsDirty(true);
 
@@ -196,16 +251,23 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
     }
   };
 
-  const handleVendorChange = async (nextVendorId: number) => {
+  const handleVendorChange = async (
+    nextVendorId: number,
+    options?: { preserveDueDate?: boolean }
+  ): Promise<number> => {
     markDirty();
     setVendorId(nextVendorId);
     setErrors((prev) => ({ ...prev, vendorId: "" }));
+    if (nextVendorId > 0) {
+      setUnmatchedVendorDraft(null);
+      setUnmatchedVendorHint("");
+    }
 
-    if (nextVendorId <= 0) return;
+    if (nextVendorId <= 0) return defaultExpenseAccountId;
 
     try {
       const vendor = await VendorService.GetVendorById(nextVendorId);
-      if (!vendor) return;
+      if (!vendor) return defaultExpenseAccountId;
 
       const expenseId =
         Number((vendor as any).defaultExpenseAccountId) || defaultExpenseAccountId || 0;
@@ -219,23 +281,126 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
         );
       }
 
-      const vendorTerm = ((vendor as any).term || "").trim();
-      if (vendorTerm && paymentTerms.length > 0) {
-        const match =
-          paymentTerms.find(
-            (t) => t.name.toLowerCase() === vendorTerm.toLowerCase()
-          ) ||
-          paymentTerms.find((t) =>
-            vendorTerm.toUpperCase().includes(`NET${t.days}`)
-          ) ||
-          paymentTerms.find((t) => vendorTerm.includes(String(t.days)));
-        if (match) {
-          applyPaymentTerm(match.id);
+      if (!options?.preserveDueDate) {
+        const vendorTerm = ((vendor as any).term || "").trim();
+        if (vendorTerm && paymentTerms.length > 0) {
+          const match =
+            paymentTerms.find(
+              (t) => t.name.toLowerCase() === vendorTerm.toLowerCase()
+            ) ||
+            paymentTerms.find((t) =>
+              vendorTerm.toUpperCase().includes(`NET${t.days}`)
+            ) ||
+            paymentTerms.find((t) => vendorTerm.includes(String(t.days)));
+          if (match) {
+            applyPaymentTerm(match.id);
+          }
         }
       }
+
+      return expenseId;
     } catch (error) {
       console.error("Error loading vendor defaults:", error);
+      return defaultExpenseAccountId;
     }
+  };
+
+  const handleExtractionImport = async (payload: DocumentExtractionImportPayload) => {
+    if (!isVendorExtractionReview(payload.review)) return;
+
+    let resolvedExpenseAccountId = defaultExpenseAccountId;
+    if (payload.review.matchedVendorId > 0) {
+      resolvedExpenseAccountId = await handleVendorChange(
+        payload.review.matchedVendorId,
+        { preserveDueDate: Boolean(payload.review.dueDate) }
+      );
+    }
+
+    const mapped = applyDirectVendorInvoiceImport({
+      currentLines: lines,
+      review: payload.review,
+      mode: payload.mode,
+      defaultAccountId: resolvedExpenseAccountId,
+      newLineKey,
+    });
+
+    if (mapped.invoiceNo) {
+      setInvoiceNo(mapped.invoiceNo);
+    }
+    if (mapped.invoiceDate) {
+      setInvoiceDate(mapped.invoiceDate);
+      setErrors((prev) => ({ ...prev, invoiceDate: "" }));
+    }
+    if (mapped.dueDate) {
+      setDueDate(mapped.dueDate);
+      setPaymentTermId(0);
+      setErrors((prev) => ({ ...prev, dueDate: "" }));
+    } else if (mapped.invoiceDate && paymentTermId > 0) {
+      applyPaymentTerm(paymentTermId, mapped.invoiceDate);
+    }
+
+    if (mapped.taxRate !== undefined) {
+      setTaxRate(mapped.taxRate);
+    }
+    if (mapped.hasExtractedTax && mapped.taxAmount !== undefined) {
+      setTaxAmountManual(true);
+      setTaxAmount(mapped.taxAmount);
+    } else if (mapped.taxRate !== undefined) {
+      setTaxAmountManual(false);
+    }
+    if (mapped.freightCharge !== undefined) {
+      setFreightCharge(mapped.freightCharge);
+    }
+
+    setLines(mapped.lines);
+    setExtractedPdfTotal(mapped.extractedTotal);
+    setErrors((prev) => ({ ...prev, lines: "" }));
+    markDirty();
+
+    if (
+      payload.review.matchedVendorId <= 0 &&
+      (payload.review.extractedVendorDraft || payload.review.vendorNameHint)
+    ) {
+      setUnmatchedVendorDraft(
+        payload.review.extractedVendorDraft || {
+          company_name: payload.review.vendorNameHint.split(",")[0]?.trim() || "",
+          email: "",
+          phone_number: "",
+          address: "",
+          apartment: "",
+          City: "",
+          states: "",
+          zipcode: "",
+          country: "US",
+          shippingaddress: "",
+          shippingApartment: "",
+          shippingCity: "",
+          shippingStates: "",
+          shippingZipCode: "",
+          shippingCountry: "",
+          contactFirstName: "",
+          contactLastName: "",
+          contactEmail: "",
+          contactPhone: "",
+        }
+      );
+      setUnmatchedVendorHint(payload.review.vendorNameHint || "");
+    } else {
+      setUnmatchedVendorDraft(null);
+      setUnmatchedVendorHint("");
+    }
+
+    if (mapped.warnings.length > 0) {
+      toast.info(mapped.warnings[0]);
+    } else {
+      toast.success("Vendor invoice details imported from PDF");
+    }
+  };
+
+  const openCreateVendorFromExtraction = () => {
+    if (!unmatchedVendorDraft) return;
+    setVendorCreateInitialValues(unmatchedVendorDraft);
+    setShowCreateVendor(true);
   };
 
   const updateLine = (key: string, field: keyof LineDraft, value: string | number) => {
@@ -359,12 +524,55 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
               use Create Invoice.
             </p>
           </div>
-          <button type="button" className="btn-close" onClick={handleDismiss} aria-label="Close">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          <div className="direct-header-actions">
+            {!bootstrapping && (
+              <button
+                type="button"
+                className="btn-secondary direct-import-pdf-btn"
+                onClick={() => setShowExtractionSlideout(true)}
+                title={
+                  hasExtractionProgress(extractionSession)
+                    ? `Resume PDF import${extractionSession.fileName ? `: ${extractionSession.fileName}` : ""}`
+                    : "Upload a vendor invoice PDF and extract details with AI"
+                }
+              >
+                <svg
+                  className="direct-import-pdf-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#DC2626"
+                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+                  />
+                  <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
+                  <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
+                  <text
+                    x="12"
+                    y="17.6"
+                    textAnchor="middle"
+                    fill="#fff"
+                    fontSize="6"
+                    fontWeight="700"
+                    fontFamily="Arial, Helvetica, sans-serif"
+                  >
+                    PDF
+                  </text>
+                </svg>
+                {hasExtractionProgress(extractionSession)
+                  ? "Resume PDF import"
+                  : "Import from PDF"}
+              </button>
+            )}
+            <button type="button" className="btn-close" onClick={handleDismiss} aria-label="Close">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {bootstrapping ? (
@@ -375,6 +583,67 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
         ) : (
           <form className="airframe-form" onSubmit={handleSubmit}>
             <div className="tab-content" style={{ display: "block" }}>
+              {unmatchedVendorDraft && vendorId <= 0 && (
+                <div className="direct-extraction-vendor-miss" role="status">
+                  <div className="direct-extraction-vendor-miss-text">
+                    Vendor{" "}
+                    <strong>
+                      {unmatchedVendorHint ||
+                        unmatchedVendorDraft.company_name ||
+                        "from PDF"}
+                    </strong>{" "}
+                    was not found in Vendor Master.
+                    {unmatchedVendorDraft.address || unmatchedVendorDraft.City
+                      ? " Address and contact details from the PDF can be used to create it."
+                      : " You can create it from the extracted details."}
+                  </div>
+                  <div className="direct-extraction-vendor-miss-actions">
+                    {canAddVendor && (
+                      <button
+                        type="button"
+                        className="btn-submit"
+                        onClick={openCreateVendorFromExtraction}
+                      >
+                        Create vendor
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      onClick={() => {
+                        setUnmatchedVendorDraft(null);
+                        setUnmatchedVendorHint("");
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {extractedPdfTotal !== null &&
+                Math.abs(extractedPdfTotal - invoiceTotal) > 0.01 && (
+                  <div className="direct-extraction-variance" role="status">
+                    <div className="direct-extraction-variance-text">
+                      PDF total is{" "}
+                      <strong>{formatCurrency(extractedPdfTotal)}</strong>, but the
+                      current form total is{" "}
+                      <strong>{formatCurrency(invoiceTotal)}</strong> (difference:{" "}
+                      <strong>
+                        {formatCurrency(Math.abs(extractedPdfTotal - invoiceTotal))}
+                      </strong>
+                      ). Review line amounts, tax, and freight before saving.
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      onClick={() => setExtractedPdfTotal(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="directVendor">
@@ -656,6 +925,42 @@ const DirectVendorInvoiceSlideout: React.FC<DirectVendorInvoiceSlideoutProps> = 
             </div>
           </form>
         )}
+
+        {showCreateVendor && (
+          <Suspense fallback={null}>
+            <VendorMasterSlideout
+              vendorId={0}
+              initialValues={vendorCreateInitialValues}
+              onSaved={async (id) => {
+                await loadVendors();
+                await handleVendorChange(id, { preserveDueDate: Boolean(dueDate) });
+                setUnmatchedVendorDraft(null);
+                setUnmatchedVendorHint("");
+                setVendorCreateInitialValues(null);
+                setShowCreateVendor(false);
+              }}
+              onClose={() => {
+                setShowCreateVendor(false);
+                setVendorCreateInitialValues(null);
+              }}
+            />
+          </Suspense>
+        )}
+
+        {showExtractionSlideout
+          ? createPortal(
+              <DocumentExtractionSlideout
+                kind="vendorInvoice"
+                session={extractionSession}
+                onSessionChange={setExtractionSession}
+                onClose={() => setShowExtractionSlideout(false)}
+                vendors={vendors}
+                hostHasExistingLines={directInvoiceHasMeaningfulLines(lines)}
+                onImport={handleExtractionImport}
+              />,
+              document.body
+            )
+          : null}
       </div>
     </div>
   );

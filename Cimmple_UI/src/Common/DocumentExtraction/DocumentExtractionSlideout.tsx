@@ -14,6 +14,7 @@ import {
 import { DocumentExtractionService } from "./DocumentExtractionService";
 import type { DocumentExtractionSession } from "./DocumentExtractionSession";
 import { buildCustomerDocumentReview } from "./mappers/customerDocumentMapper";
+import { buildVendorInvoiceReview } from "./mappers/vendorInvoiceMapper";
 import { buildVendorOrderReview } from "./mappers/vendorOrderMapper";
 import { buildVendorQuotationReview } from "./mappers/vendorQuotationMapper";
 import type {
@@ -46,14 +47,20 @@ interface DocumentExtractionSlideoutProps {
   /** Optional; retained for host compatibility (job matching happens on import). */
   jobOrders?: unknown[];
   hostHasExistingLines: boolean;
+  /** When true, skip the Replace/Append dialog and apply directly (e.g. PO/Order invoice modals). */
+  skipImportModePrompt?: boolean;
+  /** Optional z-index override so the slideout can stack above high z-index modals. */
+  overlayZIndex?: number;
   onImport: (payload: DocumentExtractionImportPayload) => void;
 }
 
 const KIND_LABELS: Record<DocumentExtractionKind, string> = {
   vendorQuotation: "Vendor Quotation",
   vendorOrder: "Vendor Order",
+  vendorInvoice: "Vendor Invoice",
   customerQuotation: "Customer Quotation",
   customerOrder: "Customer Order",
+  customerInvoice: "Customer Invoice",
 };
 
 const STEPS = [
@@ -70,6 +77,8 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
   vendors = [],
   customers = [],
   hostHasExistingLines,
+  skipImportModePrompt = false,
+  overlayZIndex,
   onImport,
 }) => {
   const activeKind = (session.kind || kind) as DocumentExtractionKind;
@@ -198,6 +207,9 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
     if (isCustomerExtractionKind(activeKind)) {
       return buildCustomerDocumentReview(result, customers);
     }
+    if (activeKind === "vendorInvoice") {
+      return buildVendorInvoiceReview(result, vendors);
+    }
     if (activeKind === "vendorOrder") {
       return buildVendorOrderReview(result, vendors);
     }
@@ -242,7 +254,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
       });
 
       // Skip review — apply into the host slideout immediately.
-      if (session.hasImported || hostHasExistingLines) {
+      if (!skipImportModePrompt && (session.hasImported || hostHasExistingLines)) {
         setImportModePrompt(true);
         return;
       }
@@ -277,6 +289,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
   return (
     <div
       className="vendor-quotation-slideout-overlay doc-extraction-overlay"
+      style={overlayZIndex ? { zIndex: overlayZIndex } : undefined}
       onClick={(e) => {
         e.stopPropagation();
         onClose();
@@ -444,7 +457,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                     <span className="doc-extraction-badge is-success">Uploaded</span>
                   </div>
 
-                  <h3>Extracting quotation details</h3>
+                  <h3>Extracting {kindLabel.toLowerCase()} details</h3>
 
                   <ul className="doc-extraction-processing-steps">
                     {PROCESSING_STEPS.map((label, index) => {
@@ -481,7 +494,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
                     />
                   </div>
                   <p className="doc-extraction-processing-note">
-                    Please keep this quotation open while extraction is in progress.
+                    Please keep this {kindLabel.toLowerCase()} open while extraction is in progress.
                   </p>
                 </div>
               </div>
@@ -516,7 +529,7 @@ const DocumentExtractionSlideout: React.FC<DocumentExtractionSlideoutProps> = ({
             <div className="doc-extraction-mode-card">
               <h3>Import extracted lines</h3>
               <p>
-                The quotation already has line items
+                The {kindLabel.toLowerCase()} already has line items
                 {session.hasImported ? " (or was imported earlier)" : ""}. How
                 should the extracted lines be applied?
               </p>

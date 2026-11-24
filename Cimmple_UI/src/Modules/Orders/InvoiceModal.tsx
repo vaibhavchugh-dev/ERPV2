@@ -1,7 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'react-toastify';
 import { InvoiceableItem, CreateInvoiceRequest, InvoiceService } from '../../Common/Services/InvoiceService';
 import { AccountingService } from '../../Common/Services/AccountingService';
+import {
+  DocumentExtractionSlideout,
+  clearExtractionSession,
+  createEmptyExtractionSession,
+  hasExtractionProgress,
+  reconcileInvoiceModalImport,
+  type DocumentExtractionImportPayload,
+  type DocumentExtractionSession,
+  type InvoiceModalReconcileResult,
+} from '../../Common/DocumentExtraction';
 import { useFormatting } from '../../Common/Hooks/useFormatting';
 import { todayIsoInTenantTimezone } from '../../Common/Utils/Formatting';
 import { confirmDiscardChanges } from '../../Common/Utils/dismissGuard';
@@ -52,6 +63,30 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const [quantityInputs, setQuantityInputs] = useState<{ [key: number]: string }>({});
   const [priceInputs, setPriceInputs] = useState<{ [key: number]: string }>({});
   const [discountInputs, setDiscountInputs] = useState<{ [key: number]: string }>({});
+
+  // PDF Document Extraction state
+  const [showExtractionSlideout, setShowExtractionSlideout] = useState(false);
+  const [extractionSession, setExtractionSession] = useState<DocumentExtractionSession>(() =>
+    createEmptyExtractionSession('customerInvoice')
+  );
+  const extractionSessionRef = useRef(extractionSession);
+  extractionSessionRef.current = extractionSession;
+  const [reconcileSummary, setReconcileSummary] = useState<InvoiceModalReconcileResult | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      clearExtractionSession(extractionSessionRef.current);
+      setExtractionSession(createEmptyExtractionSession('customerInvoice'));
+      setShowExtractionSlideout(false);
+      setReconcileSummary(null);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      clearExtractionSession(extractionSessionRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -150,6 +185,70 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
   }, [subtotal, taxRate, taxAmountManual]);
 
   const invoiceTotal = Math.round((subtotal + taxAmount + shippingCharge + otherCharge) * 100) / 100;
+
+  const handleExtractionImport = (payload: DocumentExtractionImportPayload) => {
+    const result = reconcileInvoiceModalImport({
+      selectedItems,
+      review: payload.review,
+      minInvoiceDate,
+    });
+
+    if (result.invoiceDate) {
+      setInvoiceDate(result.invoiceDate);
+    }
+    if (result.dueDate) {
+      setDueDate(result.dueDate);
+    }
+    if (result.taxRate !== undefined) {
+      setTaxRate(result.taxRate);
+    }
+    if (result.hasExtractedTax && result.taxAmount !== undefined) {
+      setTaxAmountManual(true);
+      setTaxAmount(result.taxAmount);
+    } else if (result.taxRate !== undefined) {
+      setTaxAmountManual(false);
+    }
+    if (result.freightCharge !== undefined) {
+      setShippingCharge(result.freightCharge);
+    }
+
+    if (Object.keys(result.quantities).length > 0) {
+      setQuantities((prev) => ({ ...prev, ...result.quantities }));
+      setQuantityInputs((prev) => {
+        const next = { ...prev };
+        Object.entries(result.quantities).forEach(([id, qty]) => {
+          next[Number(id)] = qty.toString();
+        });
+        return next;
+      });
+    }
+    if (Object.keys(result.unitPrices).length > 0) {
+      setUnitPrices((prev) => ({ ...prev, ...result.unitPrices }));
+      setPriceInputs((prev) => {
+        const next = { ...prev };
+        Object.entries(result.unitPrices).forEach(([id, price]) => {
+          next[Number(id)] = price.toString();
+        });
+        return next;
+      });
+    }
+    if (Object.keys(result.discounts).length > 0) {
+      setDiscounts((prev) => ({ ...prev, ...result.discounts }));
+      setDiscountInputs((prev) => {
+        const next = { ...prev };
+        Object.entries(result.discounts).forEach(([id, disc]) => {
+          next[Number(id)] = disc.toString();
+        });
+        return next;
+      });
+    }
+
+    setReconcileSummary(result);
+    setIsDirty(true);
+    toast.success(
+      `Imported PDF (${result.matchedCount} of ${result.totalSelected} order item${result.totalSelected === 1 ? '' : 's'} matched)`
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,26 +386,128 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
           <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold' }}>
             {selectedItems.length === 1 ? 'Invoice Line Item' : 'Create Invoice'}
           </h3>
-          <button
-            type="button"
-            onClick={() => {
-              console.log('Close button clicked');
-              handleDismiss();
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '1.5rem',
-              cursor: 'pointer',
-              color: '#6b7280'
-            }}
-          >
-            ×
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <button
+              type="button"
+              onClick={() => setShowExtractionSlideout(true)}
+              title={
+                hasExtractionProgress(extractionSession)
+                  ? `Resume PDF import${extractionSession.fileName ? `: ${extractionSession.fileName}` : ''}`
+                  : 'Upload a customer invoice PDF and pre-fill invoice details'
+              }
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                padding: '0.375rem 0.75rem',
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+                color: '#374151',
+                backgroundColor: '#ffffff',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                cursor: 'pointer',
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0, display: 'block' }}>
+                <path fill="#DC2626" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+                <path fill="#FECACA" d="M14 2v6h6l-6-6z" />
+                <rect x="4.5" y="12.5" width="15" height="6.5" rx="1.2" fill="#B91C1C" />
+                <text x="12" y="17.6" textAnchor="middle" fill="#fff" fontSize="6" fontWeight="700" fontFamily="Arial, Helvetica, sans-serif">
+                  PDF
+                </text>
+              </svg>
+              {hasExtractionProgress(extractionSession) ? 'Resume PDF import' : 'Import from PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                console.log('Close button clicked');
+                handleDismiss();
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '1.5rem',
+                cursor: 'pointer',
+                color: '#6b7280'
+              }}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} onChange={() => setIsDirty(true)}>
           <div className="modal-body" style={{ padding: '1.5rem' }}>
+            {reconcileSummary && (
+              <div
+                role="status"
+                style={{
+                  marginBottom: '1rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '0.375rem',
+                  border:
+                    reconcileSummary.warnings.length > 0 ||
+                    reconcileSummary.unmatchedPdfLines.length > 0 ||
+                    (reconcileSummary.extractedTotal !== null &&
+                      Math.abs(reconcileSummary.extractedTotal - invoiceTotal) > 0.01)
+                      ? '1px solid #fcd34d'
+                      : '1px solid #93c5fd',
+                  backgroundColor:
+                    reconcileSummary.warnings.length > 0 ||
+                    reconcileSummary.unmatchedPdfLines.length > 0 ||
+                    (reconcileSummary.extractedTotal !== null &&
+                      Math.abs(reconcileSummary.extractedTotal - invoiceTotal) > 0.01)
+                      ? '#fffbeb'
+                      : '#eff6ff',
+                  fontSize: '0.75rem',
+                  color: '#374151',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                  <strong>
+                    PDF imported: matched {reconcileSummary.matchedCount} of {reconcileSummary.totalSelected} order item
+                    {reconcileSummary.totalSelected === 1 ? '' : 's'}.
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setReconcileSummary(null)}
+                    style={{
+                      background: 'none',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.25rem',
+                      padding: '0.15rem 0.5rem',
+                      fontSize: '0.7rem',
+                      cursor: 'pointer',
+                      color: '#374151',
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                {reconcileSummary.extractedTotal !== null &&
+                  Math.abs(reconcileSummary.extractedTotal - invoiceTotal) > 0.01 && (
+                    <div style={{ marginTop: '0.35rem', color: '#92400e' }}>
+                      PDF total is <strong>{formatCurrency(reconcileSummary.extractedTotal)}</strong> vs. modal total{' '}
+                      <strong>{formatCurrency(invoiceTotal)}</strong> (difference:{' '}
+                      <strong>{formatCurrency(Math.abs(reconcileSummary.extractedTotal - invoiceTotal))}</strong>).
+                    </div>
+                  )}
+                {reconcileSummary.warnings.length > 0 && (
+                  <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.1rem', color: '#92400e' }}>
+                    {reconcileSummary.warnings.map((w, idx) => (
+                      <li key={idx}>{w}</li>
+                    ))}
+                  </ul>
+                )}
+                {reconcileSummary.unmatchedPdfLines.length > 0 && (
+                  <div style={{ marginTop: '0.35rem', color: '#92400e' }}>
+                    Unmatched PDF lines: {reconcileSummary.unmatchedPdfLines.join('; ')}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Items to Invoice */}
             <div style={{ marginBottom: '1.5rem' }}>
               <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600' }}>
@@ -708,6 +909,21 @@ const InvoiceModal: React.FC<InvoiceModalProps> = ({
           </div>
         </form>
       </div>
+      {showExtractionSlideout
+        ? createPortal(
+            <DocumentExtractionSlideout
+              kind="customerInvoice"
+              session={extractionSession}
+              onSessionChange={setExtractionSession}
+              onClose={() => setShowExtractionSlideout(false)}
+              hostHasExistingLines={false}
+              skipImportModePrompt
+              overlayZIndex={10050}
+              onImport={handleExtractionImport}
+            />,
+            document.body
+          )
+        : null}
     </div>
   );
 };

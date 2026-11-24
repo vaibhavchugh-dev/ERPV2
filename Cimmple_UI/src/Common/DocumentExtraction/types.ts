@@ -1,5 +1,11 @@
-/** Extensible document kinds for future modules (Customer Quotation, Orders, etc.). */
-export type DocumentExtractionKind = "vendorQuotation" | "customerQuotation" | "vendorOrder" | "customerOrder";
+/** Extensible document kinds for future modules (Customer Quotation, Orders, Invoices, etc.). */
+export type DocumentExtractionKind =
+  | "vendorQuotation"
+  | "customerQuotation"
+  | "vendorOrder"
+  | "customerOrder"
+  | "vendorInvoice"
+  | "customerInvoice";
 
 export type DocumentExtractionStep = "upload" | "select" | "extracting" | "review";
 
@@ -48,6 +54,14 @@ export interface VendorQuotationExtractionResult {
   quotationNumber?: string | null;
   quotationDate?: string | null;
   dueDate?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  poNumber?: string | null;
+  subtotal?: number | null;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  freightCharge?: number | null;
+  totalAmount?: number | null;
   vendorNames?: string[] | null;
   vendorContactName?: string | null;
   vendorPhone?: string | null;
@@ -99,6 +113,7 @@ export interface VendorQuotationExtractionReviewLine {
   qtyOrdered: number;
   unit: string;
   unitPrice: number;
+  amount?: number;
   discount: number;
   discountType: "Amount" | "Percent";
   notes: string;
@@ -119,6 +134,13 @@ export interface VendorQuotationExtractionReview {
   vendorPoNumber: string;
   /** Kept for compatibility; contact comes from Vendor Master. */
   buyerName: string;
+  /** Invoice-specific fields populated for vendorInvoice extraction. */
+  invoiceNumber?: string;
+  poNumber?: string;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  freightCharge?: number | null;
+  extractedTotal?: number | null;
   lines: VendorQuotationExtractionReviewLine[];
 }
 
@@ -168,6 +190,13 @@ export interface CustomerDocumentExtractionReview {
   orderDate: string;
   dueDate: string;
   customerPoNumber: string;
+  /** Invoice-specific fields populated for customerInvoice extraction. */
+  invoiceNumber?: string;
+  poNumber?: string;
+  taxRate?: number | null;
+  taxAmount?: number | null;
+  freightCharge?: number | null;
+  extractedTotal?: number | null;
   lines: VendorQuotationExtractionReviewLine[];
 }
 
@@ -188,9 +217,17 @@ export function isCustomerExtractionReview(
 }
 
 export function isVendorExtractionKind(kind: DocumentExtractionKind): boolean {
-  return kind === "vendorQuotation" || kind === "vendorOrder";
+  return (
+    kind === "vendorQuotation" ||
+    kind === "vendorOrder" ||
+    kind === "vendorInvoice"
+  );
 }
 
 export function isCustomerExtractionKind(kind: DocumentExtractionKind): boolean {
-  return kind === "customerQuotation" || kind === "customerOrder";
+  return (
+    kind === "customerQuotation" ||
+    kind === "customerOrder" ||
+    kind === "customerInvoice"
+  );
 }
