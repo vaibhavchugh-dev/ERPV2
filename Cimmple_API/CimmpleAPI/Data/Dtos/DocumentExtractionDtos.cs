@@ -88,6 +88,15 @@ namespace CimmpleAPI.Data.Dtos
         public string? QuotationDate { get; set; }
         public string? DueDate { get; set; }
 
+        public string? InvoiceNumber { get; set; }
+        public string? InvoiceDate { get; set; }
+        public string? PoNumber { get; set; }
+        public decimal? Subtotal { get; set; }
+        public decimal? TaxRate { get; set; }
+        public decimal? TaxAmount { get; set; }
+        public decimal? FreightCharge { get; set; }
+        public decimal? TotalAmount { get; set; }
+
         public List<string> VendorNames { get; set; } = new();
 
         public string? VendorContactName { get; set; }

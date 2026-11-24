@@ -228,6 +228,21 @@ export function buildCustomerDocumentReview(
   const { orderDate, dueDate } = resolveExtractionDates(result);
   const lines = buildExtractionLinesFromResult(result);
 
+  const toOptionalNumber = (value: unknown): number | null => {
+    if (value == null || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const invoiceNumber = String(
+    result.invoiceNumber ||
+      anyResult.InvoiceNumber ||
+      result.quotationNumber ||
+      anyResult.QuotationNumber ||
+      ""
+  ).trim();
+  const poNumber = String(result.poNumber || anyResult.PoNumber || "").trim();
+
   return {
     ...customerMatch,
     extractedCustomerDraft:
@@ -236,7 +251,15 @@ export function buildCustomerDocumentReview(
         : buildExtractedCustomerDraft(result, customerMatch.customerNameHint),
     orderDate,
     dueDate,
-    customerPoNumber: (result.quotationNumber || "").trim(),
+    customerPoNumber: poNumber || (result.quotationNumber || "").trim(),
+    invoiceNumber: invoiceNumber || undefined,
+    poNumber: poNumber || undefined,
+    taxRate: toOptionalNumber(result.taxRate ?? anyResult.TaxRate),
+    taxAmount: toOptionalNumber(result.taxAmount ?? anyResult.TaxAmount),
+    freightCharge: toOptionalNumber(
+      result.freightCharge ?? anyResult.FreightCharge
+    ),
+    extractedTotal: toOptionalNumber(result.totalAmount ?? anyResult.TotalAmount),
     lines,
   };
 }

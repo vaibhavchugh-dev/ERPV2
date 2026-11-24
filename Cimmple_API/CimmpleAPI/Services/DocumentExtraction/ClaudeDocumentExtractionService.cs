@@ -124,7 +124,7 @@ namespace CimmpleAPI.Services.DocumentExtraction
             if (string.IsNullOrWhiteSpace(jsonText))
                 throw new InvalidOperationException("Claude returned an empty response.");
 
-            return DocumentExtractionPrompts.ParseVendorQuotationJson(jsonText);
+            return DocumentExtractionPrompts.ParseVendorQuotationJson(jsonText, kind);
         }
     }
 }

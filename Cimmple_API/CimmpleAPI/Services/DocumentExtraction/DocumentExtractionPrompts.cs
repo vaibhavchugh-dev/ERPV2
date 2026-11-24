@@ -15,14 +15,18 @@ namespace CimmpleAPI.Services.DocumentExtraction
     {
         public const string VendorQuotation = "vendorQuotation";
         public const string VendorOrder = "vendorOrder";
+        public const string VendorInvoice = "vendorInvoice";
         public const string CustomerQuotation = "customerQuotation";
         public const string CustomerOrder = "customerOrder";
+        public const string CustomerInvoice = "customerInvoice";
 
         public static bool IsKnown(string? kind) =>
             string.Equals(kind, VendorQuotation, StringComparison.OrdinalIgnoreCase)
             || string.Equals(kind, VendorOrder, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(kind, VendorInvoice, StringComparison.OrdinalIgnoreCase)
             || string.Equals(kind, CustomerQuotation, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(kind, CustomerOrder, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(kind, CustomerOrder, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(kind, CustomerInvoice, StringComparison.OrdinalIgnoreCase);
 
         public static string Normalize(string? kind) =>
             string.IsNullOrWhiteSpace(kind) ? VendorQuotation : kind.Trim();
@@ -31,7 +35,8 @@ namespace CimmpleAPI.Services.DocumentExtraction
         {
             var k = Normalize(kind);
             return string.Equals(k, VendorQuotation, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(k, VendorOrder, StringComparison.OrdinalIgnoreCase);
+                || string.Equals(k, VendorOrder, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(k, VendorInvoice, StringComparison.OrdinalIgnoreCase);
         }
 
         public static bool IsCustomerParty(string? kind) => !IsVendorParty(kind);
@@ -76,6 +81,22 @@ PARTY (vendor purchase order / vendor order):
 - quotationDate = Order / PO date.
 ";
 
+        private const string VendorInvoiceSchemaJson =
+            @"{""documentType"":string,""invoiceNumber"":string,""invoiceDate"":string,""quotationNumber"":string,""quotationDate"":string,""dueDate"":string,""poNumber"":string,""subtotal"":number,""taxRate"":number,""taxAmount"":number,""freightCharge"":number,""totalAmount"":number,""projectName"":string,""material"":string,""vendorNames"":[string],""vendorContactName"":string,""vendorPhone"":string,""vendorEmail"":string,""billTo"":{""name"":string,""address"":string,""apartment"":string,""city"":string,""state"":string,""zip"":string,""country"":string,""contactName"":string,""phone"":string,""email"":string},""shipTo"":{""name"":string,""address"":string,""apartment"":string,""city"":string,""state"":string,""zip"":string,""country"":string},""vendorAddress"":string,""vendorApartment"":string,""vendorCity"":string,""vendorState"":string,""vendorZip"":string,""vendorCountry"":string,""vendorShippingAddress"":string,""vendorShippingApartment"":string,""vendorShippingCity"":string,""vendorShippingState"":string,""vendorShippingZip"":string,""vendorShippingCountry"":string,""details"":[{""itemName"":string,""itemDescription"":string,""quantity"":number,""unit"":string,""unitPrice"":number,""amount"":number,""discount"":number,""discountType"":string,""notes"":string,""parts"":[{""partNo"":string,""jobNo"":string,""partName"":string,""description"":string,""material"":string,""quantity"":number,""unit"":string,""remarks"":string}]}]}";
+
+        private const string VendorInvoiceOverlay = @"
+PARTY & TOTALS (vendor invoice):
+- vendorNames = Bill To / Vendor / Supplier / Seller party name (or Ship To if Bill To is absent). Prefer billTo.name. NEVER companyName/letterhead.
+- billTo = Bill To / Vendor billing block ONLY; mirror into vendorAddress* + vendorContactName/vendorPhone/vendorEmail.
+- shipTo = Ship To block ONLY; mirror into vendorShipping* fields. NEVER copy billTo into shipTo.
+- invoiceNumber (and quotationNumber) = Invoice / bill number when present.
+- invoiceDate (and quotationDate) = Invoice / bill date as yyyy-MM-dd.
+- dueDate = Payment due date as yyyy-MM-dd when present; else null.
+- poNumber = Purchase order / PO reference number if shown; else null.
+- subtotal = pre-tax line subtotal number if shown; taxRate = tax percentage (e.g. 8.25) if shown; taxAmount = tax dollar amount if shown; freightCharge = shipping/freight/delivery charge if shown; totalAmount = invoice grand total / amount due.
+- details[] = each billable line item with itemDescription/itemName, quantity, unitPrice, and line amount (always include amount when present, even if qty/unitPrice are omitted). Do NOT include Subtotal, Tax, Freight, or Total summary rows in details[].
+";
+
         private const string CustomerPartyOverlay = @"
 PARTY (customer document):
 - vendorNames = CUSTOMER party only (Bill To / Sold To / Customer / Buyer). Prefer billTo.name.
@@ -91,6 +112,20 @@ PARTY (customer order / customer PO):
 - quotationDate = Order / PO date.
 ";
 
+        private const string CustomerInvoiceOverlay = @"
+PARTY & TOTALS (customer invoice):
+- vendorNames = CUSTOMER party only (Bill To / Sold To / Customer / Buyer / Ship To customer). Prefer billTo.name.
+- NEVER put seller / vendor / letterhead / companyName into vendorNames.
+- billTo = Bill To / Sold To customer billing block ONLY; mirror into vendorAddress* + vendorContactName/vendorPhone/vendorEmail.
+- shipTo = Ship To block ONLY; mirror into vendorShipping* fields. NEVER copy billTo into shipTo.
+- invoiceNumber (and quotationNumber) = Invoice number when present.
+- invoiceDate (and quotationDate) = Invoice date as yyyy-MM-dd.
+- dueDate = Payment due date as yyyy-MM-dd when present; else null.
+- poNumber = Customer PO / Order reference number if shown; else null.
+- subtotal = pre-tax line subtotal number if shown; taxRate = tax percentage (e.g. 8.25) if shown; taxAmount = tax dollar amount if shown; freightCharge = shipping/freight/delivery charge if shown; totalAmount = invoice grand total / amount due.
+- details[] = each billable line item with itemDescription/itemName, quantity, unitPrice, and line amount (always include amount when present). Do NOT include Subtotal, Tax, Freight, or Total summary rows in details[].
+";
+
         /// <summary>Backward-compatible full VQ prompt (core + vendor overlay + schema).</summary>
         public static string VendorQuotationExtractionPrompt =>
             ResolvePrompt(DocumentExtractionKinds.VendorQuotation);
@@ -98,6 +133,11 @@ PARTY (customer order / customer PO):
         public static string ResolvePrompt(string documentKind)
         {
             var kind = DocumentExtractionKinds.Normalize(documentKind);
+            if (string.Equals(kind, DocumentExtractionKinds.VendorInvoice, StringComparison.OrdinalIgnoreCase))
+                return SharedCoreRules + VendorInvoiceOverlay + "\n" + VendorInvoiceSchemaJson;
+            if (string.Equals(kind, DocumentExtractionKinds.CustomerInvoice, StringComparison.OrdinalIgnoreCase))
+                return SharedCoreRules + CustomerInvoiceOverlay + "\n" + VendorInvoiceSchemaJson;
+
             string overlay;
             if (string.Equals(kind, DocumentExtractionKinds.VendorOrder, StringComparison.OrdinalIgnoreCase))
                 overlay = VendorOrderOverlay;
@@ -177,7 +217,7 @@ PARTY (customer order / customer PO):
             return null;
         }
 
-        public static VendorQuotationExtractionDto ParseVendorQuotationJson(string jsonText)
+        public static VendorQuotationExtractionDto ParseVendorQuotationJson(string jsonText, string? documentKind = null)
         {
             jsonText = StripJsonMarkdownFence(jsonText);
             try
@@ -277,6 +317,7 @@ PARTY (customer order / customer PO):
                         PreferBillToVendorAndBilling(dto, root);
                         EnrichAddressesFromNestedParties(dto, root);
                         EnrichDatesFromRaw(dto, root);
+                        EnrichInvoiceFieldsFromRaw(dto, root);
                         StripIssuerFromVendorNames(dto, root);
                     }
                     else
@@ -348,6 +389,55 @@ PARTY (customer order / customer PO):
                 "validUntil",
                 "expiryDate",
                 "expirationDate");
+            dto.InvoiceDate ??= PickDate(
+                root,
+                "invoiceDate",
+                "billDate",
+                "quotationDate",
+                "documentDate",
+                "date");
+        }
+
+        private static decimal? ReadDecimal(JObject obj, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var token = obj[name];
+                if (token == null || token.Type == JTokenType.Null) continue;
+                if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+                    return token.Value<decimal>();
+                if (token.Type == JTokenType.String)
+                {
+                    var raw = (token.Value<string>() ?? string.Empty)
+                        .Replace("$", "")
+                        .Replace(",", "")
+                        .Replace("%", "")
+                        .Trim();
+                    if (decimal.TryParse(
+                        raw,
+                        System.Globalization.NumberStyles.Number | System.Globalization.NumberStyles.AllowLeadingSign,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+            }
+            return null;
+        }
+
+        public static void EnrichInvoiceFieldsFromRaw(VendorQuotationExtractionDto dto, JObject root)
+        {
+            if (dto == null || root == null) return;
+
+            dto.InvoiceNumber ??= ReadPartyString(root, "invoiceNumber", "invoiceNo", "billNumber", "billNo", "quotationNumber");
+            dto.QuotationNumber ??= dto.InvoiceNumber;
+            dto.PoNumber ??= ReadPartyString(root, "poNumber", "purchaseOrderNumber", "poNo", "customerPo");
+            dto.Subtotal ??= ReadDecimal(root, "subtotal", "subTotal", "netAmount");
+            dto.TaxRate ??= ReadDecimal(root, "taxRate", "taxPercent", "salesTaxRate");
+            dto.TaxAmount ??= ReadDecimal(root, "taxAmount", "tax", "salesTax", "totalTax");
+            dto.FreightCharge ??= ReadDecimal(root, "freightCharge", "freight", "shippingCharge", "shipping", "deliveryCharge");
+            dto.TotalAmount ??= ReadDecimal(root, "totalAmount", "grandTotal", "invoiceTotal", "amountDue", "balanceDue", "total");
         }
 
         /// <summary>
@@ -389,6 +479,19 @@ PARTY (customer order / customer PO):
                     dto.VendorNames.RemoveAll(n =>
                         string.Equals(n, billName, StringComparison.OrdinalIgnoreCase));
                     dto.VendorNames.Insert(0, billName!);
+                }
+            }
+
+            // Fallback to shipTo.name when no vendor name was found from billTo/vendorNames.
+            if (dto.VendorNames.Count == 0 && root?["shipTo"] is JObject shipTo)
+            {
+                var shipName = ReadPartyString(shipTo, "name", "companyName", "company", "vendorName");
+                if (!string.IsNullOrWhiteSpace(shipName)
+                    && !issuerCandidates.Any(issuer =>
+                        !string.IsNullOrWhiteSpace(issuer)
+                        && string.Equals(issuer!.Trim(), shipName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    dto.VendorNames.Add(shipName!);
                 }
             }
         }

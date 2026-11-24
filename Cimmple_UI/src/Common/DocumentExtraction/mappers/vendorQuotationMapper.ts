@@ -230,7 +230,7 @@ function cleanNotesField(
   return kept.join(" | ");
 }
 
-function matchVendor(
+export function matchVendor(
   vendorNames: string[] | null | undefined,
   vendors: VendorCandidate[],
   excludeNames?: Array<string | null | undefined>
@@ -391,7 +391,7 @@ function enrichAddressFields(input: {
   return { address, apartment, City, states, zipcode, country };
 }
 
-function buildExtractedVendorDraft(
+export function buildExtractedVendorDraft(
   result: VendorQuotationExtractionResult,
   vendorNameHint: string
 ): ExtractedVendorDraft | null {
@@ -562,11 +562,16 @@ function detailToLines(
     ...jobNos
   );
 
+  const rawAmount = Number(detail.amount ?? 0) || 0;
+  const effectiveUnitPrice =
+    unitPrice > 0 ? unitPrice : rawAmount > 0 && qty <= 1 ? rawAmount : 0;
+
   if (
     !lineDescription &&
     partNos.length === 0 &&
     partQty <= 0 &&
-    unitPrice <= 0 &&
+    effectiveUnitPrice <= 0 &&
+    rawAmount <= 0 &&
     !notes &&
     discount <= 0
   ) {
@@ -583,7 +588,8 @@ function detailToLines(
       jobNumber: jobNos.join(", "),
       qtyOrdered,
       unit: partUnit || "EA",
-      unitPrice,
+      unitPrice: effectiveUnitPrice,
+      amount: rawAmount > 0 ? rawAmount : undefined,
       discount,
       discountType,
       notes,

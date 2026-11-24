@@ -26,7 +26,7 @@ namespace CimmpleAPI.Controllers
         }
 
         /// <summary>
-        /// Extract a PDF for any supported kind (vendorQuotation, vendorOrder, customerQuotation, customerOrder).
+        /// Extract a PDF for any supported kind (vendorQuotation, vendorOrder, vendorInvoice, customerQuotation, customerOrder, customerInvoice).
         /// </summary>
         [HttpPost("Extract")]
         [Consumes("multipart/form-data")]
@@ -80,7 +80,7 @@ namespace CimmpleAPI.Controllers
                 return BadRequest(new
                 {
                     success = false,
-                    message = $"Unsupported documentKind '{documentKind}'. Use vendorQuotation, vendorOrder, customerQuotation, or customerOrder."
+                    message = $"Unsupported documentKind '{documentKind}'. Use vendorQuotation, vendorOrder, vendorInvoice, customerQuotation, customerOrder, or customerInvoice."
                 });
             }
 
