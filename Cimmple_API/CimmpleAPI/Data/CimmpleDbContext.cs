@@ -159,6 +159,7 @@ namespace CimmpleAPI.Data
         public DbSet<ReportSchedule> ReportSchedules { get; set; }
         public DbSet<Notification> Notifications { get; set; }
         public DbSet<EmailOutbox> EmailOutbox { get; set; }
+        public DbSet<InvoiceInboxItem> InvoiceInboxItems { get; set; }
         public DbSet<WorkflowInstance> WorkflowInstances { get; set; }
         public DbSet<WorkflowTask> WorkflowTasks { get; set; }
         public DbSet<WorkflowHandoff> WorkflowHandoffs { get; set; }
@@ -893,6 +894,29 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.LastError).HasMaxLength(2000);
                 entity.Property(e => e.LockedBy).HasMaxLength(128);
                 entity.HasIndex(e => new { e.Status, e.CreatedUtc });
+                entity.HasIndex(e => new { e.Status, e.LockedUntilUtc });
+            });
+
+            modelBuilder.Entity<InvoiceInboxItem>(entity =>
+            {
+                entity.ToTable("InvoiceInboxItem");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Source).HasMaxLength(20);
+                entity.Property(e => e.FromName).HasMaxLength(300);
+                entity.Property(e => e.FromEmail).HasMaxLength(320);
+                entity.Property(e => e.Subject).HasMaxLength(500);
+                entity.Property(e => e.MessageId).HasMaxLength(300);
+                entity.Property(e => e.FileName).HasMaxLength(500);
+                entity.Property(e => e.ContentType).HasMaxLength(100);
+                entity.Property(e => e.BlobName).HasMaxLength(300);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.ExtractionProvider).HasMaxLength(50);
+                entity.Property(e => e.ExtractedVendorName).HasMaxLength(300);
+                entity.Property(e => e.ExtractedInvoiceNo).HasMaxLength(100);
+                entity.Property(e => e.ExtractedTotal).HasColumnType("decimal(18,2)");
+                entity.Property(e => e.FailureReason).HasMaxLength(2000);
+                entity.HasIndex(e => new { e.TenantId, e.MessageId, e.AttachmentIndex }).IsUnique();
+                entity.HasIndex(e => new { e.TenantId, e.Status, e.ReceivedUtc });
                 entity.HasIndex(e => new { e.Status, e.LockedUntilUtc });
             });
 

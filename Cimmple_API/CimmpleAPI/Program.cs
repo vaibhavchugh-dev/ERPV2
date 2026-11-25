@@ -148,6 +148,13 @@ builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.MasterDataSetupService>()
 builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.TenantProvisioningService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 
+// Invoice Inbox (Draft Inbox): vendor invoices emailed to a per-location address
+builder.Services.Configure<CimmpleAPI.Services.InvoiceInbox.InboundMailSettings>(
+    builder.Configuration.GetSection(CimmpleAPI.Services.InvoiceInbox.InboundMailSettings.SectionName));
+builder.Services.AddScoped<CimmpleAPI.Services.InvoiceInbox.InvoiceInboxService>();
+builder.Services.AddScoped<CimmpleAPI.Services.InvoiceInbox.InvoiceInboxExtractionService>();
+builder.Services.AddHostedService<CimmpleAPI.Services.InvoiceInbox.InvoiceInboxExtractionHostedService>();
+
 // Legacy user repository (UserController helpers)
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -320,6 +327,17 @@ try
 catch (Exception ex)
 {
     Log.Warning(ex, "Tenant registry check at startup failed; it is retried when a tenant is provisioned.");
+}
+
+try
+{
+    using var inboxScope = app.Services.CreateScope();
+    await CimmpleAPI.Services.InvoiceInbox.InvoiceInboxSchemaService.EnsureAsync(
+        inboxScope.ServiceProvider.GetRequiredService<CimmpleDbContext>());
+}
+catch (Exception ex)
+{
+    Log.Warning(ex, "Invoice inbox schema check at startup failed; the Invoice Inbox page will not work until it succeeds.");
 }
 
 try

@@ -114,6 +114,8 @@ namespace CimmpleAPI.Services.Auth
                 ["/purchasing/vendor-orders"] = new[] { Add, Edit, Delete, Send, Print, Duplicate, Invoice },
                 ["/purchasing/vendor-receiving"] = new[] { Receive },
                 ["/purchasing/vendor-invoices"] = new[] { Add, Approve, Pay, Print, Send, Void, Delete },
+                // Draft Inbox: Add = review/convert/retry/manage address, Delete = discard.
+                ["/purchasing/invoice-inbox"] = new[] { Add, Delete },
                 ["/inventory"] = new[] { Receive, Issue, Reserve, Transfer, Adjust },
                 ["/quality"] = new[] { Add, Edit, Delete, Print, Send },
                 ["/quality/ncr-codes"] = new[] { Add, Edit, Delete },
@@ -187,6 +189,15 @@ namespace CimmpleAPI.Services.Auth
         {
             var method = (httpMethod ?? "GET").ToUpperInvariant();
             var p = path ?? "";
+
+            // Draft Inbox: the controller name contains "Invoice", which the keyword rules below would
+            // misread. Reads are View; Discard/DELETE is Delete; every other write is Add.
+            if (Contains(p, "/InvoiceInbox/"))
+            {
+                if (method is "GET" or "HEAD" or "OPTIONS") return null;
+                if (method == "DELETE" || Contains(p, "Discard")) return Delete;
+                return Add;
+            }
 
             if (method is "GET" or "HEAD" or "OPTIONS")
             {
