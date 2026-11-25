@@ -34,6 +34,7 @@ import {
   faChevronRight,
   faClock,
   faSitemap,
+  faInbox,
 } from "@fortawesome/free-solid-svg-icons";
 import { AuthService } from "../Services/AuthService";
 import "./Sidebar.scss";
@@ -96,6 +97,7 @@ const Sidebar: React.FC = () => {
     { icon: faShoppingCart, title: "Vendor Orders", path: "/purchasing/vendor-orders" },
     { icon: faClipboardList, title: "Vendor Receiving", path: "/purchasing/vendor-receiving" },
     { icon: faFileInvoiceDollar, title: "Vendor Invoices", path: "/purchasing/vendor-invoices" },
+    { icon: faInbox, title: "Invoice Inbox", path: "/purchasing/invoice-inbox" },
     { icon: faWarehouse, title: "Inventory", path: "/inventory" },
   ];
 

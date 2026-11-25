@@ -13,6 +13,7 @@ export const PAGES_WITH_LEVEL2_ACTIONS = new Set([
   "/purchasing/vendor-orders",
   "/purchasing/vendor-receiving",
   "/purchasing/vendor-invoices",
+  "/purchasing/invoice-inbox",
   "/inventory",
   "/quality",
   "/quality/ncr-codes",

@@ -25,6 +25,7 @@ namespace CimmpleAPI.Services.Auth
             {
                 ["Dashboard"] = "/home",
                 ["Workflow"] = "/workflow",
+                ["InvoiceInbox"] = "/purchasing/invoice-inbox",
                 ["Employee"] = "/masters/employee",
                 ["Workstation"] = "/masters/workstation",
                 ["Process"] = "/masters/process",

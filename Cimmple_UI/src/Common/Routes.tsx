@@ -23,6 +23,7 @@ const VendorOrders = React.lazy(() => import("../Modules/Purchasing/VendorOrders
 const VendorReceiving = React.lazy(() => import("../Modules/Purchasing/VendorReceiving"));
 const Inventory = React.lazy(() => import("../Modules/Inventory/Inventory"));
 const VendorInvoices = React.lazy(() => import("../Modules/Purchasing/VendorInvoices"));
+const InvoiceInbox = React.lazy(() => import("../Modules/Purchasing/InvoiceInbox"));
 const CustomerOrders = React.lazy(() => import("../Modules/Orders/CustomerOrders"));
 const CustomerShipments = React.lazy(() => import("../Modules/Orders/CustomerShipments"));
 const CustomerInvoices = React.lazy(() => import("../Modules/Orders/CustomerInvoices"));
@@ -158,6 +159,11 @@ export const protectedRoutes: any[] = [
     path: "/purchasing/vendor-invoices",
     name: "Vendor Invoices",
     Component: VendorInvoices,
+  },
+  {
+    path: "/purchasing/invoice-inbox",
+    name: "Invoice Inbox",
+    Component: InvoiceInbox,
   },
   {
     path: "/inventory",

@@ -1,0 +1,91 @@
+.invoice-inbox-address {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 0.5rem;
+
+  .invoice-inbox-address-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .invoice-inbox-address-label {
+    font-size: 0.75rem;
+    color: #4338ca;
+  }
+
+  .invoice-inbox-address-value {
+    font-size: 1rem;
+    color: #1e1b4b;
+    font-weight: 600;
+    word-break: break-all;
+    user-select: all;
+  }
+
+  .invoice-inbox-address-note {
+    font-size: 0.8125rem;
+    color: #6b7280;
+  }
+
+  .invoice-inbox-address-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+
+    .btn-secondary {
+      padding: 0.4rem 0.85rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #374151;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      font-family: inherit;
+
+      &:hover:not(:disabled) {
+        background: #f9fafb;
+        border-color: #9ca3af;
+      }
+
+      &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+    }
+  }
+}
+
+.inbox-cell-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+
+  small {
+    color: #6b7280;
+    font-size: 0.75rem;
+  }
+}
+
+.inbox-cell-clip {
+  display: inline-block;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.invoice-inbox-truncated {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  color: #6b7280;
+}

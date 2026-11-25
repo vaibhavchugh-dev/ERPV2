@@ -304,6 +304,7 @@ export class AuthService {
     "/purchasing/vendor-orders": ["Add", "Edit", "Delete", "Send", "Print", "Duplicate", "Invoice"],
     "/purchasing/vendor-receiving": ["Receive"],
     "/purchasing/vendor-invoices": ["Add", "Approve", "Pay", "Print", "Send", "Void", "Delete"],
+    "/purchasing/invoice-inbox": ["Add", "Delete"],
     "/inventory": ["Receive", "Issue", "Reserve", "Transfer", "Adjust"],
     "/quality": ["Add", "Edit", "Delete", "Print", "Send"],
     "/quality/ncr-codes": ["Add", "Edit", "Delete"],
