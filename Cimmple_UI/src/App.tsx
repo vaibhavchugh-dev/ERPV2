@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Switch, Route } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import { Login } from "./Login/Login";
 import { Logout } from "./Login/Logout";
+import { Signup } from "./Signup/Signup";
 import { ChangePassword } from "./Login/ChangePassword";
 import { UnderMaintenance } from "./Login/UnderMaintenance";
 import { useSettingsSafe } from "./Common/Contexts/SettingsContext";
@@ -55,6 +56,7 @@ const AppContent: React.FC = () => {
         <React.Suspense fallback={<RouteFallback />}>
           <Switch>
             <Route exact path="/login" component={Login} />
+            <Route exact path="/signup" component={Signup} />
             <Route exact path="/logout" component={Logout} />
             <Route exact path="/change-password" component={ChangePassword} />
             <Route exact path="/Under-Maintenance" component={UnderMaintenance} />

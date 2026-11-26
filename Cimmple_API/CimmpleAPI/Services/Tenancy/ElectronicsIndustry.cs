@@ -14,6 +14,20 @@ namespace CimmpleAPI.Services.Tenancy
             "SMT", "Through-hole", "Soldering", "Inspection", "Test", "Finishing", "Outside", "Other"
         };
 
+        /// <summary>Same category types as a machine shop, with electronics values.</summary>
+        internal static readonly (string Name, string Code, int DisplayOrder, string[] Values)[] CategoryTypes =
+        {
+            ("Process", "PROCESS", 1, new[] { "SMT", "Through-hole", "Soldering", "Cable Assembly", "Box Build", "Testing", "Finishing" }),
+            ("Material", "MATERIAL", 2, new[] { "FR-4", "Flex Circuit", "Aluminum PCB", "Copper", "Solder Paste", "Wire", "Plastic" }),
+            ("Part Family", "PARTFAMILY", 3, new string[0]),
+            ("Machine", "MACHINE", 4, new string[0]),
+            ("Customer", "CUSTOMER", 5, new string[0]),
+            ("Production Type", "PRODTYPE", 6, new[] { "Prototype", "Batch Production", "Mass Production", "One-Off" }),
+            ("Inspection", "INSPECTION", 7, new[] { "Visual", "AOI", "X-ray", "In-circuit", "Functional", "First Article" }),
+            ("Complexity", "COMPLEXITY", 8, new[] { "Low", "Medium", "High" }),
+            ("Product Line", "PRODUCTLINE", 9, new string[0])
+        };
+
         internal static readonly ProcessSeed[] Processes =
         {
             new("SMT-PRINT", "Solder Paste Printing", "Print solder paste through a stencil onto the bare board", "SMT", false, 10, "Stencil Printer"),

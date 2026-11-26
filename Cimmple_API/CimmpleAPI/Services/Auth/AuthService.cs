@@ -527,6 +527,10 @@ namespace CimmpleAPI.Services.Auth
             return (null, 200);
         }
 
+        private const string TrialEndedMessage = "Your free trial has ended and this account is suspended. Please contact Cimmple to continue.";
+
+        private static bool IsExpiredTrial(DateTime? trialEndsUtc) => trialEndsUtc <= DateTime.UtcNow;
+
         /// <summary>Tenants missing from the registry (legacy data) are allowed; see TenantSchemaService.</summary>
         private async Task<(string? error, int statusCode)> CheckTenantUsableAsync(int tenantId)
         {
@@ -536,22 +540,31 @@ namespace CimmpleAPI.Services.Auth
             }
 
             string? status;
+            DateTime? trialEndsUtc;
             try
             {
-                status = await _db.Tenants.AsNoTracking()
+                var tenant = await _db.Tenants.AsNoTracking()
                     .Where(t => t.TenantId == tenantId)
-                    .Select(t => t.Status)
+                    .Select(t => new { t.Status, t.TrialEndsUtc })
                     .FirstOrDefaultAsync();
+                status = tenant?.Status;
+                trialEndsUtc = tenant?.TrialEndsUtc;
             }
             catch (Exception ex) when (SystemSettingsSchemaService.IsMissingTableException(ex))
             {
                 return (null, 200);
             }
 
+            // Enforced here as well as by the trial expiry worker, so a trial ends on time even between worker runs.
+            if (TenantStatus.Normalize(status) == TenantStatus.Active && trialEndsUtc <= DateTime.UtcNow)
+            {
+                return (TrialEndedMessage, 403);
+            }
+
             return TenantStatus.Normalize(status) switch
             {
                 TenantStatus.Provisioning => ("This account is still being set up. Please try again shortly.", 403),
-                TenantStatus.Suspended => ("This account has been suspended. Please contact Cimmple support.", 403),
+                TenantStatus.Suspended => (IsExpiredTrial(trialEndsUtc) ? TrialEndedMessage : "This account has been suspended. Please contact Cimmple support.", 403),
                 TenantStatus.Cancelled => ("This account is no longer active. Please contact Cimmple support.", 403),
                 _ => (null, 200)
             };

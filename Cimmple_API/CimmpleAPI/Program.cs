@@ -148,6 +148,15 @@ builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.MasterDataSetupService>()
 builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.TenantProvisioningService>();
 builder.Services.AddHostedService<CimmpleAPI.Services.EmailOutboxHostedService>();
 
+// Self-service trial signup: public endpoint queues the request, workers provision it and suspend expired trials.
+builder.Services.Configure<CimmpleAPI.Services.Tenancy.SignupOptions>(
+    builder.Configuration.GetSection(CimmpleAPI.Services.Tenancy.SignupOptions.SectionName));
+builder.Services.AddSingleton<CimmpleAPI.Services.Tenancy.SignupWakeSignal>();
+builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.SignupService>();
+builder.Services.AddScoped<CimmpleAPI.Services.Tenancy.SignupProvisioningService>();
+builder.Services.AddHostedService<CimmpleAPI.Services.Tenancy.SignupProvisioningHostedService>();
+builder.Services.AddHostedService<CimmpleAPI.Services.Tenancy.TrialExpiryHostedService>();
+
 // Invoice Inbox (Draft Inbox): vendor invoices emailed to a per-location address
 builder.Services.Configure<CimmpleAPI.Services.InvoiceInbox.InboundMailSettings>(
     builder.Configuration.GetSection(CimmpleAPI.Services.InvoiceInbox.InboundMailSettings.SectionName));

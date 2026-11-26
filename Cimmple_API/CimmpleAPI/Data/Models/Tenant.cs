@@ -16,6 +16,11 @@ namespace CimmpleAPI.Data.Models
 
         public string? Plan { get; set; }
 
+        /// <summary>
+        /// Subscription cap on employees who can sign in. Null means no cap has been set.
+        /// </summary>
+        public int? LoginSeatLimit { get; set; }
+
         /// <summary>Industry pack code, e.g. machine-shop. Empty when no sample data applies.</summary>
         public string? Industry { get; set; }
         public string? ContactName { get; set; }
@@ -30,6 +35,14 @@ namespace CimmpleAPI.Data.Models
         public DateTime CreatedUtc { get; set; }
         public DateTime? ProvisionedUtc { get; set; }
         public DateTime? StatusChangedUtc { get; set; }
+
+        /// <summary>Free-trial deadline (UTC). The client is suspended once it passes. Null for clients that are not on a trial.</summary>
+        public DateTime? TrialEndsUtc { get; set; }
+    }
+
+    public static class TenantPlans
+    {
+        public const string Trial = "Trial";
     }
 
     public static class TenantStatus

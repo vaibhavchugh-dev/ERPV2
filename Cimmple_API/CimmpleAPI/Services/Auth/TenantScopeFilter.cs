@@ -29,8 +29,10 @@ namespace CimmpleAPI.Services.Auth
         {
             var metadata = context.ActionDescriptor.EndpointMetadata;
             var user = context.HttpContext.User;
+            // Support Portal is Cimmple staff, not a client user, so client tenant permissions do not apply.
             if (metadata.Any(m => m is AllowAnonymousAttribute or SkipTenantScopeAttribute)
-                || user?.Identity?.IsAuthenticated != true)
+                || user?.Identity?.IsAuthenticated != true
+                || IsCimmpleSupport(user))
             {
                 await next();
                 return;
@@ -330,6 +332,14 @@ namespace CimmpleAPI.Services.Auth
             if (underlying == typeof(string)) { converted = tenantId.ToString(); return true; }
             converted = null;
             return false;
+        }
+
+        private static bool IsCimmpleSupport(System.Security.Claims.ClaimsPrincipal? user)
+        {
+            if (user?.Identity?.IsAuthenticated != true) return false;
+            if (string.Equals(user.FindFirst("portalType")?.Value, "support", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return string.Equals(user.FindFirst("supportStaff")?.Value, "true", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void Deny(ActionExecutingContext context, int tokenTenant, string source)

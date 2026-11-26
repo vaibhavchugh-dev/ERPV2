@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation, useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
-import { UserManagementService, UserManagement as UserManagementType, UserQueryParams, PaginatedUsersResponse, Role } from "../../Common/Services/UserManagementService";
+import { UserManagementService, UserManagement as UserManagementType, UserQueryParams, PaginatedUsersResponse, Role, LoginSeatUsage } from "../../Common/Services/UserManagementService";
 import { useSiteListFilter } from "../../Common/Hooks/useSiteListFilter";
 import UserManagementSlideout from "./UserManagementSlideout";
 import RolePermissionManager from "./RolePermissionManager";
@@ -24,6 +24,15 @@ const UserManagementComponent: React.FC = () => {
   const [showSlideout, setShowSlideout] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<number>(0);
   const [resetPasswordUser, setResetPasswordUser] = useState<ResetPasswordUser | null>(null);
+  const [seatUsage, setSeatUsage] = useState<LoginSeatUsage | null>(null);
+
+  const loadSeatUsage = useCallback(async () => {
+    try {
+      setSeatUsage(await UserManagementService.GetLoginSeatUsage());
+    } catch {
+      setSeatUsage(null);
+    }
+  }, []);
 
   // Handle URL parameter to open slideout (from global search)
   useEffect(() => {
@@ -71,7 +80,8 @@ const UserManagementComponent: React.FC = () => {
   useEffect(() => {
     loadUsers();
     loadRoles();
-  }, [debouncedSearch, filterValue, pagination.pageNumber, locationIdParam]);
+    void loadSeatUsage();
+  }, [debouncedSearch, filterValue, pagination.pageNumber, locationIdParam, loadSeatUsage]);
 
   useEffect(() => {
     // Create a map of role IDs to role names for quick lookup
@@ -172,6 +182,7 @@ const UserManagementComponent: React.FC = () => {
       await UserManagementService.DeleteUser(userId, tenantID);
       toast.success("User deactivated successfully");
       loadUsers();
+      void loadSeatUsage();
     } catch (error: any) {
       console.error('[UserManagement] Error deleting user:', error);
       toast.error(`Error deactivating user: ${error?.response?.data?.message || error.message || 'Unknown error'}`);
@@ -241,6 +252,13 @@ const UserManagementComponent: React.FC = () => {
           <h1>User Management</h1>
           <p style={{ fontSize: '0.875rem', color: '#6b7280', margin: '0.25rem 0 0 0' }}>
             Manage user accounts, roles, and permissions. Users are created via <strong>Employee Master</strong>.
+          </p>
+          <p style={{ fontSize: '0.875rem', color: '#374151', margin: '0.35rem 0 0 0' }}>
+            {seatUsage == null
+              ? "Login seats: …"
+              : (seatUsage.loginSeatLimit ?? 0) <= 0
+                ? "Login seats: none allotted."
+                : `Login seats: ${seatUsage.usedSeats} of ${seatUsage.loginSeatLimit} used · ${seatUsage.availableSeats} available`}
           </p>
         </div>
         <div className="page-actions">
@@ -469,6 +487,7 @@ const UserManagementComponent: React.FC = () => {
           }}
           onSave={() => {
             loadUsers();
+            void loadSeatUsage();
             setShowSlideout(false);
             setSelectedUserId(0);
           }}

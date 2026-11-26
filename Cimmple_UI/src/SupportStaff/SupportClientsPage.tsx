@@ -1,15 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { useFormatting } from "../Common/Hooks/useFormatting";
 import { deriveCurrencySymbol } from "../Common/Utils/Formatting";
 import { SYSTEM_CURRENCY_OPTIONS, SYSTEM_TIMEZONE_OPTIONS } from "../Common/Utils/defaultSystemSettings";
 import SupportHeader from "./SupportHeader";
 import SupportClientMasterData from "./SupportClientMasterData";
+import SupportClientSecurity, { defaultTenantSecurity } from "./SupportClientSecurity";
 import {
   apiError,
   PlatformTenantService,
   ProvisionTenantRequest,
   SeedStepResult,
+  TenantSecuritySettings,
   TenantStatus,
   TenantSummary,
 } from "./PlatformTenantService";
@@ -19,6 +21,7 @@ const emptyForm: ProvisionTenantRequest = {
   companyName: "",
   code: "",
   plan: "",
+  loginSeatLimit: 0,
   adminFirstName: "",
   adminLastName: "",
   adminEmail: "",
@@ -30,7 +33,11 @@ const emptyForm: ProvisionTenantRequest = {
   currencySymbol: "$",
   notes: "",
   industry: "",
-  includeSampleData: false,
+  includeSampleWorkstations: false,
+  includeSampleProcesses: false,
+  includeSampleJobTemplates: false,
+  includeSampleNcrCodes: false,
+  security: defaultTenantSecurity(),
   sendInviteEmail: true,
 };
 
@@ -76,6 +83,15 @@ const SupportClientsPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [industries, setIndustries] = useState<{ code: string; label: string }[]>([]);
+  const [security, setSecurity] = useState<TenantSecuritySettings>(defaultTenantSecurity());
+  const [securityReady, setSecurityReady] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [seatDraft, setSeatDraft] = useState("");
+  const securityRef = useRef(security);
+  const setSecurityNow = (next: TenantSecuritySettings) => {
+    securityRef.current = next;
+    setSecurity(next);
+  };
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -97,6 +113,28 @@ const SupportClientsPage: React.FC = () => {
     void PlatformTenantService.industries().then(setIndustries).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    if (!selectedId) {
+      setSecurityReady(false);
+      return;
+    }
+    let cancelled = false;
+    setSecurityReady(false);
+    void PlatformTenantService.getSecuritySettings(selectedId)
+      .then((settings) => {
+        if (!cancelled && settings) setSecurityNow(settings);
+      })
+      .catch(() => {
+        if (!cancelled) setSecurityNow(defaultTenantSecurity());
+      })
+      .finally(() => {
+        if (!cancelled) setSecurityReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tenants.filter((t) => {
@@ -109,6 +147,10 @@ const SupportClientsPage: React.FC = () => {
   }, [tenants, statusFilter, search]);
 
   const selected = tenants.find((t) => t.tenantId === selectedId) || null;
+
+  useEffect(() => {
+    setSeatDraft(selected?.loginSeatLimit != null ? String(selected.loginSeatLimit) : "");
+  }, [selected?.tenantId, selected?.loginSeatLimit]);
 
   const replaceTenant = (tenant: TenantSummary | null | undefined) => {
     if (!tenant) return;
@@ -146,6 +188,10 @@ const SupportClientsPage: React.FC = () => {
     e.preventDefault();
     if (!form.companyName.trim() || !form.adminFirstName.trim() || !form.adminLastName.trim() || !form.adminEmail.trim()) {
       toast.error("Company name and the administrator's name and email are required.");
+      return;
+    }
+    if (form.loginSeatLimit == null || !Number.isInteger(form.loginSeatLimit) || form.loginSeatLimit < 0) {
+      toast.error("Login seats must be a whole number. Use 0 when no employee logins are allotted.");
       return;
     }
     setBusy(true);
@@ -200,14 +246,41 @@ const SupportClientsPage: React.FC = () => {
     });
 
   const applyDefaults = (tenant: TenantSummary) => {
-    if (!window.confirm(`Add any missing default data (roles, permissions, chart of accounts, categories, NCR codes, payment terms) for ${tenant.name}? Existing records are not changed.`)) {
+    if (!window.confirm(`Save security settings and add any missing roles, permissions, chart of accounts, and payment terms for ${tenant.name}? Existing roles, accounts, and payment terms are not changed.`)) {
       return;
     }
     void runAction("Apply defaults", async () => {
-      const result = await PlatformTenantService.applyDefaults(tenant.tenantId);
-      replaceTenant(result.tenant);
-      if (result.success) toast.success(`Defaults applied. ${stepSummary(result.steps)}`);
-      else toast.error(result.error || "Applying defaults failed.");
+      setApplying(true);
+      try {
+        const current = securityRef.current;
+        const saved = await PlatformTenantService.saveSecuritySettings(tenant.tenantId, current);
+        if (saved) setSecurityNow(saved);
+        const result = await PlatformTenantService.applyDefaults(tenant.tenantId, saved);
+        replaceTenant(result.tenant);
+        if (result.success) toast.success(`Security settings saved. ${stepSummary(result.steps)}`);
+        else toast.error(result.error || "Security settings were saved, but applying default data failed.");
+      } finally {
+        setApplying(false);
+      }
+    });
+  };
+
+  const saveLoginSeats = (tenant: TenantSummary) => {
+    const next = Number(seatDraft);
+    if (!Number.isInteger(next) || next < 0) {
+      toast.error("Login seats must be a whole number. Use 0 when no employee logins are allotted.");
+      return;
+    }
+    const used = tenant.usedLoginSeats || 0;
+    if (next < used) {
+      const ok = window.confirm(
+        `${used} people can still sign in. No one is signed out. New logins stay blocked until usage is back to ${next}.`
+      );
+      if (!ok) return;
+    }
+    void runAction("Save login seats", async () => {
+      replaceTenant(await PlatformTenantService.setLoginSeatLimit(tenant.tenantId, next));
+      toast.success(`Login seats set to ${next}.`);
     });
   };
 
@@ -306,6 +379,9 @@ const SupportClientsPage: React.FC = () => {
                 <div className="support-ticket-card__subject">{t.name}</div>
                 <div className="support-ticket-card__meta">
                   {t.userCount} user{t.userCount === 1 ? "" : "s"}
+                  {t.loginSeatLimit != null
+                    ? ` · ${t.usedLoginSeats}/${t.loginSeatLimit} seats`
+                    : " · seats not set"}
                   {t.plan ? ` · ${t.plan}` : ""}
                   {t.contactEmail ? ` · ${t.contactEmail}` : ""}
                 </div>
@@ -354,121 +430,212 @@ const SupportClientsPage: React.FC = () => {
           {creating && (
             <form className="support-inbox__reply sc-form" onSubmit={(e) => void submitCreate(e)}>
               <h3>New client</h3>
-              <div className="sc-form__grid">
-                <label className="sc-form__wide">
-                  Company name *
-                  <input value={form.companyName} onChange={setField("companyName")} maxLength={200} required />
-                </label>
-                <label>
-                  Client code
-                  <input value={form.code} onChange={setField("code")} maxLength={50} placeholder="e.g. ACME" />
-                </label>
+              <section className="sc-section">
+                <h3>Company</h3>
+                <div className="sc-form__grid">
+                  <label className="sc-form__wide">
+                    Company name *
+                    <input value={form.companyName} onChange={setField("companyName")} maxLength={200} required />
+                  </label>
+                  <label>
+                    Client code
+                    <input value={form.code} onChange={setField("code")} maxLength={50} placeholder="e.g. ACME" />
+                  </label>
                 <label>
                   Plan
                   <input value={form.plan} onChange={setField("plan")} maxLength={50} placeholder="e.g. Standard" />
                 </label>
                 <label>
-                  Administrator first name *
-                  <input value={form.adminFirstName} onChange={setField("adminFirstName")} required />
-                </label>
-                <label>
-                  Administrator last name *
-                  <input value={form.adminLastName} onChange={setField("adminLastName")} required />
-                </label>
-                <label>
-                  Administrator email *
-                  <input type="email" value={form.adminEmail} onChange={setField("adminEmail")} required />
-                </label>
-                <label>
-                  Administrator username
+                  Login seats *
                   <input
-                    value={form.adminUserName}
-                    onChange={setField("adminUserName")}
-                    maxLength={100}
-                    placeholder="Defaults to the email"
-                  />
-                </label>
-                <label>
-                  Phone
-                  <input value={form.phone} onChange={setField("phone")} />
-                </label>
-                <label>
-                  Country
-                  <input value={form.country} onChange={setField("country")} />
-                </label>
-                <label>
-                  Time zone
-                  <select value={form.timeZone} onChange={setField("timeZone")}>
-                    {SYSTEM_TIMEZONE_OPTIONS.map((tz) => (
-                      <option key={tz.value} value={tz.value}>
-                        {tz.label} ({tz.value})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Currency
-                  <select
-                    value={form.currency}
+                    type="number"
+                    min={0}
+                    step={1}
+                    required
+                    value={form.loginSeatLimit ?? ""}
                     onChange={(e) => {
-                      const currency = e.target.value;
+                      const raw = e.target.value;
                       setForm((prev) => ({
                         ...prev,
-                        currency,
-                        currencySymbol: deriveCurrencySymbol(currency),
+                        loginSeatLimit: raw === "" ? undefined : Number(raw),
                       }));
                     }}
-                  >
-                    {SYSTEM_CURRENCY_OPTIONS.map((currency) => (
-                      <option key={currency.value} value={currency.value}>
-                        {currency.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Currency symbol
-                  <input value={form.currencySymbol} readOnly />
-                </label>
-                <label className="sc-form__wide">
-                  Internal notes
-                  <textarea rows={3} value={form.notes} onChange={setField("notes")} maxLength={2000} />
-                </label>
-                <label>
-                  Industry
-                  <select
-                    value={form.industry}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setForm((prev) => ({
-                        ...prev,
-                        industry: value,
-                        includeSampleData: value ? prev.includeSampleData : false,
-                      }));
-                    }}
-                  >
-                    <option value="">None</option>
-                    {industries.map((industry) => (
-                      <option key={industry.code} value={industry.code}>
-                        {industry.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="sc-form__check sc-form__wide">
-                  <input
-                    type="checkbox"
-                    checked={form.includeSampleData}
-                    disabled={!form.industry}
-                    onChange={setField("includeSampleData")}
                   />
-                  Include sample workstations, processes, and job templates
                 </label>
-                <label className="sc-form__check sc-form__wide">
-                  <input type="checkbox" checked={form.sendInviteEmail} onChange={setField("sendInviteEmail")} />
-                  Email the administrator their sign-in details
-                </label>
-              </div>
+                  <label>
+                    Phone
+                    <input value={form.phone} onChange={setField("phone")} />
+                  </label>
+                  <label>
+                    Country
+                    <input value={form.country} onChange={setField("country")} />
+                  </label>
+                  <label className="sc-form__wide">
+                    Internal notes
+                    <textarea rows={3} value={form.notes} onChange={setField("notes")} maxLength={2000} />
+                  </label>
+                </div>
+              </section>
+              <section className="sc-section">
+                <h3>Administrator</h3>
+                <div className="sc-form__grid">
+                  <label>
+                    First name *
+                    <input value={form.adminFirstName} onChange={setField("adminFirstName")} required />
+                  </label>
+                  <label>
+                    Last name *
+                    <input value={form.adminLastName} onChange={setField("adminLastName")} required />
+                  </label>
+                  <label>
+                    Email *
+                    <input type="email" value={form.adminEmail} onChange={setField("adminEmail")} required />
+                  </label>
+                  <label>
+                    Username
+                    <input
+                      value={form.adminUserName}
+                      onChange={setField("adminUserName")}
+                      maxLength={100}
+                      placeholder="Defaults to the email"
+                    />
+                  </label>
+                  <label className="sc-form__check sc-form__wide">
+                    <input type="checkbox" checked={form.sendInviteEmail} onChange={setField("sendInviteEmail")} />
+                    Email the administrator their sign-in details
+                  </label>
+                </div>
+              </section>
+              <section className="sc-section">
+                <h3>Regional</h3>
+                <div className="sc-form__grid">
+                  <label>
+                    Time zone
+                    <select value={form.timeZone} onChange={setField("timeZone")}>
+                      {SYSTEM_TIMEZONE_OPTIONS.map((tz) => (
+                        <option key={tz.value} value={tz.value}>
+                          {tz.label} ({tz.value})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Currency
+                    <select
+                      value={form.currency}
+                      onChange={(e) => {
+                        const currency = e.target.value;
+                        setForm((prev) => ({
+                          ...prev,
+                          currency,
+                          currencySymbol: deriveCurrencySymbol(currency),
+                        }));
+                      }}
+                    >
+                      {SYSTEM_CURRENCY_OPTIONS.map((currency) => (
+                        <option key={currency.value} value={currency.value}>
+                          {currency.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Currency symbol
+                    <input value={form.currencySymbol} readOnly />
+                  </label>
+                </div>
+              </section>
+              <section className="sc-section">
+                <h3>Sample data</h3>
+                <div className="sc-form__grid">
+                  <label>
+                    Industry
+                    <select
+                      value={form.industry}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setForm((prev) => ({
+                          ...prev,
+                          industry: value,
+                          includeSampleWorkstations: value ? prev.includeSampleWorkstations : false,
+                          includeSampleProcesses: value ? prev.includeSampleProcesses : false,
+                          includeSampleJobTemplates: value ? prev.includeSampleJobTemplates : false,
+                          includeSampleNcrCodes: value ? prev.includeSampleNcrCodes : false,
+                        }));
+                      }}
+                    >
+                      <option value="">None</option>
+                      {industries.map((industry) => (
+                        <option key={industry.code} value={industry.code}>
+                          {industry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="sc-form__check sc-form__wide">
+                    <input
+                      type="checkbox"
+                      checked={form.includeSampleWorkstations}
+                      disabled={!form.industry}
+                      onChange={setField("includeSampleWorkstations")}
+                    />
+                    Include sample workstations
+                  </label>
+                  <label className="sc-form__check sc-form__wide">
+                    <input
+                      type="checkbox"
+                      checked={form.includeSampleProcesses}
+                      disabled={!form.industry}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm((prev) => ({
+                          ...prev,
+                          includeSampleProcesses: checked,
+                          includeSampleJobTemplates: checked ? prev.includeSampleJobTemplates : false,
+                        }));
+                      }}
+                    />
+                    Include sample processes
+                  </label>
+                  <label className="sc-form__check sc-form__wide">
+                    <input
+                      type="checkbox"
+                      checked={form.includeSampleJobTemplates}
+                      disabled={!form.industry}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm((prev) => ({
+                          ...prev,
+                          includeSampleJobTemplates: checked,
+                          includeSampleProcesses: checked ? true : prev.includeSampleProcesses,
+                        }));
+                      }}
+                    />
+                    Include sample job templates and categories
+                  </label>
+                  <label className="sc-form__check sc-form__wide">
+                    <input
+                      type="checkbox"
+                      checked={form.includeSampleNcrCodes}
+                      disabled={!form.industry}
+                      onChange={setField("includeSampleNcrCodes")}
+                    />
+                    Include sample NCR codes
+                  </label>
+                  <p className="si-muted sc-form__wide">
+                    Job templates require sample processes, so that option is selected with them.
+                  </p>
+                </div>
+              </section>
+              <section className="sc-section">
+                <h3>Security</h3>
+                <SupportClientSecurity
+                  hideHeading
+                  busy={busy}
+                  draft={form.security ?? defaultTenantSecurity()}
+                  onDraftChange={(next) => setForm((prev) => ({ ...prev, security: next }))}
+                />
+              </section>
               <div className="support-inbox__reply-actions">
                 <button type="button" className="si-btn si-btn--ghost" onClick={() => setCreating(false)} disabled={busy}>
                   Cancel
@@ -536,8 +703,32 @@ const SupportClientsPage: React.FC = () => {
                 <dl className="sc-grid">
                   <dt>Tenant ID</dt>
                   <dd>{selected.tenantId}</dd>
-                  <dt>Users</dt>
+                  <dt>Employees</dt>
                   <dd>{selected.userCount}</dd>
+                  <dt>Login seats</dt>
+                  <dd>
+                    {selected.loginSeatLimit != null
+                      ? `${selected.usedLoginSeats} of ${selected.loginSeatLimit} used · ${Math.max(0, selected.loginSeatLimit - selected.usedLoginSeats)} available`
+                      : "Not set"}
+                    <div className="sc-seat-edit">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={seatDraft}
+                        onChange={(e) => setSeatDraft(e.target.value)}
+                        aria-label="Login seats"
+                      />
+                      <button
+                        type="button"
+                        className="si-btn si-btn--ghost"
+                        disabled={busy}
+                        onClick={() => void saveLoginSeats(selected)}
+                      >
+                        Save seats
+                      </button>
+                    </div>
+                  </dd>
                   <dt>Created</dt>
                   <dd>
                     {formatWhen(selected.createdUtc)}
@@ -564,10 +755,21 @@ const SupportClientsPage: React.FC = () => {
               <SupportClientMasterData tenant={selected} busy={busy} onTenant={replaceTenant} />
 
               <div className="support-inbox__description">
-                <h3>Maintenance</h3>
-                <div className="sc-actions">
-                  <button type="button" className="si-btn si-btn--ghost" disabled={busy} onClick={() => applyDefaults(selected)}>
-                    Apply default data
+                <h3>Default data</h3>
+                {securityReady ? (
+                  <SupportClientSecurity
+                    hideHeading
+                    busy={busy}
+                    draft={security}
+                    onDraftChange={setSecurityNow}
+                  />
+                ) : (
+                  <p className="si-muted">Loading security settings…</p>
+                )}
+                {applying && <p className="si-muted">Saving security settings and default data…</p>}
+                <div className="sc-actions sc-actions--spaced">
+                  <button type="button" className="si-btn si-btn--ghost" disabled={busy || !securityReady} onClick={() => applyDefaults(selected)}>
+                    {applying ? "Applying…" : "Apply default data"}
                   </button>
                   <button
                     type="button"

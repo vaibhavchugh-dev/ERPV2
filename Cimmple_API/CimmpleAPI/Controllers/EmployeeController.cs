@@ -6,6 +6,7 @@ using CimmpleAPI.Data.Models;
 using CimmpleAPI.Data.Dtos;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
+using CimmpleAPI.Services.Tenancy;
 using CimmpleAPI.Utilities;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
@@ -523,6 +524,9 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
+                var wasAdmin = !isNew && await LoginSeatService.IsAdminRoleAsync(_context, employee.Role);
+                var occupiedBefore = !isNew && LoginSeatRules.Occupies(employee, wasAdmin);
+
                 employee.FirstName = request.FirstName;
                 employee.LastName = request.LastName;
                 employee.Email = request.Email ?? "";
@@ -635,16 +639,33 @@ namespace CimmpleAPI.Controllers
                     }
                 }
 
-                if (isNew)
+                var willBeAdmin = await LoginSeatService.IsAdminRoleAsync(_context, employee.Role);
+                var needsNewSeat = LoginSeatRules.Occupies(employee, willBeAdmin) && !occupiedBefore;
+                if (needsNewSeat)
                 {
-                    _context.UserDetails.Add(employee);
+                    var seatDenial = await LoginSeatService.ExecuteIfAllowedAsync(
+                        _context,
+                        request.TenantID,
+                        needsNewSeat: true,
+                        async () =>
+                        {
+                            if (isNew)
+                                _context.UserDetails.Add(employee);
+                            else
+                                _context.UserDetails.Update(employee);
+                            await _context.SaveChangesAsync();
+                        });
+                    if (seatDenial != null)
+                        return StatusCode(409, seatDenial.ToResponse());
                 }
                 else
                 {
-                    _context.UserDetails.Update(employee);
+                    if (isNew)
+                        _context.UserDetails.Add(employee);
+                    else
+                        _context.UserDetails.Update(employee);
+                    await _context.SaveChangesAsync();
                 }
-
-                await _context.SaveChangesAsync();
 
                 if (passwordProvided && employee.User_UniqueID > 0 && passwordSettings != null)
                 {
@@ -831,7 +852,7 @@ namespace CimmpleAPI.Controllers
         }
 
         [HttpPost("ImportEmployees")]
-        public IActionResult ImportEmployees([FromBody] EmployeeImportRequest request)
+        public async Task<IActionResult> ImportEmployees([FromBody] EmployeeImportRequest request)
         {
             try
             {
@@ -852,6 +873,11 @@ namespace CimmpleAPI.Controllers
                 var roles = _context.UserRole
                     .Where(r => r.TenantId == request.Tenantid)
                     .ToList();
+                var adminRoleIds = roles
+                    .Where(r => ErpPermissionSeedService.IsAdminRoleName(r.RoleName, r.RoleTag))
+                    .Select(r => r.RoleID)
+                    .ToHashSet();
+                bool IsImportAdmin(int? roleId) => roleId.HasValue && adminRoleIds.Contains(roleId.Value);
 
                 var locations = _context.Locations
                     .Where(l => l.TenantId == request.Tenantid)
@@ -866,6 +892,7 @@ namespace CimmpleAPI.Controllers
 
                 var result = new EmployeeImportResult();
                 var rowResults = new List<EmployeeImportRowResult>();
+                var pendingSeatDelta = 0;
                 var batchCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var batchUserNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var batchEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1052,6 +1079,7 @@ namespace CimmpleAPI.Controllers
                             }
 
                             employee = match;
+                            var occupiedBefore = LoginSeatRules.Occupies(match, IsImportAdmin(match.Role));
                             employee.FirstName = firstName;
                             employee.LastName = lastName;
                             if (!string.IsNullOrEmpty(empCode)) employee.EmpCode = empCode;
@@ -1069,6 +1097,28 @@ namespace CimmpleAPI.Controllers
                             if (row.Zip != null) employee.Zip = row.Zip.Trim();
                             if (row.DOB != null) employee.DOB = row.DOB.Trim();
                             if (row.SSN != null) employee.SSN = row.SSN.Trim();
+
+                            var occupiedAfter = LoginSeatRules.Occupies(employee, IsImportAdmin(employee.Role));
+                            if (occupiedAfter && !occupiedBefore)
+                            {
+                                var seatDenial = await LoginSeatService.DenyNewSeatAsync(
+                                    _context, request.Tenantid, pendingSeatDelta);
+                                if (seatDenial != null)
+                                {
+                                    _context.Entry(employee).State = EntityState.Unchanged;
+                                    rowResult.Status = "Error";
+                                    rowResult.Message = seatDenial.Error;
+                                    result.Failed++;
+                                    rowResults.Add(rowResult);
+                                    continue;
+                                }
+
+                                pendingSeatDelta++;
+                            }
+                            else if (occupiedBefore && !occupiedAfter)
+                            {
+                                pendingSeatDelta--;
+                            }
 
                             rowResult.Status = "Updated";
                             rowResult.Message = "Updated";
@@ -1118,6 +1168,19 @@ namespace CimmpleAPI.Controllers
                                 ContractId = "",
                                 SearchSSN = ""
                             };
+                            if (LoginSeatRules.Occupies(employee, IsImportAdmin(employee.Role)))
+                            {
+                                var seatDenial = await LoginSeatService.DenyNewSeatAsync(
+                                    _context, request.Tenantid, pendingSeatDelta);
+                                if (seatDenial != null)
+                                {
+                                    rowResult.Status = "Error";
+                                    rowResult.Message = seatDenial.Error;
+                                    result.Failed++;
+                                    rowResults.Add(rowResult);
+                                    continue;
+                                }
+                            }
                             _context.UserDetails.Add(employee);
                             existing.Add(employee);
                             _context.SaveChanges();

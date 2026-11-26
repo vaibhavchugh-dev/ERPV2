@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { toast } from "react-toastify";
-import { faSave, faCog, faClock, faDollarSign, faShieldAlt, faEnvelope, faMapMarkerAlt, faExternalLinkAlt, faPaperPlane } from "@fortawesome/free-solid-svg-icons";
+import { faSave, faCog, faClock, faDollarSign, faEnvelope, faMapMarkerAlt, faExternalLinkAlt, faPaperPlane } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { SystemSettingsService, SystemSettings } from "../../Common/Services/SystemSettingsService";
 import { LocationService, LocationMaster } from "../../Common/Services/LocationService";
@@ -20,14 +20,13 @@ const PAGE_PATH = "/settings";
 const SystemSettingsComponent: React.FC = () => {
   const history = useHistory();
   const { refreshSettings } = useSettings();
-  const isAdminSession = AuthService.isAdminSession();
   const { canEdit, canSend } = usePagePermissions(PAGE_PATH);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [defaultLocationId, setDefaultLocationId] = useState<number>(0);
   const [selectedLocation, setSelectedLocation] = useState<LocationMaster | null>(null);
   const [loadingLocations, setLoadingLocations] = useState(false);
-  const [activeTab, setActiveTab] = useState<'company' | 'datetime' | 'currency' | 'security' | 'email' | 'general'>('company');
+  const [activeTab, setActiveTab] = useState<'company' | 'datetime' | 'currency' | 'email' | 'general'>('company');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingSmtp, setTestingSmtp] = useState(false);
@@ -43,13 +42,6 @@ const SystemSettingsComponent: React.FC = () => {
     loadLocations();
     loadDefaultLocation();
   }, []);
-
-  useEffect(() => {
-    // Security settings are administrator-only — never show that tab to non-admins.
-    if (!isAdminSession && activeTab === "security") {
-      setActiveTab("company");
-    }
-  }, [isAdminSession, activeTab]);
 
   useEffect(() => {
     if (defaultLocationId > 0 && locations.length > 0) {
@@ -145,17 +137,6 @@ const SystemSettingsComponent: React.FC = () => {
     if (!settings) return;
     if (!canEdit) return;
 
-    // Validation (security fields only matter when admin is saving them)
-    if (isAdminSession && activeTab === "security") {
-      if (settings.minPasswordLength < 6 || settings.minPasswordLength > 20) {
-        toast.error('Password length must be between 6 and 20 characters');
-        return;
-      }
-      if (settings.sessionTimeoutMinutes < 5 || settings.sessionTimeoutMinutes > 480) {
-        toast.error('Session timeout must be between 5 and 480 minutes');
-        return;
-      }
-    }
     if (settings.smtpPort && (settings.smtpPort < 1 || settings.smtpPort > 65535)) {
       toast.error('SMTP port must be between 1 and 65535');
       return;
@@ -295,9 +276,6 @@ const SystemSettingsComponent: React.FC = () => {
     { id: 'company', label: 'Default Location', icon: faMapMarkerAlt },
     { id: 'datetime', label: 'Date & Time', icon: faClock },
     { id: 'currency', label: 'Currency & Numbers', icon: faDollarSign },
-    ...(isAdminSession
-      ? [{ id: 'security' as const, label: 'Security', icon: faShieldAlt }]
-      : []),
     { id: 'email', label: 'Email Settings', icon: faEnvelope },
     { id: 'general', label: 'General', icon: faCog }
   ];
@@ -815,278 +793,6 @@ const SystemSettingsComponent: React.FC = () => {
             </div>
           )}
 
-          {/* Security Settings */}
-          {activeTab === 'security' && isAdminSession && (
-            <div>
-              <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.125rem', fontWeight: '600', color: '#111827' }}>
-                Security Settings
-              </h3>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: '1.5rem',
-                }}
-              >
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Minimum Password Length
-                  </label>
-                  <input
-                    type="number"
-                    min="6"
-                    max="20"
-                    value={settings.minPasswordLength}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "") return;
-                      const parsed = parseInt(raw, 10);
-                      if (!Number.isNaN(parsed)) {
-                        updateSetting("minPasswordLength", parsed);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const parsed = parseInt(e.target.value, 10);
-                      updateSetting(
-                        "minPasswordLength",
-                        Number.isNaN(parsed) ? 8 : Math.max(6, Math.min(20, parsed))
-                      );
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Password Expiration (Days)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={settings.passwordExpirationDays}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      updateSetting('passwordExpirationDays', Math.max(0, val));
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>0 = Never expire</small>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Password History Count
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="10"
-                    value={settings.passwordHistoryCount}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      updateSetting('passwordHistoryCount', Math.max(0, Math.min(10, val)));
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>Previous passwords users cannot reuse (0 = disabled). Enforced on change and reset.</small>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Session Timeout (Minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="5"
-                    max="480"
-                    value={settings.sessionTimeoutMinutes}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "") return;
-                      const parsed = parseInt(raw, 10);
-                      if (!Number.isNaN(parsed)) {
-                        updateSetting("sessionTimeoutMinutes", parsed);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const parsed = parseInt(e.target.value, 10);
-                      updateSetting(
-                        "sessionTimeoutMinutes",
-                        Number.isNaN(parsed) ? 30 : Math.max(5, Math.min(480, parsed))
-                      );
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                  <small style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                    Logs out after this many minutes of inactivity. Active users stay signed in.
-                  </small>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Max Concurrent Sessions
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={settings.maxConcurrentSessions}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "") return;
-                      const parsed = parseInt(raw, 10);
-                      if (!Number.isNaN(parsed)) {
-                        updateSetting("maxConcurrentSessions", parsed);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const parsed = parseInt(e.target.value, 10);
-                      updateSetting(
-                        "maxConcurrentSessions",
-                        Number.isNaN(parsed) ? 3 : Math.max(1, Math.min(10, parsed))
-                      );
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Failed Login Attempts Before Lockout
-                  </label>
-                  <input
-                    type="number"
-                    min="3"
-                    max="10"
-                    value={settings.failedLoginAttempts}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "") return;
-                      const parsed = parseInt(raw, 10);
-                      if (!Number.isNaN(parsed)) {
-                        updateSetting("failedLoginAttempts", parsed);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const parsed = parseInt(e.target.value, 10);
-                      updateSetting(
-                        "failedLoginAttempts",
-                        Number.isNaN(parsed) ? 5 : Math.max(3, Math.min(10, parsed))
-                      );
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: '500', marginBottom: '0.5rem', color: '#374151' }}>
-                    Account Lockout Duration (Minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="5"
-                    max="1440"
-                    value={settings.accountLockoutMinutes}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "") return;
-                      const parsed = parseInt(raw, 10);
-                      if (!Number.isNaN(parsed)) {
-                        updateSetting("accountLockoutMinutes", parsed);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const parsed = parseInt(e.target.value, 10);
-                      updateSetting(
-                        "accountLockoutMinutes",
-                        Number.isNaN(parsed) ? 15 : Math.max(5, Math.min(1440, parsed))
-                      );
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #d1d5db',
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-                <div style={{ gridColumn: '1 / -1', marginTop: '1rem' }}>
-                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: '600', color: '#111827' }}>
-                    Password Requirements
-                  </h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.requireUppercase}
-                        onChange={(e) => updateSetting('requireUppercase', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Require uppercase letters</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.requireLowercase}
-                        onChange={(e) => updateSetting('requireLowercase', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Require lowercase letters</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.requireNumbers}
-                        onChange={(e) => updateSetting('requireNumbers', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Require numbers</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={settings.requireSpecialChars}
-                        onChange={(e) => updateSetting('requireSpecialChars', e.target.checked)}
-                        style={{ width: '1rem', height: '1rem' }}
-                      />
-                      <span style={{ fontSize: '0.875rem' }}>Require special characters</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Email Settings */}
           {activeTab === 'email' && (

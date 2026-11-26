@@ -196,6 +196,10 @@ export const Login: React.FC = () => {
           </Form>
 
           <div className="login-footer-link">
+            Don&apos;t have an account? <a href="/signup">Sign up</a>
+          </div>
+
+          <div className="login-footer-link" style={{ marginTop: "0.5rem" }}>
             Vendor? <a href="/vendor/login">Open vendor portal</a>
           </div>
         </div>

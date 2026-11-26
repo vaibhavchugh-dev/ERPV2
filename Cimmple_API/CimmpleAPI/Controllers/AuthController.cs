@@ -5,6 +5,7 @@ using CimmpleAPI.Data;
 using CimmpleAPI.Data.Models;
 using CimmpleAPI.Services;
 using CimmpleAPI.Services.Auth;
+using CimmpleAPI.Services.Tenancy;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -321,6 +322,8 @@ namespace CimmpleAPI.Controllers
                 return BadRequest(new { message = policyError });
             }
 
+            var occupiedBefore = LoginSeatRules.Occupies(
+                user, await LoginSeatService.IsAdminRoleAsync(_db, user.Role));
             var (applied, applyError) = await _authService.ValidateAndApplyPasswordAsync(
                 user, request.NewPassword, settings);
             if (!applied)
@@ -334,7 +337,17 @@ namespace CimmpleAPI.Controllers
                 user.CanAccessAllLocations = true;
             }
 
-            await _db.SaveChangesAsync();
+            if (LoginSeatRules.Occupies(user, await LoginSeatService.IsAdminRoleAsync(_db, user.Role)) && !occupiedBefore)
+            {
+                var seatDenial = await LoginSeatService.ExecuteIfAllowedAsync(
+                    _db, user.TenantID, needsNewSeat: true, () => _db.SaveChangesAsync());
+                if (seatDenial != null)
+                    return StatusCode(409, seatDenial.ToResponse());
+            }
+            else
+            {
+                await _db.SaveChangesAsync();
+            }
             await _authService.TrimPasswordHistoryAsync(user.User_UniqueID, settings.PasswordHistoryCount);
             return Ok(new { message = "Password set", userId = user.User_UniqueID, tenantId = user.TenantID });
         }

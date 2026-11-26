@@ -9,18 +9,24 @@ import {
   TenantSummary,
 } from "./PlatformTenantService";
 
-const MASTERS: { key: "workstations" | "processes" | "jobTemplates"; label: string }[] = [
-  { key: "workstations", label: "Workstations" },
-  { key: "processes", label: "Processes" },
-  { key: "jobTemplates", label: "Job templates" },
+const MASTERS: { key: "workstations" | "processes" | "jobTemplates" | "categories" | "ncrCodes"; label: string; file: boolean }[] = [
+  { key: "workstations", label: "Workstations", file: true },
+  { key: "processes", label: "Processes", file: true },
+  { key: "jobTemplates", label: "Job templates", file: true },
+  { key: "categories", label: "Categories", file: true },
+  { key: "ncrCodes", label: "NCR codes", file: true },
 ];
 
 function summarize(result: MasterImportResult): string {
   return `${result.created} created, ${result.updated} updated, ${result.skipped} skipped, ${result.failed} failed`;
 }
 
+function masterLabel(key: string): string {
+  return MASTERS.find((m) => m.key === key)?.label || key;
+}
+
 function batchText(batch: MasterApplyBatch): string {
-  return (batch.results || []).map((r) => `${r.master}: ${summarize(r)}`).join("; ");
+  return (batch.results || []).map((r) => `${masterLabel(r.master)}: ${summarize(r)}`).join("; ");
 }
 
 interface Props {
@@ -74,7 +80,7 @@ const SupportClientMasterData: React.FC<Props> = ({ tenant, busy, onTenant }) =>
       toast.error("Choose an industry first.");
       return;
     }
-    const label = masters.length === 1 ? masters[0] : "workstations, processes, and job templates";
+    const label = masters.length === 1 ? masterLabel(masters[0]) : "the selected industry samples";
     if (!window.confirm(`Load the ${industry} sample for ${label}? Existing records are left as they are.`)) return;
     setWorking(true);
     try {
@@ -149,6 +155,8 @@ const SupportClientMasterData: React.FC<Props> = ({ tenant, busy, onTenant }) =>
     if (!overview) return null;
     if (key === "workstations") return overview.workstations;
     if (key === "processes") return overview.processes;
+    if (key === "categories") return overview.categories;
+    if (key === "ncrCodes") return overview.ncrCodes;
     return overview.jobTemplates;
   };
 
@@ -156,8 +164,8 @@ const SupportClientMasterData: React.FC<Props> = ({ tenant, busy, onTenant }) =>
     <div className="support-inbox__description">
       <h3>Master data</h3>
       <p className="si-muted">
-        Sample data is only for workstations, processes, and job templates. Customers, vendors, and employees stay empty
-        until the client imports its own files from those master screens.
+        Sample workstations, processes, job templates, categories, and NCR codes follow the selected industry.
+        Customers, vendors, and employees stay empty until the client imports its own files.
       </p>
       <div className="sc-actions" style={{ marginBottom: "0.75rem" }}>
         <label>
@@ -205,23 +213,27 @@ const SupportClientMasterData: React.FC<Props> = ({ tenant, busy, onTenant }) =>
               <button type="button" className="si-btn si-btn--ghost" disabled={locked || !industry} onClick={() => void loadSample([master.key])}>
                 Load sample
               </button>
-              <button type="button" className="si-btn si-btn--ghost" disabled={locked} onClick={() => void PlatformTenantService.downloadTemplate(master.key)}>
-                Template
-              </button>
-              <label className="si-btn si-btn--ghost" style={{ cursor: locked ? "wait" : "pointer" }}>
-                Upload
-                <input
-                  type="file"
-                  accept=".csv,.xlsx,.xlsm,text/csv"
-                  hidden
-                  disabled={locked}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) void stageFile(master.key, file);
-                  }}
-                />
-              </label>
+              {master.file && (
+                <>
+                  <button type="button" className="si-btn si-btn--ghost" disabled={locked} onClick={() => void PlatformTenantService.downloadTemplate(master.key)}>
+                    Template
+                  </button>
+                  <label className="si-btn si-btn--ghost" style={{ cursor: locked ? "wait" : "pointer" }}>
+                    Upload
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx,.xlsm,text/csv"
+                      hidden
+                      disabled={locked}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) void stageFile(master.key, file);
+                      }}
+                    />
+                  </label>
+                </>
+              )}
             </div>
           </div>
         );
@@ -232,7 +244,7 @@ const SupportClientMasterData: React.FC<Props> = ({ tenant, busy, onTenant }) =>
           <h3>Preview · {preview.title}</h3>
           {(preview.batch.results || []).map((result) => (
             <div key={result.master} style={{ marginBottom: "0.6rem" }}>
-              <strong>{result.master}</strong>
+              <strong>{masterLabel(result.master)}</strong>
               <div>{summarize(result)}</div>
               {(result.issues || []).slice(0, 12).map((issue, index) => (
                 <div key={`${issue.rowNumber}-${index}`} className="si-muted">
