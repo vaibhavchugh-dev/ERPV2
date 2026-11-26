@@ -13,6 +13,12 @@ import { validateEmail, validatePhone, validateZipCode } from "../../Common/Util
 import DeletionImpactDialog, { DeletionImpactResult } from "../../Common/Components/DeletionImpactDialog";
 import PasswordInput from "../../Common/Components/PasswordInput";
 import { getKeepActiveReason, isAdminRoleName } from "../../Common/Utils/accountProtection";
+import {
+  UserManagementService,
+  LoginSeatUsage,
+  isActiveAccountStatus,
+  loginSeatLimitMessage,
+} from "../../Common/Services/UserManagementService";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import "./CustomerMasterSlideout.scss";
 
@@ -77,6 +83,8 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
   const [loginPasswordConfirm, setLoginPasswordConfirm] = useState("");
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
   const [initialLoginAccessEnabled, setInitialLoginAccessEnabled] = useState(false);
+  const [loadedStatus, setLoadedStatus] = useState("");
+  const [seatUsage, setSeatUsage] = useState<LoginSeatUsage | null>(null);
 
   // Profile Picture State & Refs
   const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
@@ -101,11 +109,13 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
 
     loadRoles();
     loadLocations();
+    void UserManagementService.GetLoginSeatUsage().then(setSeatUsage).catch(() => setSeatUsage(null));
 
     if (employeeId > 0) {
       loadEmployee();
     } else {
       setLoadedRoleName("");
+      setLoadedStatus("");
       setLoginAccessEnabled(false);
       setHasPassword(false);
       setFaceEnrolled(false);
@@ -359,6 +369,7 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
         setFaceEnrolled(!!employee.FaceEnrolled);
         setLoginAccessEnabled(passwordExists);
         setInitialLoginAccessEnabled(passwordExists);
+        setLoadedStatus(employee.Status || "Active");
         setLoginPassword("");
         setLoginPasswordConfirm("");
         setSendWelcomeEmail(false);
@@ -471,6 +482,24 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     }
   };
 
+  const savedUserName = (formData.UserName || "").trim();
+  const draftRoleName =
+    roles.find((r) => r.roleID === formData.Role)?.roleName || loadedRoleName;
+  const loadedIsAdmin = isAdminRoleName(loadedRoleName);
+  const draftIsAdmin = isAdminRoleName(draftRoleName);
+  const savedOccupies =
+    !loadedIsAdmin &&
+    hasPassword &&
+    !!savedUserName &&
+    savedUserName !== "enabled" &&
+    isActiveAccountStatus(loadedStatus);
+  const cannotEnableLogin =
+    !draftIsAdmin && !!seatUsage && (seatUsage.availableSeats ?? 0) <= 0 && !savedOccupies;
+  const seatLimitText =
+    cannotEnableLogin && seatUsage?.loginSeatLimit != null
+      ? loginSeatLimitMessage(seatUsage.usedSeats, seatUsage.loginSeatLimit)
+      : "";
+
   const validateForm = (): boolean => {
     const newErrors: { [key: string]: string } = {};
 
@@ -506,6 +535,18 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
     if (formData.Zip && formData.Zip.trim() !== "") {
       const zipError = validateZipCode(formData.Zip);
       if (zipError) newErrors.Zip = zipError;
+    }
+
+    if (
+      cannotEnableLogin &&
+      loginAccessEnabled &&
+      isActiveAccountStatus(formData.Status) &&
+      (hasPassword || loginPassword.trim())
+    ) {
+      newErrors.loginAccess = loginSeatLimitMessage(
+        seatUsage?.usedSeats ?? 0,
+        seatUsage?.loginSeatLimit ?? 0
+      );
     }
 
     if (loginAccessEnabled && isAdminSession) {
@@ -873,15 +914,25 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                       cursor: isAdminSession ? 'pointer' : 'not-allowed',
                       opacity: isAdminSession ? 1 : 0.65,
                     }}
-                    title={isAdminSession ? undefined : "Only an administrator can change login access"}
+                    title={
+                      !isAdminSession
+                        ? "Only an administrator can change login access"
+                        : cannotEnableLogin && !loginAccessEnabled
+                          ? seatLimitText
+                          : undefined
+                    }
                   >
                     <input
                       type="checkbox"
                       checked={loginAccessEnabled}
-                      disabled={!isAdminSession}
+                      disabled={!isAdminSession || (cannotEnableLogin && !loginAccessEnabled)}
                       onChange={(e) => {
                         if (!isAdminSession) return;
                         const enabled = e.target.checked;
+                        if (enabled && cannotEnableLogin) {
+                          if (seatLimitText) toast.error(seatLimitText);
+                          return;
+                        }
                         setLoginAccessEnabled(enabled);
                         setLoginPassword("");
                         setLoginPasswordConfirm("");
@@ -902,6 +953,11 @@ const EmployeeMasterSlideout: React.FC<EmployeeMasterSlideoutProps> = ({
                     <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Login Access</span>
                   </label>
                 </div>
+                {seatLimitText && (
+                  <p style={{ fontSize: "0.8125rem", color: "#b45309", margin: "0 0 1rem" }}>
+                    {seatLimitText}
+                  </p>
+                )}
 
                 {!isAdminSession && (
                   <p style={{ fontSize: '0.8125rem', color: '#6b7280', marginBottom: '1rem' }}>

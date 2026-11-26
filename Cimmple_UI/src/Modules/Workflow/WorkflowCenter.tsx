@@ -1060,7 +1060,7 @@ const ChoreTable: React.FC<{
         <thead>
           <tr>
             <SortHeader className="col-chore" label="Chore" column="chore" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
-            <SortHeader className="col-order" label="Order" column="order" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+            <SortHeader className="col-order" label="Reference" column="order" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader className="col-customer" label="Customer" column="customer" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader className="col-stage" label="Stage" column="stage" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
             <SortHeader className="col-priority" label="Priority" column="priority" sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />

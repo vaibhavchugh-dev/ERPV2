@@ -213,9 +213,6 @@ namespace CimmpleAPI.Controllers
             if (settings == null)
                 return BadRequest(new { message = "Settings data is required" });
 
-            var callerIsAdmin = AccountProtection.IsAdminCaller(
-                _context, CanAccessAllLocations(), GetCallerRoleId());
-
             try
             {
                 await SystemSettingsSchemaService.EnsureTablesAsync(_context);
@@ -228,11 +225,8 @@ namespace CimmpleAPI.Controllers
                     settings.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
                     if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
                         ClearTenantCustomSmtpFields(settings);
-                    if (!callerIsAdmin)
-                    {
-                        // Non-admins cannot set security policy on first create — use defaults.
-                        ApplyDefaultSecuritySettings(settings);
-                    }
+                    // Security policy is edited in the Support Portal, not from this screen.
+                    ApplyDefaultSecuritySettings(settings);
                     settings.CreatedDate = DateTime.UtcNow;
                     settings.UpdatedDate = DateTime.UtcNow;
                     _context.SystemSettings.Add(settings);
@@ -240,10 +234,6 @@ namespace CimmpleAPI.Controllers
                 else
                 {
                     ApplyNonSecuritySettings(existingSettings, settings);
-                    if (callerIsAdmin)
-                    {
-                        ApplySecuritySettings(existingSettings, settings);
-                    }
                     existingSettings.UpdatedDate = DateTime.UtcNow;
                 }
 
@@ -266,8 +256,7 @@ namespace CimmpleAPI.Controllers
                         settings!.EmailDeliveryMode = SmtpSettingsResolver.NormalizeMode(settings.EmailDeliveryMode);
                         if (!SmtpSettingsResolver.IsCustomMode(settings.EmailDeliveryMode))
                             ClearTenantCustomSmtpFields(settings);
-                        if (!callerIsAdmin)
-                            ApplyDefaultSecuritySettings(settings);
+                        ApplyDefaultSecuritySettings(settings);
                         settings.CreatedDate = DateTime.UtcNow;
                         settings.UpdatedDate = DateTime.UtcNow;
                         _context.SystemSettings.Add(settings);
@@ -275,8 +264,6 @@ namespace CimmpleAPI.Controllers
                     else
                     {
                         ApplyNonSecuritySettings(existingSettings, settings!);
-                        if (callerIsAdmin)
-                            ApplySecuritySettings(existingSettings, settings!);
                         existingSettings.UpdatedDate = DateTime.UtcNow;
                     }
 

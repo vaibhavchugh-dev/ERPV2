@@ -14,8 +14,11 @@ namespace CimmpleAPI.Services.Tenancy
         public const string Workstations = "workstations";
         public const string Processes = "processes";
         public const string JobTemplates = "jobTemplates";
+        public const string Categories = "categories";
+        public const string NcrCodes = "ncrCodes";
 
-        private static readonly string[] Order = { Workstations, Processes, JobTemplates };
+        private static readonly string[] Order = { Workstations, Processes, JobTemplates, Categories, NcrCodes };
+        private static readonly string[] FileOrder = { Workstations, Processes, JobTemplates, Categories, NcrCodes };
 
         private readonly CimmpleDbContext _db;
 
@@ -28,6 +31,8 @@ namespace CimmpleAPI.Services.Tenancy
         {
             Workstations => "Workstations",
             Processes => "Processes",
+            Categories => "Categories",
+            NcrCodes => "NCR Codes",
             _ => "Job Templates"
         };
 
@@ -64,7 +69,9 @@ namespace CimmpleAPI.Services.Tenancy
                 Industry = tenant.Industry,
                 Workstations = Count(Workstations, await _db.WorkstationMaster.CountAsync(w => w.TenantId == tenantId)),
                 Processes = Count(Processes, await _db.ProcessMaster.CountAsync(p => p.Tenantid == tenantId)),
-                JobTemplates = Count(JobTemplates, await _db.JobTemplateMaster.CountAsync(t => t.Tenantid == tenantId))
+                JobTemplates = Count(JobTemplates, await _db.JobTemplateMaster.CountAsync(t => t.Tenantid == tenantId)),
+                Categories = Count(Categories, await _db.CategoryType.CountAsync(t => t.Tenantid == tenantId)),
+                NcrCodes = Count(NcrCodes, await _db.NCRCodeMaster.CountAsync(c => c.TenantId == tenantId))
             };
         }
 
@@ -103,7 +110,7 @@ namespace CimmpleAPI.Services.Tenancy
             await stream.CopyToAsync(buffer);
             var bytes = buffer.ToArray();
             var rowsByMaster = new Dictionary<string, List<TabularRow>>();
-            foreach (var master in Order)
+            foreach (var master in FileOrder)
             {
                 using var probe = new MemoryStream(bytes);
                 if (!TabularFileParser.HasSheet(probe, SheetName(master))) continue;
@@ -111,7 +118,7 @@ namespace CimmpleAPI.Services.Tenancy
                 rowsByMaster[master] = TabularFileParser.Parse(read, fileName, SheetName(master));
             }
             if (rowsByMaster.Count == 0)
-                return MasterApplyBatch.Fail("No sheets named Workstations, Processes, or Job Templates were found.");
+                return MasterApplyBatch.Fail("No sheets named Workstations, Processes, Job Templates, Categories, or NCR Codes were found.");
 
             return await ApplyAsync(tenantId, null, rowsByMaster.Keys, createdBy, "File", fileName, rowsByMaster, commit);
         }
@@ -123,7 +130,10 @@ namespace CimmpleAPI.Services.Tenancy
             {
                 Workstations => "Workstation Name,Status\nCNC Lathe,Active\n",
                 Processes => "Process Code,Process Name,Description,Category,Outside Services,Estimated Minutes,Default Workstation,Status\nTURN-CNC,CNC Turning,Two axis CNC lathe turning,Machining,No,45,CNC Lathe,Active\n",
-                _ => "Template Code,Template Name,Description,Sequence,Process Code,Workstation Name,Setup Minutes,Cycle Minutes,Instructions\nTURNED-PIN,Turned Pin,Saw then turn,1,SAW-01,Horizontal Band Saw,15,15,Cut to length\n"
+                JobTemplates => "Template Code,Template Name,Description,Sequence,Process Code,Workstation Name,Setup Minutes,Cycle Minutes,Instructions\nTURNED-PIN,Turned Pin,Saw then turn,1,SAW-01,Horizontal Band Saw,15,15,Cut to length\n",
+                Categories => "Category Type,Type Code,Value\nMaterial,MATERIAL,Aluminium\nMaterial,MATERIAL,Steel\n",
+                NcrCodes => "NCR Code,Description\nSLD-001,Solder bridge\n",
+                _ => throw new InvalidOperationException("This master does not have a file template.")
             };
         }
 
@@ -178,12 +188,18 @@ namespace CimmpleAPI.Services.Tenancy
             MasterImportResult result;
             try
             {
-                result = master switch
-                {
-                    Workstations => ImportWorkstations(tenantId, source == "Sample" ? null : fileRows, updateExisting: source != "Sample", sample),
-                    Processes => ImportProcesses(tenantId, source == "Sample" ? null : fileRows, updateExisting: source != "Sample", sample),
-                    _ => ImportJobTemplates(tenantId, source == "Sample" ? null : fileRows, sample)
-                };
+                if (master == NcrCodes)
+                    result = await ImportNcrCodesAsync(tenantId, source == "Sample" ? null : fileRows, sample);
+                else if (master == Categories)
+                    result = ImportCategories(tenantId, source == "Sample" ? null : fileRows, sample);
+                else if (master == Workstations)
+                    result = ImportWorkstations(tenantId, source == "Sample" ? null : fileRows, updateExisting: source != "Sample", sample);
+                else if (master == Processes)
+                    result = ImportProcesses(tenantId, source == "Sample" ? null : fileRows, updateExisting: source != "Sample", sample);
+                else if (master == JobTemplates)
+                    result = ImportJobTemplates(tenantId, source == "Sample" ? null : fileRows, sample);
+                else
+                    throw new InvalidOperationException("Unknown master.");
             }
             catch
             {
@@ -214,6 +230,160 @@ namespace CimmpleAPI.Services.Tenancy
             });
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+            return result;
+        }
+
+        private MasterImportResult ImportCategories(int tenantId, List<TabularRow>? fileRows, IndustrySample? sample)
+        {
+            var result = new MasterImportResult { Master = Categories };
+            if (fileRows == null)
+            {
+                var pack = sample ?? throw new InvalidOperationException("Choose an industry before loading sample data.");
+                var (typesCreated, valuesCreated) = CategoryDefaults.EnsureForTenant(_db, tenantId, pack.Code);
+                result.Created = typesCreated + valuesCreated;
+                result.Skipped = pack.CategoryTypes.Length - typesCreated;
+                return result;
+            }
+
+            var types = _db.CategoryType.Where(t => t.Tenantid == tenantId).ToList();
+            var typeIds = types.Select(t => t.Id).ToList();
+            var values = typeIds.Count == 0
+                ? new List<CategoryValue>()
+                : _db.CategoryValue.Where(v => v.Tenantid == tenantId && typeIds.Contains(v.CategoryTypeId)).ToList();
+            var nextTypeOrder = types.Count == 0 ? 1 : types.Max(t => t.DisplayOrder) + 1;
+
+            foreach (var row in fileRows)
+            {
+                var typeName = TabularFileParser.Cell(row, "Category Type", "Type", "Type Name").Trim();
+                var typeCode = TabularFileParser.Cell(row, "Type Code", "Code").Trim();
+                var valueName = TabularFileParser.Cell(row, "Value", "Category Value").Trim();
+                if (typeName.Length == 0 && typeCode.Length == 0)
+                {
+                    Fail(result, row.RowNumber, "Category Type is required");
+                    continue;
+                }
+
+                var byCode = typeCode.Length == 0
+                    ? null
+                    : types.FirstOrDefault(t => string.Equals(t.Code, typeCode, StringComparison.OrdinalIgnoreCase));
+                var byName = typeName.Length == 0
+                    ? null
+                    : types.FirstOrDefault(t => string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase));
+                if (byCode != null && byName != null && byCode.Id != byName.Id)
+                {
+                    Fail(result, row.RowNumber, $"Type Code '{typeCode}' and Category Type '{typeName}' belong to different categories");
+                    continue;
+                }
+
+                var type = byCode ?? byName;
+                if (type == null)
+                {
+                    if (typeName.Length == 0)
+                    {
+                        Fail(result, row.RowNumber, "Category Type is required for a new category");
+                        continue;
+                    }
+                    type = new CategoryType
+                    {
+                        Tenantid = tenantId,
+                        Name = typeName,
+                        Code = typeCode.Length == 0 ? null : typeCode,
+                        DisplayOrder = nextTypeOrder++,
+                        AllowUserValues = true,
+                        IsSystem = false,
+                        IsActive = true
+                    };
+                    _db.CategoryType.Add(type);
+                    types.Add(type);
+                    result.Created++;
+                }
+
+                if (valueName.Length == 0)
+                {
+                    if (byCode != null || byName != null)
+                        Skip(result, row.RowNumber, "Category type already exists");
+                    continue;
+                }
+
+                var typeValues = values.Where(v => ReferenceEquals(v.CategoryType, type) || (type.Id > 0 && v.CategoryTypeId == type.Id)).ToList();
+                if (typeValues.Any(v => string.Equals(v.Name, valueName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Skip(result, row.RowNumber, "Category value already exists");
+                    continue;
+                }
+
+                var value = new CategoryValue
+                {
+                    Tenantid = tenantId,
+                    CategoryType = type,
+                    Name = valueName,
+                    DisplayOrder = typeValues.Count == 0 ? 1 : typeValues.Max(v => v.DisplayOrder) + 1,
+                    IsSystem = false,
+                    IsActive = true
+                };
+                _db.CategoryValue.Add(value);
+                values.Add(value);
+                result.Created++;
+            }
+
+            _db.SaveChanges();
+            return result;
+        }
+
+        private async Task<MasterImportResult> ImportNcrCodesAsync(int tenantId, List<TabularRow>? fileRows, IndustrySample? sample)
+        {
+            var result = new MasterImportResult { Master = NcrCodes };
+            var createdBy = await _db.UserDetails
+                .Where(u => u.TenantID == tenantId)
+                .OrderBy(u => u.User_UniqueID)
+                .Select(u => u.User_UniqueID)
+                .FirstOrDefaultAsync();
+
+            if (fileRows == null)
+            {
+                var pack = sample ?? throw new InvalidOperationException("Choose an industry before loading sample data.");
+                var (inserted, _) = await NcrCodeDefaults.EnsureForTenantAsync(_db, tenantId, createdBy, pack.Code);
+                result.Created = inserted;
+                result.Skipped = pack.NcrCodes.Length - inserted;
+                return result;
+            }
+
+            await NcrCodeDefaults.LockNcrCodesAsync(_db, tenantId);
+            var existing = new HashSet<string>(
+                await _db.NCRCodeMaster.Where(c => c.TenantId == tenantId && c.NCRCode != null).Select(c => c.NCRCode!).ToListAsync(),
+                StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var now = DateTime.UtcNow;
+            foreach (var row in fileRows)
+            {
+                var code = TabularFileParser.Cell(row, "NCR Code", "Code").Trim();
+                var description = TabularFileParser.Cell(row, "Description").Trim();
+                if (code.Length == 0)
+                {
+                    Fail(result, row.RowNumber, "NCR Code is required");
+                    continue;
+                }
+                if (!seen.Add(code))
+                {
+                    Fail(result, row.RowNumber, $"Duplicate NCR Code '{code}' in the file");
+                    continue;
+                }
+                if (!existing.Add(code))
+                {
+                    Skip(result, row.RowNumber, "NCR code already exists");
+                    continue;
+                }
+                _db.NCRCodeMaster.Add(new NCRCodeMaster
+                {
+                    NCRCode = code,
+                    Description = description,
+                    TenantId = tenantId,
+                    CreatedBy = createdBy,
+                    CreatedDate = now
+                });
+                result.Created++;
+            }
+            await _db.SaveChangesAsync();
             return result;
         }
 
@@ -566,6 +736,8 @@ namespace CimmpleAPI.Services.Tenancy
         {
             Workstations => "Workstations",
             Processes => "Processes",
+            Categories => "Categories",
+            NcrCodes => "NCR codes",
             _ => "Job templates"
         };
 
@@ -629,6 +801,8 @@ namespace CimmpleAPI.Services.Tenancy
         public MasterSetupCount Workstations { get; set; } = new();
         public MasterSetupCount Processes { get; set; } = new();
         public MasterSetupCount JobTemplates { get; set; } = new();
+        public MasterSetupCount Categories { get; set; } = new();
+        public MasterSetupCount NcrCodes { get; set; } = new();
     }
 
     public class MasterSetupCount

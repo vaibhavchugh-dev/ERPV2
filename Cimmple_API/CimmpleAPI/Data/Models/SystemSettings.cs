@@ -30,10 +30,10 @@ namespace CimmpleAPI.Data.Models
         public bool RequireLowercase { get; set; } = true;
         public bool RequireNumbers { get; set; } = true;
         public bool RequireSpecialChars { get; set; } = false;
-        public int PasswordExpirationDays { get; set; } = 90;
+        public int PasswordExpirationDays { get; set; } = 0;
         public int PasswordHistoryCount { get; set; } = 5;
         public int SessionTimeoutMinutes { get; set; } = 30;
-        public int MaxConcurrentSessions { get; set; } = 3;
+        public int MaxConcurrentSessions { get; set; } = 1;
         public int FailedLoginAttempts { get; set; } = 5;
         public int AccountLockoutMinutes { get; set; } = 15;
         

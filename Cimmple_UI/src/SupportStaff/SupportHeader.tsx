@@ -19,16 +19,14 @@ const SupportHeader: React.FC = () => {
             {user?.displayName || user?.username || "Staff"}
           </div>
         </div>
-        {user?.platformAdmin && (
-          <nav className="support-inbox__nav">
-            <NavLink exact to="/support" activeClassName="is-active">
-              Inbox
-            </NavLink>
-            <NavLink to="/support/clients" activeClassName="is-active">
-              Clients
-            </NavLink>
-          </nav>
-        )}
+        <nav className="support-inbox__nav">
+          <NavLink exact to="/support" activeClassName="is-active">
+            Inbox
+          </NavLink>
+          <NavLink to="/support/clients" activeClassName="is-active">
+            Clients
+          </NavLink>
+        </nav>
       </div>
       <button type="button" className="si-btn si-btn--ghost" onClick={logout}>
         Sign out

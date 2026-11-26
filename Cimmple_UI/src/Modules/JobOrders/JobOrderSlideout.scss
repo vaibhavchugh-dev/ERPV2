@@ -472,11 +472,12 @@
 
 .jo-material-table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .jo-material-table {
   width: 100%;
-  min-width: 56rem;
+  min-width: 52rem;
   table-layout: fixed;
   border-collapse: collapse;
   background: #ffffff;
@@ -491,23 +492,42 @@
   background: #f3f4f6;
 }
 
+.jo-material-table th.is-item,
+.jo-material-table td.jo-material-item-cell {
+  width: auto;
+  min-width: 22rem;
+  overflow: visible;
+}
+
 .jo-material-table th.is-num,
 .jo-material-table td.is-num {
-  width: 4.75rem;
+  width: 4.25rem;
   text-align: right;
   white-space: nowrap;
 }
 
 .jo-material-table th.is-notes,
 .jo-material-table td.is-notes {
-  width: 16%;
+  width: 8.5rem;
 }
 
 .jo-material-table th.is-actions,
 .jo-material-table td.is-actions {
-  width: 22rem;
+  width: 11.5rem;
   overflow: visible;
+  text-align: left;
+  padding-left: 0.5rem;
+  padding-right: 0.45rem;
+}
+
+.jo-material-table th.is-delete,
+.jo-material-table td.is-delete {
+  width: 2.75rem;
+  padding-left: 0.15rem;
+  padding-right: 0.4rem;
+  text-align: right;
   white-space: nowrap;
+  overflow: visible;
 }
 
 .jo-material-table td {
@@ -516,6 +536,10 @@
   border-top: 1px solid #e5e7eb;
   vertical-align: middle;
   overflow: hidden;
+}
+
+.jo-material-table td.is-delete {
+  overflow: visible;
 }
 
 .jo-material-table tr.is-short {
@@ -538,6 +562,7 @@
 
 .jo-material-item-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
   align-items: center;
   min-width: 0;
@@ -545,18 +570,21 @@
 }
 
 .jo-material-kit select.jo-material-type {
-  flex: 0 0 auto;
-  width: auto;
-  max-width: 7.5rem;
+  flex: 0 0 11.25rem;
+  width: 11.25rem;
+  min-width: 11.25rem;
+  max-width: none;
 }
 
 .jo-material-picker {
-  flex: 1 1 0%;
-  min-width: 0;
+  flex: 1 1 8rem;
+  min-width: 8rem;
 }
 
 .jo-material-picker .jo-material-item {
   width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .jo-material-picker__list {
@@ -625,16 +653,18 @@
 }
 
 .jo-material-actions {
-  display: inline-flex;
-  flex-wrap: nowrap;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: flex-start;
+  gap: 0.3rem;
+  width: 100%;
 }
 
 .jo-material-btn {
   flex: 0 0 auto;
-  min-width: 5.5rem;
-  padding: 0.3rem 0.5rem;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
   margin: 0;
   border-radius: 0.25rem;
   font-size: 0.75rem;
@@ -643,6 +673,39 @@
   text-align: center;
   white-space: nowrap;
   cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .jo-material-table th.is-notes,
+  .jo-material-table td.is-notes {
+    width: 6.5rem;
+  }
+}
+
+@media (max-width: 720px) {
+
+  .jo-material-table th.is-num,
+  .jo-material-table td.is-num {
+    width: 3.75rem;
+  }
+
+  .jo-material-table th.is-delete,
+  .jo-material-table td.is-delete {
+    width: 2.5rem;
+    position: sticky;
+    right: 0;
+    background: #ffffff;
+    box-shadow: -4px 0 8px rgba(15, 23, 42, 0.06);
+    z-index: 1;
+  }
+
+  .jo-material-table thead th.is-delete {
+    background: #f3f4f6;
+  }
+
+  .jo-material-table tr.is-short td.is-delete {
+    background: #fef2f2;
+  }
 }
 
 .jo-material-btn:disabled {

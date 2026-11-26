@@ -16,6 +16,11 @@ namespace CimmpleAPI.Data.Models
 
         public string? Plan { get; set; }
 
+        /// <summary>
+        /// Subscription cap on employees who can sign in. Null means no cap has been set.
+        /// </summary>
+        public int? LoginSeatLimit { get; set; }
+
         /// <summary>Industry pack code, e.g. machine-shop. Empty when no sample data applies.</summary>
         public string? Industry { get; set; }
         public string? ContactName { get; set; }

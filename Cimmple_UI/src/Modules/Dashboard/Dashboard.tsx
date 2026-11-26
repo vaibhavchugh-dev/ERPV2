@@ -72,50 +72,94 @@ const Dashboard: React.FC = () => {
   const [upcomingDeadlines, setUpcomingDeadlines] = useState<UpcomingDeadline[]>([]);
 
   // Every section loads independently and in parallel; nothing waits on the KPI metrics call.
-  const loadMetrics = async (refresh = false) => {
+  // Each effect owns a cancelled flag so login/reload site-hydrate races do not toast stale failures.
+  const loadMetrics = async (refresh = false, cancelled?: () => boolean) => {
+    const isCancelled = cancelled || (() => false);
     setMetricsLoading(true);
+    const fetchOnce = () =>
+      DashboardService.GetMetrics(dateRange, locationIdParam, refresh);
     try {
-      const metricsData = await DashboardService.GetMetrics(dateRange, locationIdParam, refresh);
-      if (metricsData) setMetrics(metricsData);
+      let metricsData = await fetchOnce();
+      if (isCancelled()) return;
+      if (metricsData) {
+        setMetrics(metricsData);
+        return;
+      }
     } catch (error) {
+      if (isCancelled()) return;
       console.error("Error loading dashboard metrics:", error);
-      toast.error("Failed to load dashboard metrics");
+      try {
+        const metricsData = await fetchOnce();
+        if (isCancelled()) return;
+        if (metricsData) {
+          setMetrics(metricsData);
+          return;
+        }
+      } catch (retryError) {
+        if (isCancelled()) return;
+        console.error("Retry failed loading dashboard metrics:", retryError);
+        toast.error("Failed to load dashboard metrics");
+      }
     } finally {
-      setMetricsLoading(false);
+      if (!isCancelled()) setMetricsLoading(false);
     }
   };
 
-  const loadWidgets = async () => {
+  const loadWidgets = async (cancelled?: () => boolean) => {
+    const isCancelled = cancelled || (() => false);
     setWidgetsLoading(true);
     const results = await Promise.allSettled([
-      DashboardService.GetRecentActivities(20, locationIdParam).then((d) => d && setRecentActivities(d)),
-      DashboardService.GetAlerts(locationIdParam).then((d) => d && setAlerts(d)),
-      DashboardService.GetTopCustomers(5, locationIdParam).then((d) => d && setTopCustomers(d)),
-      DashboardService.GetTopProducts(5, locationIdParam).then((d) => d && setTopProducts(d)),
-      DashboardService.GetQualityStatus(locationIdParam).then((d) => d && setQualityStatus(d)),
-      DashboardService.GetUpcomingDeadlines(7, locationIdParam).then((d) => d && setUpcomingDeadlines(d)),
+      DashboardService.GetRecentActivities(20, locationIdParam).then((d) => {
+        if (!isCancelled() && d) setRecentActivities(d);
+      }),
+      DashboardService.GetAlerts(locationIdParam).then((d) => {
+        if (!isCancelled() && d) setAlerts(d);
+      }),
+      DashboardService.GetTopCustomers(5, locationIdParam).then((d) => {
+        if (!isCancelled() && d) setTopCustomers(d);
+      }),
+      DashboardService.GetTopProducts(5, locationIdParam).then((d) => {
+        if (!isCancelled() && d) setTopProducts(d);
+      }),
+      DashboardService.GetQualityStatus(locationIdParam).then((d) => {
+        if (!isCancelled() && d) setQualityStatus(d);
+      }),
+      DashboardService.GetUpcomingDeadlines(7, locationIdParam).then((d) => {
+        if (!isCancelled() && d) setUpcomingDeadlines(d);
+      }),
     ]);
+    if (isCancelled()) return;
     setWidgetsLoading(false);
     if (results.some((r) => r.status === "rejected")) {
       console.error("Some dashboard widgets failed to load", results);
     }
   };
 
-  const loadProductionStatus = () =>
-    DashboardService.GetProductionStatus(productionPeriod, locationIdParam)
-      .then((d) => setProductionStatus(d || { jobOrdersByStatus: [], overdueJobs: 0 }))
+  const loadProductionStatus = (cancelled?: () => boolean) => {
+    const isCancelled = cancelled || (() => false);
+    return DashboardService.GetProductionStatus(productionPeriod, locationIdParam)
+      .then((d) => {
+        if (!isCancelled()) setProductionStatus(d || { jobOrdersByStatus: [], overdueJobs: 0 });
+      })
       .catch((error) => {
+        if (isCancelled()) return;
         console.error("Error loading production status:", error);
         setProductionStatus({ jobOrdersByStatus: [], overdueJobs: 0 });
       });
+  };
 
-  const loadRevenueTrends = () =>
-    DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam)
-      .then((d) => setRevenueTrends(d || { revenue: [], expenses: [] }))
+  const loadRevenueTrends = (cancelled?: () => boolean) => {
+    const isCancelled = cancelled || (() => false);
+    return DashboardService.GetRevenueTrends(revenuePeriod, locationIdParam)
+      .then((d) => {
+        if (!isCancelled()) setRevenueTrends(d || { revenue: [], expenses: [] });
+      })
       .catch((error) => {
+        if (isCancelled()) return;
         console.error("Error loading revenue trends:", error);
         setRevenueTrends({ revenue: [], expenses: [] });
       });
+  };
 
   const refreshAll = () => {
     void loadMetrics(true);
@@ -126,19 +170,35 @@ const Dashboard: React.FC = () => {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    void loadMetrics();
+    let cancelled = false;
+    void loadMetrics(false, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [dateRange, locationIdParam]);
 
   useEffect(() => {
-    void loadWidgets();
+    let cancelled = false;
+    void loadWidgets(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [locationIdParam]);
 
   useEffect(() => {
-    void loadProductionStatus();
+    let cancelled = false;
+    void loadProductionStatus(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [productionPeriod, locationIdParam]);
 
   useEffect(() => {
-    void loadRevenueTrends();
+    let cancelled = false;
+    void loadRevenueTrends(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [revenuePeriod, locationIdParam]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
