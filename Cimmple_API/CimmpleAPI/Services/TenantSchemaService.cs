@@ -95,6 +95,9 @@ IF COL_LENGTH(N'CimmpleFlow.Tenant', N'LoginSeatLimit') IS NULL
 
 EXEC(N'UPDATE CimmpleFlow.Tenant SET [LoginSeatLimit] = 0 WHERE [LoginSeatLimit] IS NULL');
 
+IF COL_LENGTH(N'CimmpleFlow.Tenant', N'TrialEndsUtc') IS NULL
+    ALTER TABLE CimmpleFlow.Tenant ADD [TrialEndsUtc] datetime2 NULL;
+
 IF OBJECT_ID(N'CimmpleFlow.TenantMasterImport', N'U') IS NULL
 BEGIN
     CREATE TABLE CimmpleFlow.TenantMasterImport (

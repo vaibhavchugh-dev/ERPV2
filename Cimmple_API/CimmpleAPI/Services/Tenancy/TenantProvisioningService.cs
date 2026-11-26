@@ -114,7 +114,8 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                     Notes = TrimOrNull(request.Notes),
                     CreatedBy = createdBy,
                     CreatedUtc = now,
-                    StatusChangedUtc = now
+                    StatusChangedUtc = now,
+                    TrialEndsUtc = request.TrialEndsUtc
                 };
                 _db.Tenants.Add(tenant);
                 await _db.SaveChangesAsync();
@@ -245,7 +246,8 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             {
                 (result.InviteQueued, result.InviteError) = await IdentityEmailService.TryQueueTenantAdminInviteAsync(
                     _outbox, tenant.TenantId, _configuration, adminEmail,
-                    tenant.ContactName ?? "", companyName, adminUserName, temporaryPassword);
+                    tenant.ContactName ?? "", companyName, adminUserName, temporaryPassword,
+                    tenant.TrialEndsUtc);
             }
 
             return result;
@@ -318,6 +320,15 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             tenant.Status = normalized;
             tenant.StatusChangedUtc = DateTime.UtcNow;
 
+            // Activating a client whose trial has run out converts it to a paid client; keeping the
+            // old deadline would only get it suspended again.
+            if (normalized == TenantStatus.Active && tenant.TrialEndsUtc <= DateTime.UtcNow)
+            {
+                tenant.TrialEndsUtc = null;
+                if (string.Equals(tenant.Plan, TenantPlans.Trial, StringComparison.OrdinalIgnoreCase))
+                    tenant.Plan = null;
+            }
+
             if (normalized != TenantStatus.Active)
             {
                 var sessions = await _db.UserInfo
@@ -366,7 +377,8 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             var displayName = $"{admin.FirstName} {admin.LastName}".Trim();
             var (queued, error) = await IdentityEmailService.TryQueueTenantAdminInviteAsync(
                 _outbox, tenantId, _configuration, admin.Email ?? "",
-                displayName, tenant.Name, admin.UserName ?? "", temporaryPassword);
+                displayName, tenant.Name, admin.UserName ?? "", temporaryPassword,
+                tenant.TrialEndsUtc);
 
             return new ResendInviteResult
             {
@@ -710,6 +722,7 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             CreatedUtc = t.CreatedUtc,
             ProvisionedUtc = t.ProvisionedUtc,
             StatusChangedUtc = t.StatusChangedUtc,
+            TrialEndsUtc = t.TrialEndsUtc,
             UserCount = userCount,
             LoginSeatLimit = t.LoginSeatLimit,
             UsedLoginSeats = usedLoginSeats
@@ -755,6 +768,9 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public TenantSecuritySettingsDto? Security { get; set; }
 
         public bool SendInviteEmail { get; set; } = true;
+
+        /// <summary>Free-trial deadline (UTC). The client is suspended when it passes. Leave empty for a paid client.</summary>
+        public DateTime? TrialEndsUtc { get; set; }
     }
 
     public class TenantSecuritySettingsDto
@@ -790,6 +806,9 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
         public DateTime CreatedUtc { get; set; }
         public DateTime? ProvisionedUtc { get; set; }
         public DateTime? StatusChangedUtc { get; set; }
+
+        /// <summary>Free-trial deadline; null when the client is not on a trial.</summary>
+        public DateTime? TrialEndsUtc { get; set; }
         public int UserCount { get; set; }
         public int? LoginSeatLimit { get; set; }
         public int UsedLoginSeats { get; set; }

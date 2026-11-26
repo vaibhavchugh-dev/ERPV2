@@ -35,6 +35,14 @@ namespace CimmpleAPI.Data.Models
         public DateTime CreatedUtc { get; set; }
         public DateTime? ProvisionedUtc { get; set; }
         public DateTime? StatusChangedUtc { get; set; }
+
+        /// <summary>Free-trial deadline (UTC). The client is suspended once it passes. Null for clients that are not on a trial.</summary>
+        public DateTime? TrialEndsUtc { get; set; }
+    }
+
+    public static class TenantPlans
+    {
+        public const string Trial = "Trial";
     }
 
     public static class TenantStatus

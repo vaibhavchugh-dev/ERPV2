@@ -79,6 +79,28 @@ namespace CimmpleAPI.Services
             return $"<p><a href=\"{safeLogin}\">Sign in</a></p>";
         }
 
+        /// <summary>Plan summary for a trial workspace; empty for a paid one.</summary>
+        private static string BuildTrialHtml(IConfiguration? configuration, DateTime? trialEndsUtc)
+        {
+            if (!trialEndsUtc.HasValue)
+                return "";
+
+            var ends = trialEndsUtc.Value;
+            var days = Math.Max(1, (int)Math.Ceiling((ends - DateTime.UtcNow).TotalDays));
+            var supportEmail = configuration?["Support:Email"]?.Trim();
+            var contact = string.IsNullOrWhiteSpace(supportEmail)
+                ? "Contact Cimmple to continue."
+                : $"Contact us at <a href=\"mailto:{WebUtility.HtmlEncode(supportEmail)}\">{WebUtility.HtmlEncode(supportEmail)}</a> to continue.";
+
+            return
+                "<p><strong>Your free trial</strong></p>" +
+                "<ul>" +
+                $"<li>Trial length: {days} day{(days == 1 ? "" : "s")}, ending on {ends.ToString("MMMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)} (UTC).</li>" +
+                "<li>The administrator account is the only login during the trial. Employee logins are available once you upgrade.</li>" +
+                $"<li>When the trial ends, your account is suspended and sign-in is blocked. Your data is kept. {contact}</li>" +
+                "</ul>";
+        }
+
         public static async Task<(bool queued, string? error)> TryQueueEmployeeWelcomeAsync(
             EmailOutboxService outbox,
             int tenantId,
@@ -123,7 +145,8 @@ namespace CimmpleAPI.Services
             string displayName,
             string companyName,
             string userName,
-            string temporaryPassword)
+            string temporaryPassword,
+            DateTime? trialEndsUtc = null)
         {
             if (string.IsNullOrWhiteSpace(toEmail))
                 return (false, "Administrator email is missing.");
@@ -142,7 +165,10 @@ namespace CimmpleAPI.Services
                 $"<strong>Temporary password:</strong> {safePwd}</p>" +
                 BuildSignInHtml(loginUrl) +
                 "<p>You will be asked to choose a new password the first time you sign in. " +
-                "After that you can add your team under User Management.</p>";
+                (trialEndsUtc.HasValue
+                    ? "After that you can explore your workspace, which comes with sample machine shop data.</p>"
+                    : "After that you can add your team under User Management.</p>") +
+                BuildTrialHtml(configuration, trialEndsUtc);
 
             return await outbox.EnqueueAsync(tenantId, new MailRequest
             {

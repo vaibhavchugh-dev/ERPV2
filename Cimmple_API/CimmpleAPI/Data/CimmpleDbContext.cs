@@ -109,6 +109,7 @@ namespace CimmpleAPI.Data
 
         public DbSet<Tenant> Tenants { get; set; }
         public DbSet<TenantMasterImport> TenantMasterImports { get; set; }
+        public DbSet<SignupRequest> SignupRequests { get; set; }
 
         // User Entities
         public DbSet<UserDetail> UserDetails { get; set; }
@@ -881,6 +882,22 @@ namespace CimmpleAPI.Data
                 entity.Property(e => e.FileName).HasMaxLength(260);
                 entity.Property(e => e.CreatedBy).HasMaxLength(100);
                 entity.HasIndex(e => new { e.TenantId, e.MasterName, e.CreatedUtc });
+            });
+
+            modelBuilder.Entity<SignupRequest>(entity =>
+            {
+                entity.ToTable("SignupRequest");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.FirstName).HasMaxLength(100);
+                entity.Property(e => e.LastName).HasMaxLength(100);
+                entity.Property(e => e.CompanyName).HasMaxLength(200);
+                entity.Property(e => e.Email).HasMaxLength(200);
+                entity.Property(e => e.IpAddress).HasMaxLength(45);
+                entity.Property(e => e.Status).HasMaxLength(32);
+                entity.Property(e => e.LastError).HasMaxLength(2000);
+                entity.HasIndex(e => new { e.Status, e.NextAttemptUtc });
+                entity.HasIndex(e => new { e.IpAddress, e.CreatedUtc });
+                entity.HasIndex(e => new { e.Email, e.CreatedUtc });
             });
 
             modelBuilder.Entity<EmailOutbox>(entity =>
