@@ -72,6 +72,7 @@ const Sidebar: React.FC = () => {
   const menuItems: NavItem[] = [
     { icon: faHome, title: "Dashboard", path: "/home" },
     { icon: faSitemap, title: "Workflow Center", path: "/workflow" },
+    { icon: faInbox, title: "Inbox", path: "/purchasing/invoice-inbox" },
   ];
 
   const salesItems: NavItem[] = [
@@ -97,7 +98,6 @@ const Sidebar: React.FC = () => {
     { icon: faShoppingCart, title: "Vendor Orders", path: "/purchasing/vendor-orders" },
     { icon: faClipboardList, title: "Vendor Receiving", path: "/purchasing/vendor-receiving" },
     { icon: faFileInvoiceDollar, title: "Vendor Invoices", path: "/purchasing/vendor-invoices" },
-    { icon: faInbox, title: "Invoice Inbox", path: "/purchasing/invoice-inbox" },
     { icon: faWarehouse, title: "Inventory", path: "/inventory" },
   ];
 

@@ -21,6 +21,7 @@ export interface TenantSummary {
   createdUtc: string;
   provisionedUtc?: string | null;
   statusChangedUtc?: string | null;
+  trialEndsUtc?: string | null;
   userCount: number;
 }
 

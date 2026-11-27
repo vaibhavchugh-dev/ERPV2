@@ -299,6 +299,18 @@
     background: #fee2e2;
     color: #b91c1c;
   }
+
+  &--trial {
+    background: #ede9fe;
+    color: #6d28d9;
+  }
+}
+
+.sc-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
 }
 
 .sc-section {

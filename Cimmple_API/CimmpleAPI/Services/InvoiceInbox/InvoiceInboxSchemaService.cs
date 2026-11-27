@@ -36,6 +36,7 @@ BEGIN
         [Id] int IDENTITY(1,1) NOT NULL,
         [TenantId] int NOT NULL,
         [LocationId] int NOT NULL,
+        [DocumentType] nvarchar(40) NOT NULL DEFAULT N'vendorInvoice',
         [Source] nvarchar(20) NOT NULL,
         [FromName] nvarchar(300) NULL,
         [FromEmail] nvarchar(320) NULL,
@@ -60,6 +61,7 @@ BEGIN
         [ProcessedUtc] datetime2 NULL,
         [LockedUntilUtc] datetime2 NULL,
         [VendorInvoiceId] int NULL,
+        [ConvertedRecordId] int NULL,
         [ConvertedBy] int NULL,
         [ConvertedUtc] datetime2 NULL,
         CONSTRAINT [PK_InvoiceInboxItem] PRIMARY KEY ([Id])
@@ -70,6 +72,18 @@ BEGIN
         ON CimmpleFlow.InvoiceInboxItem ([TenantId], [Status], [ReceivedUtc]);
     CREATE INDEX [IX_InvoiceInboxItem_Status_Locked]
         ON CimmpleFlow.InvoiceInboxItem ([Status], [LockedUntilUtc]);
+END
+
+IF COL_LENGTH(N'CimmpleFlow.InvoiceInboxItem', N'DocumentType') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.InvoiceInboxItem
+        ADD [DocumentType] nvarchar(40) NOT NULL CONSTRAINT [DF_InvoiceInboxItem_DocumentType] DEFAULT N'vendorInvoice';
+END
+
+IF COL_LENGTH(N'CimmpleFlow.InvoiceInboxItem', N'ConvertedRecordId') IS NULL
+BEGIN
+    ALTER TABLE CimmpleFlow.InvoiceInboxItem
+        ADD [ConvertedRecordId] int NULL;
 END
 ");
                 Volatile.Write(ref _ensured, 1);

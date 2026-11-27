@@ -105,6 +105,7 @@ namespace CimmpleAPI.Controllers
         [HttpGet("List")]
         public async Task<IActionResult> List(
             [FromQuery] string status = "Open",
+            [FromQuery] string? documentType = null,
             [FromQuery] string? searchTerm = null,
             [FromQuery] int? locationId = null,
             [FromQuery] int page = 1,
@@ -127,6 +128,13 @@ namespace CimmpleAPI.Controllers
                 scoped = scoped.Where(x => x.LocationId == filterLocationId.Value);
             else if (restrict != null)
                 scoped = scoped.Where(x => restrict.Contains(x.LocationId));
+
+            if (!string.IsNullOrWhiteSpace(documentType)
+                && !documentType.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                var dt = documentType.Trim();
+                scoped = scoped.Where(x => x.DocumentType == dt);
+            }
 
             if (!string.IsNullOrWhiteSpace(searchTerm))
             {
@@ -169,6 +177,7 @@ namespace CimmpleAPI.Controllers
                 {
                     id = x.Id,
                     locationId = x.LocationId,
+                    documentType = x.DocumentType,
                     fromName = x.FromName,
                     fromEmail = x.FromEmail,
                     subject = x.Subject,
@@ -181,7 +190,8 @@ namespace CimmpleAPI.Controllers
                     extractedTotal = x.ExtractedTotal,
                     failureReason = x.FailureReason,
                     receivedUtc = x.ReceivedUtc,
-                    vendorInvoiceId = x.VendorInvoiceId
+                    vendorInvoiceId = x.VendorInvoiceId,
+                    convertedRecordId = x.ConvertedRecordId ?? x.VendorInvoiceId
                 })
                 .ToListAsync(ct);
 
@@ -218,6 +228,7 @@ namespace CimmpleAPI.Controllers
                 {
                     id = item.Id,
                     locationId = item.LocationId,
+                    documentType = item.DocumentType,
                     fromName = item.FromName,
                     fromEmail = item.FromEmail,
                     subject = item.Subject,
@@ -234,7 +245,8 @@ namespace CimmpleAPI.Controllers
                     extractedTotal = item.ExtractedTotal,
                     failureReason = item.FailureReason,
                     receivedUtc = item.ReceivedUtc,
-                    vendorInvoiceId = item.VendorInvoiceId
+                    vendorInvoiceId = item.VendorInvoiceId,
+                    convertedRecordId = item.ConvertedRecordId ?? item.VendorInvoiceId
                 }
             });
         }
@@ -262,36 +274,62 @@ namespace CimmpleAPI.Controllers
         public class MarkConvertedRequest
         {
             public int VendorInvoiceId { get; set; }
+            public int RecordId { get; set; }
         }
 
-        /// <summary>Called after the vendor invoice was created from this item (links the two).</summary>
+        /// <summary>Called after the document was created from this item (links the two).</summary>
         [HttpPost("MarkConverted/{id:int}")]
-        public async Task<IActionResult> MarkConverted(int id, [FromBody] MarkConvertedRequest request, CancellationToken ct)
+        public async Task<IActionResult> MarkConverted(int id, [FromBody] MarkConvertedRequest? request, CancellationToken ct)
         {
             var (item, error) = await LoadAccessibleAsync(id, tracking: true, ct);
             if (item == null) return error!;
 
-            if (request == null || request.VendorInvoiceId <= 0)
-                return BadRequest(new { message = "Vendor invoice id is required." });
+            var recordId = request?.RecordId > 0 ? request.RecordId : (request?.VendorInvoiceId ?? 0);
+            var docType = string.IsNullOrWhiteSpace(item.DocumentType)
+                ? InvoiceInboxItem.DocTypeVendorInvoice
+                : item.DocumentType;
+
+            if (recordId <= 0 && !string.Equals(docType, InvoiceInboxItem.DocTypeCustomerInvoice, StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Created record id is required." });
 
             var tenantId = GetTenantId();
-            var invoiceExists = await _context.VendorInvoiceMaster.AsNoTracking()
-                .AnyAsync(v => v.Id == request.VendorInvoiceId && v.TenantId == tenantId, ct);
-            if (!invoiceExists)
-                return BadRequest(new { message = "Vendor invoice not found." });
+            if (recordId > 0)
+            {
+                var exists = docType switch
+                {
+                    InvoiceInboxItem.DocTypeVendorInvoice => await _context.VendorInvoiceMaster.AsNoTracking()
+                        .AnyAsync(v => v.Id == recordId && v.TenantId == tenantId, ct),
+                    InvoiceInboxItem.DocTypeVendorOrder => await _context.VendorOrders.AsNoTracking()
+                        .AnyAsync(v => v.OrderID == recordId && v.Tenantid == tenantId, ct),
+                    InvoiceInboxItem.DocTypeVendorQuotation => await _context.VendorQuotations.AsNoTracking()
+                        .AnyAsync(v => v.OrderID == recordId && v.Tenantid == tenantId, ct),
+                    InvoiceInboxItem.DocTypeCustomerOrder => await _context.CustomerOrder.AsNoTracking()
+                        .AnyAsync(v => v.OrderID == recordId && v.Tenantid == tenantId, ct),
+                    InvoiceInboxItem.DocTypeCustomerQuotation => await _context.QuotationOrder.AsNoTracking()
+                        .AnyAsync(v => v.OrderID == recordId && v.Tenantid == tenantId, ct),
+                    InvoiceInboxItem.DocTypeCustomerInvoice => await _context.InvoiceMaster.AsNoTracking()
+                        .AnyAsync(v => v.Id == recordId && v.TenantId == tenantId, ct),
+                    _ => false
+                };
+                if (!exists)
+                    return BadRequest(new { message = "Created document was not found." });
+            }
 
             if (item.Status == InvoiceInboxItem.StatusConverted)
             {
-                return item.VendorInvoiceId == request.VendorInvoiceId
+                var existingId = item.ConvertedRecordId ?? item.VendorInvoiceId ?? 0;
+                return existingId == recordId
                     ? Ok(new { result = new { message = "Already linked." } })
-                    : BadRequest(new { message = "This item was already converted to another vendor invoice." });
+                    : BadRequest(new { message = "This item was already converted to another record." });
             }
 
             if (item.Status == InvoiceInboxItem.StatusDiscarded)
                 return BadRequest(new { message = "This item was discarded." });
 
             item.Status = InvoiceInboxItem.StatusConverted;
-            item.VendorInvoiceId = request.VendorInvoiceId;
+            item.ConvertedRecordId = recordId > 0 ? recordId : null;
+            if (string.Equals(docType, InvoiceInboxItem.DocTypeVendorInvoice, StringComparison.OrdinalIgnoreCase) && recordId > 0)
+                item.VendorInvoiceId = recordId;
             item.ConvertedBy = GetUserId();
             item.ConvertedUtc = DateTime.UtcNow;
             item.LockedUntilUtc = null;
@@ -354,7 +392,9 @@ namespace CimmpleAPI.Controllers
                 {
                     locationId = resolved,
                     address = _inbox.BuildAddress(resolved),
-                    configured = !string.IsNullOrWhiteSpace(_settings.Domain) && _settings.Enabled
+                    domain = (_settings.Domain ?? "").Trim().TrimStart('@'),
+                    configured = !string.IsNullOrWhiteSpace(_settings.Domain) && _settings.Enabled,
+                    addresses = _inbox.BuildAddresses(resolved)
                 }
             });
         }
