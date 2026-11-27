@@ -49,7 +49,8 @@ namespace CimmpleAPI.Services.InvoiceInbox
         {
             new InboxAddressSpec("cq", InvoiceInboxItem.DocTypeCustomerQuotation, "Customer Quotation", "Cust CQ", "Customer", "Customer RFQs and quotation requests"),
             new InboxAddressSpec("co", InvoiceInboxItem.DocTypeCustomerOrder, "Customer Order", "Cust CO", "Customer", "Customer purchase orders"),
-            new InboxAddressSpec("ci", InvoiceInboxItem.DocTypeCustomerInvoice, "Customer Invoice", "Cust INV", "Customer", "Customer invoices"),
+            // Customer Invoice is hidden for now (invoices are billed from shipped orders). Re-enable to bring it back.
+            // new InboxAddressSpec("ci", InvoiceInboxItem.DocTypeCustomerInvoice, "Customer Invoice", "Cust INV", "Customer", "Customer invoices"),
             new InboxAddressSpec("vq", InvoiceInboxItem.DocTypeVendorQuotation, "Vendor Quotation", "Vendor VQ", "Vendor", "Vendor quotes and pricing proposals"),
             new InboxAddressSpec("po", InvoiceInboxItem.DocTypeVendorOrder, "Vendor Order", "Vendor PO", "Vendor", "Vendor purchase orders (also accepts -vo)"),
             new InboxAddressSpec("inv", InvoiceInboxItem.DocTypeVendorInvoice, "Vendor Invoice", "Vendor INV", "Vendor", "Vendor bills and invoices"),
@@ -60,8 +61,9 @@ namespace CimmpleAPI.Services.InvoiceInbox
         {
             ["cq"] = InvoiceInboxItem.DocTypeCustomerQuotation,
             ["co"] = InvoiceInboxItem.DocTypeCustomerOrder,
-            ["ci"] = InvoiceInboxItem.DocTypeCustomerInvoice,
-            ["cinv"] = InvoiceInboxItem.DocTypeCustomerInvoice,
+            // Customer Invoice hidden for now:
+            // ["ci"] = InvoiceInboxItem.DocTypeCustomerInvoice,
+            // ["cinv"] = InvoiceInboxItem.DocTypeCustomerInvoice,
             ["vq"] = InvoiceInboxItem.DocTypeVendorQuotation,
             ["po"] = InvoiceInboxItem.DocTypeVendorOrder,
             ["vo"] = InvoiceInboxItem.DocTypeVendorOrder,

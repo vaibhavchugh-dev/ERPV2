@@ -1,8 +1,14 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHistory } from "react-router-dom";
 import { toast } from "react-toastify";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEnvelope, faFilePdf } from "@fortawesome/free-solid-svg-icons";
+import {
+  faAngleDoubleLeft,
+  faAngleDoubleRight,
+  faEnvelope,
+  faFilePdf,
+  faTrashAlt,
+} from "@fortawesome/free-solid-svg-icons";
 import {
   InboxDocumentType,
   InvoiceInboxItemDetail,
@@ -34,11 +40,30 @@ import {
   type ExtractedVendorDraft,
   type VendorQuotationExtractionResult,
 } from "../../Common/DocumentExtraction";
+import { InventoryService, type RawMaterial } from "../../Common/Services/InventoryService";
+import {
+  ProductMasterService,
+  type CustomerPartOption,
+  type ProductMaster,
+} from "../../Common/Services/ProductMasterService";
+import { JobOrderService, type JobOrderMaster } from "../../Common/Services/JobOrderService";
+import {
+  DEFAULT_VENDOR_ORDER_LINE_TYPE,
+  VENDOR_ORDER_LINE_TYPES,
+  deriveOrderMaterialType,
+} from "../../Common/Constants/vendorOrderLineTypes";
+import RawMaterialCombobox from "../../Common/Components/RawMaterialCombobox";
+import ProductMasterCombobox from "../../Common/Components/ProductMasterCombobox";
+import CustomerPartCombobox, {
+  VendorPartCombobox,
+} from "../../Common/Components/CustomerPartCombobox";
 import { useFormatting } from "../../Common/Hooks/useFormatting";
 import { usePagePermissions } from "../../Common/Hooks/usePagePermissions";
 import { todayIsoInTenantTimezone } from "../../Common/Utils/Formatting";
 import { confirmDiscardChanges, onBackdropClick } from "../../Common/Utils/dismissGuard";
 import { DOC_TYPE_META } from "./InvoiceInbox";
+import InboxJobOrderSelect from "./InboxJobOrderSelect";
+import { findByPart, matchJobOrders } from "./inboxLineLinking";
 import "../../Common/Components/MasterSlideout/MasterSlideout.scss";
 import "./DirectVendorInvoiceSlideout.scss";
 import "./InvoiceInboxReviewSlideout.scss";
@@ -69,13 +94,26 @@ interface BillLineDraft {
 
 interface TradeLineDraft {
   key: string;
+  /** Vendor documents only: RawMaterial, FinishedProduct, Tool, Service, ... */
+  lineType: string;
   partNo: string;
   partName: string;
+  /** Vendor documents only: matched job order ids / labels. */
+  jobIds: number[];
+  jobNumber: string;
+  /** Job references from the PDF that are not existing job orders (shown as a hint). */
+  unmatchedJobs: string[];
   qty: string;
   unit: string;
   unitPrice: string;
   discount: string;
+  discountType: "Percent" | "Amount";
   notes: string;
+  /** Customer documents only: per-line Est / Due date (blank = document default). */
+  dueDate: string;
+  /** Linked master record ids (set when a part is picked or auto-matched). */
+  productId?: number;
+  rawMaterialId?: number;
 }
 
 interface PartyOption {
@@ -108,21 +146,74 @@ const emptyBillLine = (accountId = 0): BillLineDraft => ({
 
 const emptyTradeLine = (): TradeLineDraft => ({
   key: newLineKey(),
+  lineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
   partNo: "",
   partName: "",
+  jobIds: [],
+  jobNumber: "",
+  unmatchedJobs: [],
   qty: "1",
   unit: "EA",
   unitPrice: "",
   discount: "0",
+  discountType: "Percent",
   notes: "",
+  dueDate: "",
 });
 
 const tradeLineTotal = (line: TradeLineDraft): number => {
   const qty = parseFloat(line.qty) || 0;
   const price = parseFloat(line.unitPrice) || 0;
-  const disc = Math.min(Math.max(parseFloat(line.discount) || 0, 0), 100);
-  return Math.round(Math.max(0, qty * price * (1 - disc / 100)) * 100) / 100;
+  const gross = qty * price;
+  const disc = Math.max(parseFloat(line.discount) || 0, 0);
+  const net =
+    line.discountType === "Amount"
+      ? gross - Math.min(disc, gross)
+      : gross * (1 - Math.min(disc, 100) / 100);
+  return Math.round(Math.max(0, net) * 100) / 100;
 };
+
+type ExtractionReviewLine = {
+  partNo: string;
+  partName: string;
+  jobNumber: string;
+  qtyOrdered: number;
+  unit: string;
+  unitPrice: number;
+  discount: number;
+  discountType: "Amount" | "Percent";
+  notes: string;
+  included: boolean;
+};
+
+/** Turn reviewed extraction lines into editable lines, matching job references to existing job orders. */
+const draftsFromReview = (
+  lines: ExtractionReviewLine[],
+  jobs: JobOrderMaster[] | null
+): TradeLineDraft[] =>
+  (lines || [])
+    .filter((l) => l.included)
+    .map<TradeLineDraft>((l) => {
+      const jobMatch = jobs ? matchJobOrders(jobs, l.jobNumber) : null;
+      // A line with only remarks (no part / description) uses them as the description.
+      const onlyNotes = !l.partNo && !l.partName && !!l.notes;
+      return {
+        key: newLineKey(),
+        lineType: DEFAULT_VENDOR_ORDER_LINE_TYPE,
+        partNo: l.partNo || "",
+        partName: onlyNotes ? l.notes : l.partName || "",
+        jobIds: jobMatch?.ids || [],
+        jobNumber: jobMatch?.labels.join(", ") || "",
+        unmatchedJobs: jobMatch?.unmatched || [],
+        qty: String(l.qtyOrdered > 0 ? l.qtyOrdered : 1),
+        unit: l.unit || "EA",
+        unitPrice: l.unitPrice > 0 ? String(l.unitPrice) : "",
+        discount: l.discount > 0 ? String(l.discount) : "0",
+        discountType: l.discountType === "Amount" ? "Amount" : "Percent",
+        notes: onlyNotes ? "" : l.notes || "",
+        dueDate: "",
+      };
+    });
 
 const convertedRouteFor = (docType: InboxDocumentType, recordId: number): string => {
   switch (docType) {
@@ -147,7 +238,8 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
   onClose,
 }) => {
   const history = useHistory();
-  const { formatCurrency, formatUtcToTimezone } = useFormatting();
+  const { formatCurrency, formatUtcToTimezone, currencySymbol, discountColumnLabel } =
+    useFormatting();
   const { canAdd, canDelete } = usePagePermissions(PAGE_PATH);
   const { canAdd: canAddVendor } = usePagePermissions("/masters/vendor");
 
@@ -171,7 +263,10 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
     addDaysToIsoDate(todayIsoInTenantTimezone(), 30)
   );
   const [paymentTermId, setPaymentTermId] = useState(0);
-  const [materialType, setMaterialType] = useState("Material");
+  // Contact person (vendor docs) / buyer name (customer docs): auto-filled from the party's default contact.
+  const [buyerName, setBuyerName] = useState("");
+  // Quotation # (vendor order / customer order only).
+  const [quotationNo, setQuotationNo] = useState("");
   const [shippingInstructions, setShippingInstructions] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -184,6 +279,13 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
 
   // Trade document lines (CQ, CO, VQ, VO, CI)
   const [tradeLines, setTradeLines] = useState<TradeLineDraft[]>([emptyTradeLine()]);
+  const [jobOrders, setJobOrders] = useState<JobOrderMaster[]>([]);
+  // Lines show a compact row; job / discount / notes details open on demand.
+  // Collapse the email / attachment pane to give the form the full width.
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  // Master data used to link extracted parts to existing records (loaded once, reused on re-match).
+  const productsRef = useRef<ProductMaster[] | null>(null);
+  const rawMaterialsRef = useRef<Map<number, RawMaterial[]>>(new Map());
 
   const [extractedTotal, setExtractedTotal] = useState<number | null>(null);
   const [unmatchedVendorDraft, setUnmatchedVendorDraft] =
@@ -280,6 +382,97 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
         console.error("Error loading vendor defaults:", error);
         return companyExpenseId;
       }
+    },
+    []
+  );
+
+  /**
+   * Link extracted lines to existing master records (never creates anything):
+   * vendor lines match Raw Material Master (for this vendor) then Product Master; customer
+   * lines match Product Master. Part # is matched first, the description only when the
+   * document has no part number. Lines already linked are left alone.
+   */
+  const linkTradeLines = useCallback(
+    async (
+      lines: TradeLineDraft[],
+      kind: "vendor" | "customer",
+      vendorId: number
+    ): Promise<TradeLineDraft[]> => {
+      const needsLink = lines.some(
+        (l) => !l.productId && !l.rawMaterialId && (l.partNo.trim() || l.partName.trim())
+      );
+      if (!needsLink) return lines;
+
+      if (!productsRef.current) {
+        try {
+          productsRef.current = await ProductMasterService.GetProductMasterList();
+        } catch {
+          productsRef.current = [];
+        }
+      }
+      const products = (productsRef.current || []).filter((p) => (p.productId || 0) > 0);
+
+      let materials: RawMaterial[] = [];
+      if (kind === "vendor" && vendorId > 0) {
+        const cached = rawMaterialsRef.current.get(vendorId);
+        if (cached) {
+          materials = cached;
+        } else {
+          try {
+            materials =
+              (await InventoryService.GetRawMaterials({ includeInactive: true, vendorId })) || [];
+          } catch {
+            materials = [];
+          }
+          rawMaterialsRef.current.set(vendorId, materials);
+        }
+      }
+
+      const asProduct = (line: TradeLineDraft, p: ProductMaster): TradeLineDraft => ({
+        ...line,
+        productId: p.productId,
+        rawMaterialId: undefined,
+        partNo: p.partNo || line.partNo,
+        partName: line.partName || p.partName || "",
+        unitPrice: line.unitPrice || (p.avgUnitPrice > 0 ? String(p.avgUnitPrice) : ""),
+      });
+
+      return lines.map((line) => {
+        if (line.productId || line.rawMaterialId) return line;
+        const partNo = line.partNo.trim();
+        const partName = line.partName.trim();
+        if (!partNo && !partName) return line;
+
+        const findProduct = () =>
+          findByPart(products, (p) => p.partNo, (p) => p.partName, partNo, partName);
+
+        if (kind === "customer") {
+          const p = findProduct();
+          return p ? asProduct(line, p) : line;
+        }
+
+        if (line.lineType === "RawMaterial") {
+          const rm = findByPart(materials, (m) => m.partNo, (m) => m.partName, partNo, partName);
+          if (rm) {
+            return {
+              ...line,
+              rawMaterialId: rm.id,
+              productId: undefined,
+              partNo: rm.partNo || line.partNo,
+              partName: line.partName || rm.partName || "",
+              unitPrice: line.unitPrice || (rm.unitCost > 0 ? String(rm.unitCost) : ""),
+            };
+          }
+          const p = findProduct();
+          return p ? { ...asProduct(line, p), lineType: "FinishedProduct" } : line;
+        }
+
+        if (line.lineType === "FinishedProduct") {
+          const p = findProduct();
+          return p ? asProduct(line, p) : line;
+        }
+        return line;
+      });
     },
     []
   );
@@ -468,25 +661,22 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             if (typeof parsed.totalAmount === "number" && parsed.totalAmount > 0) {
               setExtractedTotal(parsed.totalAmount);
             }
-            const mapped = (review.lines || [])
-              .filter((l) => l.included)
-              .map<TradeLineDraft>((l) => ({
-                key: newLineKey(),
-                partNo: l.partNo || "",
-                partName: l.partName || l.notes || "",
-                qty: String(l.qtyOrdered > 0 ? l.qtyOrdered : 1),
-                unit: l.unit || "EA",
-                unitPrice: l.unitPrice > 0 ? String(l.unitPrice) : "",
-                discount: l.discount > 0 ? String(l.discount) : "0",
-                notes: l.notes || "",
-              }));
+            const mapped = draftsFromReview(review.lines, null);
             if (mapped.length > 0) startLines = mapped;
           }
-          if (!cancelled) setTradeLines(startLines);
+          const linked = await linkTradeLines(startLines, "customer", 0);
+          if (!cancelled) setTradeLines(linked);
         } else {
           // vendorQuotation or vendorOrder
-          const vendorList = await loadVendors();
+          const [vendorList, jobs] = await Promise.all([
+            loadVendors(),
+            JobOrderService.GetJobOrders({ tenantid: tenantID })
+              .then((r) => (Array.isArray(r) ? r : []))
+              .catch(() => [] as JobOrderMaster[]),
+          ]);
           if (cancelled) return;
+          setJobOrders(jobs);
+          let matchedVendorId = 0;
           let startLines: TradeLineDraft[] = [emptyTradeLine()];
           if (parsed) {
             const candidates = vendorList.map((v) => ({
@@ -500,6 +690,7 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                 : buildVendorQuotationReview(parsed, candidates);
 
             if (review.matchedVendorId > 0) {
+              matchedVendorId = review.matchedVendorId;
               setPartyId(review.matchedVendorId);
             } else if (review.extractedVendorDraft || review.vendorNameHint) {
               setUnmatchedVendorDraft(review.extractedVendorDraft);
@@ -513,21 +704,11 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             if (typeof parsed.totalAmount === "number" && parsed.totalAmount > 0) {
               setExtractedTotal(parsed.totalAmount);
             }
-            const mapped = (review.lines || [])
-              .filter((l) => l.included)
-              .map<TradeLineDraft>((l) => ({
-                key: newLineKey(),
-                partNo: l.partNo || "",
-                partName: l.partName || l.notes || "",
-                qty: String(l.qtyOrdered > 0 ? l.qtyOrdered : 1),
-                unit: l.unit || "EA",
-                unitPrice: l.unitPrice > 0 ? String(l.unitPrice) : "",
-                discount: l.discount > 0 ? String(l.discount) : "0",
-                notes: l.notes || "",
-              }));
+            const mapped = draftsFromReview(review.lines, jobs);
             if (mapped.length > 0) startLines = mapped;
           }
-          if (!cancelled) setTradeLines(startLines);
+          const linked = await linkTradeLines(startLines, "vendor", matchedVendorId);
+          if (!cancelled) setTradeLines(linked);
         }
       } catch (error: any) {
         if (!cancelled) setLoadError(error?.message || "Failed to load this inbox item");
@@ -541,7 +722,7 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [itemId, loadVendors, loadCustomers, applyVendorDefaults]);
+  }, [itemId, loadVendors, loadCustomers, applyVendorDefaults, linkTradeLines]);
 
   const expenseAccounts = useMemo(() => {
     const expenseLike = coaAccounts.filter((a) => {
@@ -589,6 +770,39 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
     if (term) setDueDate(addDaysToIsoDate(fromInvoiceDate, term.days));
   };
 
+  // Contact person / buyer name follow the chosen party's default contact (same as the regular screens).
+  useEffect(() => {
+    if (isVendorInvoice || isCustomerInvoice) return;
+    if (partyId <= 0) {
+      setBuyerName("");
+      return;
+    }
+    let cancelled = false;
+    const pickName = (contacts: any[] | undefined): string => {
+      const list = Array.isArray(contacts) ? contacts : [];
+      const c = list.find((x) => x?.isDefault) || list[0];
+      return c ? `${c.firstname || ""} ${c.lastname || ""}`.trim() : "";
+    };
+    (async () => {
+      try {
+        const full: any = isCustomerDoc
+          ? await CustomerService.GetCustomerById(partyId)
+          : await VendorService.GetVendorById(partyId);
+        if (cancelled) return;
+        setBuyerName(
+          isCustomerDoc
+            ? pickName(full?.CustomerContact || full?.customerContact)
+            : pickName(full?.VendorContact || full?.vendorContact)
+        );
+      } catch {
+        if (!cancelled) setBuyerName("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [partyId, isCustomerDoc, isVendorInvoice, isCustomerInvoice]);
+
   const handlePartyChange = async (nextId: number) => {
     markDirty();
     setPartyId(nextId);
@@ -601,6 +815,13 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
       await applyVendorDefaults(nextId, paymentTerms, defaultExpenseAccountId, {
         fromInvoiceDate: docDate,
       });
+    } else if (!isCustomerDoc && nextId > 0) {
+      // Vendor changed: link any still-unlinked parts against this vendor's raw materials.
+      const linked = await linkTradeLines(tradeLines, "vendor", nextId);
+      const byKey = new Map(linked.map((l) => [l.key, l]));
+      setTradeLines((prev) =>
+        prev.map((l) => (!l.productId && !l.rawMaterialId ? byKey.get(l.key) || l : l))
+      );
     }
   };
 
@@ -623,17 +844,91 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
     setBillLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.key !== key)));
   };
 
-  const updateTradeLine = (key: string, field: keyof TradeLineDraft, value: string) => {
+  const mutateTradeLine = (key: string, fn: (line: TradeLineDraft) => TradeLineDraft) => {
     markDirty();
-    setTradeLines((prev) =>
-      prev.map((line) => (line.key === key ? { ...line, [field]: value } : line))
-    );
+    setTradeLines((prev) => prev.map((line) => (line.key === key ? fn(line) : line)));
   };
+
+  const updateTradeLine = (
+    key: string,
+    field: "partNo" | "partName" | "qty" | "unit" | "unitPrice" | "discount" | "notes" | "dueDate",
+    value: string
+  ) => {
+    mutateTradeLine(key, (line) => ({ ...line, [field]: value }));
+  };
+
+  /** Free-typed Part # — drops any previous link (same as typing in the regular screens). */
+  const handlePartNoTyped = (key: string, partNo: string) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      partNo,
+      productId: undefined,
+      rawMaterialId: undefined,
+    }));
+
+  const handleLineTypeChange = (key: string, lineType: string) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      lineType,
+      productId: undefined,
+      rawMaterialId: undefined,
+    }));
+
+  const handleRawMaterialPicked = (key: string, material: RawMaterial) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      lineType: "RawMaterial",
+      partNo: material.partNo || line.partNo,
+      partName: material.partName || line.partName,
+      unit: material.unit || line.unit || "EA",
+      unitPrice: material.unitCost > 0 ? String(material.unitCost) : line.unitPrice,
+      rawMaterialId: material.id,
+      productId: undefined,
+    }));
+
+  const handleProductPicked = (key: string, product: ProductMaster, vendorSide: boolean) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      lineType: vendorSide ? "FinishedProduct" : line.lineType,
+      partNo: product.partNo || line.partNo,
+      partName: product.partName || line.partName,
+      unit: product.unit || line.unit || "EA",
+      unitPrice: product.avgUnitPrice > 0 ? String(product.avgUnitPrice) : line.unitPrice,
+      productId: product.productId,
+      rawMaterialId: undefined,
+    }));
+
+  /** Part picked from customer / vendor history (customer docs, and vendor Tool/Service/... lines). */
+  const handleHistoryPartPicked = (key: string, part: CustomerPartOption) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      partNo: part.partNo,
+      partName: part.partName || line.partName,
+      unit: part.unit || line.unit || "EA",
+      unitPrice: part.unitPrice > 0 ? String(part.unitPrice) : line.unitPrice,
+      productId: part.productId ?? line.productId,
+      rawMaterialId: undefined,
+      qty: part.suggestedQty && part.suggestedQty > 0 ? String(part.suggestedQty) : line.qty,
+    }));
+
+  const handleJobsChange = (key: string, ids: number[]) =>
+    mutateTradeLine(key, (line) => ({
+      ...line,
+      jobIds: ids,
+      jobNumber: ids
+        .map((id) => jobOrders.find((jo) => jo.jobOrderID === id))
+        .filter((jo): jo is JobOrderMaster => !!jo)
+        .map((jo) => (jo.jobNumber || `JO#${jo.jobOrderNumber}`).trim())
+        .join(", "),
+      unmatchedJobs: [],
+    }));
 
   const addTradeLine = () => {
     markDirty();
-    setTradeLines((prev) => [...prev, emptyTradeLine()]);
+    const line = emptyTradeLine();
+    setTradeLines((prev) => [...prev, line]);
   };
+
 
   const removeTradeLine = (key: string) => {
     markDirty();
@@ -649,7 +944,8 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
     }
     if (!docDate) next.docDate = "Date is required";
     if (isVendorInvoice && !dueDate) next.dueDate = "Due date is required";
-    if (docDate && dueDate && dueDate < docDate) {
+    // Customer documents have no header due date (each line carries its own date).
+    if (!isCustomerDoc && docDate && dueDate && dueDate < docDate) {
       next.dueDate = "Due date cannot be before document date";
     }
 
@@ -752,15 +1048,18 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             ItemNo: idx + 1,
             PartName: l.partName.trim() || l.partNo.trim(),
             PartNo: l.partNo.trim(),
+            LineType: l.lineType || DEFAULT_VENDOR_ORDER_LINE_TYPE,
+            ProductId: l.productId,
+            RawMaterialId: l.rawMaterialId,
             DueDate: dueDate || docDate,
-            JobNumber: "",
+            JobNumber: l.jobNumber.trim(),
             JobDesc: "",
             QtyOrdered: Math.max(1, parseFloat(l.qty) || 1),
             Unit: l.unit.trim() || "EA",
             UnitPrice: Math.max(0, parseFloat(l.unitPrice) || 0),
             JobPriority: 0,
             Discount: Math.max(0, parseFloat(l.discount) || 0),
-            DiscountType: "Percent",
+            DiscountType: l.discountType,
             LeadTime: "",
             Notes: l.notes.trim(),
           }));
@@ -781,10 +1080,10 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
           Status: "Open",
           ShippingInstructions: shippingInstructions.trim(),
           ExternalVendorPO: docNumber.trim(),
-          BuyerName: "",
-          VendorRefNo: refNumber.trim(),
+          ExternalOrderDate: dueDate || undefined,
+          BuyerName: buyerName,
+          VendorRefNo: "",
           LocationId: item.locationId > 0 ? item.locationId : undefined,
-          AdditionalNotes: notes.trim(),
           Details: details,
         });
         createdId = created.id;
@@ -797,15 +1096,18 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             ItemNo: idx + 1,
             PartName: l.partName.trim() || l.partNo.trim(),
             PartNo: l.partNo.trim(),
+            LineType: l.lineType || DEFAULT_VENDOR_ORDER_LINE_TYPE,
+            ProductId: l.productId,
+            RawMaterialId: l.rawMaterialId,
             DueDate: dueDate || docDate,
-            JobNumber: "",
+            JobNumber: l.jobNumber.trim(),
             JobDesc: "",
             QtyOrdered: Math.max(1, parseFloat(l.qty) || 1),
             Unit: l.unit.trim() || "EA",
             UnitPrice: Math.max(0, parseFloat(l.unitPrice) || 0),
             JobPriority: 0,
             Discount: Math.max(0, parseFloat(l.discount) || 0),
-            DiscountType: "Percent",
+            DiscountType: l.discountType,
             LeadTime: "",
             Notes: l.notes.trim(),
             ShippedQty: 0,
@@ -830,14 +1132,17 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
           Status: "Open",
           ShippingInstructions: shippingInstructions.trim(),
           ExternalVendorPO: docNumber.trim(),
-          BuyerName: "",
-          VendorRefNo: refNumber.trim(),
+          ExternalOrderDate: dueDate || undefined,
+          BuyerName: buyerName,
+          VendorRefNo: "",
           OrderType: "Vendor",
-          MaterialType: materialType,
+          // Derived from the line types, exactly like the regular Vendor Order screen.
+          MaterialType: deriveOrderMaterialType(
+            details.map((d) => d.LineType || DEFAULT_VENDOR_ORDER_LINE_TYPE)
+          ),
           QuotationId: 0,
-          QuotationNo: "",
+          QuotationNo: quotationNo.trim(),
           LocationId: item.locationId > 0 ? item.locationId : undefined,
-          AdditionalNotes: notes.trim(),
           Details: details,
         });
         if (!created?.id) throw new Error("Failed to create vendor order");
@@ -851,7 +1156,8 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             ItemNo: idx + 1,
             PartName: l.partName.trim() || l.partNo.trim(),
             PartNo: l.partNo.trim(),
-            DueDate: dueDate || docDate,
+            ProductId: l.productId,
+            DueDate: l.dueDate || dueDate || docDate,
             JobNumber: "",
             JobDesc: "",
             QtyOrdered: Math.max(1, parseFloat(l.qty) || 1),
@@ -859,7 +1165,7 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             UnitPrice: Math.max(0, parseFloat(l.unitPrice) || 0),
             JobPriority: 0,
             Discount: Math.max(0, parseFloat(l.discount) || 0),
-            DiscountType: "Percent",
+            DiscountType: l.discountType,
             LeadTime: "",
             Notes: l.notes.trim(),
           }));
@@ -878,9 +1184,9 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
           UserId: userId,
           UserToken: userToken,
           Status: "Open",
-          ShippingInstructions: shippingInstructions.trim(),
+          ShippingInstructions: "",
           ExternalCustomerPO: docNumber.trim(),
-          BuyerName: "",
+          BuyerName: buyerName,
           CustomerRefNo: refNumber.trim(),
           LocationId: item.locationId > 0 ? item.locationId : undefined,
           Details: details,
@@ -895,7 +1201,8 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             ItemNo: idx + 1,
             PartName: l.partName.trim() || l.partNo.trim(),
             PartNo: l.partNo.trim(),
-            DueDate: dueDate || docDate,
+            ProductId: l.productId,
+            DueDate: l.dueDate || dueDate || docDate,
             JobNumber: "",
             JobDesc: "",
             QtyOrdered: Math.max(1, parseFloat(l.qty) || 1),
@@ -903,7 +1210,7 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
             UnitPrice: Math.max(0, parseFloat(l.unitPrice) || 0),
             JobPriority: 0,
             Discount: Math.max(0, parseFloat(l.discount) || 0),
-            DiscountType: "Percent",
+            DiscountType: l.discountType,
             LeadTime: "",
             Notes: l.notes.trim(),
             ShippedQty: 0,
@@ -926,9 +1233,10 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
           UserId: userId,
           UserToken: userToken,
           Status: "Open",
-          ShippingInstructions: shippingInstructions.trim(),
+          ShippingInstructions: "",
           ExternalCustomerPO: docNumber.trim(),
-          BuyerName: "",
+          BuyerName: buyerName,
+          QuotationNo: quotationNo.trim(),
           LocationId: item.locationId > 0 ? item.locationId : undefined,
           Details: details,
         });
@@ -983,6 +1291,265 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
     } finally {
       setBusyAction(false);
     }
+  };
+
+  const renderTradeLine = (line: TradeLineDraft, index: number) => {
+    const locked = !canAdd || isCustomerInvoice;
+    const vendorSide = !isCustomerDoc;
+    const scrollSelector = ".inbox-review-right";
+    const hasParty = partyId > 0;
+    const field = (n: number) => `inbox-line-field inbox-span-${n}`;
+
+    const partInput = (() => {
+      if (locked || !hasParty) {
+        // Read-only, or no vendor/customer chosen yet: plain text so the extracted value stays editable.
+        return (
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Part #"
+            value={line.partNo}
+            disabled={locked}
+            onChange={(e) => handlePartNoTyped(line.key, e.target.value)}
+          />
+        );
+      }
+      if (!vendorSide) {
+        return (
+          <CustomerPartCombobox
+            value={line.partNo}
+            customerId={partyId}
+            customerSelected
+            scrollContainerSelector={scrollSelector}
+            onChange={(partNo) => handlePartNoTyped(line.key, partNo)}
+            onSelectPart={(part) => handleHistoryPartPicked(line.key, part)}
+          />
+        );
+      }
+      if (line.lineType === "RawMaterial") {
+        return (
+          <RawMaterialCombobox
+            value={line.partNo}
+            rawMaterialId={line.rawMaterialId}
+            suggestedPartName={line.partName}
+            suggestedUnit={line.unit}
+            suggestedUnitCost={parseFloat(line.unitPrice) || 0}
+            vendorId={partyId}
+            vendorSelected
+            scrollContainerSelector={scrollSelector}
+            onChange={(partNo) => handlePartNoTyped(line.key, partNo)}
+            onSelect={(material) => handleRawMaterialPicked(line.key, material)}
+          />
+        );
+      }
+      if (line.lineType === "FinishedProduct") {
+        return (
+          <ProductMasterCombobox
+            value={line.partNo}
+            productId={line.productId}
+            scrollContainerSelector={scrollSelector}
+            onChange={(partNo) => handlePartNoTyped(line.key, partNo)}
+            onSelect={(product) => handleProductPicked(line.key, product, true)}
+          />
+        );
+      }
+      return (
+        <VendorPartCombobox
+          value={line.partNo}
+          vendorId={partyId}
+          vendorSelected
+          lineType={line.lineType}
+          scrollContainerSelector={scrollSelector}
+          onChange={(partNo) => handlePartNoTyped(line.key, partNo)}
+          onSelectPart={(part) => handleHistoryPartPicked(line.key, part)}
+        />
+      );
+    })();
+
+    const linkText = line.rawMaterialId
+      ? "Linked to Raw Material Master"
+      : line.productId
+      ? "Linked to Product Master"
+      : "";
+
+    const discountField = (
+      <div className={field(3)}>
+        <label>{discountColumnLabel}</label>
+        <div className="inbox-line-discount">
+          <select
+            className="form-input"
+            value={line.discountType}
+            disabled={locked}
+            title="Discount type"
+            onChange={(e) =>
+              mutateTradeLine(line.key, (l) => ({
+                ...l,
+                discountType: e.target.value === "Amount" ? "Amount" : "Percent",
+              }))
+            }
+          >
+            <option value="Percent">%</option>
+            <option value="Amount">{currencySymbol}</option>
+          </select>
+          <input
+            type="number"
+            className="form-input amount-input"
+            min="0"
+            step="any"
+            value={line.discount}
+            disabled={locked}
+            onChange={(e) => updateTradeLine(line.key, "discount", e.target.value)}
+          />
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="inbox-line" key={line.key}>
+        <div className="inbox-line-head">
+          <span className="inbox-line-no">{index + 1}</span>
+          {line.partNo.trim() && !isCustomerInvoice && (
+            <span className={`inbox-line-link ${linkText ? "linked" : "unlinked"}`}>
+              {linkText ? `✓ ${linkText}` : "Not in master — saved as typed"}
+            </span>
+          )}
+          <span className="inbox-line-head-spacer" />
+          <span className="inbox-line-total">
+            <small>Line total</small>
+            {formatCurrency(tradeLineTotal(line))}
+          </span>
+          {!isCustomerInvoice && (
+            <button
+              type="button"
+              className="inbox-line-icon-btn danger"
+              title="Remove line"
+              disabled={tradeLines.length <= 1 || !canAdd}
+              onClick={() => removeTradeLine(line.key)}
+            >
+              <FontAwesomeIcon icon={faTrashAlt} />
+            </button>
+          )}
+        </div>
+
+        <div className="inbox-line-body">
+          {vendorSide && (
+            <div className={field(3)}>
+              <label>Line type</label>
+              <select
+                className="form-input"
+                value={line.lineType}
+                disabled={locked}
+                onChange={(e) => handleLineTypeChange(line.key, e.target.value)}
+              >
+                {VENDOR_ORDER_LINE_TYPES.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className={field(vendorSide ? 4 : 5)}>
+            <label>Part #</label>
+            {partInput}
+          </div>
+
+          <div className={field(vendorSide ? 5 : 7)}>
+            <label>Description</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Item / Part name"
+              value={line.partName}
+              title={line.partName}
+              disabled={locked}
+              onChange={(e) => updateTradeLine(line.key, "partName", e.target.value)}
+            />
+          </div>
+
+          <div className={field(3)}>
+            <label>Qty</label>
+            <input
+              type="number"
+              className="form-input amount-input"
+              min="0"
+              step="any"
+              value={line.qty}
+              disabled={locked}
+              onChange={(e) => updateTradeLine(line.key, "qty", e.target.value)}
+            />
+          </div>
+
+          <div className={field(3)}>
+            <label>Unit</label>
+            <input
+              type="text"
+              className="form-input"
+              value={line.unit}
+              disabled={locked}
+              onChange={(e) => updateTradeLine(line.key, "unit", e.target.value)}
+            />
+          </div>
+
+          <div className={field(3)}>
+            <label>Unit price</label>
+            <input
+              type="number"
+              className="form-input amount-input"
+              min="0"
+              step="0.01"
+              placeholder="0.00"
+              value={line.unitPrice}
+              disabled={locked}
+              onChange={(e) => updateTradeLine(line.key, "unitPrice", e.target.value)}
+            />
+          </div>
+
+          {discountField}
+
+          {vendorSide ? (
+            <div className={field(6)}>
+              <label>Job No</label>
+              <InboxJobOrderSelect
+                jobOrders={jobOrders}
+                selectedIds={line.jobIds}
+                disabled={locked}
+                onChange={(ids) => handleJobsChange(line.key, ids)}
+              />
+              {line.unmatchedJobs.length > 0 && line.jobIds.length === 0 && (
+                <span className="inbox-line-hint">
+                  Not found in Job Orders: {line.unmatchedJobs.join(", ")}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className={field(4)}>
+              <label>{docType === "customerQuotation" ? "Est Date" : "Due Date"}</label>
+              <input
+                type="date"
+                className="form-input"
+                value={line.dueDate || dueDate}
+                disabled={locked}
+                onChange={(e) => updateTradeLine(line.key, "dueDate", e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className={field(vendorSide ? 6 : 8)}>
+            <label>Notes</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Line notes"
+              value={line.notes}
+              disabled={locked}
+              onChange={(e) => updateTradeLine(line.key, "notes", e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const fromLabel = item
@@ -1077,9 +1644,21 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
           </div>
         ) : (
           <form className="airframe-form" onSubmit={handleSubmit}>
-            <div className="inbox-review-grid">
+            <div className={`inbox-review-grid ${leftCollapsed ? "left-collapsed" : ""}`}>
               {/* LEFT PANE: Email tab first, then Attachment tab — both prominently highlighted */}
-              <div className="inbox-review-left">
+              <div className={`inbox-review-left ${leftCollapsed ? "collapsed" : ""}`}>
+                {leftCollapsed ? (
+                  <button
+                    type="button"
+                    className="inbox-left-rail"
+                    onClick={() => setLeftCollapsed(false)}
+                    title="Show email and attachment"
+                  >
+                    <FontAwesomeIcon icon={faAngleDoubleRight} />
+                    <span>Email &amp; Attachment</span>
+                  </button>
+                ) : (
+                  <>
                 <div className="inbox-review-tabs" role="tablist">
                   <button
                     type="button"
@@ -1102,6 +1681,15 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                   >
                     <FontAwesomeIcon icon={faFilePdf} />
                     <span className="inbox-tab-label">Attachment</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="inbox-collapse-btn"
+                    onClick={() => setLeftCollapsed(true)}
+                    title="Collapse to give the form more room"
+                    aria-label="Collapse email and attachment"
+                  >
+                    <FontAwesomeIcon icon={faAngleDoubleLeft} />
                   </button>
                 </div>
 
@@ -1140,6 +1728,8 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </div>
 
               {/* RIGHT PANE: Dynamic fields based on fetched document type */}
@@ -1596,30 +2186,6 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                           </div>
 
                           <div className="form-group">
-                            <label htmlFor="inboxDocNo">
-                              {docType === "customerInvoice"
-                                ? "Invoice #"
-                                : isCustomerDoc
-                                ? "Customer PO / Ref #"
-                                : "Vendor PO / Quote #"}
-                            </label>
-                            <input
-                              id="inboxDocNo"
-                              type="text"
-                              className="form-input"
-                              placeholder="Reference number"
-                              value={docNumber}
-                              disabled={!canAdd || isCustomerInvoice}
-                              onChange={(e) => {
-                                markDirty();
-                                setDocNumber(e.target.value);
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="form-row">
-                          <div className="form-group">
                             <label htmlFor="inboxDocDate">
                               {docType === "customerQuotation" || docType === "vendorQuotation"
                                 ? "Quotation Date"
@@ -1642,71 +2208,106 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                             />
                             {errors.docDate && <span className="error-message">{errors.docDate}</span>}
                           </div>
+                        </div>
 
+                        <div className="form-row">
                           <div className="form-group">
-                            <label htmlFor="inboxTradeDueDate">Due Date</label>
+                            <label htmlFor="inboxBuyerName">
+                              {isCustomerDoc ? "Buyer Name" : "Contact Person"}
+                            </label>
                             <input
-                              id="inboxTradeDueDate"
-                              type="date"
-                              className={`form-input ${errors.dueDate ? "error" : ""}`}
-                              value={dueDate}
-                              disabled={!canAdd || isCustomerInvoice}
-                              onChange={(e) => {
-                                markDirty();
-                                setDueDate(e.target.value);
-                                setErrors((prev) => ({ ...prev, dueDate: "" }));
-                              }}
+                              id="inboxBuyerName"
+                              type="text"
+                              className="form-input"
+                              placeholder={
+                                isCustomerDoc
+                                  ? "Buyer name from default contact"
+                                  : "Contact person (auto-filled from vendor)"
+                              }
+                              value={buyerName}
+                              readOnly
                             />
-                            {errors.dueDate && <span className="error-message">{errors.dueDate}</span>}
                           </div>
 
-                          {docType === "vendorOrder" ? (
+                          {!isCustomerDoc ? (
                             <div className="form-group">
-                              <label htmlFor="inboxMaterialType">Order Type</label>
-                              <select
-                                id="inboxMaterialType"
-                                className="form-input"
-                                value={materialType}
+                              <label htmlFor="inboxTradeDueDate">Due Date</label>
+                              <input
+                                id="inboxTradeDueDate"
+                                type="date"
+                                className={`form-input ${errors.dueDate ? "error" : ""}`}
+                                value={dueDate}
+                                min={docDate || undefined}
                                 disabled={!canAdd}
                                 onChange={(e) => {
                                   markDirty();
-                                  setMaterialType(e.target.value);
+                                  setDueDate(e.target.value);
+                                  setErrors((prev) => ({ ...prev, dueDate: "" }));
                                 }}
-                              >
-                                <option value="Material">Material</option>
-                                <option value="Service">Service</option>
-                              </select>
+                              />
+                              {errors.dueDate && (
+                                <span className="error-message">{errors.dueDate}</span>
+                              )}
                             </div>
-                          ) : (
+                          ) : docType === "customerQuotation" ? (
                             <div className="form-group">
-                              <label htmlFor="inboxRefNo">
-                                {isCustomerDoc ? "Customer Ref #" : "Vendor Ref #"}
-                              </label>
+                              <label htmlFor="inboxRefNo">Customer Ref #</label>
                               <input
                                 id="inboxRefNo"
                                 type="text"
                                 className="form-input"
-                                placeholder="Optional reference"
+                                placeholder="Enter customer reference number"
                                 value={refNumber}
-                                disabled={!canAdd || isCustomerInvoice}
+                                disabled={!canAdd}
                                 onChange={(e) => {
                                   markDirty();
                                   setRefNumber(e.target.value);
                                 }}
                               />
                             </div>
+                          ) : (
+                            <div className="form-group">
+                              <label htmlFor="inboxQuotationNo">Quotation #</label>
+                              <input
+                                id="inboxQuotationNo"
+                                type="text"
+                                className="form-input"
+                                placeholder="Enter quotation number if converted from quotation"
+                                value={quotationNo}
+                                disabled={!canAdd || isCustomerInvoice}
+                                onChange={(e) => {
+                                  markDirty();
+                                  setQuotationNo(e.target.value);
+                                }}
+                              />
+                            </div>
                           )}
                         </div>
 
-                        {!isCustomerInvoice && (
+                        {!isCustomerDoc && (
                           <div className="form-row">
+                            <div className="form-group">
+                              <label htmlFor="inboxDocNo">Vendor PO Number</label>
+                              <input
+                                id="inboxDocNo"
+                                type="text"
+                                className="form-input"
+                                placeholder="Vendor purchase order number"
+                                value={docNumber}
+                                disabled={!canAdd}
+                                onChange={(e) => {
+                                  markDirty();
+                                  setDocNumber(e.target.value);
+                                }}
+                              />
+                            </div>
                             <div className="form-group">
                               <label htmlFor="inboxShipping">Shipping Instructions</label>
                               <input
                                 id="inboxShipping"
                                 type="text"
                                 className="form-input"
-                                placeholder="Optional shipping instructions"
+                                placeholder="Special shipping instructions"
                                 value={shippingInstructions}
                                 disabled={!canAdd}
                                 onChange={(e) => {
@@ -1715,134 +2316,43 @@ const InvoiceInboxReviewSlideout: React.FC<InvoiceInboxReviewSlideoutProps> = ({
                                 }}
                               />
                             </div>
-                            {!isCustomerDoc && (
-                              <div className="form-group">
-                                <label htmlFor="inboxTradeNotes">Notes</label>
-                                <input
-                                  id="inboxTradeNotes"
-                                  type="text"
-                                  className="form-input"
-                                  placeholder="Optional notes"
-                                  value={notes}
-                                  disabled={!canAdd}
-                                  onChange={(e) => {
-                                    markDirty();
-                                    setNotes(e.target.value);
-                                  }}
-                                />
-                              </div>
-                            )}
+                          </div>
+                        )}
+
+                        {docType === "vendorOrder" && (
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label htmlFor="inboxVoQuotationNo">Quotation #</label>
+                              <input
+                                id="inboxVoQuotationNo"
+                                type="text"
+                                className="form-input"
+                                placeholder="Enter quotation number if converted from quotation"
+                                value={quotationNo}
+                                disabled={!canAdd}
+                                onChange={(e) => {
+                                  markDirty();
+                                  setQuotationNo(e.target.value);
+                                }}
+                              />
+                            </div>
                           </div>
                         )}
 
                         <div className="direct-lines-header">
                           <h3>Line Items</h3>
-                          {canAdd && !isCustomerInvoice && (
-                            <button type="button" className="btn-add-line" onClick={addTradeLine}>
-                              + Add line
-                            </button>
-                          )}
+                          <div className="inbox-lines-tools">
+                            {canAdd && !isCustomerInvoice && (
+                              <button type="button" className="btn-add-line" onClick={addTradeLine}>
+                                + Add line
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {errors.lines && <span className="error-message">{errors.lines}</span>}
 
-                        <div className="direct-lines-table-wrap">
-                          <table className="direct-lines-table">
-                            <thead>
-                              <tr>
-                                <th style={{ width: "16%" }}>Part #</th>
-                                <th style={{ width: "30%" }}>Description / Part</th>
-                                <th style={{ width: "11%" }}>Qty</th>
-                                <th style={{ width: "10%" }}>Unit</th>
-                                <th style={{ width: "14%" }}>Unit Price</th>
-                                <th style={{ width: "13%", textAlign: "right" }}>Total</th>
-                                {!isCustomerInvoice && <th style={{ width: "6%" }} />}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {tradeLines.map((line) => (
-                                <tr key={line.key}>
-                                  <td>
-                                    <input
-                                      type="text"
-                                      className="form-input"
-                                      placeholder="Part #"
-                                      value={line.partNo}
-                                      disabled={!canAdd || isCustomerInvoice}
-                                      onChange={(e) =>
-                                        updateTradeLine(line.key, "partNo", e.target.value)
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="text"
-                                      className="form-input"
-                                      placeholder="Item / Part name"
-                                      value={line.partName}
-                                      disabled={!canAdd || isCustomerInvoice}
-                                      onChange={(e) =>
-                                        updateTradeLine(line.key, "partName", e.target.value)
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      className="form-input amount-input"
-                                      min="0"
-                                      step="any"
-                                      value={line.qty}
-                                      disabled={!canAdd || isCustomerInvoice}
-                                      onChange={(e) =>
-                                        updateTradeLine(line.key, "qty", e.target.value)
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="text"
-                                      className="form-input"
-                                      value={line.unit}
-                                      disabled={!canAdd || isCustomerInvoice}
-                                      onChange={(e) =>
-                                        updateTradeLine(line.key, "unit", e.target.value)
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      className="form-input amount-input"
-                                      min="0"
-                                      step="0.01"
-                                      placeholder="0.00"
-                                      value={line.unitPrice}
-                                      disabled={!canAdd || isCustomerInvoice}
-                                      onChange={(e) =>
-                                        updateTradeLine(line.key, "unitPrice", e.target.value)
-                                      }
-                                    />
-                                  </td>
-                                  <td style={{ textAlign: "right", fontWeight: 600 }}>
-                                    {formatCurrency(tradeLineTotal(line))}
-                                  </td>
-                                  {!isCustomerInvoice && (
-                                    <td>
-                                      <button
-                                        type="button"
-                                        className="btn-remove-line"
-                                        title="Remove line"
-                                        disabled={tradeLines.length <= 1 || !canAdd}
-                                        onClick={() => removeTradeLine(line.key)}
-                                      >
-                                        ×
-                                      </button>
-                                    </td>
-                                  )}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="inbox-lines">
+                          {tradeLines.map((line, index) => renderTradeLine(line, index))}
                         </div>
 
                         <div className="inbox-trade-summary">

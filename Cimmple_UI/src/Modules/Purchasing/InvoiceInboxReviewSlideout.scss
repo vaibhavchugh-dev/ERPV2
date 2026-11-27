@@ -13,12 +13,68 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    // The form needs more room than the email/PDF preview.
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: 1.25rem;
+    transition: grid-template-columns 0.2s ease;
+
+    &.left-collapsed {
+      grid-template-columns: 2.75rem minmax(0, 1fr);
+    }
 
     @media (max-width: 1000px) {
       grid-template-columns: minmax(0, 1fr);
       overflow-y: auto;
+
+      &.left-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+  }
+
+  .inbox-left-rail {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 0;
+    border: none;
+    background: #eef2ff;
+    color: #4338ca;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+
+    &:hover {
+      background: #e0e7ff;
+    }
+
+    span {
+      writing-mode: vertical-rl;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+  }
+
+  .inbox-collapse-btn {
+    margin-left: auto;
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #c7d2fe;
+    border-radius: 0.45rem;
+    background: rgba(255, 255, 255, 0.7);
+    color: #4338ca;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: #ffffff;
+      border-color: #818cf8;
     }
   }
 
@@ -159,6 +215,221 @@
 
   .inbox-review-right {
     min-width: 0;
+  }
+
+  .inbox-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .inbox-lines-tools {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  // One card per line: [ # · link status ........ line total · remove ]  +  a tidy field grid.
+  .inbox-line {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+    background: #ffffff;
+    overflow: visible;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    &:hover,
+    &:focus-within {
+      border-color: #c7d2fe;
+      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.1);
+    }
+  }
+
+  .inbox-line-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 2.5rem;
+    padding: 0.35rem 0.6rem 0.35rem 0.75rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #eef0f3;
+    border-radius: 0.65rem 0.65rem 0 0;
+  }
+
+  .inbox-line-head-spacer {
+    flex: 1 1 auto;
+  }
+
+  .inbox-line-no {
+    flex-shrink: 0;
+    min-width: 1.6rem;
+    height: 1.6rem;
+    padding: 0 0.35rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: #eef2ff;
+    color: #4338ca;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  .inbox-line-total {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: #111827;
+    white-space: nowrap;
+
+    small {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+  }
+
+  .inbox-line-icon-btn {
+    flex-shrink: 0;
+    width: 1.9rem;
+    height: 1.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.4rem;
+    background: #ffffff;
+    color: #4b5563;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover:not(:disabled) {
+      color: #4f46e5;
+      border-color: #818cf8;
+      background: #eef2ff;
+    }
+
+    &.danger:hover:not(:disabled) {
+      color: #b91c1c;
+      border-color: #fca5a5;
+      background: #fef2f2;
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+
+  .inbox-line-link {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.55rem;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+
+    &.linked {
+      color: #047857;
+      background: #ecfdf5;
+      border-color: #a7f3d0;
+    }
+
+    &.unlinked {
+      color: #6b7280;
+      background: #f3f4f6;
+      border-color: #e5e7eb;
+    }
+  }
+
+  // 12-column field grid:
+  //   vendor:   Line type · Part # · Description / Qty · Unit · Price · Discount / Job No · Notes
+  //   customer: Part # · Description / Qty · Unit · Price · Discount / Est Date · Notes
+  .inbox-line-body {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 0.7rem 0.75rem;
+    align-items: start;
+    padding: 0.75rem;
+  }
+
+  .inbox-span-3 { grid-column: span 3; }
+  .inbox-span-4 { grid-column: span 4; }
+  .inbox-span-5 { grid-column: span 5; }
+  .inbox-span-6 { grid-column: span 6; }
+  .inbox-span-7 { grid-column: span 7; }
+  .inbox-span-8 { grid-column: span 8; }
+
+  // Narrow panes: two fields per row, long text fields full width.
+  @media (max-width: 1250px) {
+    .inbox-line-body > .inbox-line-field {
+      grid-column: span 6;
+    }
+
+    .inbox-line-body > .inbox-span-7,
+    .inbox-line-body > .inbox-span-8 {
+      grid-column: span 12;
+    }
+  }
+
+  .inbox-line-field {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+
+    // Reset the global label rule (flex + bottom margin) so every field lines up.
+    > label {
+      display: block;
+      margin: 0;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      line-height: 1.2;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    // One control height for inputs, selects and the part / job comboboxes.
+    .form-input {
+      height: 2.4rem;
+      margin: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      min-width: 0 !important;
+    }
+  }
+
+  .inbox-line-discount {
+    display: flex;
+    gap: 0.25rem;
+
+    .form-input {
+      min-width: 0;
+    }
+
+    select {
+      width: 3.6rem;
+      flex-shrink: 0;
+      padding-left: 0.4rem;
+      padding-right: 0.4rem;
+    }
+  }
+
+  .inbox-line-hint {
+    font-size: 0.7rem;
+    color: #b45309;
   }
 
   .inbox-trade-summary {
