@@ -35,7 +35,8 @@ const DOC_TYPE_OPTIONS = [
   { value: "All", label: "All types" },
   { value: "customerQuotation", label: "Cust CQ — Customer Quotation" },
   { value: "customerOrder", label: "Cust CO — Customer Order" },
-  { value: "customerInvoice", label: "Cust INV — Customer Invoice" },
+  // Customer Invoice hidden for now:
+  // { value: "customerInvoice", label: "Cust INV — Customer Invoice" },
   { value: "vendorQuotation", label: "Vendor VQ — Vendor Quotation" },
   { value: "vendorOrder", label: "Vendor PO — Vendor Order" },
   { value: "vendorInvoice", label: "Vendor INV — Vendor Invoice" },
@@ -280,8 +281,12 @@ const InvoiceInbox: React.FC = () => {
         }${counts.failed ? ` · ${counts.failed} need attention` : ""}`
       : "Customer and vendor documents received by email";
 
-  const customerAddresses = (address?.addresses || []).filter((a) => a.partyGroup === "Customer");
-  const vendorAddresses = (address?.addresses || []).filter((a) => a.partyGroup === "Vendor");
+  // Customer Invoice is hidden for now, so it is not listed even if the API still returns it.
+  const visibleAddresses = (address?.addresses || []).filter(
+    (a) => a.documentType !== "customerInvoice"
+  );
+  const customerAddresses = visibleAddresses.filter((a) => a.partyGroup === "Customer");
+  const vendorAddresses = visibleAddresses.filter((a) => a.partyGroup === "Vendor");
 
   return (
     <div style={{ padding: "1rem" }}>

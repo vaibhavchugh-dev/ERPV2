@@ -360,7 +360,6 @@ const SupportClientsPage: React.FC = () => {
                 <option value="Trial">Trial</option>
                 <option value="Provisioning">Provisioning</option>
                 <option value="Suspended">Suspended</option>
-                <option value="Cancelled">Cancelled</option>
               </select>
             </label>
             <button type="button" className="si-btn si-btn--ghost" onClick={() => void loadList()}>
@@ -693,11 +692,6 @@ const SupportClientsPage: React.FC = () => {
                   {selected.status === "Active" && (
                     <button type="button" className="si-btn si-btn--ghost" disabled={busy} onClick={() => changeStatus(selected, "Suspended")}>
                       Suspend
-                    </button>
-                  )}
-                  {selected.status !== "Cancelled" && selected.status !== "Provisioning" && (
-                    <button type="button" className="si-btn si-btn--ghost" disabled={busy} onClick={() => changeStatus(selected, "Cancelled")}>
-                      Cancel client
                     </button>
                   )}
                 </div>
