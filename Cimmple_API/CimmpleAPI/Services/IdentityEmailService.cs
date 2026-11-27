@@ -179,6 +179,48 @@ namespace CimmpleAPI.Services
             }, skipNotificationGate: true);
         }
 
+        public static async Task<(bool queued, string? error)> TryQueueTenantSuspendedNoticeAsync(
+            EmailOutboxService outbox,
+            int tenantId,
+            IConfiguration? configuration,
+            string toEmail,
+            string displayName,
+            string companyName,
+            bool trialEnded)
+        {
+            if (string.IsNullOrWhiteSpace(toEmail))
+                return (false, "Administrator email is missing.");
+
+            var safeName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Trim());
+            var safeCompany = WebUtility.HtmlEncode(companyName ?? "");
+            var supportEmail = configuration?["Support:Email"]?.Trim();
+            var contact = string.IsNullOrWhiteSpace(supportEmail)
+                ? "Please contact Cimmple support"
+                : $"Please contact us at <a href=\"mailto:{WebUtility.HtmlEncode(supportEmail)}\">{WebUtility.HtmlEncode(supportEmail)}</a>";
+
+            var subject = trialEnded
+                ? "Your Cimmple free trial has ended"
+                : "Your Cimmple workspace has been suspended";
+
+            var body = trialEnded
+                ? $"<p>Hello {safeName},</p>" +
+                  $"<p>Your free trial for <strong>{safeCompany}</strong> has ended and your Cimmple workspace has been suspended.</p>" +
+                  "<p>Sign-in is currently blocked, and all of your data has been kept safely. " +
+                  $"{contact} to upgrade and reactivate your workspace.</p>"
+                : $"<p>Hello {safeName},</p>" +
+                  $"<p>Your Cimmple workspace for <strong>{safeCompany}</strong> has been suspended.</p>" +
+                  "<p>Sign-in is currently blocked, and your data has been kept. " +
+                  $"{contact} if you have any questions or would like to reactivate your account.</p>";
+
+            return await outbox.EnqueueAsync(tenantId, new MailRequest
+            {
+                To = toEmail.Trim(),
+                Subject = subject,
+                Body = body,
+                IsHtml = true
+            }, skipNotificationGate: true);
+        }
+
         public static async Task<(bool queued, string? error)> TryQueuePasswordResetNoticeAsync(
             EmailOutboxService outbox,
             int tenantId,

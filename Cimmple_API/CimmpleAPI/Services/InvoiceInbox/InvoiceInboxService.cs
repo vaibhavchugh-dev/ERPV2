@@ -33,8 +33,41 @@ namespace CimmpleAPI.Services.InvoiceInbox
         private const int MaxBodyTextChars = 100_000;
         private const int MaxBodyHtmlChars = 300_000;
 
-        /// <summary>The part after the dash in <c>{locationId}-inv@domain</c> (room for e.g. a PO mailbox later).</summary>
+        /// <summary>Primary suffix for vendor invoices in <c>{locationId}-{code}@domain</c>.</summary>
         public const string MailCode = "inv";
+
+        public sealed record InboxAddressSpec(
+            string Code,
+            string DocumentType,
+            string Label,
+            string ShortLabel,
+            string PartyGroup,
+            string Description);
+
+        /// <summary>All supported document-type inbox codes for each site.</summary>
+        public static readonly IReadOnlyList<InboxAddressSpec> AddressSpecs = new[]
+        {
+            new InboxAddressSpec("cq", InvoiceInboxItem.DocTypeCustomerQuotation, "Customer Quotation", "Cust CQ", "Customer", "Customer RFQs and quotation requests"),
+            new InboxAddressSpec("co", InvoiceInboxItem.DocTypeCustomerOrder, "Customer Order", "Cust CO", "Customer", "Customer purchase orders"),
+            new InboxAddressSpec("ci", InvoiceInboxItem.DocTypeCustomerInvoice, "Customer Invoice", "Cust INV", "Customer", "Customer invoices"),
+            new InboxAddressSpec("vq", InvoiceInboxItem.DocTypeVendorQuotation, "Vendor Quotation", "Vendor VQ", "Vendor", "Vendor quotes and pricing proposals"),
+            new InboxAddressSpec("po", InvoiceInboxItem.DocTypeVendorOrder, "Vendor Order", "Vendor PO", "Vendor", "Vendor purchase orders (also accepts -vo)"),
+            new InboxAddressSpec("inv", InvoiceInboxItem.DocTypeVendorInvoice, "Vendor Invoice", "Vendor INV", "Vendor", "Vendor bills and invoices"),
+        };
+
+        /// <summary>Maps address suffix code (case-insensitive) to canonical DocumentType.</summary>
+        private static readonly Dictionary<string, string> CodeToDocType = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["cq"] = InvoiceInboxItem.DocTypeCustomerQuotation,
+            ["co"] = InvoiceInboxItem.DocTypeCustomerOrder,
+            ["ci"] = InvoiceInboxItem.DocTypeCustomerInvoice,
+            ["cinv"] = InvoiceInboxItem.DocTypeCustomerInvoice,
+            ["vq"] = InvoiceInboxItem.DocTypeVendorQuotation,
+            ["po"] = InvoiceInboxItem.DocTypeVendorOrder,
+            ["vo"] = InvoiceInboxItem.DocTypeVendorOrder,
+            ["inv"] = InvoiceInboxItem.DocTypeVendorInvoice,
+            ["vi"] = InvoiceInboxItem.DocTypeVendorInvoice,
+        };
 
         private readonly CimmpleDbContext _db;
         private readonly IConfiguration _configuration;
@@ -55,22 +88,35 @@ namespace CimmpleAPI.Services.InvoiceInbox
 
         // ---------------------------------------------------------------- addresses
 
-        /// <summary>Tenant and site a received email belongs to.</summary>
-        private sealed record InboxTarget(int TenantId, int LocationId);
+        /// <summary>Tenant, site, and document type a received email belongs to.</summary>
+        private sealed record InboxTarget(int TenantId, int LocationId, string DocumentType);
 
         /// <summary>
-        /// Inbox address for a site: <c>{locationId}-inv@{InboundMail:Domain}</c>.
+        /// Primary inbox address for a site: <c>{locationId}-{code}@{InboundMail:Domain}</c>.
         /// Null when the domain is not configured.
         /// </summary>
-        public string? BuildAddress(int locationId)
+        public string? BuildAddress(int locationId, string code = MailCode)
         {
             var domain = (_settings.Domain ?? "").Trim().TrimStart('@');
             return string.IsNullOrEmpty(domain) || locationId <= 0
                 ? null
-                : $"{locationId}-{MailCode}@{domain}";
+                : $"{locationId}-{code}@{domain}";
         }
 
-        /// <summary>True for sites that can receive invoices (business sites and warehouses).</summary>
+        /// <summary>All inbox addresses for a site (CQ, CO, CI, VQ, PO, INV).</summary>
+        public IReadOnlyList<object> BuildAddresses(int locationId) =>
+            AddressSpecs.Select(s => (object)new
+            {
+                code = s.Code,
+                documentType = s.DocumentType,
+                label = s.Label,
+                shortLabel = s.ShortLabel,
+                partyGroup = s.PartyGroup,
+                description = s.Description,
+                address = BuildAddress(locationId, s.Code)
+            }).ToList();
+
+        /// <summary>True for sites that can receive documents (business sites and warehouses).</summary>
         public static bool IsMailSite(int locType) =>
             locType == 0 || locType == LocationKind.BusinessSite || locType == LocationKind.Warehouse;
 
@@ -78,9 +124,9 @@ namespace CimmpleAPI.Services.InvoiceInbox
 
         public async Task<InboundReceiveResult> ReceiveAsync(IFormCollection form, CancellationToken ct = default)
         {
-            var locationId = ExtractLocationId(form["recipient"].ToString(), form["To"].ToString(), form["to"].ToString());
-            if (locationId <= 0)
-                return Unknown("Recipient is not an invoice inbox address.");
+            var (locationId, documentType) = ExtractTarget(form["recipient"].ToString(), form["To"].ToString(), form["to"].ToString());
+            if (locationId <= 0 || string.IsNullOrEmpty(documentType))
+                return Unknown("Recipient is not a recognized inbox address.");
 
             var site = await _db.Locations.AsNoTracking()
                 .Where(l => l.LocationId == locationId)
@@ -89,7 +135,7 @@ namespace CimmpleAPI.Services.InvoiceInbox
             if (site == null || !IsMailSite(site.LocType))
                 return Unknown("Inbox location does not exist.");
 
-            var address = new InboxTarget(site.TenantId, site.LocationId);
+            var address = new InboxTarget(site.TenantId, site.LocationId, documentType);
 
             var (fromName, fromEmail) = ParseAddress(FirstNonEmpty(form, "from", "From", "sender", "Sender"));
             var subject = Truncate(FirstNonEmpty(form, "subject", "Subject"), 500);
@@ -201,6 +247,7 @@ namespace CimmpleAPI.Services.InvoiceInbox
         {
             TenantId = address.TenantId,
             LocationId = address.LocationId,
+            DocumentType = address.DocumentType,
             Source = InvoiceInboxItem.SourceEmail,
             FromName = Truncate(fromName, 300),
             FromEmail = Truncate(fromEmail, 320),
@@ -257,11 +304,11 @@ namespace CimmpleAPI.Services.InvoiceInbox
         // ---------------------------------------------------------------- parsing helpers
 
         /// <summary>
-        /// Site id from the first recipient shaped <c>{locationId}-inv@{domain}</c> (an optional
-        /// '+tag' after the local part is ignored). 0 when no recipient matches.
+        /// Site id and document type from the first recipient shaped <c>{locationId}-{code}@{domain}</c>
+        /// (an optional '+tag' after the local part is ignored). Returns (0, "") when no recipient matches.
         /// Only addresses on the configured inbox domain are accepted when a domain is set.
         /// </summary>
-        public int ExtractLocationId(params string[] recipientFields)
+        public (int LocationId, string DocumentType) ExtractTarget(params string[] recipientFields)
         {
             var domain = (_settings.Domain ?? "").Trim().TrimStart('@');
 
@@ -282,17 +329,17 @@ namespace CimmpleAPI.Services.InvoiceInbox
                     if (dash <= 0) continue;
 
                     var code = local[(dash + 1)..];
-                    if (!code.Equals(MailCode, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!CodeToDocType.TryGetValue(code, out var docType)) continue;
                     if (!int.TryParse(local[..dash], System.Globalization.NumberStyles.None,
                             System.Globalization.CultureInfo.InvariantCulture, out var locationId) || locationId <= 0)
                         continue;
 
                     if (domain.Length == 0 || email[(at + 1)..].Equals(domain, StringComparison.OrdinalIgnoreCase))
-                        return locationId;
+                        return (locationId, docType);
                 }
             }
 
-            return 0;
+            return (0, "");
         }
 
         /// <summary>Splits <c>Name &lt;user@host&gt;</c> into display name and address.</summary>

@@ -111,21 +111,34 @@ namespace CimmpleAPI.Services.InvoiceInbox
                     return true;
                 }
 
+                var docKind = DocumentExtractionKinds.IsKnown(item.DocumentType)
+                    ? item.DocumentType
+                    : DocumentExtractionKinds.VendorInvoice;
                 var outcome = await _extraction.ExtractDocumentFromPdfAsync(
-                    bytes, DocumentExtractionKinds.VendorInvoice, item.FileName, ct);
+                    bytes, docKind, item.FileName, ct);
                 var result = outcome.Result;
 
-                var vendorName = result.VendorNames?.FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))?.Trim()
-                                 ?? result.CompanyName?.Trim();
-                var invoiceNo = (result.InvoiceNumber ?? result.QuotationNumber)?.Trim();
+                var partyName = DocumentExtractionKinds.IsCustomerParty(docKind)
+                    ? (result.ClientName?.Trim()
+                       ?? result.VendorNames?.FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))?.Trim()
+                       ?? result.CompanyName?.Trim())
+                    : (result.VendorNames?.FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))?.Trim()
+                       ?? result.CompanyName?.Trim());
+                var docNo = (result.InvoiceNumber ?? result.QuotationNumber ?? result.PoNumber)?.Trim();
                 var total = result.TotalAmount;
+                if (total == null && result.Details != null && result.Details.Count > 0)
+                {
+                    var summed = result.Details.Sum(d =>
+                        d.Amount ?? ((d.Quantity ?? 1m) * (d.UnitPrice ?? 0m)));
+                    if (summed > 0m) total = Math.Round(summed, 2);
+                }
 
-                if (string.IsNullOrWhiteSpace(vendorName)
-                    && string.IsNullOrWhiteSpace(invoiceNo)
+                if (string.IsNullOrWhiteSpace(partyName)
+                    && string.IsNullOrWhiteSpace(docNo)
                     && total == null
                     && (result.Details == null || result.Details.Count == 0))
                 {
-                    await FailAsync(id, "No invoice data could be read from this PDF.", ct);
+                    await FailAsync(id, "No document data could be read from this PDF.", ct);
                     return true;
                 }
 
@@ -137,8 +150,8 @@ namespace CimmpleAPI.Services.InvoiceInbox
                         .SetProperty(x => x.Status, InvoiceInboxItem.StatusExtracted)
                         .SetProperty(x => x.ExtractionJson, json)
                         .SetProperty(x => x.ExtractionProvider, Truncate(outcome.Provider, 50))
-                        .SetProperty(x => x.ExtractedVendorName, Truncate(vendorName, 300))
-                        .SetProperty(x => x.ExtractedInvoiceNo, Truncate(invoiceNo, 100))
+                        .SetProperty(x => x.ExtractedVendorName, Truncate(partyName, 300))
+                        .SetProperty(x => x.ExtractedInvoiceNo, Truncate(docNo, 100))
                         .SetProperty(x => x.ExtractedTotal, total)
                         .SetProperty(x => x.FailureReason, (string?)null)
                         .SetProperty(x => x.ProcessedUtc, done)

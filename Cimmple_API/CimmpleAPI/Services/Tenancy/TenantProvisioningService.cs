@@ -317,12 +317,16 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
             if (tenant.Status == TenantStatus.Provisioning && normalized == TenantStatus.Active)
                 return (false, "Finish setup with Resume setup before activating this client.");
 
+            var previousStatus = tenant.Status;
+            var now = DateTime.UtcNow;
+            var trialEnded = tenant.TrialEndsUtc.HasValue && tenant.TrialEndsUtc.Value <= now;
+
             tenant.Status = normalized;
-            tenant.StatusChangedUtc = DateTime.UtcNow;
+            tenant.StatusChangedUtc = now;
 
             // Activating a client whose trial has run out converts it to a paid client; keeping the
             // old deadline would only get it suspended again.
-            if (normalized == TenantStatus.Active && tenant.TrialEndsUtc <= DateTime.UtcNow)
+            if (normalized == TenantStatus.Active && trialEnded)
             {
                 tenant.TrialEndsUtc = null;
                 if (string.Equals(tenant.Plan, TenantPlans.Trial, StringComparison.OrdinalIgnoreCase))
@@ -347,12 +351,52 @@ IF @r < 0 THROW 51000, 'Another client is being created. Please try again.', 1;"
                 }
 
                 _logger.LogInformation("Tenant {TenantId} set to {Status}; {Count} session(s) ended", tenantId, normalized, sessions.Count);
+
+                if (normalized == TenantStatus.Suspended
+                    && !string.Equals(previousStatus, TenantStatus.Suspended, StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryQueueSuspensionEmailAsync(tenant, trialEnded);
+                }
+
                 return (true, null);
             }
 
             await _db.SaveChangesAsync();
             _logger.LogInformation("Tenant {TenantId} set to {Status}", tenantId, normalized);
             return (true, null);
+        }
+
+        private async Task TryQueueSuspensionEmailAsync(Tenant tenant, bool trialEnded)
+        {
+            try
+            {
+                var toEmail = tenant.ContactEmail?.Trim();
+                var displayName = tenant.ContactName?.Trim();
+                if (string.IsNullOrWhiteSpace(toEmail))
+                {
+                    var admin = await FindAdminUserAsync(tenant);
+                    toEmail = admin?.Email?.Trim();
+                    if (string.IsNullOrWhiteSpace(displayName) && admin != null)
+                        displayName = $"{admin.FirstName} {admin.LastName}".Trim();
+                }
+
+                if (string.IsNullOrWhiteSpace(toEmail))
+                {
+                    _logger.LogWarning("Tenant {TenantId} suspended, but no contact or admin email is available for notification", tenant.TenantId);
+                    return;
+                }
+
+                var (queued, error) = await IdentityEmailService.TryQueueTenantSuspendedNoticeAsync(
+                    _outbox, tenant.TenantId, _configuration, toEmail,
+                    displayName ?? "", tenant.Name, trialEnded);
+
+                if (!queued)
+                    _logger.LogWarning("Suspension email for tenant {TenantId} was not queued: {Error}", tenant.TenantId, error);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to queue suspension email for tenant {TenantId}", tenant.TenantId);
+            }
         }
 
         /// <summary>Issues a new temporary password for the tenant's administrator and emails it.</summary>

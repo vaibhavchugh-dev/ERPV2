@@ -162,7 +162,7 @@ export const protectedRoutes: any[] = [
   },
   {
     path: "/purchasing/invoice-inbox",
-    name: "Invoice Inbox",
+    name: "Inbox",
     Component: InvoiceInbox,
   },
   {

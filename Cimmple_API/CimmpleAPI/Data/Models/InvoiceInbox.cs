@@ -21,12 +21,22 @@ namespace CimmpleAPI.Data.Models
 
         public const string SourceEmail = "Email";
 
+        public const string DocTypeVendorInvoice = "vendorInvoice";
+        public const string DocTypeVendorOrder = "vendorOrder";
+        public const string DocTypeVendorQuotation = "vendorQuotation";
+        public const string DocTypeCustomerOrder = "customerOrder";
+        public const string DocTypeCustomerQuotation = "customerQuotation";
+        public const string DocTypeCustomerInvoice = "customerInvoice";
+
         [Key]
         public int Id { get; set; }
 
         public int TenantId { get; set; }
 
         public int LocationId { get; set; }
+
+        [MaxLength(40)]
+        public string DocumentType { get; set; } = DocTypeVendorInvoice;
 
         [MaxLength(20)]
         public string Source { get; set; } = SourceEmail;
@@ -92,8 +102,11 @@ namespace CimmpleAPI.Data.Models
         /// <summary>Extraction claim expiry so a crashed worker's rows are retried.</summary>
         public DateTime? LockedUntilUtc { get; set; }
 
-        /// <summary>Vendor invoice created from this item.</summary>
+        /// <summary>Vendor invoice created from this item (when DocumentType is vendorInvoice).</summary>
         public int? VendorInvoiceId { get; set; }
+
+        /// <summary>Created record id for any document type (VQ, VO, VI, CQ, CO, CI).</summary>
+        public int? ConvertedRecordId { get; set; }
 
         public int? ConvertedBy { get; set; }
 

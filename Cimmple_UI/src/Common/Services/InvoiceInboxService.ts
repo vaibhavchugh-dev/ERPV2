@@ -9,9 +9,18 @@ export type InvoiceInboxStatus =
   | "Converted"
   | "Discarded";
 
+export type InboxDocumentType =
+  | "customerQuotation"
+  | "customerOrder"
+  | "customerInvoice"
+  | "vendorQuotation"
+  | "vendorOrder"
+  | "vendorInvoice";
+
 export interface InvoiceInboxItem {
   id: number;
   locationId: number;
+  documentType: InboxDocumentType;
   fromName?: string | null;
   fromEmail?: string | null;
   subject?: string | null;
@@ -25,6 +34,7 @@ export interface InvoiceInboxItem {
   failureReason?: string | null;
   receivedUtc: string;
   vendorInvoiceId?: number | null;
+  convertedRecordId?: number | null;
 }
 
 export interface InvoiceInboxItemDetail extends InvoiceInboxItem {
@@ -52,11 +62,23 @@ export interface InvoiceInboxList {
   counts: InvoiceInboxCounts;
 }
 
+export interface InvoiceInboxAddressEntry {
+  code: string;
+  documentType: InboxDocumentType;
+  label: string;
+  shortLabel: string;
+  partyGroup: "Customer" | "Vendor" | string;
+  description: string;
+  address: string | null;
+}
+
 export interface InvoiceInboxAddress {
   locationId: number;
   /** Null until InboundMail:Domain is configured on the server. */
   address: string | null;
+  domain?: string;
   configured: boolean;
+  addresses?: InvoiceInboxAddressEntry[];
 }
 
 const errorMessage = (error: any, fallback: string): string => {
@@ -73,6 +95,7 @@ const errorMessage = (error: any, fallback: string): string => {
 export class InvoiceInboxService {
   public static GetList = async (params: {
     status?: string;
+    documentType?: string;
     searchTerm?: string;
     locationId?: number;
     page?: number;
@@ -82,7 +105,7 @@ export class InvoiceInboxService {
       const response = await Instense.get("/InvoiceInbox/List", { params });
       return response.data.result as InvoiceInboxList;
     } catch (error: any) {
-      throw new Error(errorMessage(error, "Failed to load the invoice inbox"));
+      throw new Error(errorMessage(error, "Failed to load the inbox"));
     }
   };
 
@@ -107,11 +130,14 @@ export class InvoiceInboxService {
     }
   };
 
-  public static MarkConverted = async (id: number, vendorInvoiceId: number): Promise<void> => {
+  public static MarkConverted = async (id: number, recordId: number): Promise<void> => {
     try {
-      await Instense.post(`/InvoiceInbox/MarkConverted/${id}`, { vendorInvoiceId });
+      await Instense.post(`/InvoiceInbox/MarkConverted/${id}`, {
+        recordId,
+        vendorInvoiceId: recordId,
+      });
     } catch (error: any) {
-      throw new Error(errorMessage(error, "Failed to link the vendor invoice"));
+      throw new Error(errorMessage(error, "Failed to mark the item as converted"));
     }
   };
 
@@ -138,7 +164,7 @@ export class InvoiceInboxService {
       });
       return response.data.result as InvoiceInboxAddress;
     } catch (error: any) {
-      throw new Error(errorMessage(error, "Failed to load the inbox address"));
+      throw new Error(errorMessage(error, "Failed to load the inbox addresses"));
     }
   };
 }

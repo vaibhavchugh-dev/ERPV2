@@ -31,10 +31,11 @@ export interface FilterOption {
 
 // Custom action button
 export interface CustomActionButton {
-  label: string;
+  label: React.ReactNode;
   onClick: () => void;
   className?: string;
   disabled?: boolean;
+  title?: string; // optional tooltip / aria-label (useful for icon-only buttons)
 }
 
 // Props for MasterListPage
@@ -324,6 +325,8 @@ const MasterListPage = <T extends Record<string, any>>({
               className={button.className || "btn-secondary"}
               onClick={button.onClick}
               disabled={button.disabled}
+              title={button.title}
+              aria-label={button.title}
             >
               {button.label}
             </button>

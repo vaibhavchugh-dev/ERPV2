@@ -49,6 +49,10 @@ interface Credentials {
   inviteError?: string | null;
 }
 
+function isTrialTenant(t: TenantSummary): boolean {
+  return Boolean(t.trialEndsUtc) || (t.plan ?? "").trim().toLowerCase() === "trial";
+}
+
 function statusClass(status: string): string {
   switch (status) {
     case "Active":
@@ -138,7 +142,11 @@ const SupportClientsPage: React.FC = () => {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tenants.filter((t) => {
-      if (statusFilter !== "all" && t.status !== statusFilter) return false;
+      if (statusFilter === "Trial") {
+        if (!isTrialTenant(t)) return false;
+      } else if (statusFilter !== "all" && t.status !== statusFilter) {
+        return false;
+      }
       if (!q) return true;
       return [t.name, t.code, t.contactName, t.contactEmail, String(t.tenantId)]
         .filter(Boolean)
@@ -349,6 +357,7 @@ const SupportClientsPage: React.FC = () => {
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                 <option value="all">All</option>
                 <option value="Active">Active</option>
+                <option value="Trial">Trial</option>
                 <option value="Provisioning">Provisioning</option>
                 <option value="Suspended">Suspended</option>
                 <option value="Cancelled">Cancelled</option>
@@ -374,7 +383,10 @@ const SupportClientsPage: React.FC = () => {
                     #{t.tenantId}
                     {t.code ? ` · ${t.code}` : ""}
                   </span>
-                  <span className={statusClass(t.status)}>{t.status}</span>
+                  <span className="sc-badges">
+                    {isTrialTenant(t) && <span className="si-badge si-badge--trial">Trial</span>}
+                    <span className={statusClass(t.status)}>{t.status}</span>
+                  </span>
                 </div>
                 <div className="support-ticket-card__subject">{t.name}</div>
                 <div className="support-ticket-card__meta">

@@ -918,6 +918,7 @@ namespace CimmpleAPI.Data
             {
                 entity.ToTable("InvoiceInboxItem");
                 entity.HasKey(e => e.Id);
+                entity.Property(e => e.DocumentType).HasMaxLength(40);
                 entity.Property(e => e.Source).HasMaxLength(20);
                 entity.Property(e => e.FromName).HasMaxLength(300);
                 entity.Property(e => e.FromEmail).HasMaxLength(320);

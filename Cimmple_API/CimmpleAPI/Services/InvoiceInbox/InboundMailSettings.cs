@@ -12,7 +12,7 @@ namespace CimmpleAPI.Services.InvoiceInbox
         /// <summary>Master switch. When false the webhook answers 503 and the worker idles.</summary>
         public bool Enabled { get; set; } = true;
 
-        /// <summary>Mail domain that receives invoices, e.g. <c>inbox.example.com</c>. Addresses are <c>{locationId}-inv@{Domain}</c>.</summary>
+        /// <summary>Mail domain that receives invoices, e.g. <c>inbox.example.com</c>. Addresses are <c>{locationId}-{code}@{Domain}</c> (e.g. <c>1002-inv</c>, <c>1002-po</c>, <c>1002-co</c>).</summary>
         public string Domain { get; set; } = "";
 
         /// <summary>Mailgun HTTP webhook signing key (HMAC-SHA256 of timestamp + token).</summary>
